@@ -1,5 +1,6 @@
 [package]
 name = "dyn-solve"
+description = "ODE integrators (Euler, Heun, RK4, Dormand-Prince 5(4)) with dense output, events and map iteration"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +8,7 @@ license.workspace = true
 [dependencies]
 dyn-core.workspace = true
 serde.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
 approx.workspace = true
+serde_json.workspace = true
