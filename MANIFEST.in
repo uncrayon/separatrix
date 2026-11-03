@@ -1,7 +1,0 @@
-# MANIFEST.in — include static assets for sdist and exclude development artefacts
-include README.md
-include LICENSE
-include pyproject.toml
-recursive-include backend/static *
-exclude backend/jobs.sqlite
-exclude backend/worker_runs.log
