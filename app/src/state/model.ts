@@ -1,0 +1,331 @@
+// The UI's data model and the pure functions that turn it into requests.
+//
+// Nothing here touches React; useStudio.ts holds the state and calls these.
+
+import type {
+  AxisRef,
+  CompileResponse,
+  Method,
+  PortraitResponse,
+  SymbolInfo,
+  TrajectoryRequest,
+} from "../api/types";
+import type { PortraitJob } from "../api/client";
+import type { Template } from "../templates";
+
+/** One editable equation line in the left panel. */
+export interface EquationLine {
+  id: number;
+  latex: string;
+}
+
+/** A user-placed starting point. `x0` is always the full state vector. */
+export interface InitialCondition {
+  id: number;
+  x0: number[];
+  /** Start time (ODE). Maps always start at n = 0. */
+  t0: number;
+  /** Index into the trajectory palette, fixed when the point is created. */
+  color: number;
+}
+
+/** A parameter with its current value and slider range. */
+export interface ParamState {
+  name: string;
+  latex: string;
+  value: number;
+  min: number;
+  max: number;
+}
+
+/** What is on the canvas. */
+export interface View {
+  xAxis: AxisRef;
+  yAxis: AxisRef;
+  xRange: [number, number];
+  yRange: [number, number];
+}
+
+/** Toggleable layers and their densities ("smart defaults" shown as chips). */
+export interface Layers {
+  field: boolean;
+  /** Arrows per side of the direction-field grid. */
+  fieldGrid: number;
+  nullclines: boolean;
+  fixedPoints: boolean;
+  /** Also integrate each initial condition backwards in time. */
+  backward: boolean;
+}
+
+/** Solver settings shown in the inspector. */
+export interface SolverSettings {
+  method: Method;
+  rtol: number;
+  atol: number;
+  /** Fixed step (euler/heun/rk4) or initial step for dopri5; 0 = automatic. */
+  h: number;
+  maxSteps: number;
+  /** Time span T for ODEs, number of iterates N for maps. */
+  tEnd: number;
+  /** Dense samples per trajectory; 0 = automatic. */
+  samples: number;
+}
+
+/** What the inspector shows. */
+export type Selection = { kind: "ic"; id: number } | { kind: "fp"; index: number } | null;
+
+/** Which initial condition (and which direction) a returned trajectory belongs to. */
+export interface TrajectoryMeta {
+  icId: number;
+  direction: "forward" | "backward";
+}
+
+/** Extra data returned with each portrait response. */
+export interface PortraitMeta {
+  systemId: number;
+  trajectories: TrajectoryMeta[];
+  view: View;
+}
+
+/** The latest portrait the canvas can draw. */
+export interface PortraitState {
+  res: PortraitResponse;
+  meta: PortraitMeta;
+  roundTripMs: number;
+}
+
+/** Number of colours in the trajectory palette (tokens --traj-1 … --traj-7). */
+export const PALETTE_SIZE = 7;
+
+export const DEFAULT_LAYERS: Layers = {
+  field: true,
+  fieldGrid: 21,
+  nullclines: true,
+  fixedPoints: true,
+  backward: true,
+};
+
+export const DEFAULT_SOLVER: SolverSettings = {
+  method: "dopri5",
+  rtol: 1e-6,
+  atol: 1e-9,
+  h: 0,
+  maxSteps: 200_000,
+  tEnd: 20,
+  samples: 0,
+};
+
+/** Default fixed step when switching to a fixed-step method. */
+export const DEFAULT_FIXED_STEP = 0.01;
+
+export const TIME_AXIS: AxisRef = { kind: "time" };
+export const stateAxis = (index: number): AxisRef => ({ kind: "state", index });
+
+/** A reasonable first view for a freshly compiled system. */
+export function defaultView(sys: CompileResponse): View {
+  const dim = sys.states.length;
+  if (dim <= 1) {
+    const map = sys.kind === "map";
+    return {
+      xAxis: TIME_AXIS,
+      yAxis: stateAxis(0),
+      xRange: map ? [0, 50] : [0, 10],
+      yRange: map ? [-0.1, 1.1] : [-3, 3],
+    };
+  }
+  return { xAxis: stateAxis(0), yAxis: stateAxis(1), xRange: [-5, 5], yRange: [-5, 5] };
+}
+
+/** Resolve a template axis name ("t", "n" or a state name) to an axis. */
+export function resolveAxis(name: string, states: SymbolInfo[]): AxisRef | null {
+  if (name === "t" || name === "n") return TIME_AXIS;
+  const i = states.findIndex((s) => s.name === name || s.latex === name);
+  return i >= 0 ? stateAxis(i) : null;
+}
+
+/** The view a template asks for, or the default when its axes don't resolve. */
+export function templateView(t: Template, sys: CompileResponse): View {
+  const xAxis = resolveAxis(t.view.x, sys.states);
+  const yAxis = resolveAxis(t.view.y, sys.states);
+  if (!xAxis || !yAxis) return defaultView(sys);
+  return { xAxis, yAxis, xRange: [...t.view.xRange], yRange: [...t.view.yRange] };
+}
+
+/** Is this axis still meaningful for a system with `dim` states? */
+export function axisValid(a: AxisRef, dim: number): boolean {
+  return a.kind === "time" || a.index < dim;
+}
+
+/** A slider range that comfortably contains `v`. */
+export function defaultParamRange(v: number): [number, number] {
+  if (v === 0) return [-1, 1];
+  const span = niceCeil(Math.abs(v) * 2);
+  return v > 0 ? [0, span] : [-span, 0];
+}
+
+/** Smallest 1/2/5 × 10^k that is ≥ v. */
+export function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v - 1e-12) return m * p;
+  return 10 * p;
+}
+
+/**
+ * Carry initial conditions over to a recompiled system: values are matched by
+ * state name, so renaming nothing keeps every point where it was.
+ */
+export function adaptInitialConditions(
+  ics: InitialCondition[],
+  oldStates: SymbolInfo[],
+  newStates: SymbolInfo[],
+): InitialCondition[] {
+  return ics.map((ic) => ({
+    ...ic,
+    x0: newStates.map((s) => {
+      const k = oldStates.findIndex((o) => o.name === s.name);
+      return k >= 0 ? (ic.x0[k] ?? 0) : 0;
+    }),
+  }));
+}
+
+/** The time window covered by an axis on screen, if time is on an axis. */
+export function visibleTimeRange(view: View): [number, number] | null {
+  if (view.xAxis.kind === "time") return view.xRange;
+  if (view.yAxis.kind === "time") return view.yRange;
+  return null;
+}
+
+/**
+ * The time spans to integrate for one initial condition.
+ *
+ * - Maps: iterate `tEnd` steps forward.
+ * - ODE with time on an axis: forward up to the right/top edge of the visible
+ *   time window, and (only when `layers.backward` is on) backward down to the
+ *   left/bottom edge. The time span T is not used: the view sets the span.
+ * - ODE phase plane: forward for T, and backward for T when `layers.backward`.
+ */
+export function trajectorySpans(
+  kind: CompileResponse["kind"],
+  view: View,
+  ic: InitialCondition,
+  solver: SolverSettings,
+  layers: Layers,
+): { req: TrajectoryRequest; direction: TrajectoryMeta["direction"] }[] {
+  if (kind === "map") {
+    return [{ req: { x0: ic.x0, t0: 0, t1: Math.max(1, Math.round(solver.tEnd)) }, direction: "forward" }];
+  }
+  const out: { req: TrajectoryRequest; direction: TrajectoryMeta["direction"] }[] = [];
+  const window = visibleTimeRange(view);
+  if (window) {
+    // Time is on screen: cover exactly what is visible. Going backwards is
+    // still the user's choice: many systems (Lorenz, any dissipative flow)
+    // blow up in backward time and would only produce a solver failure.
+    const [lo, hi] = window;
+    if (hi > ic.t0) out.push({ req: { x0: ic.x0, t0: ic.t0, t1: hi }, direction: "forward" });
+    if (layers.backward && lo < ic.t0)
+      out.push({ req: { x0: ic.x0, t0: ic.t0, t1: lo }, direction: "backward" });
+    return out;
+  }
+  out.push({ req: { x0: ic.x0, t0: ic.t0, t1: ic.t0 + solver.tEnd }, direction: "forward" });
+  if (layers.backward)
+    out.push({ req: { x0: ic.x0, t0: ic.t0, t1: ic.t0 - solver.tEnd }, direction: "backward" });
+  return out;
+}
+
+/** Automatic sample count: dense enough for smooth curves on long spans. */
+export function autoSamples(maxSpan: number): number {
+  return Math.round(Math.min(8000, Math.max(400, maxSpan * 120)));
+}
+
+/** Everything needed to build a portrait request. */
+export interface StudioSnapshot {
+  compiled: CompileResponse | null;
+  params: ParamState[];
+  view: View;
+  baseState: number[];
+  fieldTime: number;
+  ics: InitialCondition[];
+  layers: Layers;
+  solver: SolverSettings;
+}
+
+/** Turn the current UI state into a `compute_portrait` request. */
+export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> | null {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined) return null;
+  const dim = sys.states.length;
+  const isOde = sys.kind !== "map";
+  const trajectories: TrajectoryRequest[] = [];
+  const metas: TrajectoryMeta[] = [];
+  for (const ic of s.ics) {
+    if (ic.x0.length !== dim) continue;
+    for (const span of trajectorySpans(sys.kind, s.view, ic, s.solver, s.layers)) {
+      trajectories.push(span.req);
+      metas.push({ icId: ic.id, direction: span.direction });
+    }
+  }
+  const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
+  const fixedStep = s.solver.method !== "dopri5";
+  return {
+    body: {
+      systemId: sys.systemId,
+      params: s.params.map((p) => p.value),
+      xAxis: s.view.xAxis,
+      yAxis: s.view.yAxis,
+      xRange: s.view.xRange,
+      yRange: s.view.yRange,
+      baseState: Array.from({ length: dim }, (_, i) => s.baseState[i] ?? 0),
+      fieldTime: s.fieldTime,
+      fieldGrid: isOde && s.layers.field ? s.layers.fieldGrid : 0,
+      nullclines: isOde && s.layers.nullclines,
+      fixedPoints: s.layers.fixedPoints,
+      trajectories,
+      solver: {
+        method: s.solver.method,
+        rtol: s.solver.rtol,
+        atol: s.solver.atol,
+        h: fixedStep && s.solver.h <= 0 ? DEFAULT_FIXED_STEP : s.solver.h,
+        maxSteps: s.solver.maxSteps,
+      },
+      samples: s.solver.samples > 0 ? s.solver.samples : autoSamples(maxSpan),
+    },
+    meta: { systemId: sys.systemId, trajectories: metas, view: s.view },
+  };
+}
+
+/** Value of axis `a` at sample `k` of a trajectory. */
+export function sampleOnAxis(a: AxisRef, t: number[], x: number[], dim: number, k: number): number {
+  return a.kind === "time" ? t[k] : x[k * dim + a.index];
+}
+
+/**
+ * Min and max of one state over the trajectories that completed (used for
+ * slice-slider ranges and for the range of a newly chosen axis).
+ *
+ * Runs the solver stopped early (`maxSteps`, `blewUp`, …) are skipped: they
+ * typically end far outside the region of interest (a Lorenz orbit run
+ * backwards reaches |x| ~ 1e5 before the step limit) and would stretch the
+ * range until the interesting part is a dot. Returns null when no completed
+ * run has a finite sample of that state.
+ */
+export function stateExtent(
+  res: PortraitResponse | undefined,
+  dim: number,
+  index: number,
+): [number, number] | null {
+  if (!res) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const tr of res.trajectories) {
+    if (tr.status !== "completed") continue;
+    for (let k = 0; k < tr.t.length; k++) {
+      const v = tr.x[k * dim + index];
+      if (Number.isFinite(v) && Math.abs(v) < 1e6) {
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+  }
+  return lo <= hi ? [lo, hi] : null;
+}

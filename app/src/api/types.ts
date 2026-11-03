@@ -50,6 +50,8 @@ export interface SolverOptions {
   atol: number;
   /** Fixed step for euler/heun/rk4; initial step for dopri5 (0 = automatic). */
   h: number;
+  /** Largest allowed step for dopri5 (0 or absent = no limit). */
+  hMax?: number;
   maxSteps: number;
 }
 

@@ -26,3 +26,13 @@ codegen-units = 1
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Keep the maths fast in `tauri dev` (debug builds): optimise our own numeric crates.
+[profile.dev.package.dyn-core]
+opt-level = 3
+[profile.dev.package.dyn-expr]
+opt-level = 3
+[profile.dev.package.dyn-solve]
+opt-level = 3
+[profile.dev.package.dyn-analysis]
+opt-level = 3
