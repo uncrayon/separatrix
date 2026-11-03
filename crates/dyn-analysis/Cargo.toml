@@ -1,5 +1,6 @@
 [package]
 name = "dyn-analysis"
+description = "Phase-portrait analyses: direction fields, nullclines, fixed points and their classification"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +8,9 @@ license.workspace = true
 [dependencies]
 dyn-core.workspace = true
 serde.workspace = true
-thiserror.workspace = true
+# Only used for eigenvalues of Jacobians of dimension >= 3 (real Schur form).
+nalgebra = { version = "0.35", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 approx.workspace = true
+serde_json.workspace = true
