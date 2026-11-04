@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{Ast, AstKind, BinOp, Func};
+use crate::latex::product_separator;
 use crate::parser::{parse_lines, Line};
 use crate::sema::{leibniz_to_deriv, same_meaning};
 use crate::token::SymName;
@@ -55,11 +56,14 @@ const SYSTEM_CHANGED: &str = "Converting would change what the system means";
 /// The result has one entry per line. A converted line means exactly what
 /// the original meant and keeps every name: it parses to the same tree,
 /// and a system that compiled compiles to the same states, parameters,
-/// defaults and right-hand sides. A line that can't be converted (it has an
-/// error, or uses something the target format can't write) is returned as
-/// typed with `converted: false` and a note; `error` says which of the two
-/// it was, since only a line with an error may be left in the old format
-/// by a switch. Empty lines pass through.
+/// defaults and right-hand sides (the parameters possibly listed in another
+/// order: LaTeX `\sin^{a} b` names `a` first, text `sin(b)^a` names `b`
+/// first). A line that can't be converted (it has an error, or uses
+/// something the target format can't write) is returned as typed with
+/// `converted: false` and a note; `error` says which of the two it was,
+/// since only a line with an error may be left in the old format by a
+/// switch. Empty lines pass through, and a line holding no equation (only
+/// spacing such as `\quad`) becomes an empty one.
 pub fn convert(lines: &[String], from: InputFormat, to: InputFormat) -> Vec<ConvertedLine> {
     if from == to {
         return lines.iter().map(|l| same(l)).collect();
@@ -219,7 +223,9 @@ impl Scope {
     }
 }
 
-/// The equations of one UI line in `to`, `None` for a line without any.
+/// The equations of one UI line in `to`, `None` for a blank line. A line
+/// with no equation in it, only spacing or separators (`\quad`, `\\`),
+/// becomes an empty line: kept as typed it would be an error in text mode.
 fn convert_line(
     line: &str,
     from: InputFormat,
@@ -235,7 +241,7 @@ fn convert_line(
         return Err(Fail::Error);
     }
     if parsed.is_empty() {
-        return Ok(None);
+        return Ok(Some(String::new()));
     }
     let eqs = parsed
         .into_iter()
@@ -530,15 +536,7 @@ impl Writer {
             BinOp::Mul => {
                 let ls = latex_at_least(&l, Prec::Product);
                 let rs = latex_right(&r, Prec::Power);
-                let digit_next = rs.starts_with(|c: char| c.is_ascii_digit());
-                let mixed_number =
-                    ls.ends_with(|c: char| c.is_ascii_digit()) && rs.starts_with("\\frac");
-                let left_open = l.open && l.prec >= Prec::Product;
-                let sep = if left_open || digit_next || mixed_number {
-                    " \\cdot "
-                } else {
-                    " "
-                };
+                let sep = product_separator(&ls, &rs, l.open && l.prec >= Prec::Product);
                 let open = r.open && rs == r.s;
                 Out {
                     s: format!("{ls}{sep}{rs}"),
@@ -721,6 +719,17 @@ mod tests {
 
     fn one(src: &str, from: InputFormat, to: InputFormat) -> ConvertedLine {
         convert(&[src.to_string()], from, to).remove(0)
+    }
+
+    #[test]
+    fn the_same_system_may_list_its_parameters_in_another_order() {
+        let analysis = |src: &str, f| analyze_source(src, f, &mut Vec::new()).expect("compiles");
+        let latex = analysis("\\dot{y}=\\sin^{a}b", InputFormat::Latex);
+        let text = |src: &str| analysis(src, InputFormat::Text);
+        assert!(same_meaning(&latex, &text("y' = sin(b)^a")));
+        assert!(!same_meaning(&latex, &text("y' = sin(a)^b")));
+        assert!(!same_meaning(&latex, &text("y' = sin(b)^c")));
+        assert!(!same_meaning(&latex, &text("y' = sin(b)^a; a = 2")));
     }
 
     #[test]

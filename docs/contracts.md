@@ -79,7 +79,8 @@ A system has one input format, and every line is stored exactly as typed in it: 
 `x' = -x`) handles text, and diagnostic spans point into what the user typed.
 
 `convert` rewrites a system's lines (one UI line each; `;` inside a line is kept, written `"; "`;
-empty lines pass through) from one format to the other. Each line is parsed on its own; the
+empty lines pass through, and a line with no equation in it, only spacing such as `\quad`, becomes
+empty) from one format to the other. Each line is parsed on its own; the
 constructs the formats read differently are rewritten to what they mean (`\frac{dx}{dt}` and `dx/dt`
 are `x'`; `x(t)` is the state `x` in a flow that has one, otherwise LaTeX's product `x·t`; `H(…)` on
 the left is kept), and the tree is written out node for node, never as a prettier form that is a
@@ -88,7 +89,8 @@ different tree (`\exp x` is `exp(x)`, `e^x` stays `e^x`). The guarantee:
 - **A converted line means exactly the same and keeps every name.** The core parses its own output
   and requires the same tree (names by name, numbers bit for bit); when the original system
   compiles, the converted one must compile to the same kind, flags, states, parameters, defaults
-  and right-hand sides, or nothing is converted. So the recompile after a switch finds the same
+  and right-hand sides (parameters in any order: LaTeX `\sin^{a} b` names `a` first, text
+  `sin(b)^a` names `b` first), or nothing is converted. So the recompile after a switch finds the same
   shape, and sliders, view and initial conditions are kept.
 - **A line that can't be converted is kept as typed**, with `converted: false` and a `note` the UI
   shows under it: a line with an error (`error: true`), or a valid line the target can't write

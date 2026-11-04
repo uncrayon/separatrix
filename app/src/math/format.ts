@@ -25,14 +25,6 @@ export function fmtTex(v: number, digits = 3): string {
   return s;
 }
 
-export function complexTex([re, im]: [number, number], digits = 3): string {
-  if (Math.abs(im) < 1e-12) return fmtTex(re, digits);
-  const sign = im < 0 ? "-" : "+";
-  const reS = Math.abs(re) < 1e-12 ? "" : `${fmtTex(re, digits)} ${sign} `;
-  const imS = `${fmtTex(Math.abs(im), digits)}i`;
-  return reS ? reS + imS : (im < 0 ? "-" : "") + imS;
-}
-
 const GREEK: Record<string, string> = {
   alpha: "α",
   beta: "β",

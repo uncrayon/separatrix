@@ -553,3 +553,54 @@ fn a_state_named_x_n_converts_both_ways() {
     round_trip(&["x_n' = -x_n + y", "y' = x_n"], TEXT, &mut r);
     round_trip(&["\\ddot{x}_n=-x_n-\\dot{x}_n"], LATEX, &mut r);
 }
+
+#[test]
+fn a_function_power_converts_though_its_parameters_come_in_another_order() {
+    // LaTeX writes the power before the argument, text after it, so the
+    // parameters first appear in the other order; the system is the same.
+    let bits = |v: Vec<f64>| -> Vec<u64> { v.iter().map(|x| x.to_bits()).collect() };
+    let mut r = Rng(11);
+    for (latex, text) in [
+        ("\\dot{y}=\\sin^{a}b", "y' = sin(b)^a"),
+        (
+            "\\dot{x}=\\cos^{p}\\left(\\omega t\\right)",
+            "x' = cos(omega*t)^p",
+        ),
+    ] {
+        assert_eq!(l2t(latex), text);
+        t2l(text);
+        let (a, b) = (ok(latex, LATEX), ok(text, TEXT));
+        let names = |s: &CompiledSystem| -> Vec<String> {
+            s.info.params.iter().map(|p| p.name.clone()).collect()
+        };
+        let mut reversed = names(&a);
+        reversed.reverse();
+        assert_eq!(names(&b), reversed, "{latex}");
+        for _ in 0..20 {
+            let t = r.uniform(-2.0, 2.0);
+            let x: Vec<f64> = (0..a.dim()).map(|_| r.uniform(-2.0, 2.0)).collect();
+            let p: Vec<f64> = (0..a.n_params()).map(|_| r.uniform(0.5, 2.0)).collect();
+            let q: Vec<f64> = p.iter().rev().copied().collect();
+            assert_eq!(
+                bits(a.eval_alloc(t, &x, &p)),
+                bits(b.eval_alloc(t, &x, &q)),
+                "{latex}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_line_with_no_equation_becomes_an_empty_line() {
+    for blank in ["\\quad", "\\,", "\\\\", "\\begin{cases}\\end{cases}"] {
+        let out = conv(&["\\dot{x}=y", "\\dot{y}=-x", blank], LATEX, TEXT);
+        assert!(
+            out.iter().all(|l| l.converted && l.note.is_none()),
+            "{blank}: {out:?}"
+        );
+        assert_eq!(out[2].source, "", "{blank}");
+        let text: Vec<String> = out.into_iter().map(|l| l.source).collect();
+        assert!(compile(&text.join("\n"), TEXT).system.is_some(), "{blank}");
+    }
+    assert_eq!(all(&["x' = y; y' = -x", ";"], TEXT, LATEX)[1], "");
+}

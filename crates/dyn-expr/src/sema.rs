@@ -11,7 +11,7 @@ use crate::token::{is_greek, sym_from_word, Span, SymName};
 use crate::{InputFormat, ParamInfo, SymbolInfo, SystemInfo};
 
 /// The right-hand sides of a system, by how they define the field.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum Form {
     /// One expression per state.
     Direct(Vec<Node>),
@@ -1080,7 +1080,10 @@ fn display_latex(form: &Form, kind: SystemKind, table: &StateTable, names: &Name
 
 /// Whether two analyses define the same system: the same kind, flags,
 /// states, parameters (names and default values, bit for bit) and
-/// right-hand sides. The display LaTeX is not compared.
+/// right-hand sides. The display LaTeX is not compared, and neither is the
+/// order of the parameters: it follows where each name first appears, which
+/// the two input formats can put differently (LaTeX `\sin^{a} b` names `a`
+/// first, its text form `sin(b)^a` names `b` first).
 pub(crate) fn same_meaning(a: &Analysis, b: &Analysis) -> bool {
     let (x, y) = (&a.info, &b.info);
     let states = x.states.len() == y.states.len()
@@ -1088,17 +1091,56 @@ pub(crate) fn same_meaning(a: &Analysis, b: &Analysis) -> bool {
             .iter()
             .zip(&y.states)
             .all(|(s, t)| s.name == t.name && s.derived == t.derived);
-    let params = x.params.len() == y.params.len()
-        && x.params
-            .iter()
-            .zip(&y.params)
-            .all(|(p, q)| p.name == q.name && p.default.to_bits() == q.default.to_bits());
+    let Some(b_to_a) = param_correspondence(&x.params, &y.params) else {
+        return false;
+    };
+    let forms = match (&a.form, &b.form) {
+        (Form::Direct(xs), Form::Direct(ys)) => {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(u, v)| same_node(u, v, &b_to_a))
+        }
+        (Form::Hamiltonian { h: g, dof: m }, Form::Hamiltonian { h, dof }) => {
+            m == dof && same_node(g, h, &b_to_a)
+        }
+        _ => false,
+    };
     x.kind == y.kind
         && x.hamiltonian == y.hamiltonian
         && x.autonomous == y.autonomous
         && states
-        && params
-        && a.form == b.form
+        && forms
+}
+
+/// For each parameter of `b`, the index of the parameter of `a` with the
+/// same name and default value (bit for bit); `None` unless the two lists
+/// hold the same parameters, in any order.
+fn param_correspondence(a: &[ParamInfo], b: &[ParamInfo]) -> Option<Vec<usize>> {
+    if a.len() != b.len() {
+        return None;
+    }
+    b.iter()
+        .map(|q| {
+            a.iter()
+                .position(|p| p.name == q.name && p.default.to_bits() == q.default.to_bits())
+        })
+        .collect()
+}
+
+/// `u` and `v` are the same expression, parameter `j` of `v` standing for
+/// parameter `b_to_a[j]` of `u`.
+fn same_node(u: &Node, v: &Node, b_to_a: &[usize]) -> bool {
+    match (u, v) {
+        (Node::Param(i), Node::Param(j)) => b_to_a.get(*j) == Some(i),
+        (Node::Neg(p), Node::Neg(q)) => same_node(p, q, b_to_a),
+        (Node::Bin(o, p1, p2), Node::Bin(r, q1, q2)) => {
+            o == r && same_node(p1, q1, b_to_a) && same_node(p2, q2, b_to_a)
+        }
+        (Node::Call(f, ps), Node::Call(g, qs)) => {
+            f == g
+                && ps.len() == qs.len()
+                && ps.iter().zip(qs).all(|(p, q)| same_node(p, q, b_to_a))
+        }
+        _ => u == v,
+    }
 }
 
 pub(crate) fn analyze(

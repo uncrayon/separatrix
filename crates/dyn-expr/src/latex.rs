@@ -146,17 +146,26 @@ fn product(a: &Node, b: &Node, names: &Names) -> Out {
     let l = at_least(&lo, Prec::Product);
     let r = at_least(&ro, Prec::Product);
     let left_open = lo.ends_in_bracketless_arg && lo.prec >= Prec::Product;
-    let digit_next = r.starts_with(|c: char| c.is_ascii_digit());
-    let mixed_number = l.ends_with(|c: char| c.is_ascii_digit()) && r.starts_with("\\frac");
-    let sep = if left_open || digit_next || mixed_number {
-        " \\cdot "
-    } else {
-        " "
-    };
+    let sep = product_separator(&l, &r, left_open);
     Out {
         s: format!("{l}{sep}{r}"),
         prec: Prec::Product,
         ends_in_bracketless_arg: ro.ends_in_bracketless_arg && ro.prec >= Prec::Product,
+    }
+}
+
+/// What goes between the factors `l` and `r` of a LaTeX product: `\cdot`
+/// where plain juxtaposition would read as something else (a function
+/// argument written without brackets that would swallow `r` when
+/// `left_open`, digits running into digits, `2\frac{1}{2}` as a mixed
+/// number), else a space.
+pub(crate) fn product_separator(l: &str, r: &str, left_open: bool) -> &'static str {
+    let digit_next = r.starts_with(|c: char| c.is_ascii_digit());
+    let mixed_number = l.ends_with(|c: char| c.is_ascii_digit()) && r.starts_with("\\frac");
+    if left_open || digit_next || mixed_number {
+        " \\cdot "
+    } else {
+        " "
     }
 }
 
