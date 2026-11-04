@@ -21,6 +21,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test numerical crates
         run: cargo test --workspace --exclude separatrix --release
+      - name: Formatting
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo fmt --all -- --check
       - name: Clippy
         if: matrix.os == 'ubuntu-22.04'
         run: cargo clippy --workspace --exclude separatrix --all-targets -- -D warnings
