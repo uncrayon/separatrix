@@ -1,0 +1,160 @@
+/* System area: left panel contents (SystemPanel.tsx). Owner: system agent.
+ *
+ * The components are the design system's (EquationEditor, Diagnostic,
+ * InferenceChips, ParamSlider, PanelSection, TrajectoryList); this file only
+ * lays them out in the panel, themes MathLive with the tokens, and sizes the
+ * typeset maths that comes from MathLive's static markup (.tex). Tokens only. */
+
+/* ------------------------------------------------------------ sections */
+
+/* First section: the equation editor with the inference chips under it. */
+.panel-left .sys-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+/* The initial-conditions list fills the rest of the panel. */
+.panel-left .sys-ics {
+  flex: 1 0 auto;
+}
+
+/* ------------------------------------------------------------ equation editor */
+
+/* MathField: the wrapper is the DS field box (.ds-equation-editor-field, a flex
+   row); the <math-field> fills it as a block, so a click anywhere on the line
+   lands on the field and starts editing. Its type is the `math` style. */
+.panel-left .mathfield-host > math-field {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  /* MathLive's own frame and focus outline: the DS box draws both already
+     (edge outline, accent edge and the focus ring on the line while editing). */
+  padding: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+
+/* MathLive, themed with the tokens. The field's box (sunken fill, edge outline,
+   radius, states) is .ds-equation-editor-field; these are MathLive's own knobs. */
+.panel-left math-field {
+  --caret-color: var(--ink);
+  --primary-color: var(--accent);
+  --selection-background-color: var(--accent-soft);
+  --selection-color: var(--ink);
+  --contains-highlight-background-color: var(--hover);
+  --smart-fence-color: var(--ink-3);
+  --smart-fence-opacity: 1;
+  --placeholder-color: var(--ink-3);
+  --placeholder-opacity: 1;
+  --text-font-family: var(--font-ui);
+  --latex-color: var(--ink-2);
+  --correct-color: var(--ok);
+  --incorrect-color: var(--danger);
+}
+/* No inner padding: the field's own min-height (control-h + space-1) and side
+   padding set the box; taller maths (fractions) grows it. */
+.panel-left math-field::part(container) {
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+}
+.panel-left math-field::part(content) {
+  padding: calc(var(--space-1) / 2) 0;
+}
+/* The placeholder (ẋ =) on an empty first line: ink-3, like any placeholder. */
+.panel-left math-field::part(placeholder) {
+  color: var(--ink-3);
+}
+/* MathLive's menu stays on right-click; its toggle button is hidden. */
+.panel-left math-field::part(menu-toggle) {
+  display: none;
+}
+/* Virtual keyboard toggle: kept, quiet until the line is hovered or edited,
+   and always shown on touch screens (no hover there). */
+.panel-left math-field::part(virtual-keyboard-toggle) {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  margin-right: calc(var(--space-1) * -1);
+  border-radius: var(--radius-xs);
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.panel-left math-field:is(:hover, :focus-within)::part(virtual-keyboard-toggle) {
+  opacity: 1;
+}
+.panel-left math-field::part(virtual-keyboard-toggle):hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+@media (hover: none) {
+  .panel-left math-field::part(virtual-keyboard-toggle) {
+    opacity: 1;
+  }
+}
+
+/* Text mode: the field is a plain input; its placeholder reads as a hint. */
+.panel-left .eq-text-input::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
+}
+
+/* MathLive's virtual keyboard (appended to <body>), in the app's colours. */
+.ML__keyboard {
+  --keyboard-background: var(--raised);
+  --keyboard-border: var(--line);
+  --keyboard-accent-color: var(--accent);
+  --keyboard-toolbar-text: var(--ink-2);
+  --keyboard-toolbar-text-active: var(--accent-ink);
+  --keyboard-toolbar-background: transparent;
+  --keyboard-toolbar-background-hover: var(--hover);
+  --keyboard-toolbar-background-selected: var(--accent-soft);
+  --keyboard-horizontal-rule: var(--line);
+  --keycap-background: var(--panel);
+  --keycap-background-hover: var(--hover);
+  --keycap-background-active: var(--active);
+  --keycap-background-pressed: var(--active);
+  --keycap-border: var(--line-strong);
+  --keycap-border-bottom: var(--edge);
+  --keycap-text: var(--ink);
+  --keycap-text-active: var(--accent-ink);
+  --keycap-text-hover: var(--ink);
+  --keycap-text-pressed: var(--ink);
+  --keycap-secondary-background: var(--active);
+  --keycap-secondary-background-hover: var(--hover);
+  --keycap-secondary-border: var(--line-strong);
+  --keycap-secondary-border-bottom: var(--edge);
+  --keycap-secondary-text: var(--ink);
+  --keycap-shift-text: var(--accent-ink);
+  --variant-panel-background: var(--raised);
+  --variant-keycap-text: var(--ink);
+  --variant-keycap-text-active: var(--accent-ink);
+  --variant-keycap-background-active: var(--accent-soft);
+}
+
+/* ------------------------------------------------------------ inference chips */
+
+/* "Solved as the first-order system": the rewritten equations, quietly, under the chips. */
+.panel-left .sys-first-order {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  color: var(--ink-2);
+}
+.panel-left .sys-first-order-label {
+  color: var(--ink-2);
+}
+/* Each equation carries the `math` style. */
+.panel-left .sys-first-order-eq {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}

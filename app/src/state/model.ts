@@ -27,6 +27,8 @@ export interface InitialCondition {
   t0: number;
   /** Index into the trajectory palette, fixed when the point is created. */
   color: number;
+  /** Hidden from the plot: not integrated, its start point is drawn hollow. */
+  hidden?: boolean;
 }
 
 /** A parameter with its current value and slider range. */
@@ -248,6 +250,58 @@ export interface StudioSnapshot {
   ics: InitialCondition[];
   layers: Layers;
   solver: SolverSettings;
+  /** Width / height of the plot on screen (null before it is laid out). */
+  plotAspect: number | null;
+}
+
+/**
+ * Phase planes use equal scales on both axes, so angles in the direction
+ * field and the shapes of orbits are true (PhasePlane README): the shorter of
+ * the two ranges is widened about its centre to match the plot's aspect
+ * (`aspect` = plot width / height). Nothing is ever cut off.
+ */
+export function equalizeRanges(
+  xRange: [number, number],
+  yRange: [number, number],
+  aspect: number | null | undefined,
+): { xRange: [number, number]; yRange: [number, number] } {
+  const sx = xRange[1] - xRange[0];
+  const sy = yRange[1] - yRange[0];
+  if (!aspect || !(aspect > 0) || !Number.isFinite(aspect) || !(sx > 0) || !(sy > 0)) return { xRange, yRange };
+  const want = sy * aspect; // the x span that matches y's scale
+  if (Math.abs(want - sx) <= 1e-9 * Math.max(sx, want)) return { xRange, yRange };
+  if (want > sx) {
+    const c = (xRange[0] + xRange[1]) / 2;
+    return { xRange: [c - want / 2, c + want / 2], yRange };
+  }
+  const c = (yRange[0] + yRange[1]) / 2;
+  const span = sx / aspect;
+  return { xRange, yRange: [c - span / 2, c + span / 2] };
+}
+
+/**
+ * Should a view use equal scales? Only a flow's phase plane: both axes are
+ * states and there is a direction field whose angles should be true. Time
+ * series stay stretched, and so do maps (no field; the Hénon attractor would
+ * shrink to a sliver).
+ */
+export function wantsEqualScales(
+  xAxis: AxisRef,
+  yAxis: AxisRef,
+  kind: string | undefined,
+): boolean {
+  return kind !== "map" && xAxis.kind === "state" && yAxis.kind === "state";
+}
+
+/** The ranges actually on screen: the view, widened to equal scales on a phase plane. */
+export function displayRanges(
+  view: View,
+  kind: CompileResponse["kind"] | undefined,
+  aspect: number | null,
+): { xRange: [number, number]; yRange: [number, number] } {
+  return wantsEqualScales(view.xAxis, view.yAxis, kind)
+    ? equalizeRanges(view.xRange, view.yRange, aspect)
+    : { xRange: view.xRange, yRange: view.yRange };
 }
 
 /** Turn the current UI state into a `compute_portrait` request. */
@@ -260,6 +314,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
   const metas: TrajectoryMeta[] = [];
   for (const ic of s.ics) {
     if (ic.x0.length !== dim) continue;
+    if (ic.hidden) continue;
     for (const span of trajectorySpans(sys.kind, s.view, ic, s.solver, s.layers)) {
       trajectories.push(span.req);
       metas.push({ icId: ic.id, direction: span.direction });
@@ -267,14 +322,16 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
   }
   const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
   const fixedStep = s.solver.method !== "dopri5";
+  // The field, nullclines and fixed points cover what is on screen.
+  const shown = displayRanges(s.view, sys.kind, s.plotAspect);
   return {
     body: {
       systemId: sys.systemId,
       params: s.params.map((p) => p.value),
       xAxis: s.view.xAxis,
       yAxis: s.view.yAxis,
-      xRange: s.view.xRange,
-      yRange: s.view.yRange,
+      xRange: shown.xRange,
+      yRange: shown.yRange,
       baseState: Array.from({ length: dim }, (_, i) => s.baseState[i] ?? 0),
       fieldTime: s.fieldTime,
       fieldGrid: isOde && s.layers.field ? s.layers.fieldGrid : 0,

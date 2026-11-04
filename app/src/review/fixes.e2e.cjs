@@ -25,7 +25,22 @@ async function pick(page, title) {
   await page.waitForTimeout(600);
 }
 
-const heading = (page) => page.textContent(".panel-right .section-head h2");
+// What the inspector shows as selected, read as the user gets it: the accessible
+// name of the pressed row in the Trajectories list ("Trajectory 2, start (0.50, 1.75)")
+// or in the Fixed points list ("Saddle at (1.000, 1.000)"). "" when nothing there is pressed.
+const selectedRow = (page, list) =>
+  page.evaluate((list) => {
+    // The row's select button, not its show/hide toggle (also aria-pressed).
+    const b = document.querySelector(
+      `.panel-right ul[aria-label="${list}"] :is(.ds-traj-select, .ds-fp-row)[aria-pressed="true"]`,
+    );
+    return b ? b.getAttribute("aria-label") || b.textContent : "";
+  }, list);
+const selectedTrajectory = (page) => selectedRow(page, "Trajectories");
+const selectedFixedPoint = (page) => selectedRow(page, "Fixed points");
+/** A fixed-point row's name: its classification, then where it is. */
+const FIXED_POINT_NAME =
+  /^(Saddle|Center|Stable|Unstable|Half-stable|Non-hyperbolic|Non-isolated|Sink|Source)\b.* at (\(|\S+\* = )/;
 const icCount = (page) => page.locator(".ic-row").count();
 
 test("picking a template from the keyboard leaves focus on the plot, not the page body", async () => {
@@ -63,26 +78,33 @@ test("the axis menu works with the arrow keys", async () => {
   const { browser, page } = await open();
   try {
     await pick(page, "Rabbits vs sheep");
-    const button = page.getByRole("button", { name: "Horizontal axis" });
+    // The toolbar's axis picker: one menu button for both axes ("Axes: x horizontal, y vertical").
+    const button = page.getByRole("button", { name: /^Axes:/ });
     await button.focus();
     await page.keyboard.press("ArrowDown");
-    await page.waitForSelector(".menu");
+    await page.waitForSelector("[role=menu]");
     const checked = await page.evaluate(() => document.activeElement.getAttribute("aria-checked"));
     assert.equal(checked, "true", "opening the menu focuses the current choice");
+    // The first group is the horizontal axis: x, y, t.
     await page.keyboard.press("ArrowDown"); // x -> y
     await page.keyboard.press("ArrowDown"); // y -> t
     await page.keyboard.press("Enter");
-    await page.waitForSelector(".menu", { state: "detached" });
+    await page.waitForSelector("[role=menu]", { state: "detached" });
     const back = await page.evaluate(() => document.activeElement.getAttribute("aria-label"));
-    assert.equal(back, "Horizontal axis", "focus returns to the menu button");
+    assert.match(back, /^Axes: t horizontal/, "focus returns to the menu button, which names the new axis");
     const xLabel = await page.textContent(".plot-wrap .axis-label-x");
     assert.match(xLabel, /t/);
     assert.doesNotMatch(xLabel, /x/);
     // Escape closes without choosing.
     await page.keyboard.press("ArrowDown");
-    await page.waitForSelector(".menu");
+    await page.waitForSelector("[role=menu]");
     await page.keyboard.press("Escape");
-    await page.waitForSelector(".menu", { state: "detached" });
+    await page.waitForSelector("[role=menu]", { state: "detached" });
+    assert.match(
+      await page.evaluate(() => document.activeElement.getAttribute("aria-label")),
+      /^Axes: t horizontal/,
+      "Escape returns focus to the menu button and changes nothing",
+    );
   } finally {
     await browser.close();
   }
@@ -99,10 +121,10 @@ test("the plot can add a starting point and select fixed points from the keyboar
     await page.keyboard.press("Enter");
     await page.waitForTimeout(200);
     assert.equal(await icCount(page), before + 1);
-    assert.match(await heading(page), /Trajectory/);
+    assert.match(await selectedTrajectory(page), /^Trajectory \d+, start \(/);
     await page.keyboard.press("f");
     await page.waitForTimeout(200);
-    assert.match(await heading(page), /Fixed point/);
+    assert.match(await selectedFixedPoint(page), FIXED_POINT_NAME);
   } finally {
     await browser.close();
   }
@@ -158,6 +180,53 @@ test("Lorenz: the slice card folds to one line and opens again", async () => {
     assert.equal(await page.locator(".slice-card input[type=range]").count(), 0);
     await page.locator(".slice-folded").click();
     assert.equal(await page.locator(".slice-card input[type=range]").count(), 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("an equation line starts editing wherever it is clicked, not only on the typeset maths", async () => {
+  const { browser, page } = await open();
+  try {
+    await page.locator(".gallery .card.blank").click();
+    await page.waitForSelector(".gallery", { state: "detached" });
+    await page.waitForTimeout(600);
+    const box = await page.locator(".panel-left .ds-equation-editor-field").first().boundingBox();
+    // Well right of "ẋ = y": the empty part of the line.
+    await page.mouse.click(box.x + box.width * 0.8, box.y + box.height / 2);
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => document.activeElement.tagName), "MATH-FIELD");
+    const before = await page.evaluate(() => document.querySelector(".panel-left math-field").value);
+    await page.keyboard.type("+1");
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => document.querySelector(".panel-left math-field").value);
+    assert.notEqual(after, before, "typing after the click edits the equation");
+    assert.match(after, /\+1$/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Text mode: the status bar's error button moves focus to the bad line", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Van der Pol");
+    await page.getByRole("radio", { name: "Text" }).click();
+    const first = page.locator(".panel-left input.ds-equation-editor-field").first();
+    await first.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("+");
+    await page.waitForTimeout(800);
+    await page.locator("canvas.plot-canvas").focus();
+    const errors = page.locator(".statusbar .ds-statusbar-item--danger.ds-statusbar-item--button");
+    assert.equal(await errors.count(), 1, "the status bar counts the error");
+    await errors.focus();
+    await page.keyboard.press("Enter");
+    const focused = await page.evaluate(() => ({
+      tag: document.activeElement.tagName,
+      label: document.activeElement.getAttribute("aria-label"),
+    }));
+    assert.deepEqual(focused, { tag: "INPUT", label: "Equation 1" });
   } finally {
     await browser.close();
   }

@@ -88,7 +88,7 @@ const GREEK: Record<string, string> = {
 /**
  * Turn short LaTeX (names, dotted names, simple expressions) into readable
  * plain Unicode. Used where typesetting is not possible: diagnostics text,
- * `title` tooltips and canvas tick labels. `\dot{\theta}` → "θ̇".
+ * accessible names and canvas tick labels. `\dot{\theta}` → "θ̇".
  */
 export function latexToPlain(s: string): string {
   let out = s;
@@ -104,10 +104,29 @@ export function latexToPlain(s: string): string {
   return out;
 }
 
+/**
+ * A core diagnostic as the panel shows it: plain maths, and a quoted token in curly quotes
+ * ("Missing right-hand side after ‘=’", as in the brand book). Apostrophes ("can't", "x'") stay.
+ */
+export function diagnosticText(message: string): string {
+  return latexToPlain(message).replace(/'([^'\s]{1,12})'/g, "‘$1’");
+}
+
 /** The LaTeX used to label an axis: the user's state name, or t / n. */
 export function axisLatex(axis: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "time") return kind === "map" ? "n" : "t";
   return states[axis.index]?.latex ?? "?";
+}
+
+/** An axis name as the plot labels it: {@link axisLatex}, with `_n` for a map value plotted against n. */
+export function axisLabelLatex(
+  axis: AxisRef,
+  other: AxisRef,
+  states: SymbolInfo[],
+  kind: SystemKind | undefined,
+): string {
+  const base = axisLatex(axis, states, kind);
+  return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
 }
 
 /** Same as {@link axisLatex}, for a map state on the value axis: `x_n`. */
@@ -121,31 +140,32 @@ export function sameAxis(a: AxisRef, b: AxisRef): boolean {
 }
 
 /**
- * Classification in Strogatz's words, capitalised for headings. In 1D
- * Strogatz just says "stable" or "unstable fixed point" (Ch. 2).
+ * Classification in Strogatz's words, capitalised for headings (US spelling,
+ * as the brand book asks: "Center", "Saddle"). In 1D Strogatz just says
+ * "stable" or "unstable" (Ch. 2), and "half-stable" when f′(x*) = 0.
  */
 export function classificationTitle(c: Classification, dim = 2): string {
   if (dim === 1) {
-    if (c === "non-hyperbolic" || c === "non-isolated") return "Half-stable or non-hyperbolic";
+    if (c === "non-hyperbolic" || c === "non-isolated") return "Half-stable";
     const stable = c === "sink" || c.startsWith("stable");
-    return stable ? "Stable fixed point" : "Unstable fixed point";
+    return stable ? "Stable" : "Unstable";
   }
   const words: Record<Classification, string> = {
-    saddle: "Saddle point",
+    saddle: "Saddle",
     "stable node": "Stable node",
     "unstable node": "Unstable node",
     "stable spiral": "Stable spiral",
     "unstable spiral": "Unstable spiral",
-    center: "Centre",
+    center: "Center",
     "stable star": "Stable star",
     "unstable star": "Unstable star",
     "stable degenerate node": "Stable degenerate node",
     "unstable degenerate node": "Unstable degenerate node",
-    "non-isolated": "Non-isolated fixed point",
+    "non-isolated": "Non-isolated",
     sink: "Sink",
     source: "Source",
     "saddle (n-D)": "Saddle",
-    "non-hyperbolic": "Non-hyperbolic fixed point",
+    "non-hyperbolic": "Non-hyperbolic",
   };
   return words[c];
 }
@@ -158,11 +178,11 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
     if (kind === "map") {
       if (stable) return "|f′(x*)| < 1: nearby orbits are pulled in.";
       if (unstable) return "|f′(x*)| > 1: nearby orbits are pushed away.";
-      return "|f′(x*)| = 1: linearisation cannot decide stability.";
+      return "|f′(x*)| = 1: linearization cannot decide stability.";
     }
-    if (stable) return "f′(x*) < 0: nearby solutions flow towards it.";
+    if (stable) return "f′(x*) < 0: nearby solutions flow toward it.";
     if (unstable) return "f′(x*) > 0: nearby solutions flow away from it.";
-    return "f′(x*) = 0: linearisation cannot decide; look at the sign of f on each side.";
+    return "f′(x*) = 0: linearization cannot decide; look at the sign of f on each side.";
   }
   if (kind === "map") {
     switch (c) {
@@ -178,7 +198,7 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
       case "saddle (n-D)":
         return "Some multipliers have |μ| > 1 and some |μ| < 1: orbits come in along one direction and leave along another.";
       default:
-        return "A multiplier has |μ| = 1, so linearisation cannot decide stability.";
+        return "A multiplier has |μ| = 1, so linearization cannot decide stability.";
     }
   }
   switch (c) {
@@ -194,7 +214,7 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
     case "unstable spiral":
       return "Complex eigenvalues with positive real part: trajectories spiral out.";
     case "center":
-      return "Purely imaginary eigenvalues: in the linearisation, trajectories are closed orbits.";
+      return "Purely imaginary eigenvalues: in the linearization, trajectories are closed orbits.";
     case "stable star":
     case "unstable star":
       return "Two equal eigenvalues with two independent eigenvectors: trajectories are straight lines.";
@@ -208,7 +228,7 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
     case "source":
       return "Every eigenvalue has positive real part: all nearby trajectories leave.";
     case "non-hyperbolic":
-      return "An eigenvalue on the imaginary axis: linearisation cannot decide stability.";
+      return "An eigenvalue on the imaginary axis: linearization cannot decide stability.";
   }
 }
 

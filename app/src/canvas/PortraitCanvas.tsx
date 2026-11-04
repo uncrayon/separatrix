@@ -1,39 +1,49 @@
 // The centre of the app: the phase portrait canvas and its overlays
-// (typeset axis labels, fixed-point tooltip, legend, slice sliders, hints).
+// (typeset axis names, fixed-point tooltip, slice card, hints) and the legend.
 //
-// Interactions: click = add an initial condition, drag a dot = move it (live
-// re-solve), drag empty space = pan, wheel = zoom around the cursor,
-// double-click = reset the view.
+// What the pointer does depends on the canvas tool (CanvasToolbar):
+// - Select (default): click = add an initial condition, drag a start point =
+//   move it (live re-solve), click a fixed point or a curve = select it, drag
+//   empty space = pan;
+// - Pan: drag anywhere = pan;
+// - Add trajectory: click anywhere (also on a curve or a fixed point) = add a
+//   start point there, keep dragging to adjust it.
+// In every tool: wheel = zoom around the cursor, double-click = reset the view.
 //
 // Keyboard (the canvas is focusable): arrow keys move a cursor ring (Shift =
 // bigger steps), Enter/Space adds a trajectory there or selects the mark under
 // it, F / Shift+F step through fixed points, + / − zoom around the cursor,
 // 0 resets the view, Delete removes the selected trajectory, Escape deselects.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, SymbolInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
-import { axisLatex, classificationTitle, complexTex, fmtTex, sameAxis } from "../math/format";
-import { IconChevron } from "../components/icons";
+import { axisLabelLatex, axisLatex, classificationTitle, complexTex, fmtTex, latexToPlain, sameAxis } from "../math/format";
+import { useCanvasTool } from "../components/CanvasToolbar";
+import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { stateExtent } from "../state/model";
 import { NumberField, Slider } from "../components/controls";
 import {
+  axisLines,
   drawScene,
+  fixedPointGlyph,
   fixedPointPx,
-  fixedPointShape,
   icPx,
   trajectoryPx,
-  type FixedPointShape,
+  type Box,
+  type FixedPointGlyphKind,
   type Scene,
 } from "./draw";
 import { readPlotTheme, type PlotTheme } from "./theme";
-import { insidePlot, makeViewport, sx, sy, toPlot, unitsPerPx, zoomRange } from "./viewport";
+import { makeViewport, sx, sy, toPlot, unitsPerPx, wantsEqualScales, zoomRange } from "./viewport";
 
 interface Props {
   state: StudioState;
   actions: StudioActions;
   theme: "dark" | "light";
+  /** The floating CanvasToolbar, rendered inside the plot well (CanvasToolbar README). */
+  toolbar?: ReactNode;
 }
 
 type Drag =
@@ -44,9 +54,14 @@ type Drag =
       startY: number;
       xRange: [number, number];
       yRange: [number, number];
+      /** Plot units per px when the drag started (the view on screen). */
+      upp: [number, number];
       moved: boolean;
+      /** Select tool: a click (no move) adds a start point. */
+      clickAdds: boolean;
     };
 
+/** Hit radius for start points and fixed points, × g (PhasePlane README). */
 const HIT_RADIUS = 10;
 /** Below this plot width (CSS px) the slice card starts folded. */
 const SLICE_CARD_MIN_PLOT_W = 640;
@@ -60,25 +75,32 @@ export function dotted(latex: string): string {
 }
 
 /** Axis label: the user's name, with `_n` for map values plotted against n. */
-function axisLabel(
-  axis: AxisRef,
-  other: AxisRef,
-  states: SymbolInfo[],
-  kind: SystemKind | undefined,
-): string {
-  const base = axisLatex(axis, states, kind);
-  return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
-}
+const axisLabel = axisLabelLatex;
 
-export function PortraitCanvas({ state, actions, theme }: Props) {
+const sameBox = (a: Box | null, b: Box | null) =>
+  a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) < 0.5));
+
+export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const probeRef = useRef<HTMLSpanElement>(null);
+  const sliceRef = useRef<HTMLElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [hover, setHover] = useState<{ fp: number | null; ic: number | null }>({ fp: null, ic: null });
   const [dragging, setDragging] = useState<Drag["mode"] | null>(null);
   const drag = useRef<Drag | null>(null);
   const recentAdds = useRef<{ id: number; at: number }[]>([]);
   const themeCache = useRef<{ key: string; th: PlotTheme } | null>(null);
+  /** Bumped when the theme attribute changes or web fonts finish loading: redraw with fresh tokens. */
+  const [themeVersion, setThemeVersion] = useState(0);
+  /** The floating toolbar's box, relative to the plot well (null when absent). */
+  const [toolbarBox, setToolbarBox] = useState<Box | null>(null);
+  /** The slice card moves below the toolbar when both would share the top row. */
+  const [sliceBelow, setSliceBelow] = useState(false);
+  /** Size of the typeset x-axis name, measured after layout, to keep it clear of the toolbar. */
+  const [xNameSize, setXNameSize] = useState<[number, number]>([12, 20]);
+  /** Boxes of the typeset axis names, measured after layout, for the renderer. */
+  const nameBoxes = useRef<Box[]>([]);
   /** Keyboard cursor in plot coordinates; null when not using the keyboard. */
   const [kbd, setKbd] = useState<[number, number] | null>(null);
   /** Last keyboard action, read out by screen readers. */
@@ -86,14 +108,30 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
   /**
    * The slice card can be folded into one line so it never hides the plot.
    * Until the user chooses (null), it starts folded on narrow plots, where the
-   * 236 px card would cover a large part of the picture.
+   * open card would cover a large part of the picture.
    */
   const [sliceChoice, setSliceOpen] = useState<boolean | null>(null);
   const sliceOpen = sliceChoice ?? size.w >= SLICE_CARD_MIN_PLOT_W;
+  const tool = useCanvasTool();
 
   const { compiled, view } = state;
-  const scale = theme === "light" ? 1.25 : 1;
-  const vp = makeViewport(size.w, size.h, view.xRange, view.yRange, scale);
+  /** Glyph scale g: hit radii grow with the glyphs in projector mode. */
+  const g = theme === "light" ? 1.3 : 1;
+  // Phase planes of flows use equal scales on both axes (PhasePlane README).
+  const vp = makeViewport(
+    size.w,
+    size.h,
+    view.xRange,
+    view.yRange,
+    g,
+    wantsEqualScales(view.xAxis, view.yAxis, compiled?.kind),
+  );
+
+  // The plot's aspect goes to the state, so the field is computed for exactly
+  // what is on screen.
+  useEffect(() => {
+    actions.setPlotAspect(size.w > 0 && size.h > 0 ? size.w / size.h : null);
+  }, [actions, size.w, size.h]);
 
   // ---- size (CSS px), kept in sync with the layout
   useLayoutEffect(() => {
@@ -105,8 +143,50 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     return () => ro.disconnect();
   }, []);
 
+  // ---- redraw on theme change (any writer of html[data-theme]) and when fonts load
+  useEffect(() => {
+    const bump = () => setThemeVersion((v) => v + 1);
+    const mo = new MutationObserver(bump);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    let live = true;
+    document.fonts?.ready.then(() => live && bump());
+    return () => {
+      live = false;
+      mo.disconnect();
+    };
+  }, []);
+
+  // ---- where the chrome over the plot sits (every commit; cheap, and the
+  // toolbar changes with the same state that renders this component)
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const wr = wrap.getBoundingClientRect();
+    const ox = wr.left + wrap.clientLeft;
+    const oy = wr.top + wrap.clientTop;
+    const rel = (r: DOMRect): Box => [r.left - ox, r.top - oy, r.right - ox, r.bottom - oy];
+    const bar = wrap.querySelector<HTMLElement>(".plot-toolbar");
+    const tb = bar ? rel(bar.getBoundingClientRect()) : null;
+    if (!sameBox(tb, toolbarBox)) setToolbarBox(tb);
+    nameBoxes.current = [...wrap.querySelectorAll<HTMLElement>(".axis-label")].map((el) =>
+      rel(el.getBoundingClientRect()),
+    );
+    const xName = wrap.querySelector<HTMLElement>(".axis-label-x");
+    if (xName) {
+      const w = xName.offsetWidth;
+      const h = xName.offsetHeight;
+      if (Math.abs(w - xNameSize[0]) > 0.5 || Math.abs(h - xNameSize[1]) > 0.5) setXNameSize([w, h]);
+    }
+    const card = sliceRef.current;
+    if (card && tb) {
+      const cr = rel(card.getBoundingClientRect());
+      const below = cr[0] < tb[2] + 8;
+      if (below !== sliceBelow) setSliceBelow(below);
+    }
+  });
+
   // ---- what to draw
-  const scene = useMemo<Scene | null>(() => {
+  const scene = useMemo<Omit<Scene, "avoid"> | null>(() => {
     if (!compiled || !compiled.ok) return null;
     const p = state.portrait;
     const dim = compiled.states.length;
@@ -118,7 +198,8 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
       ? p.res.trajectories.flatMap((out, i) => {
           const meta = p.meta.trajectories[i];
           const color = meta ? colorOf.get(meta.icId) : undefined;
-          return meta && color !== undefined ? [{ out, meta, color }] : [];
+          const hidden = state.ics.some((ic) => ic.id === meta?.icId && ic.hidden);
+          return meta && color !== undefined && !hidden ? [{ out, meta, color }] : [];
         })
       : [];
     return {
@@ -150,7 +231,37 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     hover,
   ]);
 
-  // ---- draw (after layout effects, so the theme attribute is already applied)
+  // ---- keep the default view clear of the toolbar (CanvasToolbar README: "keep
+  // the plot's default view padded so fixed points and starts are not under
+  // it"). Only while the view is the home view, as loaded or reset: once the
+  // user pans or zooms, the view is theirs.
+  useEffect(() => {
+    if (!scene || !toolbarBox || size.w === 0 || view !== state.homeView) return;
+    const [l, , r, b] = toolbarBox;
+    const pad = 12 * g;
+    const marks: [number, number][] = [
+      ...scene.ics.filter((ic) => ic.x0.length === scene.dim).map((ic) => icPx(vp, scene, ic)),
+      ...scene.fixedPoints.map((fp) => fixedPointPx(vp, scene, fp)),
+    ];
+    const target = b + pad;
+    const H = vp.height;
+    if (target >= H * 0.6) return; // a tiny plot: nothing sensible to do
+    const [y0, y1] = vp.yRange;
+    let top = y1;
+    for (const [px, py] of marks) {
+      if (px < l - pad || px > r + pad || py >= target || py < vp.top) continue;
+      // The y value of this mark, and the top that puts it `target` px down.
+      const y = y1 - ((py - vp.top) / H) * (y1 - y0);
+      const f = (target - vp.top) / H;
+      top = Math.max(top, (y - f * y0) / (1 - f));
+    }
+    if (top > y1 + 1e-9 * Math.abs(y1 - y0)) actions.setView({ ...view, xRange: vp.xRange, yRange: [y0, top] });
+    // vp and scene follow from these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, toolbarBox, size.w, size.h, view, state.homeView]);
+
+  // ---- draw (after layout effects, so the theme attribute is already applied
+  // and the chrome over the plot has been measured)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.w === 0) return;
@@ -163,9 +274,14 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (themeCache.current?.key !== theme) themeCache.current = { key: theme, th: readPlotTheme() };
+    const key = `${document.documentElement.dataset.theme ?? theme}:${themeVersion}`;
+    if (themeCache.current?.key !== key) themeCache.current = { key, th: readPlotTheme(probeRef.current) };
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, size.w, size.h, vp, scene, themeCache.current.th);
+    const avoid = {
+      labels: [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes.current],
+      field: nameBoxes.current.map(([l, t, r, b]): Box => [l - 3, t - 3, r + 3, b + 3]),
+    };
+    drawScene(ctx, size.w, size.h, vp, scene && { ...scene, avoid }, themeCache.current.th);
   });
 
   // ---- hit testing
@@ -185,7 +301,7 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     const none = { ic: null, fp: null };
     if (!scene) return none;
     let best: { ic: number | null; fp: number | null } = none;
-    let bestD = HIT_RADIUS * HIT_RADIUS * scale * scale;
+    let bestD = (HIT_RADIUS * g) ** 2;
     for (let i = 0; i < scene.fixedPoints.length; i++) {
       const [x, y] = fixedPointPx(vp, scene, scene.fixedPoints[i]);
       const d = (x - px) ** 2 + (y - py) ** 2;
@@ -212,7 +328,7 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
   /** The initial condition whose trajectory passes within a few px, if any. */
   const hitTrajectory = (px: number, py: number): number | null => {
     if (!scene) return null;
-    const tol = 5 * scale;
+    const tol = 5 * g;
     let best: number | null = null;
     let bestD = tol * tol;
     for (const tr of scene.trajectories) {
@@ -248,23 +364,24 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
   }, []);
 
   // ---- keyboard
+  // The ranges on screen (vp), which a phase plane widens to equal scales.
   const centre = (): [number, number] => [
-    (view.xRange[0] + view.xRange[1]) / 2,
-    (view.yRange[0] + view.yRange[1]) / 2,
+    (vp.xRange[0] + vp.xRange[1]) / 2,
+    (vp.yRange[0] + vp.yRange[1]) / 2,
   ];
   const inView = ([x, y]: [number, number]) =>
-    x >= Math.min(...view.xRange) &&
-    x <= Math.max(...view.xRange) &&
-    y >= Math.min(...view.yRange) &&
-    y <= Math.max(...view.yRange);
+    x >= Math.min(...vp.xRange) &&
+    x <= Math.max(...vp.xRange) &&
+    y >= Math.min(...vp.yRange) &&
+    y <= Math.max(...vp.yRange);
   const fmtPoint = ([x, y]: [number, number]) => `${fmtPlain(x)}, ${fmtPlain(y)}`;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (!scene || e.altKey || e.ctrlKey || e.metaKey) return;
     const cur = kbd && inView(kbd) ? kbd : centre();
     const big = e.shiftKey ? 5 : 1;
-    const dx = (view.xRange[1] - view.xRange[0]) * KEY_STEP * big;
-    const dy = (view.yRange[1] - view.yRange[0]) * KEY_STEP * big;
+    const dx = (vp.xRange[1] - vp.xRange[0]) * KEY_STEP * big;
+    const dy = (vp.yRange[1] - vp.yRange[0]) * KEY_STEP * big;
     const moves: Record<string, [number, number]> = {
       ArrowLeft: [-dx, 0],
       ArrowRight: [dx, 0],
@@ -275,10 +392,7 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     if (e.key in moves) {
       handled();
       const [mx, my] = moves[e.key];
-      const next: [number, number] = [
-        clampTo(cur[0] + mx, view.xRange),
-        clampTo(cur[1] + my, view.yRange),
-      ];
+      const next: [number, number] = [clampTo(cur[0] + mx, vp.xRange), clampTo(cur[1] + my, vp.yRange)];
       setKbd(next);
       setAnnounce(fmtPoint(next));
     } else if (e.key === "Enter" || e.key === " ") {
@@ -311,7 +425,11 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     } else if (e.key === "+" || e.key === "=" || e.key === "-" || e.key === "_") {
       handled();
       const f = e.key === "+" || e.key === "=" ? 1 / 1.25 : 1.25;
-      actions.setView({ ...view, xRange: zoomRange(view.xRange, cur[0], f), yRange: zoomRange(view.yRange, cur[1], f) });
+      actions.setView({
+        ...view,
+        xRange: zoomRange(view.xRange, cur[0], f),
+        yRange: zoomRange(view.yRange, cur[1], f),
+      });
       setKbd(cur);
     } else if (e.key === "0") {
       handled();
@@ -327,12 +445,46 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     }
   };
 
+  const addAt = (px: number, py: number) => {
+    const [x, y] = toPlot(vp, px, py);
+    const id = actions.addIc(x, y);
+    recentAdds.current = [
+      ...recentAdds.current.filter((a) => performance.now() - a.at < 600),
+      { id, at: performance.now() },
+    ];
+    return id;
+  };
+
+  const startPan = (px: number, py: number, clickAdds: boolean) => {
+    drag.current = {
+      mode: "pan",
+      startX: px,
+      startY: py,
+      xRange: view.xRange,
+      yRange: view.yRange,
+      upp: unitsPerPx(vp),
+      moved: false,
+      clickAdds,
+    };
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0 || !scene) return;
     setKbd(null);
     const [px, py] = localPoint(e);
-    const hit = hitTest(px, py);
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (tool === "pan") {
+      startPan(px, py, false);
+      return;
+    }
+    if (tool === "add") {
+      // Place the start point now; keep dragging to adjust it.
+      const id = addAt(px, py);
+      drag.current = { mode: "ic", id };
+      setDragging("ic");
+      return;
+    }
+    const hit = hitTest(px, py);
     if (hit.ic !== null) {
       actions.select({ kind: "ic", id: hit.ic });
       drag.current = { mode: "ic", id: hit.ic };
@@ -341,14 +493,7 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
       actions.select({ kind: "fp", index: hit.fp });
       drag.current = null;
     } else {
-      drag.current = {
-        mode: "pan",
-        startX: px,
-        startY: py,
-        xRange: view.xRange,
-        yRange: view.yRange,
-        moved: false,
-      };
+      startPan(px, py, true);
     }
   };
 
@@ -368,7 +513,7 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
         setDragging("pan");
       }
       if (d.moved) {
-        const [ux, uy] = unitsPerPx({ ...vp, xRange: d.xRange, yRange: d.yRange });
+        const [ux, uy] = d.upp;
         actions.setView({
           ...view,
           xRange: [d.xRange[0] - dx * ux, d.xRange[1] - dx * ux],
@@ -385,20 +530,14 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     const d = drag.current;
     drag.current = null;
     setDragging(null);
-    if (d?.mode !== "pan" || d.moved) return;
+    if (d?.mode !== "pan" || d.moved || !d.clickAdds) return;
     const [px, py] = localPoint(e);
-    if (!insidePlot(vp, px, py)) return;
     const traj = hitTrajectory(px, py);
     if (traj !== null) {
       actions.select({ kind: "ic", id: traj });
       return;
     }
-    const [x, y] = toPlot(vp, px, py);
-    const id = actions.addIc(x, y);
-    recentAdds.current = [
-      ...recentAdds.current.filter((a) => performance.now() - a.at < 600),
-      { id, at: performance.now() },
-    ];
+    addAt(px, py);
   };
 
   const onDoubleClick = () => {
@@ -413,17 +552,21 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
   const cursor =
     dragging === "pan"
       ? "grabbing"
-      : dragging === "ic" || hover.ic !== null
+      : tool === "pan"
         ? "grab"
-        : hover.fp !== null
-          ? "pointer"
-          : "crosshair";
+        : tool === "add"
+          ? "crosshair"
+          : dragging === "ic" || hover.ic !== null
+            ? "grab"
+            : hover.fp !== null
+              ? "pointer"
+              : "crosshair";
 
   // ---- overlays
   const states = compiled?.states ?? [];
   const kind = compiled?.kind;
   const dim = states.length;
-  const hoveredFp = scene && hover.fp !== null ? scene.fixedPoints[hover.fp] : undefined;
+  const hoveredFp = scene && hover.fp !== null && !dragging ? scene.fixedPoints[hover.fp] : undefined;
   const hiddenStates =
     kind === "ode"
       ? states
@@ -440,6 +583,37 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
     !compiled.autonomous &&
     view.xAxis.kind !== "time" &&
     view.yAxis.kind !== "time";
+  const hasSlice = hiddenStates.length > 0 || !!showTimeSlice;
+
+  // Axis names: x at the right end above the x-axis, y at the top right of the
+  // y-axis (both pinned to an edge when the axis is out of view). Either name
+  // drops below the toolbar rather than hide under it.
+  const axes = axisLines(vp);
+  const right = vp.left + vp.width;
+  const xNameAbove = axes.Y - vp.top > 40;
+  const [xNameW, xNameH] = xNameSize;
+  let xNameTop = xNameAbove ? axes.Y - 4 - xNameH : axes.Y + 4;
+  if (
+    toolbarBox &&
+    right - 8 - xNameW < toolbarBox[2] &&
+    right - 8 > toolbarBox[0] &&
+    xNameTop < toolbarBox[3] &&
+    xNameTop + xNameH > toolbarBox[1]
+  )
+    xNameTop = toolbarBox[3] + 6;
+  const yNameRight = right - axes.X > 48;
+  const yNameX = yNameRight ? axes.X + 8 : axes.X - 8;
+  const yNameTop =
+    toolbarBox && (yNameRight ? yNameX < toolbarBox[2] : yNameX > toolbarBox[0])
+      ? toolbarBox[3] + 6
+      : vp.top + 6;
+  const sliceStyle = {
+    top: sliceBelow && toolbarBox ? toolbarBox[3] + 8 : undefined,
+  };
+
+  const ariaLabel = scene
+    ? describePlot(scene, states, kind, vp.xRange, vp.yRange, view.xAxis, view.yAxis)
+    : "Phase portrait";
 
   return (
     <>
@@ -461,68 +635,93 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
           onBlur={() => setKbd(null)}
           tabIndex={0}
           role="application"
-          aria-roledescription="phase portrait"
-          aria-label="Phase portrait"
+          aria-roledescription="phase plane"
+          aria-label={ariaLabel}
           aria-describedby="plot-keys"
         />
+        {toolbar}
+        {/* Probe for the tick-label font: the numeric-sm type style, as computed. */}
+        <span ref={probeRef} className="numeric-sm plot-probe" aria-hidden="true" />
         <span id="plot-keys" className="sr-only">
-          Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F and
-          Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected
-          trajectory.
+          Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F
+          and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the
+          selected trajectory.
         </span>
-        <span className="sr-only" aria-live="polite">
+        <span className="sr-only" aria-live="polite" aria-atomic="true">
           {announce}
         </span>
         {kbd && inView(kbd) && (
-          <div className="kbd-cursor" style={{ left: sx(vp, kbd[0]), top: sy(vp, kbd[1]) }} aria-hidden="true" />
+          <div
+            className="kbd-cursor"
+            style={{ left: sx(vp, kbd[0]), top: sy(vp, kbd[1]) }}
+            aria-hidden="true"
+          />
         )}
 
         {compiled && size.w > 0 && (
           <>
             <div
-              className="axis-label axis-label-x"
-              style={{ right: size.w - vp.left - vp.width + 8, top: vp.top + vp.height - 8 }}
+              className="axis-label axis-label-x math"
+              style={{ right: size.w - right + 8, top: xNameTop }}
+              aria-hidden="true"
             >
               <Tex latex={axisLabel(view.xAxis, view.yAxis, states, kind)} />
             </div>
-            <div className="axis-label axis-label-y" style={{ left: vp.left + 8, top: vp.top + 6 }}>
+            <div
+              className={"axis-label axis-label-y math" + (yNameRight ? "" : " is-left")}
+              style={yNameRight ? { left: yNameX, top: yNameTop } : { right: size.w - yNameX, top: yNameTop }}
+              aria-hidden="true"
+            >
               <Tex latex={axisLabel(view.yAxis, view.xAxis, states, kind)} />
             </div>
           </>
         )}
 
-        {(hiddenStates.length > 0 || showTimeSlice) && !sliceOpen && (
+        {hasSlice && !sliceOpen && (
           <button
+            ref={(el) => {
+              sliceRef.current = el;
+            }}
             type="button"
             className="slice-card slice-folded"
-            style={{ top: vp.top + 10, right: size.w - vp.left - vp.width + 10 }}
+            style={sliceStyle}
             onClick={() => setSliceOpen(true)}
             aria-expanded={false}
-            title="Show the slice controls"
+            data-tooltip="Show the slice controls"
           >
-            <span className="slice-label">Field at</span>
-            <Tex
-              latex={[
-                ...hiddenStates.map(({ s, i }) => `${s.latex}=${fmtTex(state.baseState[i] ?? 0, 3)}`),
-                ...(showTimeSlice ? [`t=${fmtTex(state.fieldTime, 3)}`] : []),
-              ].join(",\ ")}
-            />
-            <IconChevron size={14} />
+            <span className="slice-label caption">Field at</span>
+            <span className="math">
+              <Tex
+                latex={[
+                  ...hiddenStates.map(({ s, i }) => `${s.latex}=${fmtTex(state.baseState[i] ?? 0, 3)}`),
+                  ...(showTimeSlice ? [`t=${fmtTex(state.fieldTime, 3)}`] : []),
+                ].join(",\\ ")}
+              />
+            </span>
+            <IconChevronDown className="slice-folded-chevron" />
+            <span className="ds-sr">. Show the slice controls</span>
           </button>
         )}
-        {(hiddenStates.length > 0 || showTimeSlice) && sliceOpen && (
-          <div className="slice-card" style={{ top: vp.top + 10, right: size.w - vp.left - vp.width + 10 }}>
+        {hasSlice && sliceOpen && (
+          <div
+            ref={(el) => {
+              sliceRef.current = el;
+            }}
+            className="slice-card"
+            style={sliceStyle}
+          >
             <div className="slice-head">
-              <span>Field slice</span>
+              <span className="label">Field slice</span>
               <button
                 type="button"
-                className="icon-btn slice-fold"
+                className="ds-icon-button ds-icon-button--sm slice-fold"
                 onClick={() => setSliceOpen(false)}
                 aria-expanded={true}
                 aria-label="Fold the slice controls"
-                title="Fold to one line"
+                data-tip="Fold to one line"
+                data-tip-align="end"
               >
-                <IconChevron size={14} />
+                <IconChevronDown className="slice-fold-icon" />
               </button>
             </div>
             {hiddenStates.map(({ s, i }) => {
@@ -559,20 +758,46 @@ export function PortraitCanvas({ state, actions, theme }: Props) {
             kind={kind}
             pos={fixedPointPx(vp, scene, hoveredFp)}
             width={size.w}
+            height={size.h}
+            g={g}
           />
         )}
 
         {compiled && !state.compileOk && (
-          <div className="plot-hint warn">
-            Showing the last system that worked. Fix the equation on the left to update.
+          <div className="plot-hint">
+            <div className="ds-diagnostic ds-diagnostic--block ds-diagnostic--warning" role="status">
+              <IconWarning className="ds-diagnostic-icon" />
+              <span className="ds-diagnostic-body">
+                <span className="ds-diagnostic-word">Warning</span>
+                <span className="ds-diagnostic-msg">
+                  Showing the last system that worked. Fix the equation on the left to update.
+                </span>
+              </span>
+            </div>
           </div>
         )}
         {compiled && state.compileOk && state.ics.length === 0 && (
-          <div className="plot-hint">Click anywhere on the plot to start a trajectory</div>
+          <div className="plot-hint">
+            <p className="plot-hint-note caption">
+              {tool === "pan"
+                ? "Choose Select or Add trajectory, then click the plot to start a trajectory."
+                : "Click anywhere on the plot to start a trajectory."}
+            </p>
+          </div>
         )}
-        {state.computeError && <div className="plot-hint error">Could not compute: {state.computeError}</div>}
+        {state.computeError && (
+          <div className="plot-hint">
+            <div className="ds-diagnostic ds-diagnostic--block ds-diagnostic--error" role="alert">
+              <IconError className="ds-diagnostic-icon" />
+              <span className="ds-diagnostic-body">
+                <span className="ds-diagnostic-word">Error</span>
+                <span className="ds-diagnostic-msg">Could not compute: {state.computeError}</span>
+              </span>
+            </div>
+          </div>
+        )}
       </div>
-      <LegendBar scene={scene} states={states} kind={kind} />
+      <Legend scene={scene} states={states} kind={kind} tool={tool} />
     </>
   );
 }
@@ -584,16 +809,16 @@ function SliceRow(props: {
   max: number;
   onChange: (v: number) => void;
 }) {
+  const name = latexToPlain(props.latex);
   return (
     <div className="slice-row">
-      <span className="slice-label">
-        Field at <Tex latex={`${props.latex} =`} />
-      </span>
       <NumberField
+        size="sm"
+        lead={<Tex latex={props.latex} />}
         value={props.value}
         onCommit={props.onChange}
         digits={3}
-        ariaLabel={`Slice value`}
+        ariaLabel={`Field slice at ${name}`}
         className="slice-num"
       />
       <Slider
@@ -601,102 +826,171 @@ function SliceRow(props: {
         min={props.min}
         max={props.max}
         onChange={props.onChange}
-        ariaLabel="Slice value"
+        ariaLabel={`Field slice at ${name}`}
+        className="slice-slider"
       />
     </div>
   );
 }
 
-/** Small SVG copy of a canvas fixed-point marker, for the legend and inspector. */
-export function FixedPointGlyph({
-  shape,
-  filled,
-  size = 14,
-}: {
-  shape: FixedPointShape;
-  filled: boolean;
-  size?: number;
-}) {
-  const c = size / 2;
-  const r = size * 0.32;
-  const fill = filled ? "var(--plot-fp)" : "var(--plot-bg)";
-  const common = { fill, stroke: "var(--plot-fp)", strokeWidth: 1.4 };
+/** A fixed-point glyph as a 16px icon (design system: FixedPoint, `.ds-fp-icon`). */
+export function FixedPointIcon({ kind }: { kind: FixedPointGlyphKind }) {
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" className="fp-glyph">
-      {shape === "diamond" && (
-        <path
-          d={`M${c} ${c - r * 1.2}L${c + r * 1.2} ${c}L${c} ${c + r * 1.2}L${c - r * 1.2} ${c}Z`}
-          {...common}
-        />
-      )}
-      {shape === "triangle" && (
-        <path
-          d={`M${c} ${c - r * 1.15}L${c + r * 1.1} ${c + r * 0.8}L${c - r * 1.1} ${c + r * 0.8}Z`}
-          {...common}
-        />
-      )}
-      {(shape === "circle" || shape === "centre") && <circle cx={c} cy={c} r={r} {...common} />}
-      {shape === "centre" && <circle cx={c} cy={c} r={r * 0.4} fill="var(--plot-fp)" />}
-      {shape === "spiral" && (
-        <>
-          <circle cx={c} cy={c} r={r * 0.62} {...common} />
-          <path
-            d={`M${c + r * 1.25 * Math.cos(-0.15 * Math.PI)} ${c + r * 1.25 * Math.sin(-0.15 * Math.PI)}A${r * 1.25} ${r * 1.25} 0 1 1 ${c + r * 1.25 * Math.cos(1.25 * Math.PI)} ${c + r * 1.25 * Math.sin(1.25 * Math.PI)}`}
-            fill="none"
-            stroke="var(--plot-fp)"
-            strokeWidth={1.2}
-          />
-        </>
-      )}
+    <svg className="ds-fp-icon" viewBox="-8 -8 16 16" aria-hidden="true">
+      <g className={`ds-fp ds-fp--${kind}`}>
+        <g className="ds-fp-mark">
+          <circle className="ds-fp-body" r="5" />
+          {kind === "half" && <path className="ds-fp-half" d="M0 -4.25A4.25 4.25 0 0 0 0 4.25Z" />}
+        </g>
+      </g>
     </svg>
   );
 }
 
-/** The strip under the plot: what each mark means, and how to interact. */
-function LegendBar({
+const GLYPH_ORDER: FixedPointGlyphKind[] = ["stable", "unstable", "half"];
+
+/**
+ * The legend under the plot (design system: PhasePlane `.ds-phase-legend`):
+ * HTML, one key per kind of mark on the plot, each sample on a plot-bg chip.
+ */
+function Legend({
   scene,
   states,
   kind,
+  tool,
 }: {
-  scene: Scene | null;
+  scene: Omit<Scene, "avoid"> | null;
   states: SymbolInfo[];
   kind?: SystemKind;
+  tool: "select" | "pan" | "add";
 }) {
   const nulls = scene ? scene.nullclines.filter((n) => n.polylines.length > 0) : [];
-  const kinds = new Map<string, { shape: FixedPointShape; filled: boolean; label: string }>();
+  // Fixed points by glyph, named by the classifications on the plot.
+  const glyphs = new Map<FixedPointGlyphKind, Set<string>>();
   for (const fp of scene?.fixedPoints ?? []) {
-    const label = classificationTitle(fp.classification, states.length);
-    kinds.set(label, { shape: fixedPointShape(fp.classification), filled: fp.stable, label });
+    const k = fixedPointGlyph(fp.classification, fp.stable);
+    if (!glyphs.has(k)) glyphs.set(k, new Set());
+    glyphs.get(k)!.add(classificationTitle(fp.classification, states.length));
   }
-  const hasBackward = scene?.trajectories.some((t) => t.meta.direction === "backward") ?? false;
+  const glyphName = (k: FixedPointGlyphKind, names: Set<string>) => {
+    // Saddles last: "Unstable node or saddle", as the PhasePlane legend writes it.
+    const list = [...names].sort((p, q) => Number(/saddle/i.test(p)) - Number(/saddle/i.test(q)));
+    if (list.length === 1) return list[0];
+    if (list.length === 2) return `${list[0]} or ${list[1].charAt(0).toLowerCase()}${list[1].slice(1)}`;
+    return k === "stable"
+      ? "Stable fixed point"
+      : k === "unstable"
+        ? "Unstable fixed point"
+        : "Non-hyperbolic fixed point";
+  };
+  const isMap = kind === "map";
+  const trajs = scene?.trajectories ?? [];
+  const hasForward = trajs.some((t) => t.meta.direction === "forward");
+  const hasBackward = trajs.some((t) => t.meta.direction === "backward");
+  const hasStarts = (scene?.ics.length ?? 0) > 0;
+  const help =
+    tool === "pan"
+      ? "Drag to pan, scroll to zoom, double-click to reset the view."
+      : tool === "add"
+        ? "Click to place a start point and drag to adjust it. Scroll to zoom."
+        : "Click to add a trajectory, drag a start point to move it, drag the plot to pan, scroll to zoom, double-click to reset.";
+
+  const forwardSample = (
+    <svg viewBox="0 0 24 16" aria-hidden="true">
+      <path className="ds-phase-mark ds-phase-mark--traj" d="M2 8H22" />
+      <path className="ds-phase-mark ds-phase-mark--head" d="M15.5 8L8.5 4.85V11.15Z" />
+    </svg>
+  );
+  // Two kinds of key (PhasePlane README): what the user drags or reads off,
+  // and the background marks. Listed alternately, so in a two-column legend
+  // each kind lines up in its own column.
+  const data: { key: string; sample: ReactNode; faint?: boolean; text: ReactNode }[] = [
+    ...(hasForward && !isMap ? [{ key: "fwd", sample: forwardSample, text: "Trajectory, forward in time" }] : []),
+    ...(hasForward && isMap
+      ? [
+          {
+            key: "orbit",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="6" cy="8" r="2" />
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="12" cy="8" r="2" />
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="18" cy="8" r="2" />
+              </svg>
+            ),
+            text: "Orbit, one dot per iterate",
+          },
+        ]
+      : []),
+    ...(hasBackward ? [{ key: "back", sample: forwardSample, faint: true, text: "Trajectory, backward in time" }] : []),
+    ...(hasStarts
+      ? [
+          {
+            key: "start",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <circle className="ds-phase-mark ds-phase-mark--halo" cx="12" cy="8" r="7.5" />
+                <circle className="ds-phase-mark ds-phase-mark--ring" cx="12" cy="8" r="6.75" />
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="12" cy="8" r="3.5" />
+              </svg>
+            ),
+            text: "Start point, drag to move",
+          },
+        ]
+      : []),
+    ...GLYPH_ORDER.filter((k) => glyphs.has(k)).map((k) => ({
+      key: `fp-${k}`,
+      sample: <FixedPointIcon kind={k} />,
+      text: glyphName(k, glyphs.get(k)!),
+    })),
+  ];
+  const background: { key: string; sample: ReactNode; text: ReactNode }[] = [
+    ...(scene && scene.arrows.length > 0
+      ? [
+          {
+            key: "field",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <path className="ds-phase-mark ds-phase-mark--field" d="M7 11.5L17 4.5M13.7 5L17 4.5L15.4 7.4" />
+              </svg>
+            ),
+            text: "Direction field",
+          },
+        ]
+      : []),
+    ...nulls.map((n) => ({
+      key: `n${n.state}`,
+      sample: (
+        <svg viewBox="0 0 24 16" aria-hidden="true">
+          <path className={`ds-phase-mark ds-phase-mark--null ds-phase-mark--null-${(n.state % 4) + 1}`} d="M0 8H24" />
+        </svg>
+      ),
+      text: (
+        <span>
+          Nullcline{" "}
+          <Tex latex={`${isMap ? states[n.state]?.latex : dotted(states[n.state]?.latex ?? "x")}=0`} />
+        </span>
+      ),
+    })),
+  ];
+  const keys: typeof data = [];
+  for (let i = 0; i < Math.max(data.length, background.length); i++) {
+    if (data[i]) keys.push(data[i]);
+    if (background[i]) keys.push(background[i]);
+  }
+
   return (
     <div className="legend-bar">
-      {nulls.map((n) => (
-        <span className="legend-item" key={`n${n.state}`}>
-          <span className="legend-dash" style={{ borderColor: `var(--null-${(n.state % 4) + 1})` }} />
-          <Tex
-            latex={`${kind === "map" ? states[n.state]?.latex : dotted(states[n.state]?.latex ?? "x")}=0`}
-          />
-        </span>
-      ))}
-      {[...kinds.values()].map((k) => (
-        <span className="legend-item" key={k.label}>
-          <FixedPointGlyph shape={k.shape} filled={k.filled} />
-          {k.label}
-        </span>
-      ))}
-      {hasBackward && (
-        <span className="legend-item">
-          <span className="legend-faint" />
-          backward in time
-        </span>
+      {keys.length > 0 && (
+        <ul className="ds-phase-legend caption" aria-label="Legend">
+          {keys.map((k) => (
+            <li className="ds-phase-key" key={k.key}>
+              <span className={"ds-phase-sample" + (k.faint ? " legend-faint" : "")}>{k.sample}</span>
+              {k.text}
+            </li>
+          ))}
+        </ul>
       )}
-      <span className="legend-spacer" />
-      {scene && (
-        <span className="legend-help">
-          Click to add · drag a dot to move · drag to pan · scroll to zoom · double-click to reset
-        </span>
-      )}
+      {scene && <p className="legend-help caption">{help}</p>}
     </div>
   );
 }
@@ -707,37 +1001,92 @@ function FixedPointTooltip(props: {
   kind?: SystemKind;
   pos: [number, number];
   width: number;
+  height: number;
+  g: number;
 }) {
-  const { fp, states, kind, pos } = props;
+  const { fp, states, kind, pos, g } = props;
   const names = states.map((s) => s.latex).join(", ");
   const values = fp.x.map((v) => fmtTex(v, 3)).join(", ");
   const point = states.length === 1 ? `${names}^* = ${values}` : `(${names}) = (${values})`;
   const sym = kind === "map" ? "\\mu" : "\\lambda";
-  const flip = pos[0] > props.width - 260;
+  const glyph = fixedPointGlyph(fp.classification, fp.stable);
+  const title = classificationTitle(fp.classification, states.length);
+  // The word "stable" or "unstable" when the name does not already say it.
+  const word = glyph !== "half" && !/stable/i.test(title) ? (fp.stable ? "stable" : "unstable") : null;
+  const off = 12 * g;
+  const flipX = pos[0] > props.width - 260;
+  const flipY = pos[1] > props.height - 140;
   return (
     <div
-      className="tooltip"
+      className="ds-tooltip fp-tooltip"
+      role="tooltip"
       style={{
-        left: pos[0] + (flip ? -14 : 14),
-        top: pos[1] + 14,
-        transform: flip ? "translateX(-100%)" : undefined,
+        left: pos[0] + (flipX ? -off : off),
+        top: pos[1] + (flipY ? -off : off),
+        transform: `translate(${flipX ? "-100%" : "0"}, ${flipY ? "-100%" : "0"})`,
       }}
     >
-      <div className="tooltip-title">
-        {classificationTitle(fp.classification, states.length)}
-        <span className={"badge " + (fp.stable ? "ok" : "neutral")}>{fp.stable ? "stable" : "unstable"}</span>
+      <div className="ds-tooltip-row">
+        <span className="fp-tooltip-glyph">
+          <FixedPointIcon kind={glyph} />
+        </span>
+        <span className="ds-tooltip-label label">
+          {title}
+          {word && <span className="fp-tooltip-word">, {word}</span>}
+        </span>
       </div>
-      <div className="tooltip-row">
+      <div className="fp-tooltip-math math">
         <Tex latex={point} />
       </div>
       {fp.eigenvalues.map((ev, i) => (
-        <div className="tooltip-row" key={i}>
+        <div className="fp-tooltip-math math" key={i}>
           <Tex latex={`${sym}_{${i + 1}} = ${complexTex(ev)}`} />
         </div>
       ))}
-      <div className="tooltip-foot">Click for details</div>
+      <p className="ds-tooltip-desc caption">Click for details in the inspector.</p>
     </div>
   );
+}
+
+/** The canvas's accessible name: the view, the trajectories and the fixed points. */
+function describePlot(
+  scene: Omit<Scene, "avoid">,
+  states: SymbolInfo[],
+  kind: SystemKind | undefined,
+  xRange: [number, number],
+  yRange: [number, number],
+  xAxis: AxisRef,
+  yAxis: AxisRef,
+): string {
+  const name = (a: AxisRef) => latexToPlain(axisLatex(a, states, kind));
+  const num = (v: number) => fmtPlain(v).replace("-", "−");
+  const r = ([a, b]: [number, number]) => `${num(a)} to ${num(b)}`;
+  const parts = [
+    `${kind === "map" ? "Orbit plot" : "Phase plane"}: ${name(xAxis)} from ${r(xRange)} across, ${name(yAxis)} from ${r(yRange)} up.`,
+  ];
+  const n = scene.ics.length;
+  if (n > 0) {
+    const sel = scene.ics.findIndex((ic) => ic.id === scene.selectedIc);
+    parts.push(
+      `${n} trajector${n === 1 ? "y" : "ies"}` +
+        (sel >= 0
+          ? `; trajectory ${sel + 1} is selected, starting at (${scene.ics[sel].x0.map(num).join(", ")}).`
+          : "."),
+    );
+  }
+  if (scene.fixedPoints.length > 0) {
+    parts.push(
+      "Fixed points: " +
+        scene.fixedPoints
+          .map(
+            (fp) =>
+              `${classificationTitle(fp.classification, states.length).toLowerCase()}${states.length === 1 ? " fixed point" : ""} at (${fp.x.map(num).join(", ")})`,
+          )
+          .join("; ") +
+        ".",
+    );
+  }
+  return parts.join(" ");
 }
 
 function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {

@@ -1,9 +1,12 @@
 // The template gallery: opens on first run, one click loads a full portrait.
+// DS: TemplateCard (cards in a list), a modal sheet on scrim (radius-lg, shadow-modal).
 
 import { useEffect, useRef } from "react";
 import { Tex } from "../math/Tex";
-import { TEMPLATES, type Template } from "../templates";
+import { TEMPLATES, strogatzRef, type Template } from "../templates";
+import { tipDismiss } from "./Chrome";
 import { IconClose, IconPlus } from "./icons";
+import { TemplateThumb } from "./TemplateThumb";
 
 interface Props {
   onPick: (t: Template) => void;
@@ -18,6 +21,16 @@ function tabbables(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'),
   );
+}
+
+/**
+ * The two tags of a card: dimension, then kind ("2D", "ODE"). The dimension is
+ * the number of first-order states: θ̈ and a Hamiltonian H(q, p) count twice.
+ */
+function tags(t: Template): [string, string] {
+  const isMap = t.equations.some((e) => /_\{?n\s*\+\s*1/.test(e));
+  const dim = t.equations.reduce((n, e) => n + (/\\ddot\{|^H\\left\(|^H\(/.test(e) ? 2 : 1), 0);
+  return [`${dim}D`, isMap ? "Map" : "ODE"];
 }
 
 /**
@@ -65,42 +78,104 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="gallery-title"
+        aria-describedby="gallery-sub"
       >
         <header className="gallery-head">
-          <div>
-            <h1 id="gallery-title">Start from a classic system</h1>
-            <p>
+          <div className="gallery-head-text">
+            <h1 id="gallery-title" className="display">
+              Start with a system
+            </h1>
+            <p id="gallery-sub" className="body gallery-sub">
               Each one opens with trajectories already placed. Edit the equations or drag anything afterwards.
             </p>
           </div>
           {canClose && (
-            <button type="button" className="icon-btn" aria-label="Close gallery" onClick={onClose}>
+            <button
+              type="button"
+              className="ds-icon-button"
+              aria-label="Close gallery"
+              data-tip="Close gallery"
+              data-tip-align="end"
+              onClick={onClose}
+              {...tipDismiss}
+            >
               <IconClose />
             </button>
           )}
         </header>
         <div className="gallery-grid">
-          {TEMPLATES.map((t) => (
-            <button key={t.id} type="button" className="card" onClick={() => onPick(t)}>
-              <div className="card-top">
-                <span className="card-title">{t.title}</span>
-                <span className="card-chapter">{t.chapter}</span>
-              </div>
-              <div className="card-math">
-                {t.equations.map((e, k) => (
-                  <div key={k}>
-                    <Tex latex={e} />
-                  </div>
-                ))}
-              </div>
-              <p className="card-desc">{t.description}</p>
-            </button>
-          ))}
-          <button type="button" className="card blank" onClick={onBlank}>
-            <IconPlus size={20} />
-            <span className="card-title">Blank system</span>
-            <p className="card-desc">Start from ẋ = y, ẏ = −x and type your own.</p>
-          </button>
+          <ul className="ds-template-grid template-grid" aria-label="Templates">
+            {TEMPLATES.map((t) => {
+              const id = `tpl-${t.id}`;
+              const [dim, kind] = tags(t);
+              return (
+                <li key={t.id}>
+                  <button
+                    type="button"
+                    className="ds-template-card card"
+                    aria-labelledby={`${id}-name`}
+                    aria-describedby={`${id}-eq ${id}-desc`}
+                    onClick={() => onPick(t)}
+                  >
+                    <TemplateThumb template={t} />
+                    <span className="ds-template-card-text">
+                      <span className="ds-template-card-name" id={`${id}-name`}>
+                        {t.title}
+                      </span>
+                      <span className="ds-template-card-math" id={`${id}-eq`}>
+                        {t.equations.map((e, k) => (
+                          <span key={k}>
+                            <Tex latex={e} />
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className="ds-template-card-desc" id={`${id}-desc`}>
+                      {t.description}
+                    </span>
+                    <span className="ds-template-card-meta">
+                      <span className="ds-template-card-tags">
+                        <span className="ds-template-card-tag">{dim}</span>
+                        <span className="ds-template-card-tag">{kind}</span>
+                      </span>
+                      {strogatzRef(t) && <span className="ds-template-card-ref">{strogatzRef(t)}</span>}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            <li>
+              <button
+                type="button"
+                className="ds-template-card ds-template-card--blank card blank"
+                aria-labelledby="tpl-blank-name"
+                aria-describedby="tpl-blank-eq tpl-blank-foot"
+                onClick={onBlank}
+              >
+                <span className="ds-template-card-blank" aria-hidden="true">
+                  <IconPlus />
+                </span>
+                <span className="ds-template-card-text">
+                  <span className="ds-template-card-name" id="tpl-blank-name">
+                    Blank system
+                  </span>
+                  <span className="ds-template-card-math" id="tpl-blank-eq">
+                    <span>
+                      <Tex latex="\dot{x}=y" />
+                    </span>
+                    <span>
+                      <Tex latex="\dot{y}=-x" />
+                    </span>
+                  </span>
+                </span>
+                <span className="ds-template-card-meta">
+                  <span className="ds-template-card-ref" id="tpl-blank-foot">
+                    Type your own equations
+                  </span>
+                </span>
+              </button>
+            </li>
+          </ul>
         </div>
       </div>
     </div>

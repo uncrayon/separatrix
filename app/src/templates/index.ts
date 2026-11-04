@@ -15,6 +15,8 @@ export interface Template {
   title: string;
   /** Strogatz chapter, e.g. "Ch. 6". */
   chapter: string;
+  /** Strogatz section, e.g. "6.4" (shown as "Strogatz §6.4"). */
+  section?: string;
   /** One line shown in the gallery. */
   description: string;
   format: "latex";
@@ -49,4 +51,10 @@ export function templateById(id: string): Template | undefined {
 /** The source text sent to the compiler: one equation per line. */
 export function templateSource(t: Template): string {
   return t.equations.join("\n");
+}
+
+/** The Strogatz reference for a template: "Strogatz §6.4" (or the chapter), or "" when there is none. */
+export function strogatzRef(t: Template): string {
+  if (t.section) return `Strogatz §${t.section}`;
+  return t.chapter ? `Strogatz ${t.chapter}` : "";
 }

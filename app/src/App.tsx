@@ -7,6 +7,7 @@ import { StatusBar, TopBar } from "./components/Chrome";
 import { Inspector } from "./components/Inspector";
 import { SystemPanel } from "./components/SystemPanel";
 import { TemplateGallery } from "./components/TemplateGallery";
+import { TooltipLayer } from "./components/Tooltip";
 import { useStudio } from "./state/useStudio";
 import type { Template } from "./templates";
 
@@ -93,12 +94,16 @@ export default function App() {
         <div className="workspace">
           <SystemPanel state={state} actions={actions} />
           <main className="canvas-area">
-            <CanvasToolbar state={state} actions={actions} />
-            <PortraitCanvas state={state} actions={actions} theme={theme} />
+            <PortraitCanvas
+              state={state}
+              actions={actions}
+              theme={theme}
+              toolbar={<CanvasToolbar state={state} actions={actions} />}
+            />
           </main>
           <Inspector state={state} actions={actions} />
         </div>
-        <StatusBar state={state} />
+        <StatusBar state={state} actions={actions} theme={theme} />
       </div>
       {galleryOpen && (
         <TemplateGallery
@@ -108,6 +113,7 @@ export default function App() {
           canClose={state.compiled !== null}
         />
       )}
+      <TooltipLayer />
     </>
   );
 }

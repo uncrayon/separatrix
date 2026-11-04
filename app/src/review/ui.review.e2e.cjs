@@ -68,14 +68,24 @@ test("Van der Pol: the fixed point at the origin can be selected with one click"
   try {
     await pick(page, "Van der Pol");
     const b = await page.locator("canvas.plot-canvas").boundingBox();
-    // Template view x in [-4, 4], y in [-5, 5]; plot margins from viewport.ts (dark theme).
-    const left = 48, top = 14, w = b.width - 48 - 14, h = b.height - 14 - 30;
-    await page.mouse.click(b.x + left + w / 2, b.y + top + h / 2);
+    // Template view x in [-4, 4], y in [-5, 5], centred on the origin. The plot
+    // fills the canvas (viewport.ts MARGIN is 0 on every side) and equal scales
+    // widen the view about its centre, so the origin is the canvas centre.
+    // Keep this in step with MARGIN in src/canvas/viewport.ts.
+    const MARGIN = { left: 0, right: 0, top: 0, bottom: 0 };
+    const w = b.width - MARGIN.left - MARGIN.right;
+    const h = b.height - MARGIN.top - MARGIN.bottom;
+    await page.mouse.click(b.x + MARGIN.left + w / 2, b.y + MARGIN.top + h / 2);
     await page.waitForTimeout(300);
-    const heading = await page.textContent(".panel-right .section-head h2");
+    // The inspector marks the selection with a pressed row in its Fixed points
+    // list, named by what the user reads there ("Unstable spiral at (0.000, 0.000)").
+    const fixedPoint = await page.evaluate(() => {
+      const b = document.querySelector('.panel-right ul[aria-label="Fixed points"] .ds-fp-row[aria-pressed="true"]');
+      return b ? b.getAttribute("aria-label") : "";
+    });
     // Today the start dot of the template's IC (0.1, 0) is 9px away and wins
     // the hit test, so the click selects "Trajectory 1" instead.
-    assert.match(heading, /Fixed point/);
+    assert.match(fixedPoint, /^(Unstable|Stable) (spiral|node)\b.* at \(0\.000, 0\.000\)/);
   } finally {
     await browser.close();
   }

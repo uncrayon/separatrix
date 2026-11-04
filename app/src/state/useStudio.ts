@@ -83,6 +83,7 @@ export function useStudio() {
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
+  const [plotAspect, setPlotAspectState] = useState<number | null>(null);
 
   const state: StudioState = {
     equations,
@@ -101,6 +102,7 @@ export function useStudio() {
     portrait,
     templateId,
     computeError,
+    plotAspect,
   };
   // Async callbacks (compile results, the scheduler) read the newest state here.
   const latest = useRef(state);
@@ -136,7 +138,7 @@ export function useStudio() {
 
   useEffect(() => {
     scheduler.request();
-  }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver]);
+  }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
   // ------------------------------------------------------------ compile
 
@@ -304,6 +306,15 @@ export function useStudio() {
   }, []);
 
   const setView = useCallback((v: View) => setViewState(v), []);
+  /** The plot's width / height, so a phase plane can use equal scales (rounded: no churn while resizing). */
+  const setPlotAspect = useCallback((aspect: number | null) => {
+    const a = aspect && Number.isFinite(aspect) && aspect > 0 ? Number(aspect.toPrecision(3)) : null;
+    setPlotAspectState((old) => (old === a ? old : a));
+  }, []);
+  /** Show or hide one trajectory; a hidden one is not integrated, its start point stays. */
+  const setIcHidden = useCallback((id: number, hidden: boolean) => {
+    setIcs((list) => list.map((ic) => (ic.id === id ? { ...ic, hidden } : ic)));
+  }, []);
   const resetView = useCallback(() => setViewState(latest.current.homeView), []);
 
   /** Put `axis` on the horizontal or vertical axis (swapping if it is already on the other). */
@@ -417,12 +428,14 @@ export function useStudio() {
       setParamRange,
       setView,
       resetView,
+      setPlotAspect,
       setAxis,
       setSlice,
       setFieldTime,
       addIc,
       moveIc,
       updateIc,
+      setIcHidden,
       removeIcs,
       clearIcs,
       setLayers,
@@ -439,12 +452,14 @@ export function useStudio() {
       setParamRange,
       setView,
       resetView,
+      setPlotAspect,
       setAxis,
       setSlice,
       setFieldTime,
       addIc,
       moveIc,
       updateIc,
+      setIcHidden,
       removeIcs,
       clearIcs,
       setLayers,
