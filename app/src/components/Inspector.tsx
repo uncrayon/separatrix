@@ -23,6 +23,7 @@ import {
   othersHaveRealEigenvectors,
   realEigenvectors,
   setShowEigenvectors,
+  subscriptDigits,
   useShowEigenvectors,
 } from "../canvas/eigen";
 import {
@@ -47,9 +48,6 @@ const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boo
 const short = (v: number, digits = 4) => withMinus(fmt(v, digits));
 
 const atTime = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? withMinus(String(Math.round(v))) : dec(v, 2));
-
-const SUB_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
-const sub = (n: number) => String(n).replace(/\d/g, (d) => SUB_DIGITS[Number(d)]);
 
 const plainName = (latex: string) => latexToPlain(latex);
 
@@ -489,7 +487,7 @@ function eigenText(fp: FixedPointOut, sym: string): string {
   const eq = `${NBSP}=${NBSP}`;
   return numberedEigenvalues(fp)
     .map((ev) => {
-      const label = sym + ev.numbers.map(sub).join(",");
+      const label = sym + ev.numbers.map(subscriptDigits).join(",");
       if (ev.im !== 0) {
         return Math.abs(ev.re) < 5e-4
           ? `${label}${eq}±${d(ev.im)}i`

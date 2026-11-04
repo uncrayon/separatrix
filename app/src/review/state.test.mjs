@@ -4,7 +4,14 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PALETTE_SIZE, UNTITLED_SYSTEM, leastUsedPaletteIndex, sameEquations, systemTitle } from "../state/model.ts";
+import {
+  PALETTE_SIZE,
+  UNTITLED_SYSTEM,
+  leastUsedPaletteIndex,
+  resolveParam,
+  sameEquations,
+  systemTitle,
+} from "../state/model.ts";
 import templates from "../templates/templates.json" with { type: "json" };
 
 const ics = (...colors) => colors.map((color, i) => ({ id: i + 1, x0: [0, 0], t0: 0, color }));
@@ -108,4 +115,27 @@ test("name: a blank system stays Untitled system, edited or not", () => {
 
 test("name: every gallery template matches its own equations", () => {
   for (const t of templates) assert.equal(systemTitle(t, t.equations).edited, false, t.id);
+});
+
+const lorenz = templates.find((t) => t.id === "lorenz");
+const param = (name, value, min = 0, max = 20) => ({ name, latex: name, value, min, max });
+const info = (name, def) => ({ name, latex: name, default: def });
+
+test("parameters: a default line added to a template follows, while the slider is where the template put it", () => {
+  const p = resolveParam(info("sigma", 15), param("sigma", lorenz.params.sigma), 1, undefined, lorenz);
+  assert.equal(p.value, 15);
+});
+
+test("parameters: a template's value survives an edit that leaves the default alone", () => {
+  const p = resolveParam(info("sigma", 1), param("sigma", lorenz.params.sigma), 1, undefined, lorenz);
+  assert.equal(p.value, lorenz.params.sigma);
+});
+
+test("parameters: a slider the user moved keeps its value when the default line changes", () => {
+  assert.equal(resolveParam(info("sigma", 15), param("sigma", 12), 1, undefined, lorenz).value, 12);
+  assert.equal(resolveParam(info("a", 3), param("a", 5), 2, undefined, undefined).value, 5);
+});
+
+test("parameters: a slider still at the old default follows the edited default line", () => {
+  assert.equal(resolveParam(info("a", 3), param("a", 2), 2, undefined, undefined).value, 3);
 });

@@ -1,6 +1,6 @@
 use crate::ast::{Ast, AstKind, BinOp, Func, MAX_HEIGHT};
 use crate::diag::Diagnostic;
-use crate::token::{tokenize, Delim, Span, SymName, Tok, Token};
+use crate::token::{sym_from_word, tokenize, Delim, Span, SymName, Tok, Token};
 use crate::InputFormat;
 
 #[derive(Debug, Clone)]
@@ -474,7 +474,10 @@ impl<'s> Parser<'s> {
 
     #[inline(never)]
     fn parse_symbol(&mut self, s: SymName, span: Span) -> PResult<Ast> {
-        let e = self.parse_subscript(s, span)?;
+        let e = match self.text_current_iterate(&s) {
+            Some(state) => Ast::new(AstKind::Current(state), span),
+            None => self.parse_subscript(s, span)?,
+        };
         if let Some(s) = e.plain_symbol() {
             if (self.text || s.name == "H") && matches!(self.peek(), Some(Tok::Open(Delim::Paren)))
             {
@@ -484,6 +487,17 @@ impl<'s> Parser<'s> {
             }
         }
         Ok(e)
+    }
+
+    /// Text mode reads a word such as `x_n` (or `x_1_n`) as one token, so
+    /// messages quote it whole; it is the current iterate of `x` (`x_1`),
+    /// as `x_n` is in LaTeX. A function name keeps the word (`sin_n`).
+    fn text_current_iterate(&self, s: &SymName) -> Option<SymName> {
+        let base = s
+            .name
+            .strip_suffix("_n")
+            .filter(|b| self.text && !b.is_empty())?;
+        Func::from_name(base).is_none().then(|| sym_from_word(base))
     }
 
     #[inline(never)]

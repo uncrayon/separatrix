@@ -329,6 +329,25 @@ fn odd_roots_are_real_and_display_as_roots() {
 }
 
 #[test]
+fn odd_roots_have_an_infinite_slope_at_zero_like_the_cube_root() {
+    for src in [
+        r"\dot{x}=\sqrt[3]{x}",
+        r"\dot{x}=\sqrt[5]{x}",
+        r"\dot{x}=-\sqrt[7]{x}",
+    ] {
+        let j = jac(&latex(src), 0.0, &[0.0], &[]);
+        assert!(j[0].is_infinite(), "{src}: {j:?}");
+    }
+    let sys = latex(r"\dot{x}=\sqrt[5]{y}\\\dot{y}=-y");
+    assert_eq!(
+        jac(&sys, 0.0, &[0.3, 0.0], &[]),
+        [0.0, f64::INFINITY, 0.0, -1.0]
+    );
+    let sys = latex(r"H(q,p)=\frac{p^2}{2}+q\sqrt[5]{q}");
+    check_derivatives(&sys, 0.0, &[-0.7, 0.4], &[], 1e-6);
+}
+
+#[test]
 fn nested_odd_roots_compile() {
     // Each root used to copy its argument, so 30 levels meant 2^30 nodes.
     let src = format!(r"\dot{{x}}={}x{}", r"\sqrt[5]{".repeat(30), "}".repeat(30));

@@ -53,8 +53,9 @@ Accepted input (one equation per line; `;` and `\\` also separate):
 | Parameter default | `\sigma = 10` (a plain symbol equal to a constant expression) |
 
 LaTeX mode: single-letter symbols with implicit multiplication (`2xy` = 2·x·y), Greek letters
-(`\sigma`, `\theta`, …), subscripted names (`x_1`, `k_{12}`), `\operatorname{name}` / `\mathrm{name}`
-for multi-letter names, `\frac`, `\sqrt`, `\sqrt[n]`, `^`, `\cdot`, `\times`, `\left( \right)`,
+(`\sigma`, `\theta`, …), subscripted names (`x_1`, `k_{12}`), `\mathrm{name}` for multi-letter
+names (`\operatorname{name}` is for functions: a multi-letter one that is not supported is an
+error), `\frac`, `\sqrt`, `\sqrt[n]`, `^`, `\cdot`, `\times`, `\left( \right)`,
 `\sin \cos \tan \exp \ln \log \sinh \cosh \tanh \arcsin \arccos \arctan`, `|x|`, `\pi`, `e`.
 Text mode: identifiers are whole words (`sigma`, `theta` map to Greek), explicit `*` between names,
 implicit multiplication only after numbers or between parenthesised groups, functions as `sin(x)`.

@@ -278,6 +278,35 @@ export function defaultParamRange(v: number): [number, number] {
   return v > 0 ? [0, span] : [-span, 0];
 }
 
+/**
+ * A parameter after a compile: a template's value wins, then (only without
+ * a template) the slider's previous value, then the default. A slider still
+ * at the value the app gave it (the previous default `oldDefault`, or the
+ * value of the template the system came from, `source`) was never moved, so
+ * it follows an edited default line such as `a = 3`. The range follows the
+ * same order.
+ */
+export function resolveParam(
+  p: CompileResponse["params"][number],
+  prev: ParamState | undefined,
+  oldDefault: number | undefined,
+  template: Template | undefined,
+  source: Template | undefined,
+): ParamState {
+  const kept = template ? undefined : prev;
+  const neverMoved = kept !== undefined && (kept.value === oldDefault || kept.value === source?.params[p.name]);
+  const followsDefault = neverMoved && p.default !== oldDefault;
+  const value = template?.params[p.name] ?? (followsDefault ? undefined : kept?.value) ?? p.default;
+  const range = template?.paramRanges?.[p.name] ?? (kept ? [kept.min, kept.max] : defaultParamRange(value));
+  return {
+    name: p.name,
+    latex: p.latex,
+    value,
+    min: Math.min(range[0], value),
+    max: Math.max(range[1], value),
+  };
+}
+
 const NICE_MANTISSAS = [1, 2, 2.5, 5, 10];
 
 export function niceCeil(v: number): number {

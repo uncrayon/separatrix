@@ -51,6 +51,9 @@ pub trait Scalar:
     fn sqrt(self) -> Self;
     /// Real cube root.
     fn cbrt(self) -> Self;
+    /// Real `n`-th root for odd `n`, `sign(x)·|x|^(1/n)`, with derivative
+    /// `|x|^(1/n - 1) / n` (infinite at 0, like [`Scalar::cbrt`]).
+    fn odd_root(self, n: u64) -> Self;
     /// Absolute value (derivative `sign(x)`, 0 at 0).
     fn abs(self) -> Self;
     /// `-1`, `0` or `1` (derivative zero).
@@ -150,6 +153,10 @@ impl Scalar for f64 {
     #[inline]
     fn cbrt(self) -> Self {
         f64::cbrt(self)
+    }
+    #[inline]
+    fn odd_root(self, n: u64) -> Self {
+        sign_f64(self) * self.abs().powf(1.0 / n as f64)
     }
     #[inline]
     fn abs(self) -> Self {
@@ -355,6 +362,11 @@ impl<T: Scalar> Scalar for Dual<T> {
         self.chain(c, T::cst(1.0) / (T::cst(3.0) * c * c))
     }
     #[inline]
+    fn odd_root(self, n: u64) -> Self {
+        let k = 1.0 / n as f64;
+        self.chain(self.re.odd_root(n), T::cst(k) * self.re.abs().powc(k - 1.0))
+    }
+    #[inline]
     fn abs(self) -> Self {
         self.chain(self.re.abs(), T::cst(sign_f64(self.re.re())))
     }
@@ -454,6 +466,7 @@ mod tests {
             ("ln", D::ln, f64::ln, 0.7),
             ("sqrt", D::sqrt, f64::sqrt, 0.7),
             ("cbrt", D::cbrt, f64::cbrt, -0.7),
+            ("odd_root", |d| d.odd_root(5), |v| v.odd_root(5), -0.7),
             ("abs", D::abs, f64::abs, -0.7),
             ("sinh", D::sinh, f64::sinh, 0.7),
             ("cosh", D::cosh, f64::cosh, 0.7),
@@ -498,6 +511,9 @@ mod tests {
         let still = D::constant(0.0);
         assert_eq!(still.sqrt().eps, 0.0);
         assert_eq!(still.cbrt().eps, 0.0);
+        assert_eq!(still.odd_root(5).eps, 0.0);
+        assert_eq!(D::variable(0.0).odd_root(5).eps, f64::INFINITY);
+        assert_eq!(D::variable(0.0).odd_root(5).re, 0.0);
         assert_eq!(still.powc(1.0 / 3.0).eps, 0.0);
         assert_eq!(D::constant(1.0).asin().eps, 0.0);
         assert_eq!(D::constant(-1.0).acos().eps, 0.0);

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic } from "../api/types";
 import { compileSystem, PortraitScheduler } from "../api/client";
-import { BLANK_TEMPLATE, type Template } from "../templates";
+import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
   adaptInitialConditions,
   axisValid,
   buildPortraitJob,
-  defaultParamRange,
   defaultView,
   leastUsedPaletteIndex,
+  resolveParam,
   stateExtent,
   templateView,
   trackSelection,
@@ -40,31 +40,6 @@ export interface StudioState extends StudioSnapshot {
 }
 
 export type Studio = ReturnType<typeof useStudio>;
-
-/**
- * A parameter after a compile: a template's value wins, then (only without
- * a template) the slider's previous value, then the default. A slider still
- * at the previous default (`oldDefault`) was never moved, so it follows an
- * edited default line such as `a = 3`. The range follows the same order.
- */
-function resolveParam(
-  p: CompileResponse["params"][number],
-  prev: ParamState | undefined,
-  oldDefault: number | undefined,
-  template: Template | undefined,
-): ParamState {
-  const kept = template ? undefined : prev;
-  const untouched = kept !== undefined && kept.value === oldDefault;
-  const value = template?.params[p.name] ?? (untouched ? undefined : kept?.value) ?? p.default;
-  const range = template?.paramRanges?.[p.name] ?? (kept ? [kept.min, kept.max] : defaultParamRange(value));
-  return {
-    name: p.name,
-    latex: p.latex,
-    value,
-    min: Math.min(range[0], value),
-    max: Math.max(range[1], value),
-  };
-}
 
 /** A usable plot aspect rounded to 3 significant digits, or null. */
 function roundAspect(aspect: number | null): number | null {
@@ -174,6 +149,7 @@ export function useStudio() {
       const cur = latest.current;
       const old = cur.compiled;
       const dim = res.states.length;
+      const sourceTemplate = cur.sourceTemplateId ? templateById(cur.sourceTemplateId) : undefined;
 
       setParams(
         res.params.map((p) =>
@@ -182,6 +158,7 @@ export function useStudio() {
             cur.params.find((q) => q.name === p.name),
             old?.params.find((q) => q.name === p.name)?.default,
             template,
+            sourceTemplate,
           ),
         ),
       );

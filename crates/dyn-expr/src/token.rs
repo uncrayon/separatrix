@@ -391,18 +391,6 @@ impl<'s> Lexer<'s> {
             }
         }
         let w = &self.src[start..i];
-        if let Some(base) = w
-            .strip_suffix("_n")
-            .filter(|b| Func::from_name(b).is_none())
-        {
-            self.pos = start + base.len();
-            self.push(Tok::Ident(sym_from_word(base)), start);
-            self.pos += 1;
-            self.push(Tok::Underscore, self.pos - 1);
-            self.pos += 1;
-            self.push(Tok::Ident(SymName::simple("n", "n")), self.pos - 1);
-            return;
-        }
         self.pos = i;
         let tok = match Func::from_name(w) {
             Some(f) => Tok::Func(f),
@@ -520,9 +508,10 @@ impl<'s> Lexer<'s> {
                     Some(content) => match named_group(content) {
                         Tok::Ident(s) if name == "operatorname" && s.name.len() > 1 => {
                             Tok::Bad(format!(
-                                "{} isn't a supported function. Known functions: sin, cos, \
+                                "{0} isn't a supported function. Known functions: sin, cos, \
                                  tan, exp, ln, sqrt, abs, sign, sinh, cosh, tanh, arcsin, \
-                                 arccos, arctan, min, max",
+                                 arccos, arctan, min, max. For a parameter or variable named \
+                                 {0}, write \\mathrm{{{0}}}",
                                 s.name
                             ))
                         }
@@ -751,6 +740,7 @@ mod tests {
             k[0].starts_with("bad:floor isn't a supported function"),
             "{k:?}"
         );
+        assert!(k[0].ends_with("write \\mathrm{floor}"), "{k:?}");
         assert_eq!(k[1], "id:d");
     }
 

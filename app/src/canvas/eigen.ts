@@ -27,6 +27,7 @@ export {
   othersHaveRealEigenvectors,
   realEigenvectors,
   realMask,
+  subscriptDigits,
   type EigenFlow,
   type NumberedEigenvalue,
   type RealEigenvector,

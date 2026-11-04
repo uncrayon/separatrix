@@ -10,8 +10,13 @@ export interface RealEigenvector {
   label: string;
 }
 
-const SUB = "₀₁₂₃₄₅₆₇₈₉";
-const sub = (k: number) => String(k).replace(/\d/g, (d) => SUB[Number(d)]);
+const SUBSCRIPT_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
+
+/** `n` in Unicode subscript digits, for labels such as λ₁₂. */
+export function subscriptDigits(n: number): string {
+  return String(n).replace(/\d/g, (d) => SUBSCRIPT_DIGITS[Number(d)]);
+}
+
 const IM_TOL = 1e-9;
 const NEUTRAL_TOL = 1e-9;
 /** REL_TOL in crates/dyn-analysis/src/classify.rs: the core groups eigenvalues within sqrt(REL_TOL). */
@@ -99,7 +104,7 @@ export function realEigenvectors(fp: FixedPointOut, kind: SystemKind | undefined
     const value = evs[i][0];
     const growth = kind === "map" ? Math.abs(value) - 1 : value;
     const flow: EigenFlow = growth < -NEUTRAL_TOL ? -1 : growth > NEUTRAL_TOL ? 1 : 0;
-    out.push({ v, value, flow, label: plain ? sym : `${sym}${sub(ranked.indexOf(i) + 1)}` });
+    out.push({ v, value, flow, label: plain ? sym : `${sym}${subscriptDigits(ranked.indexOf(i) + 1)}` });
   }
   return out;
 }

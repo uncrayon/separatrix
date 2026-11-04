@@ -269,6 +269,14 @@ fn derivative_misuse() {
 fn text_mode_style_errors() {
     let d = text_err("x' = x y");
     assert!(d.message.contains("Missing '*' between x and y"), "{d:?}");
+    let src = "x_{n+1} = r*x_n y_n";
+    let d = text_err(src);
+    assert!(
+        d.message.contains("Missing '*' between x_n and y_n"),
+        "{d:?}"
+    );
+    let (a, b) = d.span.unwrap();
+    assert_eq!(&src[a..b], "x_n y_n");
     let d = text_err("x' = sin x");
     assert!(d.message.contains("sin(…)"), "{d:?}");
     let d = text_err("x' = \\sin x");
