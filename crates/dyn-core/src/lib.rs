@@ -130,7 +130,14 @@ impl FnField {
         kind: SystemKind,
         f: impl Fn(f64, &[f64], &[f64], &mut [f64]) + Send + Sync + 'static,
     ) -> Self {
-        Self { dim, n_params, kind, autonomous: true, f: Box::new(f), jac: None }
+        Self {
+            dim,
+            n_params,
+            kind,
+            autonomous: true,
+            f: Box::new(f),
+            jac: None,
+        }
     }
 
     /// Supply an exact Jacobian (row-major) instead of finite differences.
@@ -188,7 +195,17 @@ mod tests {
         let (x, p) = ([1.0, 2.0, 3.0], [10.0, 28.0, 8.0 / 3.0]);
         let mut j = [0.0; 9];
         f.jacobian(0.0, &x, &p, &mut j);
-        let exact = [-10.0, 10.0, 0.0, 28.0 - 3.0, -1.0, -1.0, 2.0, 1.0, -8.0 / 3.0];
+        let exact = [
+            -10.0,
+            10.0,
+            0.0,
+            28.0 - 3.0,
+            -1.0,
+            -1.0,
+            2.0,
+            1.0,
+            -8.0 / 3.0,
+        ];
         for (a, b) in j.iter().zip(exact) {
             assert!((a - b).abs() < 1e-7, "{a} vs {b}");
         }

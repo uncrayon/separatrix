@@ -14,7 +14,10 @@ fn text_err(src: &str) -> Diagnostic {
 }
 
 fn first_error(src: &str, f: InputFormat) -> Diagnostic {
-    fails(src, f).into_iter().find(|d| d.severity == Severity::Error).unwrap()
+    fails(src, f)
+        .into_iter()
+        .find(|d| d.severity == Severity::Error)
+        .unwrap()
 }
 
 fn spanned<'a>(src: &'a str, d: &Diagnostic) -> &'a str {
@@ -26,7 +29,10 @@ fn spanned<'a>(src: &'a str, d: &Diagnostic) -> &'a str {
 fn empty_input() {
     for src in ["", "   ", "\n\n", "\\\\", ";"] {
         let d = latex_err(src);
-        assert!(d.message.contains("Enter at least one equation"), "{src:?}: {d:?}");
+        assert!(
+            d.message.contains("Enter at least one equation"),
+            "{src:?}: {d:?}"
+        );
         assert_eq!(d.span, None);
     }
 }
@@ -96,7 +102,9 @@ fn symbol_that_looks_like_a_state_warns() {
     // Siblings of indexed states also warn; ordinary parameters don't.
     let out = compile("x_1' = x_2 + a", InputFormat::Text);
     assert_eq!(out.diagnostics.len(), 1, "{:?}", out.diagnostics);
-    assert!(out.diagnostics[0].message.starts_with("x_2 has no equation"));
+    assert!(out.diagnostics[0]
+        .message
+        .starts_with("x_2 has no equation"));
 
     // Giving it a value says "yes, it's a parameter": no warning.
     let out = compile("x' = y\ny = 2", InputFormat::Text);
@@ -144,7 +152,10 @@ fn mixing_flows_and_maps() {
 #[test]
 fn unclassifiable_lines() {
     let d = text_err("x + y = 2");
-    assert!(d.message.contains("Can't tell what this line defines"), "{d:?}");
+    assert!(
+        d.message.contains("Can't tell what this line defines"),
+        "{d:?}"
+    );
     let d = text_err("x' + y' = 2");
     assert!(d.message.contains("Several highest derivatives"), "{d:?}");
     let d = text_err("x'*x' = 2");
@@ -172,7 +183,10 @@ fn derivative_misuse() {
     let d = text_err("H(q) = q^2");
     assert!(d.message.contains("as many momenta"), "{d:?}");
     let d = text_err("H(q, p) = p^2\nq' = 1");
-    assert!(d.message.contains("already defines the whole system"), "{d:?}");
+    assert!(
+        d.message.contains("already defines the whole system"),
+        "{d:?}"
+    );
 }
 
 #[test]
@@ -191,7 +205,9 @@ fn errors_on_several_lines_are_all_reported() {
     let errors: Vec<_> = out.diagnostics.iter().filter(|d| d.is_error()).collect();
     assert_eq!(errors.len(), 3, "{errors:#?}");
     // sorted by position
-    assert!(errors.windows(2).all(|w| w[0].span.unwrap().0 < w[1].span.unwrap().0));
+    assert!(errors
+        .windows(2)
+        .all(|w| w[0].span.unwrap().0 < w[1].span.unwrap().0));
 }
 
 #[test]

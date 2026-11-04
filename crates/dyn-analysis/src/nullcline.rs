@@ -109,7 +109,10 @@ pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) ->
                 sampler.eval(f, p, px, py);
                 sampler.out[state]
             };
-            Nullcline { state, polylines: trace(&lattice, g, &mut eval_g) }
+            Nullcline {
+                state,
+                polylines: trace(&lattice, g, &mut eval_g),
+            }
         })
         .collect()
 }
@@ -128,7 +131,13 @@ impl Lattice {
     fn new(plane: &Plane, grid: usize) -> Self {
         let (x0, x1) = plane.x_range;
         let (y0, y1) = plane.y_range;
-        Self { grid, x0, y0, dx: (x1 - x0) / grid as f64, dy: (y1 - y0) / grid as f64 }
+        Self {
+            grid,
+            x0,
+            y0,
+            dx: (x1 - x0) / grid as f64,
+            dy: (y1 - y0) / grid as f64,
+        }
     }
 
     /// Plot coordinates of lattice point `(i, j)`, `0 <= i, j <= grid`.
@@ -165,7 +174,11 @@ enum Crossing {
 }
 
 /// Traces the zero set of `g` (sampled on the lattice) into polylines.
-fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> Vec<Vec<(f64, f64)>> {
+fn trace(
+    lat: &Lattice,
+    g: &[f64],
+    eval_g: &mut dyn FnMut(f64, f64) -> f64,
+) -> Vec<Vec<(f64, f64)>> {
     let n = lat.grid + 1;
     let val = |(i, j): (usize, usize)| g[j * n + i];
     let positive = |v: f64| v >= 0.0;
@@ -185,15 +198,26 @@ fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> V
     let mut segments: Vec<(Edge, Edge)> = Vec::new();
     for j in 0..lat.grid {
         for i in 0..lat.grid {
-            let corners = [val((i, j)), val((i + 1, j)), val((i + 1, j + 1)), val((i, j + 1))];
+            let corners = [
+                val((i, j)),
+                val((i + 1, j)),
+                val((i + 1, j + 1)),
+                val((i, j + 1)),
+            ];
             if corners.iter().any(|v| !v.is_finite()) {
                 continue;
             }
             // Edges in counter-clockwise order: bottom, right, top, left.
             // Edge k joins corner k and corner (k + 1) % 4.
-            let edges = [Edge::H(i, j), Edge::V(i + 1, j), Edge::H(i, j + 1), Edge::V(i, j)];
-            let crossed: Vec<usize> =
-                (0..4).filter(|&k| positive(corners[k]) != positive(corners[(k + 1) % 4])).collect();
+            let edges = [
+                Edge::H(i, j),
+                Edge::V(i + 1, j),
+                Edge::H(i, j + 1),
+                Edge::V(i, j),
+            ];
+            let crossed: Vec<usize> = (0..4)
+                .filter(|&k| positive(corners[k]) != positive(corners[(k + 1) % 4]))
+                .collect();
             let pairs: Vec<(usize, usize)> = match crossed.len() {
                 2 => vec![(crossed[0], crossed[1])],
                 4 => {
@@ -211,7 +235,9 @@ fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> V
             };
             for (ka, kb) in pairs {
                 let (ea, eb) = (edges[ka], edges[kb]);
-                if matches!(crossing(ea), Crossing::Point(_)) && matches!(crossing(eb), Crossing::Point(_)) {
+                if matches!(crossing(ea), Crossing::Point(_))
+                    && matches!(crossing(eb), Crossing::Point(_))
+                {
                     segments.push((ea, eb));
                 }
             }
@@ -352,7 +378,14 @@ mod tests {
     use dyn_core::FnField;
 
     fn xy_plane(x_range: (f64, f64), y_range: (f64, f64)) -> Plane {
-        Plane { x: Axis::State(0), y: Axis::State(1), x_range, y_range, base_state: vec![0.0, 0.0], t: 0.0 }
+        Plane {
+            x: Axis::State(0),
+            y: Axis::State(1),
+            x_range,
+            y_range,
+            base_state: vec![0.0, 0.0],
+            t: 0.0,
+        }
     }
 
     fn rabbits_sheep() -> FnField {
@@ -387,7 +420,11 @@ mod tests {
                 // Where the two lines of one nullcline cross, g is locally a
                 // product of two small factors and interpolation is less
                 // accurate; elsewhere points are very close to the lines.
-                let crossing = if nc.state == 0 { (0.0, 1.5) } else { (2.0, 0.0) };
+                let crossing = if nc.state == 0 {
+                    (0.0, 1.5)
+                } else {
+                    (2.0, 0.0)
+                };
                 let near_crossing = (x - crossing.0).hypot(y - crossing.1) < 4.0 * h;
                 let tol = if near_crossing { 0.25 * h } else { 5e-3 * h };
                 assert!(d < tol, "state {} point ({x}, {y}) off by {d}", nc.state);
@@ -562,7 +599,10 @@ mod tests {
 
     #[test]
     fn serialises_as_point_arrays() {
-        let nc = Nullcline { state: 1, polylines: vec![vec![(0.0, 1.0), (2.0, 3.5)]] };
+        let nc = Nullcline {
+            state: 1,
+            polylines: vec![vec![(0.0, 1.0), (2.0, 3.5)]],
+        };
         let json = serde_json::to_string(&nc).unwrap();
         assert_eq!(json, r#"{"state":1,"polylines":[[[0.0,1.0],[2.0,3.5]]]}"#);
     }

@@ -54,7 +54,11 @@ fn err<T>(msg: impl Into<String>, span: Span) -> PResult<T> {
 
 /// Tokenize and parse every line. Lines with errors are reported in
 /// `diags` and left out of the result.
-pub(crate) fn parse_lines(src: &str, format: InputFormat, diags: &mut Vec<Diagnostic>) -> Vec<Line> {
+pub(crate) fn parse_lines(
+    src: &str,
+    format: InputFormat,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<Line> {
     let toks = tokenize(src, format);
     let mut lines = Vec::new();
     for group in toks.split(|t| matches!(t.tok, Tok::Sep)) {
@@ -105,7 +109,8 @@ fn is_next_index(parts: &[Token]) -> bool {
     let is_one = |t: &Token| matches!(t.tok, Tok::Num(v) if v == 1.0);
     parts.len() == 3
         && matches!(parts[1].tok, Tok::Plus)
-        && ((is_n_token(&parts[0]) && is_one(&parts[2])) || (is_one(&parts[0]) && is_n_token(&parts[2])))
+        && ((is_n_token(&parts[0]) && is_one(&parts[2]))
+            || (is_one(&parts[0]) && is_n_token(&parts[2])))
 }
 
 fn example(text: bool) -> &'static str {
@@ -213,7 +218,10 @@ impl<'s> Parser<'s> {
     /// is checked too.
     fn nested(&mut self, f: impl FnOnce(&mut Self) -> PResult<Ast>) -> PResult<Ast> {
         if self.depth >= MAX_NESTING {
-            let span = self.toks.get(self.pos).map_or((self.line_end(), self.line_end()), |t| t.span);
+            let span = self
+                .toks
+                .get(self.pos)
+                .map_or((self.line_end(), self.line_end()), |t| t.span);
             return err(
                 "This expression is nested too deeply (brackets, fractions or functions inside \
                  each other about 50 levels deep). Simplify it",
@@ -330,7 +338,9 @@ impl<'s> Parser<'s> {
     /// allowed after a number or a closing bracket.
     #[inline(never)]
     fn implicit_next(&self) -> PResult<bool> {
-        let Some(next) = self.peek() else { return Ok(false) };
+        let Some(next) = self.peek() else {
+            return Ok(false);
+        };
         if !self.can_start_factor(next) {
             return Ok(false);
         }
@@ -383,7 +393,11 @@ impl<'s> Parser<'s> {
         if self.peek().is_none() {
             return Err(self.incomplete());
         }
-        let exp = if self.text { self.parse_unary()? } else { self.parse_latex_arg(true, "^")? };
+        let exp = if self.text {
+            self.parse_unary()?
+        } else {
+            self.parse_latex_arg(true, "^")?
+        };
         Ok(Ast::bin(BinOp::Pow, base, exp))
     }
 
@@ -413,7 +427,10 @@ impl<'s> Parser<'s> {
         match e.kind {
             AstKind::Sym(s) => Ok(Ast::new(AstKind::Deriv(s, k), span)),
             AstKind::Deriv(s, j) => Ok(Ast::new(AstKind::Deriv(s, j + k), span)),
-            _ => err("A prime (') can only follow a variable name, as in x'", span),
+            _ => err(
+                "A prime (') can only follow a variable name, as in x'",
+                span,
+            ),
         }
     }
 
@@ -500,7 +517,10 @@ impl<'s> Parser<'s> {
                 let a = self.parse_latex_arg(false, "\\frac")?;
                 let b = self.parse_latex_arg(false, "\\frac")?;
                 let span = (t.span.0, self.prev_end());
-                Ok(Ast::new(AstKind::Bin(BinOp::Div, Box::new(a), Box::new(b)), span))
+                Ok(Ast::new(
+                    AstKind::Bin(BinOp::Div, Box::new(a), Box::new(b)),
+                    span,
+                ))
             }
             Tok::Sqrt => self.parse_sqrt(),
             Tok::Dot(k) => self.parse_dot(k),
@@ -514,7 +534,8 @@ impl<'s> Parser<'s> {
     fn parse_symbol(&mut self, s: SymName, span: Span) -> PResult<Ast> {
         let e = self.parse_subscript(s, span)?;
         if let AstKind::Sym(s) = &e.kind {
-            if (self.text || s.name == "H") && matches!(self.peek(), Some(Tok::Open(Delim::Paren))) {
+            if (self.text || s.name == "H") && matches!(self.peek(), Some(Tok::Open(Delim::Paren)))
+            {
                 let s = s.clone();
                 let open = self.bump();
                 let args = self.parse_args(Delim::Paren, open.span, true)?;
@@ -634,7 +655,11 @@ impl<'s> Parser<'s> {
         if matches!(self.peek(), Some(Tok::Close(c)) if *c == d) {
             let close = self.toks[self.pos].span;
             return err(
-                format!("Nothing between {} and {}; fill it in", d.open_str(), d.close_str()),
+                format!(
+                    "Nothing between {} and {}; fill it in",
+                    d.open_str(),
+                    d.close_str()
+                ),
                 (open.0, close.1),
             );
         }
@@ -660,7 +685,11 @@ impl<'s> Parser<'s> {
                 let c = *c;
                 let close = self.toks[self.pos].span;
                 err(
-                    format!("This {} is closed by {}; they don't match", d.open_str(), c.close_str()),
+                    format!(
+                        "This {} is closed by {}; they don't match",
+                        d.open_str(),
+                        c.close_str()
+                    ),
                     (open.0, close.1),
                 )
             }
@@ -699,7 +728,10 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_latex_arg_inner(&mut self, allow_minus: bool, ctx: &str) -> PResult<Ast> {
-        let here = self.toks.get(self.pos).map_or((self.line_end(), self.line_end()), |t| t.span);
+        let here = self
+            .toks
+            .get(self.pos)
+            .map_or((self.line_end(), self.line_end()), |t| t.span);
         match self.peek().cloned() {
             Some(Tok::Open(d)) => {
                 if matches!(self.peek_at(1), Some(Tok::Close(c)) if *c == d) {
@@ -728,8 +760,10 @@ impl<'s> Parser<'s> {
                     // LaTeX takes one digit: \frac12 = 1/2, x^23 = x^2·3.
                     let first = f64::from(text.as_bytes()[0] - b'0');
                     let rest: f64 = text[1..].parse().unwrap_or(0.0);
-                    self.toks[self.pos] =
-                        Token { tok: Tok::Num(rest), span: (span.0 + 1, span.1) };
+                    self.toks[self.pos] = Token {
+                        tok: Tok::Num(rest),
+                        span: (span.0 + 1, span.1),
+                    };
                     Ok(Ast::new(AstKind::Num(first), (span.0, span.0 + 1)))
                 } else {
                     self.bump();
@@ -758,7 +792,10 @@ impl<'s> Parser<'s> {
         let mut index = 2.0;
         if matches!(self.peek(), Some(Tok::Open(Delim::Bracket))) {
             let open = self.bump();
-            let e = self.parse_args(Delim::Bracket, open.span, false)?.pop().expect("one");
+            let e = self
+                .parse_args(Delim::Bracket, open.span, false)?
+                .pop()
+                .expect("one");
             match e.kind {
                 AstKind::Num(v) if v >= 2.0 && v.fract() == 0.0 => index = v,
                 _ => {
@@ -778,7 +815,11 @@ impl<'s> Parser<'s> {
         } else {
             let one = Ast::new(AstKind::Num(1.0), span);
             let n = Ast::new(AstKind::Num(index), span);
-            AstKind::Bin(BinOp::Pow, Box::new(arg), Box::new(Ast::bin(BinOp::Div, one, n)))
+            AstKind::Bin(
+                BinOp::Pow,
+                Box::new(arg),
+                Box::new(Ast::bin(BinOp::Div, one, n)),
+            )
         };
         Ok(Ast::new(kind, span))
     }
@@ -787,13 +828,14 @@ impl<'s> Parser<'s> {
     #[inline(never)]
     fn parse_dot(&mut self, k: u32) -> PResult<Ast> {
         let t = self.bump();
-        let need = || {
-            Diagnostic::error("\\dot needs a variable name, as in \\dot{x}", Some(t.span))
-        };
+        let need =
+            || Diagnostic::error("\\dot needs a variable name, as in \\dot{x}", Some(t.span));
         let sym = match self.peek().cloned() {
             Some(Tok::Open(Delim::Brace)) => {
                 let open = self.bump();
-                let Some(Tok::Ident(s)) = self.peek().cloned() else { return Err(need()) };
+                let Some(Tok::Ident(s)) = self.peek().cloned() else {
+                    return Err(need());
+                };
                 let id = self.bump();
                 let inner = self.parse_subscript(s, id.span)?;
                 self.expect_close(Delim::Brace, open.span)?;
@@ -819,7 +861,11 @@ impl<'s> Parser<'s> {
     /// After a function token: optional `^p`, then the argument(s).
     #[inline(never)]
     fn parse_function(&mut self, f: Func, fspan: Span) -> PResult<Ast> {
-        let fname = if self.text { f.text_name().to_string() } else { f.latex_name() };
+        let fname = if self.text {
+            f.text_name().to_string()
+        } else {
+            f.latex_name()
+        };
         let mut fpow = None;
         if !self.text && matches!(self.peek(), Some(Tok::Caret)) {
             self.bump();
@@ -840,7 +886,10 @@ impl<'s> Parser<'s> {
                 self.parse_args(d, open.span, true)?
             }
             _ if self.text => {
-                return err(format!("Write {fname}(…) with parentheses in text mode"), fspan)
+                return err(
+                    format!("Write {fname}(…) with parentheses in text mode"),
+                    fspan,
+                )
             }
             _ if f.arity() == 2 => {
                 return err(
@@ -925,7 +974,8 @@ impl<'s> Parser<'s> {
                     Some(Tok::Prime(_)) => true,
                     Some(Tok::Caret) => matches!(
                         (self.peek_at(i + 1), self.peek_at(i + 2)),
-                        (Some(Tok::Prime(_)), _) | (Some(Tok::Open(Delim::Brace)), Some(Tok::Prime(_)))
+                        (Some(Tok::Prime(_)), _)
+                            | (Some(Tok::Open(Delim::Brace)), Some(Tok::Prime(_)))
                     ),
                     _ => false,
                 }
@@ -987,7 +1037,9 @@ mod tests {
     fn first_error(src: &str, f: InputFormat) -> Diagnostic {
         let mut d = Vec::new();
         parse_lines(src, f, &mut d);
-        d.into_iter().next().unwrap_or_else(|| panic!("expected an error for {src}"))
+        d.into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("expected an error for {src}"))
     }
 
     #[test]
@@ -1054,7 +1106,10 @@ mod tests {
         assert_eq!(lhs("\\dot{x_{12}}"), "x_12'");
         assert_eq!(lhs("x_{n+1}"), "x[n+1]");
         assert_eq!(lhs("x'(t)"), "x'");
-        assert_eq!(lhs("\\frac{\\mathrm{d}x}{\\mathrm{d}t}"), "(/ (* d x) (* d t))");
+        assert_eq!(
+            lhs("\\frac{\\mathrm{d}x}{\\mathrm{d}t}"),
+            "(/ (* d x) (* d t))"
+        );
         assert_eq!(lhs("H(q,p)"), "(apply H q p)");
     }
 

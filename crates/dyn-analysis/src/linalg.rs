@@ -20,9 +20,13 @@ pub(crate) fn lu_solve(a: &mut [f64], b: &mut [f64]) -> bool {
     let tiny = 1e-14 * scale;
     for k in 0..n {
         // Pick the largest pivot in column k at or below the diagonal.
-        let (piv, piv_abs) = (k..n)
-            .map(|r| (r, a[r * n + k].abs()))
-            .fold((k, -1.0), |best, cur| if cur.1 > best.1 { cur } else { best });
+        let (piv, piv_abs) =
+            (k..n)
+                .map(|r| (r, a[r * n + k].abs()))
+                .fold(
+                    (k, -1.0),
+                    |best, cur| if cur.1 > best.1 { cur } else { best },
+                );
         if piv_abs <= tiny {
             return false;
         }
@@ -68,8 +72,11 @@ pub fn eigenvalues(n: usize, a: &[f64]) -> Vec<(f64, f64)> {
         }
         _ => {
             let m = nalgebra::DMatrix::from_row_slice(n, n, a);
-            let mut ev: Vec<(f64, f64)> =
-                m.complex_eigenvalues().iter().map(|z| (z.re, z.im)).collect();
+            let mut ev: Vec<(f64, f64)> = m
+                .complex_eigenvalues()
+                .iter()
+                .map(|z| (z.re, z.im))
+                .collect();
             // Schur gives each conjugate pair; put +im first for consistency.
             for k in 0..ev.len().saturating_sub(1) {
                 if ev[k].1 < 0.0 && ev[k + 1].1 > 0.0 && ev[k].0 == ev[k + 1].0 {
@@ -93,7 +100,11 @@ pub(crate) fn eig2(tau: f64, delta: f64) -> Vec<(f64, f64)> {
             return vec![(0.0, 0.0), (0.0, 0.0)];
         }
         let small = delta / big;
-        let (l1, l2) = if big >= small { (big, small) } else { (small, big) };
+        let (l1, l2) = if big >= small {
+            (big, small)
+        } else {
+            (small, big)
+        };
         vec![(l1, 0.0), (l2, 0.0)]
     } else {
         let im = 0.5 * (-disc).sqrt();
@@ -129,7 +140,10 @@ mod tests {
     #[test]
     fn eigenvalues_small_closed_forms() {
         assert_eq!(eigenvalues(1, &[-3.0]), vec![(-3.0, 0.0)]);
-        assert_eq!(eigenvalues(2, &[2.0, 0.0, 0.0, -1.0]), vec![(2.0, 0.0), (-1.0, 0.0)]);
+        assert_eq!(
+            eigenvalues(2, &[2.0, 0.0, 0.0, -1.0]),
+            vec![(2.0, 0.0), (-1.0, 0.0)]
+        );
         let ev = eigenvalues(2, &[0.0, 1.0, -4.0, 0.0]);
         assert_eq!(ev, vec![(0.0, 2.0), (0.0, -2.0)]);
         // Large spread: the small root is computed without cancellation.
@@ -145,7 +159,10 @@ mod tests {
         ev.sort_by(|p, q| p.0.total_cmp(&q.0).then(q.1.total_cmp(&p.1)));
         let expect = [(-1.0, 2.0), (-1.0, -2.0), (3.0, 0.0)];
         for (u, v) in ev.iter().zip(expect) {
-            assert!((u.0 - v.0).abs() < 1e-12 && (u.1 - v.1).abs() < 1e-12, "{ev:?}");
+            assert!(
+                (u.0 - v.0).abs() < 1e-12 && (u.1 - v.1).abs() < 1e-12,
+                "{ev:?}"
+            );
         }
     }
 }

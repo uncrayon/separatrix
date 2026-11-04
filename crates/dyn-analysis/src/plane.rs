@@ -58,7 +58,11 @@ impl<'a> Sampler<'a> {
         for (s, b) in state.iter_mut().zip(&plane.base_state) {
             *s = *b;
         }
-        Some(Self { plane, state, out: vec![0.0; dim] })
+        Some(Self {
+            plane,
+            state,
+            out: vec![0.0; dim],
+        })
     }
 
     /// Evaluates `f` at plot coordinates `(px, py)`; the result is in

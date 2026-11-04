@@ -30,12 +30,20 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// An [`Severity::Error`] diagnostic.
     pub fn error(message: impl Into<String>, span: Option<(usize, usize)>) -> Self {
-        Diagnostic { severity: Severity::Error, message: message.into(), span }
+        Diagnostic {
+            severity: Severity::Error,
+            message: message.into(),
+            span,
+        }
     }
 
     /// A [`Severity::Warning`] diagnostic.
     pub fn warning(message: impl Into<String>, span: Option<(usize, usize)>) -> Self {
-        Diagnostic { severity: Severity::Warning, message: message.into(), span }
+        Diagnostic {
+            severity: Severity::Warning,
+            message: message.into(),
+            span,
+        }
     }
 
     /// True for [`Severity::Error`].

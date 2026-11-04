@@ -27,7 +27,17 @@ fn lorenz_latex_values_and_jacobian() {
     let f = sys.eval_alloc(0.0, &x, &defaults);
     assert_close(&f, &[10.0, 1.0 * (28.0 - 3.0) - 2.0, 2.0 - 8.0], 1e-15);
 
-    let exact = [-10.0, 10.0, 0.0, 28.0 - 3.0, -1.0, -1.0, 2.0, 1.0, -8.0 / 3.0];
+    let exact = [
+        -10.0,
+        10.0,
+        0.0,
+        28.0 - 3.0,
+        -1.0,
+        -1.0,
+        2.0,
+        1.0,
+        -8.0 / 3.0,
+    ];
     assert_close(&jac(&sys, 0.0, &x, &defaults), &exact, 1e-15);
     check_derivatives(&sys, 0.0, &[-3.2, 4.1, 17.0], &defaults, 1e-7);
 
@@ -71,7 +81,10 @@ fn text_mode_single_equation() {
     assert_eq!(s, ["x"]);
     assert_eq!(p, ["sigma", "y"]);
     assert_eq!(sys.eval_alloc(0.0, &[1.0], &[2.0, 5.0]), [8.0]);
-    assert_eq!(sys.info.equations_latex, ["\\dot{x} = \\sigma \\left(y - x\\right)"]);
+    assert_eq!(
+        sys.info.equations_latex,
+        ["\\dot{x} = \\sigma \\left(y - x\\right)"]
+    );
 }
 
 #[test]
@@ -84,11 +97,22 @@ fn pendulum_second_order() {
     assert_eq!(sys.info.states[1].latex, "\\dot{\\theta}");
     assert_eq!(sys.n_params(), 0);
     let x = [0.7, -0.4];
-    assert_close(&sys.eval_alloc(0.0, &x, &[]), &[-0.4, -(0.7f64.sin())], 1e-15);
-    assert_close(&jac(&sys, 0.0, &x, &[]), &[0.0, 1.0, -(0.7f64.cos()), 0.0], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &x, &[]),
+        &[-0.4, -(0.7f64.sin())],
+        1e-15,
+    );
+    assert_close(
+        &jac(&sys, 0.0, &x, &[]),
+        &[0.0, 1.0, -(0.7f64.cos()), 0.0],
+        1e-15,
+    );
     assert_eq!(
         sys.info.equations_latex,
-        ["\\dot{\\theta} = \\dot{\\theta}", "\\ddot{\\theta} = -\\sin\\theta"]
+        [
+            "\\dot{\\theta} = \\dot{\\theta}",
+            "\\ddot{\\theta} = -\\sin\\theta"
+        ]
     );
 }
 
@@ -100,7 +124,10 @@ fn damped_oscillator_implicit_form() {
         ("x'' = -c*x' - k*x", InputFormat::Text),
         ("\\ddot{x}+c\\dot{x}+kx=0", InputFormat::Latex),
         ("x^{\\prime\\prime}=-cx^{\\prime}-kx", InputFormat::Latex),
-        ("\\frac{d^2x}{dt^2}+c\\frac{dx}{dt}\\cdot 1+kx=0", InputFormat::Latex),
+        (
+            "\\frac{d^2x}{dt^2}+c\\frac{dx}{dt}\\cdot 1+kx=0",
+            InputFormat::Latex,
+        ),
     ];
     // (the last one has Leibniz notation inside a sum)
     let x = [0.5, -2.0];
@@ -132,7 +159,10 @@ fn third_order_equation() {
     assert_eq!(names(&sys).0, ["x", "x'", "x''"]);
     assert_eq!(sys.info.states[2].latex, "\\ddot{x}");
     assert_eq!(sys.eval_alloc(2.0, &[1.0, 2.0, 3.0], &[]), [2.0, 3.0, -4.0]);
-    assert_eq!(sys.info.equations_latex[2], "\\dddot{x} = -\\ddot{x} - \\dot{x} - x + t");
+    assert_eq!(
+        sys.info.equations_latex[2],
+        "\\dddot{x} = -\\ddot{x} - \\dot{x} - x + t"
+    );
 }
 
 #[test]
@@ -142,24 +172,45 @@ fn logistic_map() {
     assert!(sys.is_autonomous());
     assert_eq!(names(&sys), (vec!["x".to_string()], vec!["r".to_string()]));
     assert_eq!(sys.default_params(), [3.7]);
-    assert_close(&sys.eval_alloc(0.0, &[0.2], &[3.7]), &[3.7 * 0.2 * 0.8], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.2], &[3.7]),
+        &[3.7 * 0.2 * 0.8],
+        1e-15,
+    );
     assert_close(&jac(&sys, 0.0, &[0.2], &[3.7]), &[3.7 * (1.0 - 0.4)], 1e-15);
-    assert_eq!(sys.info.equations_latex, ["x_{n+1} = r x_{n} \\left(1 - x_{n}\\right)"]);
+    assert_eq!(
+        sys.info.equations_latex,
+        ["x_{n+1} = r x_{n} \\left(1 - x_{n}\\right)"]
+    );
 
     // Bare x means x_n.
     let bare = text("x_{n+1} = r*x*(1 - x)");
-    assert_eq!(bare.eval_alloc(0.0, &[0.2], &[3.7]), sys.eval_alloc(0.0, &[0.2], &[3.7]));
+    assert_eq!(
+        bare.eval_alloc(0.0, &[0.2], &[3.7]),
+        sys.eval_alloc(0.0, &[0.2], &[3.7])
+    );
 }
 
 #[test]
 fn henon_map() {
     let sys = latex("x_{n+1}=1-ax_n^2+y_n\\\\y_{n+1}=bx_n\\\\a=1.4\\\\b=0.3");
-    assert_eq!(names(&sys), (vec!["x".into(), "y".into()], vec!["a".into(), "b".into()]));
+    assert_eq!(
+        names(&sys),
+        (vec!["x".into(), "y".into()], vec!["a".into(), "b".into()])
+    );
     let p = sys.default_params();
     assert_eq!(p, [1.4, 0.3]);
     let x = [0.5, -0.2];
-    assert_close(&sys.eval_alloc(0.0, &x, &p), &[1.0 - 1.4 * 0.25 - 0.2, 0.15], 1e-15);
-    assert_close(&jac(&sys, 0.0, &x, &p), &[-2.0 * 1.4 * 0.5, 1.0, 0.3, 0.0], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &x, &p),
+        &[1.0 - 1.4 * 0.25 - 0.2, 0.15],
+        1e-15,
+    );
+    assert_close(
+        &jac(&sys, 0.0, &x, &p),
+        &[-2.0 * 1.4 * 0.5, 1.0, 0.3, 0.0],
+        1e-15,
+    );
     check_derivatives(&sys, 0.0, &x, &p, 1e-7);
 }
 
@@ -179,12 +230,27 @@ fn hamiltonian_pendulum() {
     assert!(sys.info.hamiltonian);
     assert_eq!(names(&sys).0, ["q", "p"]);
     let x = [0.8, 1.3];
-    assert_close(&sys.eval_alloc(0.0, &x, &[]), &[1.3, -(0.8f64.sin())], 1e-15);
-    assert_close(&jac(&sys, 0.0, &x, &[]), &[0.0, 1.0, -(0.8f64.cos()), 0.0], 1e-15);
-    assert_close(&[sys.hamiltonian_value(0.0, &x, &[]).unwrap()], &[0.845 - 0.8f64.cos()], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &x, &[]),
+        &[1.3, -(0.8f64.sin())],
+        1e-15,
+    );
+    assert_close(
+        &jac(&sys, 0.0, &x, &[]),
+        &[0.0, 1.0, -(0.8f64.cos()), 0.0],
+        1e-15,
+    );
+    assert_close(
+        &[sys.hamiltonian_value(0.0, &x, &[]).unwrap()],
+        &[0.845 - 0.8f64.cos()],
+        1e-15,
+    );
     assert_eq!(
         sys.info.equations_latex,
-        ["\\dot{q} = \\frac{\\partial H}{\\partial p}", "\\dot{p} = -\\frac{\\partial H}{\\partial q}"]
+        [
+            "\\dot{q} = \\frac{\\partial H}{\\partial p}",
+            "\\dot{p} = -\\frac{\\partial H}{\\partial q}"
+        ]
     );
 }
 
@@ -194,10 +260,13 @@ fn hamiltonian_two_degrees_of_freedom_with_parameters() {
     let sys = text(
         "H(q_1, q_2, p_1, p_2) = (p_1^2 + p_2^2)/2 + (q_1^2 + q_2^2)/2 + lambda*(q_1^2*q_2 - q_2^3/3)",
     );
-    assert_eq!(names(&sys), (
-        vec!["q_1".into(), "q_2".into(), "p_1".into(), "p_2".into()],
-        vec!["lambda".into()],
-    ));
+    assert_eq!(
+        names(&sys),
+        (
+            vec!["q_1".into(), "q_2".into(), "p_1".into(), "p_2".into()],
+            vec!["lambda".into()],
+        )
+    );
     let (x, p) = ([0.1, -0.3, 0.25, 0.4], [1.0]);
     let (q1, q2) = (x[0], x[1]);
     let f = sys.eval_alloc(0.0, &x, &p);
@@ -316,7 +385,11 @@ fn all_functions_evaluate_and_differentiate() {
         assert_close(&sys.eval_alloc(0.0, &x, &[]), &[f(0.4)], 1e-15);
         check_derivatives(&sys, 0.0, &x, &[], 1e-7);
         let lsys = latex(&format!("\\dot{{x}}=\\{name}\\left(x\\right)"));
-        assert_eq!(lsys.eval_alloc(0.0, &x, &[]), sys.eval_alloc(0.0, &x, &[]), "{name}");
+        assert_eq!(
+            lsys.eval_alloc(0.0, &x, &[]),
+            sys.eval_alloc(0.0, &x, &[]),
+            "{name}"
+        );
     }
     let sys = text("x' = sign(x) + min(x, a) + max(x, a)");
     assert_eq!(sys.eval_alloc(0.0, &[-2.0], &[3.0]), [-1.0 - 2.0 + 3.0]);
@@ -339,7 +412,10 @@ fn parameter_defaults_and_order() {
     let sys = text("a = 2\nx' = b*x + a\nb = -0.5e1\nc = 3*pi");
     assert_eq!(names(&sys).1, ["b", "a"]);
     assert_eq!(sys.default_params(), [-5.0, 2.0]);
-    let out = compile("a = 2\nx' = b*x + a\nb = -0.5e1\nc = 3*pi", InputFormat::Text);
+    let out = compile(
+        "a = 2\nx' = b*x + a\nb = -0.5e1\nc = 3*pi",
+        InputFormat::Text,
+    );
     let w = &out.diagnostics;
     assert_eq!(w.len(), 1, "{w:?}");
     assert!(w[0].message.contains("isn't used"), "{w:?}");

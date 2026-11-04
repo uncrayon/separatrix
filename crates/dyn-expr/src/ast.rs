@@ -171,7 +171,11 @@ impl Ast {
                 args.iter().map(|a| a.height).max().unwrap_or(0)
             }
         };
-        Ast { kind, span, height: below + 1 }
+        Ast {
+            kind,
+            span,
+            height: below + 1,
+        }
     }
 
     pub(crate) fn bin(op: BinOp, a: Ast, b: Ast) -> Ast {

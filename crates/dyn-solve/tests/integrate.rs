@@ -655,7 +655,12 @@ fn logarithmic_blow_up_is_blew_up() {
         &dopri(1e-8, 1e-10),
         Sampling::Steps,
     );
-    assert_eq!(sol.status, Status::BlewUp, "at t = {}", sol.last().unwrap().0);
+    assert_eq!(
+        sol.status,
+        Status::BlewUp,
+        "at t = {}",
+        sol.last().unwrap().0
+    );
     assert!((sol.last().unwrap().0 - 1.0).abs() < 1e-6);
 }
 

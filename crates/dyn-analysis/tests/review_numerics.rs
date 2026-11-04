@@ -58,7 +58,10 @@ fn diagonal_jacobian_is_never_a_degenerate_node() {
     for a in [-1.00001, -1.000001, -0.99999] {
         let (_, class) = classify_jacobian(SystemKind::Ode, 2, &[a, 0.0, 0.0, -1.0]);
         assert!(
-            matches!(class, Classification::StableNode | Classification::StableStar),
+            matches!(
+                class,
+                Classification::StableNode | Classification::StableStar
+            ),
             "diag({a}, -1) classified as {class}"
         );
     }
@@ -84,5 +87,8 @@ fn ghost_of_saddle_node_is_not_a_fixed_point_when_zoomed_out() {
     let near = fixed_points(&f, &[r], &[(-2.0, 2.0), (-2.0, 2.0)], 14);
     assert!(near.is_empty(), "box ±2: {near:?}");
     let far = fixed_points(&f, &[r], &[(-100.0, 100.0), (-100.0, 100.0)], 14);
-    assert!(far.is_empty(), "box ±100 reports a fixed point that does not exist: {far:?}");
+    assert!(
+        far.is_empty(),
+        "box ±100 reports a fixed point that does not exist: {far:?}"
+    );
 }

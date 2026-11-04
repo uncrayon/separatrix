@@ -1022,7 +1022,10 @@ mod tests {
         loop {
             let x0 = s.x()[0];
             let outcome = s.step();
-            assert!(matches!(outcome, StepOutcome::Accepted | StepOutcome::BlewUp));
+            assert!(matches!(
+                outcome,
+                StepOutcome::Accepted | StepOutcome::BlewUp
+            ));
             let mut prev = x0;
             for k in 0..=100 {
                 s.interpolate(s.t_prev() + s.h_last() * k as f64 / 100.0, &mut out);
@@ -1054,7 +1057,9 @@ mod tests {
         assert!((s.t() - 1.0).abs() < 1e-5, "{}", s.t());
 
         // Backwards in time: x' = -x^3 from x(0) = -1 blows up at t = -1/2.
-        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = -x[0].powi(3));
+        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+            out[0] = -x[0].powi(3)
+        });
         let mut s = Stepper::new(&f, &[], 0.0, &[-1.0], -5.0, &SolverOptions::default());
         assert_eq!(run(&mut s), StepOutcome::Failed(Status::BlewUp));
         assert!((s.t() + 0.5).abs() < 1e-5, "{}", s.t());
@@ -1105,7 +1110,11 @@ mod tests {
             ..SolverOptions::default()
         };
         let mut s = Stepper::new(&f, &[], 0.0, &[1.0, 0.0], 1.0, &o);
-        assert!(s.h_next().is_finite() && s.h_next() > 1e-6, "{}", s.h_next());
+        assert!(
+            s.h_next().is_finite() && s.h_next() > 1e-6,
+            "{}",
+            s.h_next()
+        );
         assert_eq!(run(&mut s), StepOutcome::AtEnd);
         assert_eq!(s.x()[1], 0.0);
         assert!((s.x()[0] - (-1.0f64).exp()).abs() < 1e-5);

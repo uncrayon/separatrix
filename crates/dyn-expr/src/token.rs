@@ -32,7 +32,11 @@ pub(crate) struct SymName {
 impl SymName {
     /// A symbol without subscript.
     pub(crate) fn simple(name: &str, base_latex: &str) -> SymName {
-        SymName { name: name.to_string(), base_latex: base_latex.to_string(), sub_latex: None }
+        SymName {
+            name: name.to_string(),
+            base_latex: base_latex.to_string(),
+            sub_latex: None,
+        }
     }
 
     fn with_sub(&self, base: String) -> String {
@@ -76,10 +80,46 @@ impl SymName {
 
 /// Greek letters accepted as `\name` (LaTeX) or `name` (text).
 const GREEK: &[&str] = &[
-    "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta",
-    "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma",
-    "varsigma", "tau", "upsilon", "phi", "varphi", "chi", "psi", "omega", "Gamma", "Delta",
-    "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "vartheta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "varpi",
+    "rho",
+    "varrho",
+    "sigma",
+    "varsigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "varphi",
+    "chi",
+    "psi",
+    "omega",
+    "Gamma",
+    "Delta",
+    "Theta",
+    "Lambda",
+    "Xi",
+    "Pi",
+    "Sigma",
+    "Upsilon",
+    "Phi",
+    "Psi",
+    "Omega",
 ];
 
 pub(crate) fn is_greek(word: &str) -> bool {
@@ -189,7 +229,12 @@ pub(crate) struct Token {
 
 /// Split `src` into tokens.
 pub(crate) fn tokenize(src: &str, format: InputFormat) -> Vec<Token> {
-    let mut lx = Lexer { src, pos: 0, out: Vec::new(), text: format == InputFormat::Text };
+    let mut lx = Lexer {
+        src,
+        pos: 0,
+        out: Vec::new(),
+        text: format == InputFormat::Text,
+    };
     lx.run();
     lx.out
 }
@@ -213,7 +258,10 @@ impl<'s> Lexer<'s> {
     }
 
     fn push(&mut self, tok: Tok, start: usize) {
-        self.out.push(Token { tok, span: (start, self.pos) });
+        self.out.push(Token {
+            tok,
+            span: (start, self.pos),
+        });
     }
 
     fn bad(&mut self, msg: impl Into<String>, start: usize) {
@@ -559,7 +607,10 @@ impl<'s> Lexer<'s> {
     /// `\begin{cases}` / `\end{aligned}` etc. are layout only.
     fn environment(&mut self, begin: bool, start: usize) {
         let Some(env) = self.read_group() else {
-            self.bad("\\begin / \\end must name an environment, like \\begin{cases}", start);
+            self.bad(
+                "\\begin / \\end must name an environment, like \\begin{cases}",
+                start,
+            );
             return;
         };
         match env.trim().trim_end_matches('*') {
@@ -586,7 +637,9 @@ fn named_group(content: &str) -> Tok {
     let ok = c.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
         && c.chars().all(|ch| ch.is_ascii_alphanumeric());
     if !ok {
-        return Tok::Bad(format!("Can't read the name \"{content}\"; use letters and digits only"));
+        return Tok::Bad(format!(
+            "Can't read the name \"{content}\"; use letters and digits only"
+        ));
     }
     if c.len() == 1 {
         Tok::Ident(SymName::simple(&c, &c))
@@ -672,21 +725,36 @@ mod tests {
         assert_eq!(
             k,
             [
-                "Dot(1)", "Open(Brace)", "id:x", "Close(Brace)", "Eq", "id:sigma", "Open(Paren)",
-                "id:y", "Minus", "id:x", "Close(Paren)"
+                "Dot(1)",
+                "Open(Brace)",
+                "id:x",
+                "Close(Brace)",
+                "Eq",
+                "id:sigma",
+                "Open(Paren)",
+                "id:y",
+                "Minus",
+                "id:x",
+                "Close(Paren)"
             ]
         );
     }
 
     #[test]
     fn latex_ignores_spacing_and_alignment() {
-        let k = kinds("\\begin{cases}x\\,&\\;y\\quad\\!\\end{cases}", InputFormat::Latex);
+        let k = kinds(
+            "\\begin{cases}x\\,&\\;y\\quad\\!\\end{cases}",
+            InputFormat::Latex,
+        );
         assert_eq!(k, ["id:x", "id:y"]);
     }
 
     #[test]
     fn latex_mathrm_and_operatorname() {
-        let k = kinds("\\mathrm{d}\\operatorname{sin}\\mathrm{foo}", InputFormat::Latex);
+        let k = kinds(
+            "\\mathrm{d}\\operatorname{sin}\\mathrm{foo}",
+            InputFormat::Latex,
+        );
         assert_eq!(k, ["id:d", "fn:sin", "id:foo"]);
     }
 
@@ -710,8 +778,17 @@ mod tests {
         assert_eq!(
             k,
             [
-                "id:sigma", "Star", "id:x_1", "Plus", "num:0.0015", "Minus", "num:2", "id:e",
-                "id:x", "Caret", "num:2"
+                "id:sigma",
+                "Star",
+                "id:x_1",
+                "Plus",
+                "num:0.0015",
+                "Minus",
+                "num:2",
+                "id:e",
+                "id:x",
+                "Caret",
+                "num:2"
             ]
         );
     }

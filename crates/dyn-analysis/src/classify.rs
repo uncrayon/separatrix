@@ -108,7 +108,10 @@ impl Classification {
     /// non-hyperbolic points are reported as not stable.
     pub fn is_stable(self) -> bool {
         use Classification::*;
-        matches!(self, StableNode | StableSpiral | StableStar | StableDegenerateNode | Sink)
+        matches!(
+            self,
+            StableNode | StableSpiral | StableStar | StableDegenerateNode | Sink
+        )
     }
 
     /// The display string, identical to the serialised form.
@@ -168,7 +171,11 @@ pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification 
 /// 0), or its eigenvalues overflow, there is no usable linearisation: the
 /// result is `(vec![], NonHyperbolic)`, so that no NaN or infinity reaches
 /// the UI (JSON would turn it into `null`).
-pub fn classify_jacobian(kind: SystemKind, n: usize, jac: &[f64]) -> (Vec<(f64, f64)>, Classification) {
+pub fn classify_jacobian(
+    kind: SystemKind,
+    n: usize,
+    jac: &[f64],
+) -> (Vec<(f64, f64)>, Classification) {
     let no_linearisation = (Vec::new(), Classification::NonHyperbolic);
     if !jac.iter().all(|v| v.is_finite()) {
         return no_linearisation;
@@ -311,10 +318,24 @@ mod tests {
 
     #[test]
     fn stability_flag() {
-        for c in [StableNode, StableSpiral, StableStar, StableDegenerateNode, Sink] {
+        for c in [
+            StableNode,
+            StableSpiral,
+            StableStar,
+            StableDegenerateNode,
+            Sink,
+        ] {
             assert!(c.is_stable(), "{c}");
         }
-        for c in [Saddle, UnstableNode, Centre, NonIsolated, Source, SaddleND, NonHyperbolic] {
+        for c in [
+            Saddle,
+            UnstableNode,
+            Centre,
+            NonIsolated,
+            Source,
+            SaddleND,
+            NonHyperbolic,
+        ] {
             assert!(!c.is_stable(), "{c}");
         }
     }
@@ -325,7 +346,10 @@ mod tests {
         assert_eq!(classify(k, &[(1.0, 0.0), (-1.0, 0.0)]), Saddle);
         assert_eq!(classify(k, &[(-1.0, 2.0), (-1.0, -2.0)]), StableSpiral);
         assert_eq!(classify(k, &[(0.0, 2.0), (0.0, -2.0)]), Centre);
-        assert_eq!(classify(k, &[(-2.0, 0.0), (-2.0, 0.0)]), StableDegenerateNode);
+        assert_eq!(
+            classify(k, &[(-2.0, 0.0), (-2.0, 0.0)]),
+            StableDegenerateNode
+        );
         assert_eq!(classify(k, &[(0.0, 0.0), (-2.0, 0.0)]), NonIsolated);
         assert_eq!(classify(k, &[(3.0, 0.0), (1.0, 0.0)]), UnstableNode);
     }
@@ -339,8 +363,14 @@ mod tests {
         assert_eq!(classify(k, &[(1e-13, 0.0)]), NonHyperbolic);
         assert_eq!(classify(k, &[(-1.0, 1.0), (-1.0, -1.0), (-3.0, 0.0)]), Sink);
         assert_eq!(classify(k, &[(1.0, 1.0), (1.0, -1.0), (3.0, 0.0)]), Source);
-        assert_eq!(classify(k, &[(-1.0, 1.0), (-1.0, -1.0), (3.0, 0.0)]), SaddleND);
-        assert_eq!(classify(k, &[(0.0, 1.0), (0.0, -1.0), (-3.0, 0.0)]), NonHyperbolic);
+        assert_eq!(
+            classify(k, &[(-1.0, 1.0), (-1.0, -1.0), (3.0, 0.0)]),
+            SaddleND
+        );
+        assert_eq!(
+            classify(k, &[(0.0, 1.0), (0.0, -1.0), (-3.0, 0.0)]),
+            NonHyperbolic
+        );
         assert_eq!(classify(k, &[]), NonHyperbolic);
     }
 
@@ -384,7 +414,10 @@ mod tests {
             assert_eq!(back, c);
         }
         assert_eq!(serde_json::to_string(&Centre).unwrap(), "\"center\"");
-        assert_eq!(serde_json::to_string(&SaddleND).unwrap(), "\"saddle (n-D)\"");
+        assert_eq!(
+            serde_json::to_string(&SaddleND).unwrap(),
+            "\"saddle (n-D)\""
+        );
     }
 
     #[test]

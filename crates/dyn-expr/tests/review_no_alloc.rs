@@ -69,7 +69,12 @@ fn check(src: &str) {
             run();
         }
     });
-    assert_eq!(count, 0, "{src}: {count} allocations in 100 rounds ({} instructions)", sys.instruction_count());
+    assert_eq!(
+        count,
+        0,
+        "{src}: {count} allocations in 100 rounds ({} instructions)",
+        sys.instruction_count()
+    );
 }
 
 #[test]

@@ -61,7 +61,11 @@ impl CompiledSystem {
             Some(dof) => Form::Hamiltonian { dof },
             None => Form::Direct,
         };
-        CompiledSystem { info: a.info, program, form }
+        CompiledSystem {
+            info: a.info,
+            program,
+            form,
+        }
     }
 
     /// Evaluate the field into a new vector (convenience for tests and
@@ -134,7 +138,12 @@ impl CompiledSystem {
         self.program.run(
             regs,
             D2::constant(D1::constant(t)),
-            |i| D2::new(D1::new(x[i], one(Some(i) == inner_x)), D1::new(one(i == a), 0.0)),
+            |i| {
+                D2::new(
+                    D1::new(x[i], one(Some(i) == inner_x)),
+                    D1::new(one(i == a), 0.0),
+                )
+            },
             |i| D2::constant(D1::new(p[i], one(Some(i) == inner_p))),
         );
         regs[self.program.outputs[0] as usize].eps.eps

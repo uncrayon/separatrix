@@ -204,7 +204,13 @@ fn richardson(f: impl Fn(f64) -> Vec<f64>, x0: f64) -> (Vec<f64>, Vec<f64>) {
 fn assert_matches_fd(ad: &[f64], (est, err): (Vec<f64>, Vec<f64>), what: &str) {
     for i in 0..ad.len() {
         let tol = 10.0 * err[i] + 1e-7 * (1.0 + est[i].abs());
-        assert!((ad[i] - est[i]).abs() <= tol, "{what}[{i}]: AD {} vs FD {} (±{})", ad[i], est[i], err[i]);
+        assert!(
+            (ad[i] - est[i]).abs() <= tol,
+            "{what}[{i}]: AD {} vs FD {} (±{})",
+            ad[i],
+            est[i],
+            err[i]
+        );
     }
 }
 
@@ -285,7 +291,11 @@ fn random_hamiltonians_match_finite_differences() {
             let x = [r.uniform(-1.2, 1.2), r.uniform(-1.2, 1.2)];
             let p = [r.uniform(0.5, 1.5)];
             let hv = |q: f64, m: f64| eval(&h, q, m, p[0]);
-            assert_close(&[sys.hamiltonian_value(0.0, &x, &p).unwrap()], &[hv(x[0], x[1])], 1e-12);
+            assert_close(
+                &[sys.hamiltonian_value(0.0, &x, &p).unwrap()],
+                &[hv(x[0], x[1])],
+                1e-12,
+            );
             // Field = (∂H/∂p, -∂H/∂q).
             let f = sys.eval_alloc(0.0, &x, &p);
             assert_matches_fd(&[f[0]], richardson(|m| vec![hv(x[0], m)], x[1]), "dH/dp");
@@ -293,8 +303,10 @@ fn random_hamiltonians_match_finite_differences() {
             check_ad(&sys, &x, &p);
             // Hamiltonian flows are divergence-free: trace(J) = 0.
             let j = jac(&sys, 0.0, &x, &p);
-            assert!((j[0] + j[3]).abs() < 1e-9 * (1.0 + j[0].abs()), "case {case}: {j:?}");
+            assert!(
+                (j[0] + j[3]).abs() < 1e-9 * (1.0 + j[0].abs()),
+                "case {case}: {j:?}"
+            );
         }
     }
 }
-

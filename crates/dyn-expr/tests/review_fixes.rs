@@ -7,7 +7,11 @@ use common::*;
 use dyn_expr::{compile, InputFormat, Severity};
 
 fn error_message(src: &str, f: InputFormat) -> String {
-    fails(src, f).into_iter().find(|d| d.severity == Severity::Error).unwrap().message
+    fails(src, f)
+        .into_iter()
+        .find(|d| d.severity == Severity::Error)
+        .unwrap()
+        .message
 }
 
 #[test]
@@ -23,7 +27,9 @@ fn jacobian_is_finite_where_a_root_argument_is_zero() {
     let j = jac(&sys, 0.0, &[0.3, 0.0], &[0.0]);
     assert_close(&j, &[0.0, 1.0, 0.3f64.cos(), 0.0], 1e-15);
     // Away from the singular point, still exact.
-    let sys = latex(r"\dot{x}=x\left(1-\sqrt{x^2+y^2}\right)-y\\\dot{y}=y\left(1-\sqrt{x^2+y^2}\right)+x");
+    let sys = latex(
+        r"\dot{x}=x\left(1-\sqrt{x^2+y^2}\right)-y\\\dot{y}=y\left(1-\sqrt{x^2+y^2}\right)+x",
+    );
     check_derivatives(&sys, 0.0, &[0.3, -0.4], &[], 1e-6);
 }
 
@@ -40,7 +46,11 @@ fn function_argument_stops_before_any_derivative() {
     }
     // Subscripted.
     let sys = latex(r"\ddot{x}_1=-\sin x_1\dot{x}_1");
-    assert_close(&sys.eval_alloc(0.0, &x, &[]), &[0.75, -0.5f64.sin() * 0.75], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &x, &[]),
+        &[0.75, -0.5f64.sin() * 0.75],
+        1e-15,
+    );
     // Ordinary factors are still part of the argument.
     let sys = latex(r"\dot{x}=\sin x y\\\dot{y}=0");
     assert_close(&sys.eval_alloc(0.0, &x, &[]), &[0.375f64.sin(), 0.0], 1e-15);
@@ -67,11 +77,18 @@ fn leibniz_notation_anywhere() {
     for (src, f) in [
         (r"\frac{d^2x}{dt^2}+c\frac{dx}{dt}+kx=0", InputFormat::Latex),
         (r"\ddot{x}=-c\frac{dx}{dt}-kx", InputFormat::Latex),
-        (r"\frac{\mathrm{d}^2x}{\mathrm{d}t^2}=-c\dot{x}-kx", InputFormat::Latex),
+        (
+            r"\frac{\mathrm{d}^2x}{\mathrm{d}t^2}=-c\dot{x}-kx",
+            InputFormat::Latex,
+        ),
         ("x'' + c*(dx/dt) + k*x = 0", InputFormat::Text),
     ] {
         let sys = ok(src, f);
-        assert_eq!(names(&sys), (vec!["x".into(), "x'".into()], vec!["c".into(), "k".into()]), "{src}");
+        assert_eq!(
+            names(&sys),
+            (vec!["x".into(), "x'".into()], vec!["c".into(), "k".into()]),
+            "{src}"
+        );
         assert_close(&sys.eval_alloc(0.0, &x, &p), &expect, 1e-15);
     }
 }
@@ -104,7 +121,11 @@ fn empty_boxes_name_what_is_empty() {
 
 #[test]
 fn constant_zero_denominators() {
-    for src in [r"\dot{x}=\frac{x}{1-1}", r"\dot{x}=\frac{x}{\sin0}", r"\dot{x}=x/(2\pi-2\pi)"] {
+    for src in [
+        r"\dot{x}=\frac{x}{1-1}",
+        r"\dot{x}=\frac{x}{\sin0}",
+        r"\dot{x}=x/(2\pi-2\pi)",
+    ] {
         let out = compile(src, InputFormat::Latex);
         let d = out.diagnostics.iter().find(|d| d.is_error()).expect(src);
         assert_eq!(d.message, "Division by zero", "{src}");
@@ -122,7 +143,9 @@ fn numbers_with_two_decimal_points() {
     assert_eq!(d.message, "A number can have only one decimal point");
     assert_eq!(&src[d.span.unwrap().0..d.span.unwrap().1], "1.2.3");
     assert!(compile("x' = 1..5*x", InputFormat::Text).system.is_none());
-    assert!(compile("x' = 1.5e-3.2*x", InputFormat::Text).system.is_none());
+    assert!(compile("x' = 1.5e-3.2*x", InputFormat::Text)
+        .system
+        .is_none());
     // A trailing point alone is still a number.
     assert_eq!(text("x' = 2.*x").eval_alloc(0.0, &[1.5], &[]), [3.0]);
 }
@@ -131,10 +154,20 @@ fn numbers_with_two_decimal_points() {
 fn maps_of_subscripted_states() {
     // Hénon map with indexed states.
     let sys = latex(r"x_{1,n+1}=1-ax_{1,n}^2+x_{2,n}\\x_{2,n+1}=bx_{1,n}");
-    assert_eq!(names(&sys), (vec!["x_1".into(), "x_2".into()], vec!["a".into(), "b".into()]));
+    assert_eq!(
+        names(&sys),
+        (
+            vec!["x_1".into(), "x_2".into()],
+            vec!["a".into(), "b".into()]
+        )
+    );
     assert_eq!(sys.info.states[0].latex, "x_{1}");
     assert_eq!(sys.info.equations_latex[1], "x_{2,n+1} = b x_{1,n}");
-    assert_close(&sys.eval_alloc(0.0, &[0.5, 0.2], &[1.4, 0.3]), &[1.0 - 0.35 + 0.2, 0.15], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.5, 0.2], &[1.4, 0.3]),
+        &[1.0 - 0.35 + 0.2, 0.15],
+        1e-15,
+    );
     check_derivatives(&sys, 0.0, &[0.5, 0.2], &[1.4, 0.3], 1e-6);
     // Bare x_1 on the right also means x_{1,n}, as x means x_n.
     let sys = latex(r"x_{1,n+1}=x_2\\x_{2,n+1}=-x_1");

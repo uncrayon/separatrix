@@ -40,7 +40,10 @@ async fn compute_portrait(
     store: State<'_, SystemStore>,
 ) -> Result<ipc::PortraitResponse, String> {
     let system = store.get(req.system_id).ok_or_else(|| {
-        format!("System {} is no longer available; edit the equations to recompile.", req.system_id)
+        format!(
+            "System {} is no longer available; edit the equations to recompile.",
+            req.system_id
+        )
     })?;
     tauri::async_runtime::spawn_blocking(move || service::compute_portrait(&system, &req))
         .await
@@ -52,7 +55,11 @@ async fn compute_portrait(
 pub fn run() {
     tauri::Builder::default()
         .manage(SystemStore::new())
-        .invoke_handler(tauri::generate_handler![core_version, compile_system, compute_portrait])
+        .invoke_handler(tauri::generate_handler![
+            core_version,
+            compile_system,
+            compute_portrait
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }

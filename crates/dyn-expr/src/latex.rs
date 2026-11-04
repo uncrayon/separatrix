@@ -34,7 +34,11 @@ struct Out {
 
 impl Out {
     fn new(s: String, prec: Prec) -> Out {
-        Out { s, prec, greedy: false }
+        Out {
+            s,
+            prec,
+            greedy: false,
+        }
     }
 }
 
@@ -60,7 +64,11 @@ fn at_least(o: &Out, p: Prec) -> String {
 /// large or small magnitudes.
 pub(crate) fn fmt_num(v: f64) -> String {
     if !v.is_finite() {
-        return if v.is_nan() { "\\mathrm{NaN}".into() } else { "\\infty".into() };
+        return if v.is_nan() {
+            "\\mathrm{NaN}".into()
+        } else {
+            "\\infty".into()
+        };
     }
     let a = v.abs();
     if v == v.trunc() && a < 1e15 {
@@ -78,9 +86,7 @@ pub(crate) fn fmt_num(v: f64) -> String {
 
 fn go(n: &Node, names: &Names) -> Out {
     match n {
-        Node::Num(v) => {
-            Out::new(fmt_num(*v), if *v < 0.0 { Prec::Sum } else { Prec::Atom })
-        }
+        Node::Num(v) => Out::new(fmt_num(*v), if *v < 0.0 { Prec::Sum } else { Prec::Atom }),
         Node::Pi => Out::new("\\pi".into(), Prec::Atom),
         Node::E => Out::new("e".into(), Prec::Atom),
         Node::Time => Out::new(names.time.into(), Prec::Atom),
@@ -88,7 +94,11 @@ fn go(n: &Node, names: &Names) -> Out {
         Node::Param(i) => Out::new(names.params[*i].clone(), Prec::Atom),
         Node::Neg(a) => {
             let a = go(a, names);
-            Out { s: format!("-{}", at_least(&a, Prec::Product)), prec: Prec::Sum, greedy: false }
+            Out {
+                s: format!("-{}", at_least(&a, Prec::Product)),
+                prec: Prec::Sum,
+                greedy: false,
+            }
         }
         Node::Bin(op, a, b) => bin(*op, a, b, names),
         Node::Call(f, args) => call(*f, args, names),
@@ -119,7 +129,11 @@ fn bin(op: BinOp, a: &Node, b: &Node, names: &Names) -> Out {
             // (-a) b is shown as -a b (the parser reads "-a b" that way).
             let Node::Neg(inner) = a else { unreachable!() };
             let o = bin(BinOp::Mul, inner, b, names);
-            Out { s: format!("-{}", o.s), prec: Prec::Sum, greedy: o.greedy }
+            Out {
+                s: format!("-{}", o.s),
+                prec: Prec::Sum,
+                greedy: o.greedy,
+            }
         }
         BinOp::Mul => {
             let lo = go(a, names);
@@ -129,7 +143,11 @@ fn bin(op: BinOp, a: &Node, b: &Node, names: &Names) -> Out {
             let left_greedy = lo.greedy && lo.prec >= Prec::Product;
             let digit_next = r.starts_with(|c: char| c.is_ascii_digit());
             let mixed_number = l.ends_with(|c: char| c.is_ascii_digit()) && r.starts_with("\\frac");
-            let sep = if left_greedy || digit_next || mixed_number { " \\cdot " } else { " " };
+            let sep = if left_greedy || digit_next || mixed_number {
+                " \\cdot "
+            } else {
+                " "
+            };
             Out {
                 s: format!("{l}{sep}{r}"),
                 prec: Prec::Product,
@@ -161,14 +179,21 @@ fn call(f: Func, args: &[Node], names: &Names) -> Out {
         Func::Exp => Out::new(format!("e^{{{}}}", a.s), Prec::Power),
         Func::Min | Func::Max => {
             let b = go(&args[1], names);
-            Out::new(format!("{}\\left({}, {}\\right)", f.latex_name(), a.s, b.s), Prec::Atom)
+            Out::new(
+                format!("{}\\left({}, {}\\right)", f.latex_name(), a.s, b.s),
+                Prec::Atom,
+            )
         }
         Func::Sign => Out::new(format!("{}{}", f.latex_name(), paren(&a.s)), Prec::Atom),
         _ => {
             let name = f.latex_name();
             if a.prec == Prec::Atom && !a.s.starts_with("\\left") {
                 let sep = if a.s.starts_with('\\') { "" } else { " " };
-                Out { s: format!("{name}{sep}{}", a.s), prec: Prec::Product, greedy: true }
+                Out {
+                    s: format!("{name}{sep}{}", a.s),
+                    prec: Prec::Product,
+                    greedy: true,
+                }
             } else {
                 Out::new(format!("{name}{}", paren(&a.s)), Prec::Atom)
             }
@@ -193,7 +218,14 @@ mod tests {
     fn show(n: &Node) -> String {
         let states = ["x".to_string(), "y".to_string(), "\\theta".to_string()];
         let params = ["\\sigma".to_string(), "r".to_string()];
-        to_latex(n, &Names { states: &states, params: &params, time: "t" })
+        to_latex(
+            n,
+            &Names {
+                states: &states,
+                params: &params,
+                time: "t",
+            },
+        )
     }
 
     #[test]
@@ -202,24 +234,50 @@ mod tests {
         assert_eq!(show(&lorenz_x), "\\sigma \\left(y - x\\right)");
         assert_eq!(show(&b(BinOp::Mul, Node::Num(2.0), s(0))), "2 x");
         assert_eq!(show(&b(BinOp::Mul, s(0), Node::Num(2.0))), "x \\cdot 2");
-        assert_eq!(show(&b(BinOp::Sub, s(0), b(BinOp::Sub, s(1), s(0)))), "x - \\left(y - x\\right)");
-        assert_eq!(show(&b(BinOp::Add, s(0), Node::Neg(Box::new(s(1))))), "x - y");
         assert_eq!(
-            show(&b(BinOp::Mul, Node::Num(2.0), b(BinOp::Div, s(0), Node::Num(3.0)))),
+            show(&b(BinOp::Sub, s(0), b(BinOp::Sub, s(1), s(0)))),
+            "x - \\left(y - x\\right)"
+        );
+        assert_eq!(
+            show(&b(BinOp::Add, s(0), Node::Neg(Box::new(s(1))))),
+            "x - y"
+        );
+        assert_eq!(
+            show(&b(
+                BinOp::Mul,
+                Node::Num(2.0),
+                b(BinOp::Div, s(0), Node::Num(3.0))
+            )),
             "2 \\cdot \\frac{x}{3}"
         );
     }
 
     #[test]
     fn functions_and_powers() {
-        assert_eq!(show(&Node::Neg(Box::new(Node::Call(Func::Sin, vec![s(2)])))), "-\\sin\\theta");
-        assert_eq!(show(&Node::Call(Func::Cos, vec![b(BinOp::Add, s(0), s(1))])), "\\cos\\left(x + y\\right)");
+        assert_eq!(
+            show(&Node::Neg(Box::new(Node::Call(Func::Sin, vec![s(2)])))),
+            "-\\sin\\theta"
+        );
+        assert_eq!(
+            show(&Node::Call(Func::Cos, vec![b(BinOp::Add, s(0), s(1))])),
+            "\\cos\\left(x + y\\right)"
+        );
         let sin_x_y = b(BinOp::Mul, Node::Call(Func::Sin, vec![s(0)]), s(1));
         assert_eq!(show(&sin_x_y), "\\sin x \\cdot y");
-        let sq = b(BinOp::Pow, Node::Call(Func::Sin, vec![s(0)]), Node::Num(2.0));
+        let sq = b(
+            BinOp::Pow,
+            Node::Call(Func::Sin, vec![s(0)]),
+            Node::Num(2.0),
+        );
         assert_eq!(show(&sq), "\\left(\\sin x\\right)^{2}");
-        assert_eq!(show(&b(BinOp::Pow, Node::E, Node::Neg(Box::new(s(0))))), "e^{-x}");
-        assert_eq!(show(&b(BinOp::Pow, b(BinOp::Add, s(0), s(1)), Node::Num(2.0))), "\\left(x + y\\right)^{2}");
+        assert_eq!(
+            show(&b(BinOp::Pow, Node::E, Node::Neg(Box::new(s(0))))),
+            "e^{-x}"
+        );
+        assert_eq!(
+            show(&b(BinOp::Pow, b(BinOp::Add, s(0), s(1)), Node::Num(2.0))),
+            "\\left(x + y\\right)^{2}"
+        );
     }
 
     #[test]

@@ -95,7 +95,11 @@ pub fn fixed_points(
 
     // Accepted roots with their residuals.
     let mut found: Vec<(Vec<f64>, f64)> = Vec::new();
-    let diag = search.iter().map(|(a, b)| (b - a) * (b - a)).sum::<f64>().sqrt();
+    let diag = search
+        .iter()
+        .map(|(a, b)| (b - a) * (b - a))
+        .sum::<f64>()
+        .sqrt();
     let dedup_tol = (DEDUP_REL * diag).max(1e-12);
     let mut seed = vec![0.0; n];
 
@@ -123,7 +127,12 @@ pub fn fixed_points(
         .map(|(x, _)| {
             f.jacobian(0.0, &x, p, &mut jac);
             let (eigenvalues, classification) = classify_jacobian(kind, n, &jac);
-            FixedPoint { x, eigenvalues, classification, stable: classification.is_stable() }
+            FixedPoint {
+                x,
+                eigenvalues,
+                classification,
+                stable: classification.is_stable(),
+            }
         })
         .collect();
     points.sort_by(|a, b| {
@@ -201,7 +210,11 @@ fn in_box(x: &[f64], search: &[(f64, f64)]) -> bool {
 }
 
 fn distance(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b).map(|(u, v)| (u - v) * (u - v)).sum::<f64>().sqrt()
+    a.iter()
+        .zip(b)
+        .map(|(u, v)| (u - v) * (u - v))
+        .sum::<f64>()
+        .sqrt()
 }
 
 fn max_norm(v: &[f64]) -> f64 {
@@ -339,7 +352,11 @@ impl<'a> Newton<'a> {
                 terms += x[i].abs(); // F_i = f_i(x) - x_i
             }
             // An infinite slope says nothing about the size of F_i.
-            let scale = if terms.is_finite() { terms.max(1.0) } else { 1.0 };
+            let scale = if terms.is_finite() {
+                terms.max(1.0)
+            } else {
+                1.0
+            };
             fx[i].abs() <= RESIDUAL_TOL * scale
         });
         if small_residual {
@@ -528,7 +545,11 @@ mod tests {
         let fps = fixed_points(&f, &[], &[(-4.0, 4.0), (-3.0, 3.0)], 12);
         expect_points(
             &fps,
-            &[(&[-PI, 0.0], Saddle), (&[0.0, 0.0], Centre), (&[PI, 0.0], Saddle)],
+            &[
+                (&[-PI, 0.0], Saddle),
+                (&[0.0, 0.0], Centre),
+                (&[PI, 0.0], Saddle),
+            ],
             1e-12,
         );
         // Sorted by x.
@@ -544,7 +565,17 @@ mod tests {
             o[2] = x[0] * x[1] - p[2] * x[2];
         })
         .with_jacobian(|_t, x, p, j| {
-            j.copy_from_slice(&[-p[0], p[0], 0.0, p[1] - x[2], -1.0, -x[0], x[1], x[0], -p[2]]);
+            j.copy_from_slice(&[
+                -p[0],
+                p[0],
+                0.0,
+                p[1] - x[2],
+                -1.0,
+                -x[0],
+                x[1],
+                x[0],
+                -p[2],
+            ]);
         });
         let search = [(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)];
         let fps = fixed_points(&f, &[sigma, r, b], &search, 10);
@@ -575,9 +606,15 @@ mod tests {
 
     #[test]
     fn logistic_map_fixed_points_and_multipliers() {
-        let f = FnField::new(1, 1, SystemKind::Map, |_t, x, p, o| o[0] = p[0] * x[0] * (1.0 - x[0]))
-            .with_jacobian(|_t, x, p, j| j[0] = p[0] * (1.0 - 2.0 * x[0]));
-        for (r, c0, c1) in [(2.5, Source, Sink), (3.2, Source, Source), (0.5, Sink, Source)] {
+        let f = FnField::new(1, 1, SystemKind::Map, |_t, x, p, o| {
+            o[0] = p[0] * x[0] * (1.0 - x[0])
+        })
+        .with_jacobian(|_t, x, p, j| j[0] = p[0] * (1.0 - 2.0 * x[0]));
+        for (r, c0, c1) in [
+            (2.5, Source, Sink),
+            (3.2, Source, Source),
+            (0.5, Sink, Source),
+        ] {
             let fps = fixed_points(&f, &[r], &[(-1.5, 1.5)], 20);
             let star = 1.0 - 1.0 / r;
             let pts = expect_points(&fps, &[(&[0.0], c0), (&[star], c1)], 1e-12);
@@ -586,16 +623,26 @@ mod tests {
         }
         // r = 3: x* = 2/3 has multiplier -1 (period-doubling): non-hyperbolic.
         let fps = fixed_points(&f, &[3.0], &[(-0.5, 1.5)], 20);
-        expect_points(&fps, &[(&[0.0], Source), (&[2.0 / 3.0], NonHyperbolic)], 1e-12);
+        expect_points(
+            &fps,
+            &[(&[0.0], Source), (&[2.0 / 3.0], NonHyperbolic)],
+            1e-12,
+        );
     }
 
     #[test]
     fn one_dimensional_flow() {
         // x' = x - x³: fixed points -1, 1 (sinks), 0 (source).
-        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = x[0] - x[0].powi(3))
-            .with_jacobian(|_t, x, _p, j| j[0] = 1.0 - 3.0 * x[0] * x[0]);
+        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
+            o[0] = x[0] - x[0].powi(3)
+        })
+        .with_jacobian(|_t, x, _p, j| j[0] = 1.0 - 3.0 * x[0] * x[0]);
         let fps = fixed_points(&f, &[], &[(-2.0, 2.0)], 10);
-        expect_points(&fps, &[(&[-1.0], Sink), (&[0.0], Source), (&[1.0], Sink)], 1e-12);
+        expect_points(
+            &fps,
+            &[(&[-1.0], Sink), (&[0.0], Source), (&[1.0], Sink)],
+            1e-12,
+        );
         // x' = x²: a double root, non-hyperbolic.
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = x[0] * x[0])
             .with_jacobian(|_t, x, _p, j| j[0] = 2.0 * x[0]);
@@ -679,7 +726,11 @@ mod tests {
         let disc = ((b - 1.0) * (b - 1.0) + 4.0 * a).sqrt();
         let xp = ((b - 1.0) + disc) / (2.0 * a);
         let xm = ((b - 1.0) - disc) / (2.0 * a);
-        expect_points(&fps, &[(&[xm, b * xm], SaddleND), (&[xp, b * xp], SaddleND)], 1e-10);
+        expect_points(
+            &fps,
+            &[(&[xm, b * xm], SaddleND), (&[xp, b * xp], SaddleND)],
+            1e-10,
+        );
     }
 
     #[test]
@@ -719,12 +770,19 @@ mod tests {
             for seeds in [7, 14, 30] {
                 for r in [1e-8, 1e-6, 1e-3] {
                     let fps = fixed_points(&f, &[r], &search, seeds);
-                    assert!(fps.is_empty(), "r = {r}, box ±{half_width}, {seeds}: {fps:?}");
+                    assert!(
+                        fps.is_empty(),
+                        "r = {r}, box ±{half_width}, {seeds}: {fps:?}"
+                    );
                 }
             }
         }
         let fps = fixed_points(&f, &[-1e-4], &[(-1.0, 1.0); 2], 14);
-        expect_points(&fps, &[(&[-1e-2, 0.0], StableNode), (&[1e-2, 0.0], Saddle)], 1e-12);
+        expect_points(
+            &fps,
+            &[(&[-1e-2, 0.0], StableNode), (&[1e-2, 0.0], Saddle)],
+            1e-12,
+        );
         let fps = fixed_points(&f, &[-1e-4], &[(-100.0, 100.0); 2], 14);
         assert_eq!(fps.len(), 2, "{fps:?}");
     }
@@ -732,15 +790,19 @@ mod tests {
     #[test]
     fn roots_of_functions_with_large_values_are_found() {
         // Simple roots, terms of size 1e12: rounding leaves |F| ≈ 1e-4.
-        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = 1e12 * (x[0] * x[0] - 2.0))
-            .with_jacobian(|_t, x, _p, j| j[0] = 2e12 * x[0]);
+        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
+            o[0] = 1e12 * (x[0] * x[0] - 2.0)
+        })
+        .with_jacobian(|_t, x, _p, j| j[0] = 2e12 * x[0]);
         let fps = fixed_points(&f, &[], &[(-3.0, 3.0)], 10);
         let r2 = 2f64.sqrt();
         expect_points(&fps, &[(&[-r2], Sink), (&[r2], Source)], 1e-12);
         // A double root: Newton converges only linearly and stalls with
         // |F| far above 1e-9; the convergence test still accepts it.
-        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = 1e12 * (1.0 + x[0].sin()))
-            .with_jacobian(|_t, x, _p, j| j[0] = 1e12 * x[0].cos());
+        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
+            o[0] = 1e12 * (1.0 + x[0].sin())
+        })
+        .with_jacobian(|_t, x, _p, j| j[0] = 1e12 * x[0].cos());
         let fps = fixed_points(&f, &[], &[(-3.0, 0.0)], 10);
         assert!(!fps.is_empty());
         for fp in &fps {

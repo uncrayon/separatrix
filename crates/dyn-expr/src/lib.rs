@@ -139,5 +139,8 @@ pub fn compile(source: &str, format: InputFormat) -> CompileOutput {
         _ => None,
     };
     diags.sort_by_key(|d| d.span.map_or(usize::MAX, |s| s.0));
-    CompileOutput { system, diagnostics: diags }
+    CompileOutput {
+        system,
+        diagnostics: diags,
+    }
 }

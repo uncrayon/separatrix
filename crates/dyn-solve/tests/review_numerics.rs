@@ -53,10 +53,20 @@ fn fixed_step_blow_up_step_does_not_produce_wrong_sign_samples() {
 /// "blew up" for textbook blow-up examples.
 #[test]
 fn fast_finite_time_blow_up_is_reported_as_blew_up() {
-    let cubic = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0].powi(3));
+    let cubic = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = x[0].powi(3)
+    });
     let exp = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0].exp());
     for (name, f, x0) in [("x^3", &cubic, 1.0), ("e^x", &exp, 0.0)] {
-        let sol = integrate(f, &[], 0.0, &[x0], 5.0, &SolverOptions::default(), Sampling::Steps);
+        let sol = integrate(
+            f,
+            &[],
+            0.0,
+            &[x0],
+            5.0,
+            &SolverOptions::default(),
+            Sampling::Steps,
+        );
         let (t, x) = sol.last().unwrap();
         assert_eq!(
             sol.status,

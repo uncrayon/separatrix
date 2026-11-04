@@ -7,8 +7,11 @@ use dyn_expr::{compile, CompiledSystem, Diagnostic, InputFormat, Severity};
 /// Compile and insist on success (warnings allowed).
 pub fn ok(src: &str, f: InputFormat) -> CompiledSystem {
     let out = compile(src, f);
-    let errors: Vec<&Diagnostic> =
-        out.diagnostics.iter().filter(|d| d.severity == Severity::Error).collect();
+    let errors: Vec<&Diagnostic> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
     assert!(errors.is_empty(), "{src:?} failed: {errors:#?}");
     out.system.expect("system present when there are no errors")
 }
@@ -25,7 +28,10 @@ pub fn text(src: &str) -> CompiledSystem {
 pub fn fails(src: &str, f: InputFormat) -> Vec<Diagnostic> {
     let out = compile(src, f);
     assert!(out.system.is_none(), "{src:?} should fail");
-    assert!(out.diagnostics.iter().any(|d| d.severity == Severity::Error));
+    assert!(out
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Severity::Error));
     out.diagnostics
 }
 
@@ -39,7 +45,10 @@ pub fn names(sys: &CompiledSystem) -> (Vec<String>, Vec<String>) {
 pub fn assert_close(a: &[f64], b: &[f64], tol: f64) {
     assert_eq!(a.len(), b.len(), "{a:?} vs {b:?}");
     for (i, (x, y)) in a.iter().zip(b).enumerate() {
-        assert!((x - y).abs() <= tol * (1.0 + y.abs()), "entry {i}: {x} vs {y}\n{a:?}\n{b:?}");
+        assert!(
+            (x - y).abs() <= tol * (1.0 + y.abs()),
+            "entry {i}: {x} vs {y}\n{a:?}\n{b:?}"
+        );
     }
 }
 

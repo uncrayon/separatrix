@@ -32,13 +32,28 @@ fn precedence_of_minus_powers_and_implicit_products() {
     // -x^2 is -(x^2), 2x^2 is 2·(x^2), not (2x)^2.
     assert_eq!(eval1(r"\dot{x}=-x^2", 0.0, &[3.0], &[]), [-9.0]);
     assert_eq!(eval1(r"\dot{x}=2x^2", 0.0, &[3.0], &[]), [18.0]);
-    assert_eq!(eval1(r"\dot{x}=-\left(x\right)^{2}", 0.0, &[3.0], &[]), [-9.0]);
+    assert_eq!(
+        eval1(r"\dot{x}=-\left(x\right)^{2}", 0.0, &[3.0], &[]),
+        [-9.0]
+    );
     // \sin^2 x is (sin x)^2; \sin x^2 is sin(x^2).
-    assert_close(&eval1(r"\dot{x}=\sin^2x", 0.0, &[0.7], &[]), &[0.7f64.sin().powi(2)], 1e-15);
-    assert_close(&eval1(r"\dot{x}=\sin x^{2}", 0.0, &[0.7], &[]), &[0.49f64.sin()], 1e-15);
+    assert_close(
+        &eval1(r"\dot{x}=\sin^2x", 0.0, &[0.7], &[]),
+        &[0.7f64.sin().powi(2)],
+        1e-15,
+    );
+    assert_close(
+        &eval1(r"\dot{x}=\sin x^{2}", 0.0, &[0.7], &[]),
+        &[0.49f64.sin()],
+        1e-15,
+    );
     // Documented rule: an unbracketed function takes the following product.
     let sys = latex(r"\dot{x}=\sin x y\\\dot{y}=0");
-    assert_close(&sys.eval_alloc(0.0, &[0.5, 0.75], &[]), &[0.375f64.sin(), 0.0], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.5, 0.75], &[]),
+        &[0.375f64.sin(), 0.0],
+        1e-15,
+    );
     assert_close(
         &eval1(r"\dot{x}=\cos\omega t", 0.3, &[0.0], &[2.0]),
         &[0.6f64.cos()],
@@ -54,22 +69,52 @@ fn precedence_of_minus_powers_and_implicit_products() {
 fn constants_e_exp_pi_and_abs() {
     let v = (-0.7f64).exp();
     assert_close(&eval1(r"\dot{x}=e^{-x}", 0.0, &[0.7], &[]), &[v], 1e-15);
-    assert_close(&eval1(r"\dot{x}=\exponentialE^{-x}", 0.0, &[0.7], &[]), &[v], 1e-15);
-    assert_close(&eval1(r"\dot{x}=\exp\left(-x\right)", 0.0, &[0.7], &[]), &[v], 1e-15);
-    assert_close(&eval1(r"\dot{x}=\mathrm{e}^{-x}", 0.0, &[0.7], &[]), &[v], 1e-15);
-    assert_close(&eval1(r"\dot{x}=2\pi x", 0.0, &[1.0], &[]), &[std::f64::consts::TAU], 1e-15);
+    assert_close(
+        &eval1(r"\dot{x}=\exponentialE^{-x}", 0.0, &[0.7], &[]),
+        &[v],
+        1e-15,
+    );
+    assert_close(
+        &eval1(r"\dot{x}=\exp\left(-x\right)", 0.0, &[0.7], &[]),
+        &[v],
+        1e-15,
+    );
+    assert_close(
+        &eval1(r"\dot{x}=\mathrm{e}^{-x}", 0.0, &[0.7], &[]),
+        &[v],
+        1e-15,
+    );
+    assert_close(
+        &eval1(r"\dot{x}=2\pi x", 0.0, &[1.0], &[]),
+        &[std::f64::consts::TAU],
+        1e-15,
+    );
     assert_eq!(eval1(r"\dot{x}=\left|x\right|", 0.0, &[-2.0], &[]), [2.0]);
-    assert_eq!(eval1(r"\dot{x}=\left\vert x\right\vert", 0.0, &[-2.0], &[]), [2.0]);
-    assert_eq!(eval1(r"\dot{x}=|x|y|z|\\\dot{y}=0\\\dot{z}=0", 0.0, &[-2.0, 3.0, -4.0], &[]), [
-        24.0, 0.0, 0.0
-    ]);
+    assert_eq!(
+        eval1(r"\dot{x}=\left\vert x\right\vert", 0.0, &[-2.0], &[]),
+        [2.0]
+    );
+    assert_eq!(
+        eval1(
+            r"\dot{x}=|x|y|z|\\\dot{y}=0\\\dot{z}=0",
+            0.0,
+            &[-2.0, 3.0, -4.0],
+            &[]
+        ),
+        [24.0, 0.0, 0.0]
+    );
 }
 
 #[test]
 fn nested_fractions() {
     let f = eval1(r"\dot{x}=\frac{1}{1+\frac{1}{x}}", 0.0, &[1.0], &[]);
     assert_eq!(f, [0.5]);
-    let f = eval1(r"\dot{x}=\frac{\frac{1}{x}}{\frac{1}{2}+\frac{x}{1+\frac{1}{x}}}", 0.0, &[0.5], &[]);
+    let f = eval1(
+        r"\dot{x}=\frac{\frac{1}{x}}{\frac{1}{2}+\frac{x}{1+\frac{1}{x}}}",
+        0.0,
+        &[0.5],
+        &[],
+    );
     assert_close(&f, &[3.0], 1e-15);
 }
 
@@ -78,7 +123,11 @@ fn realistic_mathlive_and_student_systems() {
     // Non-autonomous 1D flow.
     let sys = latex(r"\dot{x}=-x+\sin\left(t\right)");
     assert!(!sys.info.autonomous);
-    assert_close(&sys.eval_alloc(1.0, &[0.5], &[]), &[-0.5 + 1f64.sin()], 1e-15);
+    assert_close(
+        &sys.eval_alloc(1.0, &[0.5], &[]),
+        &[-0.5 + 1f64.sin()],
+        1e-15,
+    );
 
     // Prime as MathLive writes it.
     let sys = latex(r"x^{\prime}=y\\y^{\prime}=-x");
@@ -90,19 +139,37 @@ fn realistic_mathlive_and_student_systems() {
 
     // Pendulum, order reduction.
     let sys = latex(r"\theta^{\prime\prime}=-\frac{g}{L}\sin\theta");
-    assert_eq!(names(&sys), (vec!["theta".into(), "theta'".into()], vec!["g".into(), "L".into()]));
-    assert_close(&sys.eval_alloc(0.0, &[0.5, 0.75], &[9.8, 2.0]), &[0.75, -4.9 * 0.5f64.sin()], 1e-15);
+    assert_eq!(
+        names(&sys),
+        (
+            vec!["theta".into(), "theta'".into()],
+            vec!["g".into(), "L".into()]
+        )
+    );
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.5, 0.75], &[9.8, 2.0]),
+        &[0.75, -4.9 * 0.5f64.sin()],
+        1e-15,
+    );
 
     // Logistic map.
     let sys = latex(r"x_{n+1}=rx_n(1-x_n)");
     assert_eq!(sys.kind(), SystemKind::Map);
-    assert_close(&sys.eval_alloc(0.0, &[0.2], &[3.7]), &[3.7 * 0.2 * 0.8], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.2], &[3.7]),
+        &[3.7 * 0.2 * 0.8],
+        1e-15,
+    );
 
     // Hamiltonian harmonic oscillator.
     let sys = latex(r"H(q,p)=\frac{p^2}{2m}+\frac{1}{2}kq^2");
     assert!(sys.info.hamiltonian);
     assert_eq!(names(&sys).1, ["m", "k"]);
-    assert_close(&sys.eval_alloc(0.0, &[0.5, 0.75], &[2.0, 3.0]), &[0.375, -1.5], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[0.5, 0.75], &[2.0, 3.0]),
+        &[0.375, -1.5],
+        1e-15,
+    );
 
     // Pitchfork normal form, product of two states.
     let sys = latex(r"\dot{x}=\mu x-x^3");
@@ -133,7 +200,21 @@ fn realistic_mathlive_and_student_systems() {
 
 #[test]
 fn degenerate_inputs_give_located_errors() {
-    for src in ["", "=", "=x", "x", r"\dot{x}", r"\dot{x}=", r"\dot{}=x", "x'=x'=x", r"\left(", "^", "_", "\\", "''"] {
+    for src in [
+        "",
+        "=",
+        "=x",
+        "x",
+        r"\dot{x}",
+        r"\dot{x}=",
+        r"\dot{}=x",
+        "x'=x'=x",
+        r"\left(",
+        "^",
+        "_",
+        "\\",
+        "''",
+    ] {
         let out = compile(src, InputFormat::Latex);
         assert!(out.system.is_none(), "{src:?}");
         for d in &out.diagnostics {
@@ -156,13 +237,37 @@ fn exact_jacobians_match_central_differences() {
             &[0.3, -0.2, 0.1, 0.4],
             0.0,
         ),
-        (r"H(\theta,p)=\frac{p^2}{2mL^2}-mgL\cos\theta", &[0.9, 0.2], 0.0),
-        (r"H(q,p)=\frac{p^2}{2}+\frac{q^2}{2}\cos t", &[0.9, 0.2], 0.4),
+        (
+            r"H(\theta,p)=\frac{p^2}{2mL^2}-mgL\cos\theta",
+            &[0.9, 0.2],
+            0.0,
+        ),
+        (
+            r"H(q,p)=\frac{p^2}{2}+\frac{q^2}{2}\cos t",
+            &[0.9, 0.2],
+            0.4,
+        ),
         (r"H(q,p)=\frac{p^2}{2}+aq^{n}", &[0.9, 0.2], 0.0),
-        (r"\theta^{\prime\prime}=-\frac{g}{L}\sin\theta", &[0.4, 0.3], 0.0),
-        (r"\ddot{x}+2\zeta\omega\dot{x}+\omega^2x=F\cos\left(\Omega t\right)", &[0.4, 0.3], 0.5),
-        (r"mr\ddot{\phi}=-b\dot{\phi}-mg\sin\phi+mr\omega^2\sin\phi\cos\phi", &[0.4, 0.3], 0.0),
-        (r"\ddot{x}+\mu\left(x^2-1\right)\dot{x}+x=0", &[0.4, 0.3], 0.0),
+        (
+            r"\theta^{\prime\prime}=-\frac{g}{L}\sin\theta",
+            &[0.4, 0.3],
+            0.0,
+        ),
+        (
+            r"\ddot{x}+2\zeta\omega\dot{x}+\omega^2x=F\cos\left(\Omega t\right)",
+            &[0.4, 0.3],
+            0.5,
+        ),
+        (
+            r"mr\ddot{\phi}=-b\dot{\phi}-mg\sin\phi+mr\omega^2\sin\phi\cos\phi",
+            &[0.4, 0.3],
+            0.0,
+        ),
+        (
+            r"\ddot{x}+\mu\left(x^2-1\right)\dot{x}+x=0",
+            &[0.4, 0.3],
+            0.0,
+        ),
         (r"\dddot{x}=-a\ddot{x}-\dot{x}^2+x", &[0.4, 0.3, -0.2], 0.0),
         (r"x_{n+1}=rx_n(1-x_n)", &[0.3], 0.0),
         (r"x_{n+1}=1-ax_n^2+y_n\\y_{n+1}=bx_n", &[0.3, 0.1], 0.0),
@@ -180,13 +285,73 @@ fn exact_jacobians_match_central_differences() {
 #[test]
 fn random_snippets_never_panic_and_spans_are_valid() {
     const FRAG: &[&str] = &[
-        "x", "y", "t", "n", "H", "q", "p", "d", "e", "2", "1", "0", ".", "10", "=", "=", "+", "-",
-        "^", "_", "'", "(", ")", "{", "}", "[", "]", "|", ",", ";", "\n", "\\\\", "\\dot",
-        "\\ddot", "\\frac", "\\sqrt", "\\sin", "\\exp", "\\ln", "\\left(", "\\right)", "\\left|",
-        "\\right|", "\\prime", "\\pi", "\\theta", "\\mathrm{d}", "\\cdot", "\\max", "x_{n+1}",
-        "x_n", "\\placeholder{}", " ", "θ", "\\operatorname{", "\\begin{cases}", "\\end{cases}",
-        "&", "\\sqrt[", "\\left.", "{,}", "\\differentialD", "\\", "\\sin^{-1}", "^{\\prime}",
-        "*", "/",
+        "x",
+        "y",
+        "t",
+        "n",
+        "H",
+        "q",
+        "p",
+        "d",
+        "e",
+        "2",
+        "1",
+        "0",
+        ".",
+        "10",
+        "=",
+        "=",
+        "+",
+        "-",
+        "^",
+        "_",
+        "'",
+        "(",
+        ")",
+        "{",
+        "}",
+        "[",
+        "]",
+        "|",
+        ",",
+        ";",
+        "\n",
+        "\\\\",
+        "\\dot",
+        "\\ddot",
+        "\\frac",
+        "\\sqrt",
+        "\\sin",
+        "\\exp",
+        "\\ln",
+        "\\left(",
+        "\\right)",
+        "\\left|",
+        "\\right|",
+        "\\prime",
+        "\\pi",
+        "\\theta",
+        "\\mathrm{d}",
+        "\\cdot",
+        "\\max",
+        "x_{n+1}",
+        "x_n",
+        "\\placeholder{}",
+        " ",
+        "θ",
+        "\\operatorname{",
+        "\\begin{cases}",
+        "\\end{cases}",
+        "&",
+        "\\sqrt[",
+        "\\left.",
+        "{,}",
+        "\\differentialD",
+        "\\",
+        "\\sin^{-1}",
+        "^{\\prime}",
+        "*",
+        "/",
     ];
     let mut s = 0x9E37_79B9_7F4A_7C15_u64;
     let mut next = move || {
@@ -197,13 +362,18 @@ fn random_snippets_never_panic_and_spans_are_valid() {
     };
     for _ in 0..20_000 {
         let len = 1 + next() % 14;
-        let src: String = (0..len).map(|_| FRAG[(next() % FRAG.len() as u64) as usize]).collect();
+        let src: String = (0..len)
+            .map(|_| FRAG[(next() % FRAG.len() as u64) as usize])
+            .collect();
         for fmt in [InputFormat::Latex, InputFormat::Text] {
             let out = compile(&src, fmt);
             for d in &out.diagnostics {
                 if let Some((a, b)) = d.span {
                     assert!(
-                        a <= b && b <= src.len() && src.is_char_boundary(a) && src.is_char_boundary(b),
+                        a <= b
+                            && b <= src.len()
+                            && src.is_char_boundary(a)
+                            && src.is_char_boundary(b),
                         "{src:?}: {d:?}"
                     );
                 }
@@ -299,7 +469,11 @@ fn bug_leibniz_second_derivative_in_implicit_equation() {
 fn bug_function_argument_swallows_dotted_derivative() {
     let sys = latex(r"\ddot{\theta}=-\sin\theta\dot{\theta}");
     let (th, w) = (0.5f64, 0.75);
-    assert_close(&sys.eval_alloc(0.0, &[th, w], &[]), &[w, -th.sin() * w], 1e-15);
+    assert_close(
+        &sys.eval_alloc(0.0, &[th, w], &[]),
+        &[w, -th.sin() * w],
+        1e-15,
+    );
 }
 
 /// Parameters must be listed "in order of first appearance" (contract).
@@ -316,7 +490,12 @@ fn bug_parameter_order_is_not_first_appearance_in_rearranged_line() {
 /// unmatched brace, which is false and confusing.
 #[test]
 fn bug_empty_braces_are_reported_as_unmatched() {
-    for src in [r"\dot{x}=\frac{}{}", r"\dot{x}=\frac{1}{}", r"\dot{x}=x^{}", r"\dot{x}=\sqrt{}"] {
+    for src in [
+        r"\dot{x}=\frac{}{}",
+        r"\dot{x}=\frac{1}{}",
+        r"\dot{x}=x^{}",
+        r"\dot{x}=\sqrt{}",
+    ] {
         let m = first_error_message(src);
         assert!(!m.contains("no matching"), "{src}: {m}");
     }
@@ -336,14 +515,22 @@ fn bug_dy_dx_gets_a_generic_message() {
 #[test]
 fn bug_division_by_constant_zero_expression_compiles() {
     let out = compile(r"\dot{x}=\frac{x}{1-1}", InputFormat::Latex);
-    assert!(out.system.is_none(), "evaluates to {:?}", out.system.map(|s| s.eval_alloc(0.0, &[1.0], &[])));
+    assert!(
+        out.system.is_none(),
+        "evaluates to {:?}",
+        out.system.map(|s| s.eval_alloc(0.0, &[1.0], &[]))
+    );
 }
 
 /// `1.2.3` is silently read as 1.2 · 0.3.
 #[test]
 fn bug_number_with_two_decimal_points_is_accepted() {
     let out = compile(r"\dot{x}=1.2.3x", InputFormat::Latex);
-    assert!(out.system.is_none(), "{:?}", out.system.map(|s| s.info.equations_latex));
+    assert!(
+        out.system.is_none(),
+        "{:?}",
+        out.system.map(|s| s.info.equations_latex)
+    );
 }
 
 /// Maps of subscripted states cannot be entered, although the display form
@@ -371,7 +558,12 @@ fn bug_hamiltonian_duplicate_argument_message_uses_internal_name() {
 #[test]
 fn bug_deep_or_long_input_overflows_the_stack() {
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "deep_input_child", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "deep_input_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env("DYN_EXPR_DEEP_CHILD", "1")
         .output()
         .unwrap();
@@ -379,7 +571,10 @@ fn bug_deep_or_long_input_overflows_the_stack() {
         out.status.success(),
         "compile crashed the process ({}): {}",
         out.status,
-        String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .last()
+            .unwrap_or("")
     );
 }
 
@@ -390,7 +585,11 @@ fn deep_input_child() {
     if std::env::var_os("DYN_EXPR_DEEP_CHILD").is_none() {
         return;
     }
-    let nested = format!(r"\dot{{x}}={}x{}", r"\left(".repeat(3000), r"\right)".repeat(3000));
+    let nested = format!(
+        r"\dot{{x}}={}x{}",
+        r"\left(".repeat(3000),
+        r"\right)".repeat(3000)
+    );
     let long = format!(r"\dot{{x}}=x{}", "+x".repeat(20_000));
     let h = std::thread::Builder::new()
         .stack_size(8 << 20)

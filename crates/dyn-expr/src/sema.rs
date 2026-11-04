@@ -100,12 +100,19 @@ fn classify(line: Line, text: bool) -> Result<Eqn, Diagnostic> {
         _ if has_deriv(&lhs) || has_deriv(&rhs) => return rearrange(&lhs, &rhs, span, text),
         _ => {
             let msg = other_variable_message(&lhs, text).unwrap_or_else(|| {
-                format!("Can't tell what this line defines. Start it with {}", examples(text))
+                format!(
+                    "Can't tell what this line defines. Start it with {}",
+                    examples(text)
+                )
             });
             return Err(error(msg, lhs_span));
         }
     };
-    Ok(Eqn { target, rhs, lhs_span })
+    Ok(Eqn {
+        target,
+        rhs,
+        lhs_span,
+    })
 }
 
 fn hamiltonian_args(args: &[Ast], span: Span, text: bool) -> Result<Vec<SymName>, Diagnostic> {
@@ -114,7 +121,10 @@ fn hamiltonian_args(args: &[Ast], span: Span, text: bool) -> Result<Vec<SymName>
         match &a.kind {
             AstKind::Sym(s) => {
                 if out.iter().any(|o| o.name == s.name) {
-                    return Err(error(format!("{} is listed twice in H(…)", show(s, text)), a.span));
+                    return Err(error(
+                        format!("{} is listed twice in H(…)", show(s, text)),
+                        a.span,
+                    ));
                 }
                 out.push(s.clone());
             }
@@ -201,7 +211,9 @@ fn leibniz_wrt(a: &Ast) -> Option<(SymName, u32, SymName)> {
             }
         }
         AstKind::Bin(BinOp::Mul, op, x) => {
-            let AstKind::Bin(BinOp::Div, d, den) = &op.kind else { return None };
+            let AstKind::Bin(BinOp::Div, d, den) = &op.kind else {
+                return None;
+            };
             let (k, var) = d_var_power(den)?;
             match &x.kind {
                 AstKind::Sym(s) if d_power(d) == Some(k) => Some((s.clone(), k, var)),
@@ -228,10 +240,14 @@ fn leibniz_to_deriv(a: Ast) -> Ast {
     }
     let kind = match a.kind {
         AstKind::Neg(x) => AstKind::Neg(Box::new(leibniz_to_deriv(*x))),
-        AstKind::Bin(op, x, y) => {
-            AstKind::Bin(op, Box::new(leibniz_to_deriv(*x)), Box::new(leibniz_to_deriv(*y)))
+        AstKind::Bin(op, x, y) => AstKind::Bin(
+            op,
+            Box::new(leibniz_to_deriv(*x)),
+            Box::new(leibniz_to_deriv(*y)),
+        ),
+        AstKind::Call(f, args) => {
+            AstKind::Call(f, args.into_iter().map(leibniz_to_deriv).collect())
         }
-        AstKind::Call(f, args) => AstKind::Call(f, args.into_iter().map(leibniz_to_deriv).collect()),
         AstKind::Apply(s, args) => {
             AstKind::Apply(s, args.into_iter().map(leibniz_to_deriv).collect())
         }
@@ -251,9 +267,17 @@ fn other_variable_message(lhs: &Ast, text: bool) -> Option<String> {
     });
     let (y, k, x) = found?;
     let (yd, xd, yt) = if text {
-        (show_deriv(&y, 1, true), show_deriv(&x, 1, true), format!("d{}/dt", y.name))
+        (
+            show_deriv(&y, 1, true),
+            show_deriv(&x, 1, true),
+            format!("d{}/dt", y.name),
+        )
     } else {
-        (show_deriv(&y, 1, false), show_deriv(&x, 1, false), format!("\\frac{{d{}}}{{dt}}", y.latex()))
+        (
+            show_deriv(&y, 1, false),
+            show_deriv(&x, 1, false),
+            format!("\\frac{{d{}}}{{dt}}", y.latex()),
+        )
     };
     let (yn, xn) = (show(&y, text), show(&x, text));
     let mut msg = format!(
@@ -353,7 +377,10 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
             format!(
                 "Several highest derivatives ({}) appear in one line; write one equation per \
                  variable, each starting with its derivative",
-                tops.iter().map(|s| show_deriv(s, top, text)).collect::<Vec<_>>().join(", ")
+                tops.iter()
+                    .map(|s| show_deriv(s, top, text))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             span,
         ));
@@ -363,8 +390,9 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
     let mut terms = Vec::new();
     flatten(lhs, 1.0, &mut terms);
     flatten(rhs, -1.0, &mut terms);
-    let (with, without): (Vec<_>, Vec<_>) =
-        terms.into_iter().partition(|(_, t)| contains_target(t, &target.name, top));
+    let (with, without): (Vec<_>, Vec<_>) = terms
+        .into_iter()
+        .partition(|(_, t)| contains_target(t, &target.name, top));
     if with.len() != 1 {
         return Err(error(
             format!(
@@ -376,7 +404,10 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
     }
     let (s0, term) = &with[0];
     let Some((s1, num, den)) = extract(term, &target.name, top) else {
-        return Err(error(format!("Can't solve this line for {dname}; write it as {dname} = …"), span));
+        return Err(error(
+            format!("Can't solve this line for {dname}; write it as {dname} = …"),
+            span,
+        ));
     };
     let sigma = s0 * s1;
     // 0 = σ·num·D/den + Σ sᵢ tᵢ  ⇒  D = den · Σ(−σ sᵢ tᵢ) / num   (σ = ±1).
@@ -402,7 +433,11 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
     if let Some(n) = num {
         out = Ast::bin(BinOp::Div, out, n);
     }
-    Ok(Eqn { target: Target::Ode(target, top), rhs: out, lhs_span: span })
+    Ok(Eqn {
+        target: Target::Ode(target, top),
+        rhs: out,
+        lhs_span: span,
+    })
 }
 
 // ----- states ------------------------------------------------------------
@@ -449,7 +484,10 @@ impl StateTable {
         }
         if self.by_name.contains_key(&s.name) {
             diags.push(error(
-                format!("{} has more than one equation; keep only one", show(s, text)),
+                format!(
+                    "{} has more than one equation; keep only one",
+                    show(s, text)
+                ),
                 span,
             ));
             return false;
@@ -531,10 +569,13 @@ fn function_typo(name: &str, text: bool, table: &StateTable) -> Option<String> {
     for f in FUNCTION_WORDS {
         if name.len() > f.len() && name.starts_with(f) {
             let rest = &name[f.len()..];
-            let plausible =
-                rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
+            let plausible = rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
             if plausible && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                let fix = if text { format!("{f}({rest})") } else { format!("\\{f} {rest}") };
+                let fix = if text {
+                    format!("{f}({rest})")
+                } else {
+                    format!("\\{f} {rest}")
+                };
                 return Some(format!("{name} is not a function; did you mean {fix}?"));
             }
         }
@@ -592,7 +633,11 @@ impl Resolver<'_> {
         }
         if self.kind == SystemKind::Map {
             // x_n is the current iterate of x.
-            if let Some(idx) = s.name.strip_suffix("_n").and_then(|b| self.table.by_name.get(b)) {
+            if let Some(idx) = s
+                .name
+                .strip_suffix("_n")
+                .and_then(|b| self.table.by_name.get(b))
+            {
                 return Node::State(idx[0]);
             }
         }
@@ -641,7 +686,10 @@ impl Resolver<'_> {
                     span,
                 )
             }
-            None => self.fail(format!("{d} appears on the right, but {x} has no equation"), span),
+            None => self.fail(
+                format!("{d} appears on the right, but {x} has no equation"),
+                span,
+            ),
         }
     }
 
@@ -668,7 +716,10 @@ impl Resolver<'_> {
         }
         if !self.text {
             return self.fail(
-                format!("{}(…) can only be used on the left, as in H(q, p) = …", s.name),
+                format!(
+                    "{}(…) can only be used on the left, as in H(q, p) = …",
+                    s.name
+                ),
                 span,
             );
         }
@@ -729,7 +780,11 @@ pub(crate) fn analyze(
     let first_map = eqns.iter().position(|e| matches!(e.target, Target::Map(_)));
     let kind = match (first_flow, first_map) {
         (Some(a), Some(b)) => {
-            let (ode, map) = if text { ("x' = …", "x_{n+1} = …") } else { ("\\dot{x} = …", "x_{n+1} = …") };
+            let (ode, map) = if text {
+                ("x' = …", "x_{n+1} = …")
+            } else {
+                ("\\dot{x} = …", "x_{n+1} = …")
+            };
             diags.push(error(
                 format!(
                     "This mixes differential equations ({ode}) and maps ({map}); \
@@ -755,11 +810,17 @@ pub(crate) fn analyze(
     };
 
     // A Hamiltonian must stand alone.
-    let hams: Vec<&Eqn> = eqns.iter().filter(|e| matches!(e.target, Target::Ham(_))).collect();
+    let hams: Vec<&Eqn> = eqns
+        .iter()
+        .filter(|e| matches!(e.target, Target::Ham(_)))
+        .collect();
     let mut hamiltonian_dof = None;
     if let Some(first) = hams.first() {
         if let Some(second) = hams.get(1) {
-            diags.push(error("Only one Hamiltonian H(…) = … is allowed", second.lhs_span));
+            diags.push(error(
+                "Only one Hamiltonian H(…) = … is allowed",
+                second.lhs_span,
+            ));
             return None;
         }
         if let Some(ode) = eqns.iter().find(|e| matches!(e.target, Target::Ode(..))) {
@@ -782,9 +843,9 @@ pub(crate) fn analyze(
         accepted[i] = match &e.target {
             Target::Ode(s, k) => table.add(s, *k, kind, e.lhs_span, text, diags),
             Target::Map(s) => table.add(s, 1, kind, e.lhs_span, text, diags),
-            Target::Ham(args) => {
-                args.iter().all(|a| table.add(a, 1, kind, e.lhs_span, text, diags))
-            }
+            Target::Ham(args) => args
+                .iter()
+                .all(|a| table.add(a, 1, kind, e.lhs_span, text, diags)),
             Target::Default(_) => false,
         };
     }
@@ -793,7 +854,9 @@ pub(crate) fn analyze(
     let mut defaults: HashMap<String, f64> = HashMap::new();
     let mut default_lines: Vec<(SymName, Span)> = Vec::new();
     for e in &eqns {
-        let Target::Default(s) = &e.target else { continue };
+        let Target::Default(s) = &e.target else {
+            continue;
+        };
         let a = show(s, text);
         if table.by_name.contains_key(&s.name) {
             diags.push(error(
@@ -817,7 +880,10 @@ pub(crate) fn analyze(
                     default_lines.push((s.clone(), e.lhs_span));
                 }
             }
-            Ok(_) => diags.push(error(format!("The value of {a} isn't a finite number"), e.rhs.span)),
+            Ok(_) => diags.push(error(
+                format!("The value of {a} isn't a finite number"),
+                e.rhs.span,
+            )),
             Err(ConstErr::Other(msg, span)) => diags.push(error(msg, span)),
             Err(ConstErr::Symbol(used)) => {
                 let msg = if s.name == "H" {
@@ -877,7 +943,10 @@ pub(crate) fn analyze(
     for (s, span) in &default_lines {
         if !param_index.contains_key(&s.name) {
             diags.push(Diagnostic::warning(
-                format!("{} is given a value but isn't used in any equation", show(s, text)),
+                format!(
+                    "{} is given a value but isn't used in any equation",
+                    show(s, text)
+                ),
                 Some(*span),
             ));
         }
@@ -890,10 +959,16 @@ pub(crate) fn analyze(
             continue;
         }
         let base = s.name.split('_').next().unwrap_or("");
-        let sibling = table.syms.iter().any(|t| t.sub_latex.is_some() && t.name.starts_with(&format!("{base}_")));
+        let sibling = table
+            .syms
+            .iter()
+            .any(|t| t.sub_latex.is_some() && t.name.starts_with(&format!("{base}_")));
         if STATE_LIKE.contains(&s.name.as_str()) || sibling {
             diags.push(Diagnostic::warning(
-                format!("{} has no equation; treating it as a parameter", show(s, text)),
+                format!(
+                    "{} has no equation; treating it as a parameter",
+                    show(s, text)
+                ),
                 Some(*span),
             ));
         }
@@ -945,7 +1020,13 @@ pub(crate) fn analyze(
             })
             .collect(),
         (SystemKind::Map, None) => (0..table.len())
-            .map(|i| format!("{} = {}", table.syms[i].map_latex("n+1"), to_latex(&roots[i], &names)))
+            .map(|i| {
+                format!(
+                    "{} = {}",
+                    table.syms[i].map_latex("n+1"),
+                    to_latex(&roots[i], &names)
+                )
+            })
             .collect(),
     };
 

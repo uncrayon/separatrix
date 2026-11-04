@@ -159,7 +159,11 @@ impl Program {
     pub(crate) fn compile(roots: &[Node]) -> Program {
         let mut b = Builder::default();
         let outputs: Vec<Reg> = roots.iter().map(|n| b.lower(n)).collect();
-        Program { insts: b.insts, outputs }.without_dead_code()
+        Program {
+            insts: b.insts,
+            outputs,
+        }
+        .without_dead_code()
     }
 
     /// Number of registers needed.
@@ -213,7 +217,11 @@ impl Program {
                 insts.push(inst.remap(|a| new_index[a as usize]));
             }
         }
-        let outputs = self.outputs.iter().map(|&o| new_index[o as usize]).collect();
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|&o| new_index[o as usize])
+            .collect();
         Program { insts, outputs }
     }
 }
@@ -420,13 +428,19 @@ mod tests {
             Node::Num(0.0),
         );
         let p = Program::compile(&[n]);
-        assert_eq!(p.insts, vec![Inst::State(0), Inst::Const(8.0 / 3.0), Inst::Mul(0, 1)]);
+        assert_eq!(
+            p.insts,
+            vec![Inst::State(0), Inst::Const(8.0 / 3.0), Inst::Mul(0, 1)]
+        );
     }
 
     #[test]
     fn integer_powers_are_products() {
         let p = Program::compile(&[Node::bin(BinOp::Pow, st(0), Node::Num(3.0))]);
-        assert!(p.insts.iter().all(|i| !matches!(i, Inst::PowI(..) | Inst::PowC(..))));
+        assert!(p
+            .insts
+            .iter()
+            .all(|i| !matches!(i, Inst::PowI(..) | Inst::PowC(..))));
         assert_eq!(eval(&p, &[-2.0]), vec![-8.0]);
         let p = Program::compile(&[Node::bin(BinOp::Pow, st(0), Node::Num(-3.0))]);
         assert_eq!(eval(&p, &[2.0]), vec![0.125]);

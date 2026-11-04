@@ -99,7 +99,11 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
     let diagnostics = out
         .diagnostics
         .into_iter()
-        .map(|d| Diagnostic { severity: d.severity, message: d.message, span: d.span })
+        .map(|d| Diagnostic {
+            severity: d.severity,
+            message: d.message,
+            span: d.span,
+        })
         .collect();
     match out.system {
         Some(system) => {
@@ -114,12 +118,19 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
                 states: info
                     .states
                     .into_iter()
-                    .map(|s| SymbolInfo { name: s.name, latex: s.latex })
+                    .map(|s| SymbolInfo {
+                        name: s.name,
+                        latex: s.latex,
+                    })
                     .collect(),
                 params: info
                     .params
                     .into_iter()
-                    .map(|p| ParamInfo { name: p.name, latex: p.latex, default: p.default })
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        latex: p.latex,
+                        default: p.default,
+                    })
                     .collect(),
                 equations_latex: info.equations_latex,
                 diagnostics,
@@ -179,7 +190,12 @@ pub fn compute_portrait(
     let arrows = if req.field_grid > 0 && !is_map {
         dyn_analysis::slope_field(f, p, &plane, req.field_grid.min(MAX_FIELD_GRID))
             .into_iter()
-            .map(|a| Arrow { x: a.x, y: a.y, u: a.u, v: a.v })
+            .map(|a| Arrow {
+                x: a.x,
+                y: a.y,
+                u: a.u,
+                v: a.v,
+            })
             .collect()
     } else {
         Vec::new()
@@ -188,7 +204,10 @@ pub fn compute_portrait(
     let nullclines = if req.nullclines && !is_map {
         dyn_analysis::nullclines(f, p, &plane, NULLCLINE_GRID)
             .into_iter()
-            .map(|n| NullclineOut { state: n.state, polylines: n.polylines })
+            .map(|n| NullclineOut {
+                state: n.state,
+                polylines: n.polylines,
+            })
             .collect()
     } else {
         Vec::new()
@@ -200,7 +219,10 @@ pub fn compute_portrait(
             .into_iter()
             .filter(|fp| {
                 fp.x.iter().all(|v| v.is_finite())
-                    && fp.eigenvalues.iter().all(|(re, im)| re.is_finite() && im.is_finite())
+                    && fp
+                        .eigenvalues
+                        .iter()
+                        .all(|(re, im)| re.is_finite() && im.is_finite())
             })
             .map(|fp| FixedPointOut {
                 x: fp.x,
@@ -251,7 +273,9 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
     }
     for (name, (lo, hi)) in [("horizontal", req.x_range), ("vertical", req.y_range)] {
         if !(lo.is_finite() && hi.is_finite() && lo < hi) {
-            return Err(format!("The {name} range [{lo}, {hi}] is not a valid interval."));
+            return Err(format!(
+                "The {name} range [{lo}, {hi}] is not a valid interval."
+            ));
         }
     }
     for (k, tr) in req.trajectories.iter().enumerate() {
@@ -296,7 +320,12 @@ pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f6
                 .find(|(a, _)| *a == AxisRef::State { index: i })
                 .map(|(_, r)| *r);
             on_axis.unwrap_or_else(|| {
-                let c = req.base_state.get(i).copied().filter(|v| v.is_finite()).unwrap_or(0.0);
+                let c = req
+                    .base_state
+                    .get(i)
+                    .copied()
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(0.0);
                 (c - span, c + span)
             })
         })
@@ -323,7 +352,11 @@ fn trajectory(
     req: &PortraitRequest,
 ) -> TrajectoryOut {
     let sol = if f.kind() == SystemKind::Map {
-        let n = if tr.t1.is_finite() { tr.t1.round().clamp(0.0, MAX_ITERATES as f64) } else { 0.0 };
+        let n = if tr.t1.is_finite() {
+            tr.t1.round().clamp(0.0, MAX_ITERATES as f64)
+        } else {
+            0.0
+        };
         dyn_solve::iterate_map(f, p, &tr.x0, n as usize, 0)
     } else {
         let s = req.solver;
@@ -341,7 +374,12 @@ fn trajectory(
         };
         dyn_solve::integrate(f, p, tr.t0, &tr.x0, tr.t1, &opts, sampling)
     };
-    TrajectoryOut { t: sol.t, x: sol.x, status: sol.status, stats: sol.stats }
+    TrajectoryOut {
+        t: sol.t,
+        x: sol.x,
+        status: sol.status,
+        stats: sol.stats,
+    }
 }
 
 #[cfg(test)]
@@ -381,7 +419,10 @@ mod tests {
     }
 
     fn template(id: &str) -> Template {
-        templates().into_iter().find(|t| t.id == id).expect("template exists")
+        templates()
+            .into_iter()
+            .find(|t| t.id == id)
+            .expect("template exists")
     }
 
     /// Same rule as `resolveAxis` in `app/src/state/model.ts`.
@@ -398,10 +439,23 @@ mod tests {
 
     fn compile_ok(store: &SystemStore, t: &Template) -> CompileResponse {
         let source = t.equations.join("\n");
-        let res = compile_system(store, &CompileRequest { source, format: t.format });
-        let errors: Vec<_> =
-            res.diagnostics.iter().filter(|d| d.severity == Severity::Error).collect();
-        assert!(res.ok && errors.is_empty(), "template {} failed: {errors:?}", t.id);
+        let res = compile_system(
+            store,
+            &CompileRequest {
+                source,
+                format: t.format,
+            },
+        );
+        let errors: Vec<_> = res
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            res.ok && errors.is_empty(),
+            "template {} failed: {errors:?}",
+            t.id
+        );
         res
     }
 
@@ -424,24 +478,49 @@ mod tests {
         };
         let mut trajectories = Vec::new();
         for ic in &t.initial_conditions {
-            let x0: Vec<f64> = (0..dim).map(|i| ic.get(i).copied().unwrap_or(0.0)).collect();
+            let x0: Vec<f64> = (0..dim)
+                .map(|i| ic.get(i).copied().unwrap_or(0.0))
+                .collect();
             if is_map {
-                trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: t.t_end.round().max(1.0) });
+                trajectories.push(TrajectoryRequest {
+                    x0,
+                    t0: 0.0,
+                    t1: t.t_end.round().max(1.0),
+                });
             } else if let Some((lo, hi)) = window {
                 if hi > 0.0 {
-                    trajectories.push(TrajectoryRequest { x0: x0.clone(), t0: 0.0, t1: hi });
+                    trajectories.push(TrajectoryRequest {
+                        x0: x0.clone(),
+                        t0: 0.0,
+                        t1: hi,
+                    });
                 }
                 if lo < 0.0 {
-                    trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: lo });
+                    trajectories.push(TrajectoryRequest {
+                        x0,
+                        t0: 0.0,
+                        t1: lo,
+                    });
                 }
             } else {
-                trajectories.push(TrajectoryRequest { x0: x0.clone(), t0: 0.0, t1: t.t_end });
+                trajectories.push(TrajectoryRequest {
+                    x0: x0.clone(),
+                    t0: 0.0,
+                    t1: t.t_end,
+                });
                 if t.backward != Some(false) {
-                    trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: -t.t_end });
+                    trajectories.push(TrajectoryRequest {
+                        x0,
+                        t0: 0.0,
+                        t1: -t.t_end,
+                    });
                 }
             }
         }
-        let max_span = trajectories.iter().map(|r| (r.t1 - r.t0).abs()).fold(0.0, f64::max);
+        let max_span = trajectories
+            .iter()
+            .map(|r| (r.t1 - r.t0).abs())
+            .fold(0.0, f64::max);
         PortraitRequest {
             request_id: 7,
             system_id: res.system_id.unwrap(),
@@ -480,7 +559,10 @@ mod tests {
             assert!(n.state < dim, "{id}: nullcline state {}", n.state);
             for line in &n.polylines {
                 assert!(line.len() >= 2, "{id}: degenerate polyline");
-                assert!(line.iter().all(|(x, y)| x.is_finite() && y.is_finite()), "{id}");
+                assert!(
+                    line.iter().all(|(x, y)| x.is_finite() && y.is_finite()),
+                    "{id}"
+                );
             }
         }
         for fp in &res.fixed_points {
@@ -491,7 +573,10 @@ mod tests {
         for tr in &res.trajectories {
             assert!(!tr.t.is_empty(), "{id}: empty trajectory");
             assert_eq!(tr.x.len(), tr.t.len() * dim, "{id}: x is not t.len() * dim");
-            assert!(all_finite(&tr.t) && all_finite(&tr.x), "{id}: non-finite trajectory");
+            assert!(
+                all_finite(&tr.t) && all_finite(&tr.x),
+                "{id}: non-finite trajectory"
+            );
         }
         // The JSON must not contain `null` where the UI expects numbers.
         let json = serde_json::to_string(res).unwrap();
@@ -601,10 +686,22 @@ mod tests {
         let (res, out) = template_portrait("pendulum");
         assert_eq!(res.states.len(), 2);
         let pi = std::f64::consts::PI;
-        assert_eq!(find_fp(&out, &[0.0, 0.0]).classification, Classification::Centre);
-        assert_eq!(find_fp(&out, &[pi, 0.0]).classification, Classification::Saddle);
-        assert_eq!(find_fp(&out, &[-pi, 0.0]).classification, Classification::Saddle);
-        assert_eq!(find_fp(&out, &[2.0 * pi, 0.0]).classification, Classification::Centre);
+        assert_eq!(
+            find_fp(&out, &[0.0, 0.0]).classification,
+            Classification::Centre
+        );
+        assert_eq!(
+            find_fp(&out, &[pi, 0.0]).classification,
+            Classification::Saddle
+        );
+        assert_eq!(
+            find_fp(&out, &[-pi, 0.0]).classification,
+            Classification::Saddle
+        );
+        assert_eq!(
+            find_fp(&out, &[2.0 * pi, 0.0]).classification,
+            Classification::Centre
+        );
     }
 
     #[test]
@@ -620,7 +717,10 @@ mod tests {
         }
         assert_eq!(out.fixed_points.len(), 3);
         // The attractor stays bounded.
-        assert!(out.trajectories.iter().all(|t| t.status == Status::Completed));
+        assert!(out
+            .trajectories
+            .iter()
+            .all(|t| t.status == Status::Completed));
     }
 
     #[test]
@@ -655,7 +755,9 @@ mod tests {
             system_id,
             params: vec![],
             x_axis: AxisRef::State { index: 0 },
-            y_axis: AxisRef::State { index: 1.min(dim - 1) },
+            y_axis: AxisRef::State {
+                index: 1.min(dim - 1),
+            },
             x_range: (-1.0, 1.0),
             y_range: (-1.0, 1.0),
             base_state: vec![0.0; dim],
@@ -677,8 +779,13 @@ mod tests {
     }
 
     fn compile_src(store: &SystemStore, src: &str) -> u32 {
-        let res =
-            compile_system(store, &CompileRequest { source: src.into(), format: InputFormat::Latex });
+        let res = compile_system(
+            store,
+            &CompileRequest {
+                source: src.into(),
+                format: InputFormat::Latex,
+            },
+        );
         assert!(res.ok, "{:?}", res.diagnostics);
         res.system_id.unwrap()
     }
@@ -710,8 +817,16 @@ mod tests {
         let mut req = simple_request(id, 1);
         req.x_axis = AxisRef::Time;
         req.trajectories = vec![
-            TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: 1.0 },
-            TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: -1.0 },
+            TrajectoryRequest {
+                x0: vec![1.0],
+                t0: 0.0,
+                t1: 1.0,
+            },
+            TrajectoryRequest {
+                x0: vec![1.0],
+                t0: 0.0,
+                t1: -1.0,
+            },
         ];
         let out = compute_portrait(&sys, &req).unwrap();
         let (fwd, bwd) = (&out.trajectories[0], &out.trajectories[1]);
@@ -735,7 +850,10 @@ mod tests {
         req.y_range = (-2.0, 54.0);
         req.base_state = vec![0.0, 5.0, 0.0];
         let b = fixed_point_search_box(&req, 3);
-        assert_eq!(b, vec![(-25.0, 25.0), (5.0 - 28.0, 5.0 + 28.0), (-2.0, 54.0)]);
+        assert_eq!(
+            b,
+            vec![(-25.0, 25.0), (5.0 - 28.0, 5.0 + 28.0), (-2.0, 54.0)]
+        );
         // A time axis does not set the scale for hidden variables.
         req.x_axis = AxisRef::Time;
         req.x_range = (0.0, 1000.0);
@@ -753,13 +871,23 @@ mod tests {
         assert!(err.contains("1 parameter"), "{err}");
         req.params = vec![1.0];
         req.y_axis = AxisRef::State { index: 2 };
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("vertical axis"));
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("vertical axis"));
         req.y_axis = AxisRef::State { index: 1 };
         req.x_range = (1.0, 1.0);
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("horizontal range"));
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("horizontal range"));
         req.x_range = (-1.0, 1.0);
-        req.trajectories = vec![TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: 1.0 }];
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("Starting point 1"));
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0],
+            t0: 0.0,
+            t1: 1.0,
+        }];
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("Starting point 1"));
         req.trajectories.clear();
         assert!(compute_portrait(&sys, &req).is_ok());
     }
@@ -769,12 +897,18 @@ mod tests {
         let store = SystemStore::new();
         let res = compile_system(
             &store,
-            &CompileRequest { source: "\\dot{x}=y+\n\\dot{y}=-x".into(), format: InputFormat::Latex },
+            &CompileRequest {
+                source: "\\dot{x}=y+\n\\dot{y}=-x".into(),
+                format: InputFormat::Latex,
+            },
         );
         assert!(!res.ok);
         assert!(res.system_id.is_none() && res.kind.is_none());
         assert!(res.states.is_empty());
-        assert!(res.diagnostics.iter().any(|d| d.severity == Severity::Error && d.span.is_some()));
+        assert!(res
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.span.is_some()));
         assert!(store.is_empty());
         let json = serde_json::to_value(&res).unwrap();
         assert!(json.get("systemId").is_none());
@@ -784,8 +918,9 @@ mod tests {
     #[test]
     fn store_ids_increase_and_old_systems_are_evicted() {
         let store = SystemStore::new();
-        let ids: Vec<u32> =
-            (0..MAX_STORED_SYSTEMS + 5).map(|_| compile_src(&store, "\\dot{x}=-x")).collect();
+        let ids: Vec<u32> = (0..MAX_STORED_SYSTEMS + 5)
+            .map(|_| compile_src(&store, "\\dot{x}=-x"))
+            .collect();
         assert!(ids.windows(2).all(|w| w[1] == w[0] + 1));
         assert_eq!(ids[0], 1);
         assert_eq!(store.len(), MAX_STORED_SYSTEMS);
@@ -813,10 +948,21 @@ mod tests {
         let store = SystemStore::new();
         let res = compile_system(
             &store,
-            &CompileRequest { source: "\\dot{x}=-x".into(), format: InputFormat::Latex },
+            &CompileRequest {
+                source: "\\dot{x}=-x".into(),
+                format: InputFormat::Latex,
+            },
         );
         let json = serde_json::to_value(&res).unwrap();
-        for key in ["ok", "systemId", "kind", "hamiltonian", "autonomous", "states", "params"] {
+        for key in [
+            "ok",
+            "systemId",
+            "kind",
+            "hamiltonian",
+            "autonomous",
+            "states",
+            "params",
+        ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
         assert!(json.get("equationsLatex").is_some() && json.get("diagnostics").is_some());
@@ -824,8 +970,14 @@ mod tests {
 
         let out = compute_portrait(&store.get(1).unwrap(), &req).unwrap();
         let json = serde_json::to_value(&out).unwrap();
-        for key in ["requestId", "arrows", "nullclines", "fixedPoints", "trajectories", "elapsedMs"]
-        {
+        for key in [
+            "requestId",
+            "arrows",
+            "nullclines",
+            "fixedPoints",
+            "trajectories",
+            "elapsedMs",
+        ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
         assert_eq!(json["requestId"], 3);

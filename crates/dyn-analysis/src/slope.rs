@@ -136,7 +136,9 @@ mod tests {
     #[test]
     fn one_dimensional_with_time_axis() {
         // x' = x (1 - x)
-        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = x[0] * (1.0 - x[0]));
+        let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
+            o[0] = x[0] * (1.0 - x[0])
+        });
         let pl = Plane {
             x: Axis::Time,
             y: Axis::State(0),

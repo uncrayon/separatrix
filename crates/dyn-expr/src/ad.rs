@@ -229,13 +229,19 @@ impl<T: Scalar> Dual<T> {
     /// A constant: derivative zero.
     #[inline]
     pub fn constant(re: T) -> Self {
-        Dual { re, eps: T::cst(0.0) }
+        Dual {
+            re,
+            eps: T::cst(0.0),
+        }
     }
 
     /// The variable being differentiated: derivative one.
     #[inline]
     pub fn variable(re: T) -> Self {
-        Dual { re, eps: T::cst(1.0) }
+        Dual {
+            re,
+            eps: T::cst(1.0),
+        }
     }
 
     /// Value `f(re)` with derivative `f'(re)·eps`. A zero `eps` gives a
@@ -243,7 +249,10 @@ impl<T: Scalar> Dual<T> {
     /// [`Scalar::mul_seed`]).
     #[inline]
     fn chain(self, value: T, deriv: T) -> Self {
-        Dual { re: value, eps: deriv.mul_seed(self.eps) }
+        Dual {
+            re: value,
+            eps: deriv.mul_seed(self.eps),
+        }
     }
 }
 
@@ -251,7 +260,10 @@ impl<T: Scalar> Add for Dual<T> {
     type Output = Self;
     #[inline]
     fn add(self, o: Self) -> Self {
-        Dual { re: self.re + o.re, eps: self.eps + o.eps }
+        Dual {
+            re: self.re + o.re,
+            eps: self.eps + o.eps,
+        }
     }
 }
 
@@ -259,7 +271,10 @@ impl<T: Scalar> Sub for Dual<T> {
     type Output = Self;
     #[inline]
     fn sub(self, o: Self) -> Self {
-        Dual { re: self.re - o.re, eps: self.eps - o.eps }
+        Dual {
+            re: self.re - o.re,
+            eps: self.eps - o.eps,
+        }
     }
 }
 
@@ -267,7 +282,10 @@ impl<T: Scalar> Mul for Dual<T> {
     type Output = Self;
     #[inline]
     fn mul(self, o: Self) -> Self {
-        Dual { re: self.re * o.re, eps: self.eps * o.re + self.re * o.eps }
+        Dual {
+            re: self.re * o.re,
+            eps: self.eps * o.re + self.re * o.eps,
+        }
     }
 }
 
@@ -276,7 +294,10 @@ impl<T: Scalar> Div for Dual<T> {
     #[inline]
     fn div(self, o: Self) -> Self {
         let q = self.re / o.re;
-        Dual { re: q, eps: (self.eps - q * o.eps) / o.re }
+        Dual {
+            re: q,
+            eps: (self.eps - q * o.eps) / o.re,
+        }
     }
 }
 
@@ -284,7 +305,10 @@ impl<T: Scalar> Neg for Dual<T> {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {
-        Dual { re: -self.re, eps: -self.eps }
+        Dual {
+            re: -self.re,
+            eps: -self.eps,
+        }
     }
 }
 
@@ -366,7 +390,10 @@ impl<T: Scalar> Scalar for Dual<T> {
     }
     #[inline]
     fn atan(self) -> Self {
-        self.chain(self.re.atan(), T::cst(1.0) / (T::cst(1.0) + self.re * self.re))
+        self.chain(
+            self.re.atan(),
+            T::cst(1.0) / (T::cst(1.0) + self.re * self.re),
+        )
     }
     #[inline]
     fn powi(self, n: i32) -> Self {
@@ -525,7 +552,10 @@ mod tests {
         let p = a.mul_seed(b);
         assert_eq!(p.re, 0.0);
         assert!(p.eps.is_infinite());
-        assert_eq!(D::new(f64::NAN, f64::NAN).mul_seed(D::constant(0.0)), D::constant(0.0));
+        assert_eq!(
+            D::new(f64::NAN, f64::NAN).mul_seed(D::constant(0.0)),
+            D::constant(0.0)
+        );
     }
 
     #[test]
