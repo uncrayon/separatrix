@@ -148,7 +148,9 @@ pub enum StepOutcome {
     /// point and [`Stepper::interpolate`] covers `[t_prev, t]`.
     Accepted,
     /// A step was accepted, but the new state exceeds
-    /// [`BLOW_UP_THRESHOLD`](crate::BLOW_UP_THRESHOLD). Stop integrating.
+    /// [`BLOW_UP_THRESHOLD`](crate::BLOW_UP_THRESHOLD), or (fixed-step
+    /// methods) `f` overflows to ±∞ there while the state grows. Stop
+    /// integrating.
     BlewUp,
     /// Already at `t_end`; nothing was done.
     AtEnd,
@@ -156,7 +158,8 @@ pub enum StepOutcome {
     /// [`Status::StepTooSmall`], [`Status::NonFinite`], or
     /// [`Status::BlewUp`] when the adaptive step size collapsed because the
     /// solution runs off to infinity faster than double precision can
-    /// follow (see [`Stepper::step`]).
+    /// follow, or a fixed step overflowed to a non-finite state while
+    /// growing (see [`Stepper::step`]).
     Failed(Status),
 }
 
@@ -423,6 +426,17 @@ impl<'a> Stepper<'a> {
     /// as `x' = x^3` or `x' = e^x` reach infinity so fast that `|x|` cannot
     /// get anywhere near [`BLOW_UP_THRESHOLD`](crate::BLOW_UP_THRESHOLD)
     /// before the steps become too small for double precision.
+    ///
+    /// The fixed-step methods meet the same blow-ups as an overflow: `f` or
+    /// a stage of the step becomes ±∞ at a finite state (`e^x` for
+    /// `x > 709.8`). If the overflowing component is growing and `f` is
+    /// still ±∞ just short of the point where it overflowed, the outcome is
+    /// `BlewUp` (the new state is finite and kept) or `Failed(BlewUp)` (the
+    /// new state is not finite and is dropped). Otherwise it is
+    /// `Failed(NonFinite)`: NaN without overflow (`sqrt` of a negative
+    /// number), or a step or stage landing exactly on a pole at a finite
+    /// point (`x' = 1/(2 - x)^3` at 2, where `f` is finite just short of
+    /// it; Dopri5 reports such a finite limit as `StepTooSmall`).
     pub fn step(&mut self) -> StepOutcome {
         if self.is_done() {
             return StepOutcome::AtEnd;
@@ -596,7 +610,12 @@ impl<'a> Stepper<'a> {
 
         self.fixed_stages(h);
         if !all_finite(&self.x_new) {
-            return StepOutcome::Failed(Status::NonFinite);
+            let status = if self.overflowed_while_growing(h, t_new, false) {
+                Status::BlewUp
+            } else {
+                Status::NonFinite
+            };
+            return StepOutcome::Failed(status);
         }
         eval(
             self.f,
@@ -607,10 +626,115 @@ impl<'a> Stepper<'a> {
             &mut self.f_new,
         );
         if !all_finite(&self.f_new) && !blew_up(&self.x_new) {
-            return StepOutcome::Failed(Status::NonFinite);
+            if !self.overflowed_while_growing(h, t_new, true) {
+                return StepOutcome::Failed(Status::NonFinite);
+            }
+            // `f` overflowed at a finite, growing state (`x' = e^x` at
+            // x ≈ 1e10): keep the point, it is the last one we can compute.
+            self.hermite_dense(h);
+            self.accept(t_new, h);
+            return StepOutcome::BlewUp;
         }
         self.hermite_dense(h);
         self.accept(t_new, h)
+    }
+
+    /// After a fixed step of size `h` (to `t_new`) produced NaN or infinity:
+    /// was it a finite-time blow-up rather than the field leaving its
+    /// domain or hitting a pole?
+    ///
+    /// It is a blow-up if, for some component `i`, the step *overflowed*
+    /// (`x_new[i]`, `f(x_new)[i]` when `f_evaluated`, or a stage value of
+    /// component `i` is ±∞) while that component was *growing*:
+    /// `|x_new[i]| > |x[i]|` (true when `x_new[i]` is ±∞), or `x_new[i]` is
+    /// NaN (∞ - ∞ in the stage sum) and the last accepted step already
+    /// looked like a blow-up ([`Stepper::is_blowing_up`]), **and** `f`
+    /// still overflows just short of the first point where it failed (see
+    /// [`Stepper::still_overflows_near`]).
+    ///
+    /// A field that returns NaN without overflowing (`sqrt` of a negative
+    /// number, `0/0`), overflows at a shrinking component (`x' = -1/x`
+    /// landing exactly on 0), or has a pole at a finite point that a stage
+    /// lands on exactly (`x' = 1/(2 - x)^3` at 2) is not a blow-up.
+    fn overflowed_while_growing(&mut self, h: f64, t_new: f64, f_evaluated: bool) -> bool {
+        let stages: &[Vec<f64>] = match self.method {
+            Method::Euler | Method::Dopri5 => &[],
+            Method::Heun => &self.k[..1],
+            Method::Rk4 => &self.k[..3],
+        };
+        let uses_stage_point = !stages.is_empty();
+        let blowing_up = self.is_blowing_up();
+        let grew = (0..self.dim()).any(|i| {
+            let xn = self.x_new[i];
+            let overflow = xn.is_infinite()
+                || (f_evaluated && self.f_new[i].is_infinite())
+                || (uses_stage_point && self.x_stage[i].is_infinite())
+                || stages.iter().any(|k| k[i].is_infinite());
+            let growing = xn.abs() > self.x[i].abs() || (xn.is_nan() && blowing_up);
+            overflow && growing
+        });
+        grew && self.still_overflows_near(h, t_new, f_evaluated)
+    }
+
+    /// Tells a blow-up from a pole at a finite point by probing the field
+    /// just short of where the step first failed.
+    ///
+    /// Takes the first point at which the step evaluated `f` to a
+    /// non-finite value (a stage point, or `x_new` when `f_evaluated`) and
+    /// evaluates `f` at `P - PROBE·(P - x)`, a hair back towards the start
+    /// of the step. At a pole or finite singularity (`1/(2 - x)` at 2) `f`
+    /// is finite there; at a blow-up it is ±∞ still, because the state is
+    /// already far beyond where `f` overflows (`e^x` at `x ≈ 1e9`). If the
+    /// failing point itself is not finite (a stage running off to ±∞), or
+    /// no evaluation failed (`x_new` overflowed from finite stages), it is
+    /// a blow-up. Counts one evaluation of `f` when it probes.
+    fn still_overflows_near(&mut self, h: f64, t_new: f64, f_evaluated: bool) -> bool {
+        /// Fraction of the way back towards the start of the step.
+        const PROBE: f64 = 1e-6;
+        let n = self.dim();
+        let (t, x) = (self.t, &self.x);
+        let along = |c: f64, k: &[f64]| -> Vec<f64> {
+            x.iter().zip(k).map(|(xi, ki)| xi + c * h * ki).collect()
+        };
+        // (time, point, f there) of each stage evaluation, in order.
+        let stages: Vec<(f64, Vec<f64>, &[f64])> = match self.method {
+            Method::Heun => vec![(t + h, along(1.0, &self.fx), &self.k[0])],
+            Method::Rk4 => vec![
+                (t + 0.5 * h, along(0.5, &self.fx), &self.k[0]),
+                (t + 0.5 * h, along(0.5, &self.k[0]), &self.k[1]),
+                (t + h, along(1.0, &self.k[1]), &self.k[2]),
+            ],
+            Method::Euler | Method::Dopri5 => vec![],
+        };
+        let failed = stages
+            .into_iter()
+            .find(|(_, _, k)| !all_finite(k))
+            .map(|(ts, xs, _)| (ts, xs))
+            .or_else(|| {
+                (f_evaluated && !all_finite(&self.f_new)).then(|| (t_new, self.x_new.clone()))
+            });
+        let Some((tp, xp)) = failed else {
+            return true;
+        };
+        if !all_finite(&xp) {
+            return true;
+        }
+        let probe: Vec<f64> = xp
+            .iter()
+            .zip(x)
+            .map(|(p, x0)| p - PROBE * (p - x0))
+            .collect();
+        let t_probe = tp - PROBE * (tp - t);
+        let mut f_probe = vec![0.0; n];
+        eval(
+            self.f,
+            self.p,
+            &mut self.stats,
+            t_probe,
+            &probe,
+            &mut f_probe,
+        );
+        f_probe.iter().any(|v| v.is_infinite())
     }
 
     /// Compute `x_new` from `(t, x, fx)` with one step of the fixed-step method.

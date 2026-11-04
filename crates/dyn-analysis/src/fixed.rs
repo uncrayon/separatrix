@@ -17,12 +17,14 @@
 //! 3. **Filter**: keep points inside the box enlarged by 5% per side, and
 //!    merge points closer than `1e-6` of the box diagonal (keeping the one
 //!    with the smallest residual).
-//! 4. **Classify** with the eigenvalues of `J = Df` (see [`crate::classify`]).
+//! 4. **Classify** with the eigenvalues of `J = Df` (see [`crate::classify`]),
+//!    and compute the matching eigenvectors (see [`crate::eigenvectors`]).
 
 use dyn_core::{SystemKind, VectorField};
 use serde::{Deserialize, Serialize};
 
 use crate::classify::{classify_jacobian, Classification};
+use crate::eigvec::{eigenvectors, Eigenvectors};
 use crate::linalg::lu_solve;
 
 /// Maximum number of Newton starting points.
@@ -53,7 +55,10 @@ const BOX_MARGIN: f64 = 0.05;
 const ESCAPE_WIDTHS: f64 = 10.0;
 
 /// A fixed point with its linearisation.
+///
+/// Serialises with camelCase field names, like the UI's `FixedPointOut`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FixedPoint {
     /// Location (full state vector).
     pub x: Vec<f64>,
@@ -64,6 +69,20 @@ pub struct FixedPoint {
     /// the point is classified [`Classification::NonHyperbolic`] (the
     /// linearisation cannot decide its type). See [`classify_jacobian`].
     pub eigenvalues: Vec<(f64, f64)>,
+    /// One entry per eigenvalue, in the same order: the unit eigenvector of
+    /// a real eigenvalue (largest-magnitude component positive), or the
+    /// real part of the eigenvector of a complex one. `None` for the
+    /// missing directions of a defective eigenvalue (a degenerate node has
+    /// one vector and one `None`). Stars get an orthonormal basis. See
+    /// [`crate::eigenvectors`].
+    #[serde(default)]
+    pub eigenvectors: Vec<Option<Vec<f64>>>,
+    /// Imaginary parts of the eigenvectors of complex eigenvalues (`None`
+    /// for real ones). The phase is chosen so that the real and imaginary
+    /// parts are the major and minor semi-axes of the linearised orbits'
+    /// ellipses (orthogonal, `|re|² + |im|² = 1`).
+    #[serde(default)]
+    pub eigenvectors_im: Vec<Option<Vec<f64>>>,
     /// Type of the fixed point.
     pub classification: Classification,
     /// `true` if the point is asymptotically stable (sink-like).
@@ -127,9 +146,16 @@ pub fn fixed_points(
         .map(|(x, _)| {
             f.jacobian(0.0, &x, p, &mut jac);
             let (eigenvalues, classification) = classify_jacobian(kind, n, &jac);
+            let vecs = if eigenvalues.is_empty() {
+                Eigenvectors::default()
+            } else {
+                eigenvectors(kind, n, &jac, &eigenvalues)
+            };
             FixedPoint {
                 x,
                 eigenvalues,
+                eigenvectors: vecs.re,
+                eigenvectors_im: vecs.im,
                 classification,
                 stable: classification.is_stable(),
             }
@@ -438,6 +464,20 @@ mod tests {
             .collect()
     }
 
+    /// Checks `J v = λ v` (to `tol · max(1, |λ|)`) for every eigenpair of
+    /// `fp`, with `J` the Jacobian of `f` there, and returns `J`.
+    fn check_eigenpairs(f: &dyn VectorField, p: &[f64], fp: &FixedPoint, tol: f64) -> Vec<f64> {
+        let n = fp.x.len();
+        let mut jac = vec![0.0; n * n];
+        f.jacobian(0.0, &fp.x, p, &mut jac);
+        let vecs = Eigenvectors {
+            re: fp.eigenvectors.clone(),
+            im: fp.eigenvectors_im.clone(),
+        };
+        crate::eigvec::tests::assert_residuals(n, &jac, &fp.eigenvalues, &vecs, tol);
+        jac
+    }
+
     fn linear(a: [f64; 4]) -> FnField {
         FnField::new(2, 0, SystemKind::Ode, move |_t, x, _p, o| {
             o[0] = a[0] * x[0] + a[1] * x[1];
@@ -515,6 +555,29 @@ mod tests {
         ev.sort_by(f64::total_cmp);
         assert!((ev[0] - (-1.0 - 2f64.sqrt())).abs() < 1e-12);
         assert!((ev[1] - (-1.0 + 2f64.sqrt())).abs() < 1e-12);
+        // The saddle's eigenvectors: (√2, -1)/√3 is unstable (λ = √2 - 1),
+        // (√2, 1)/√3 stable (λ = -1 - √2).
+        let f = rabbits_sheep();
+        for fp in &fps {
+            check_eigenpairs(&f, &[], fp, 1e-9);
+            assert!(fp.eigenvectors_im.iter().all(Option::is_none));
+        }
+        let (r2, r3) = (2f64.sqrt(), 3f64.sqrt());
+        for (k, &(l, _)) in pts[3].eigenvalues.iter().enumerate() {
+            let v = pts[3].eigenvectors[k].as_ref().unwrap();
+            let expect = if l > 0.0 {
+                [r2 / r3, -1.0 / r3]
+            } else {
+                [r2 / r3, 1.0 / r3]
+            };
+            assert!(distance(v, &expect) < 1e-12, "λ = {l}: {v:?}");
+        }
+        // The origin's eigenvectors are the axes (λ = 3 along x, 2 along y).
+        for (k, &(l, _)) in pts[0].eigenvalues.iter().enumerate() {
+            let v = pts[0].eigenvectors[k].as_ref().unwrap();
+            let expect = if l == 3.0 { [1.0, 0.0] } else { [0.0, 1.0] };
+            assert_eq!(v, &expect, "λ = {l}");
+        }
     }
 
     #[test]
@@ -602,6 +665,22 @@ mod tests {
         for (u, v) in ev0.iter().zip(expect) {
             assert!((u - v).abs() < 1e-9, "{ev0:?}");
         }
+        // Eigenvectors, including the complex pair at C±.
+        for fp in &fps {
+            check_eigenpairs(&f, &[sigma, r, b], fp, 1e-9);
+        }
+        let complex = pts[1].eigenvectors_im.iter().flatten().count();
+        assert_eq!(complex, 2);
+        // At the origin the z axis is the eigenvector of λ = -b.
+        let kz = pts[0]
+            .eigenvalues
+            .iter()
+            .position(|e| (e.0 + b).abs() < 1e-9)
+            .unwrap();
+        assert_eq!(
+            pts[0].eigenvectors[kz].as_deref(),
+            Some(&[0.0, 0.0, 1.0][..])
+        );
     }
 
     #[test]
@@ -643,6 +722,11 @@ mod tests {
             &[(&[-1.0], Sink), (&[0.0], Source), (&[1.0], Sink)],
             1e-12,
         );
+        for fp in &fps {
+            check_eigenpairs(&f, &[], fp, 1e-12);
+            assert_eq!(fp.eigenvectors, vec![Some(vec![1.0])]);
+            assert_eq!(fp.eigenvectors_im, vec![None]);
+        }
         // x' = x²: a double root, non-hyperbolic.
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| o[0] = x[0] * x[0])
             .with_jacobian(|_t, x, _p, j| j[0] = 2.0 * x[0]);
@@ -731,6 +815,48 @@ mod tests {
             &[(&[xm, b * xm], SaddleND), (&[xp, b * xp], SaddleND)],
             1e-10,
         );
+        // Eigenvectors of Df (the multipliers' directions).
+        for fp in &fps {
+            check_eigenpairs(&f, &[a, b], fp, 1e-9);
+            assert!(fp.eigenvectors.iter().all(Option::is_some));
+        }
+        // Logistic map: the 1x1 Df has eigenvector [1].
+        let g = FnField::new(1, 1, SystemKind::Map, |_t, x, p, o| {
+            o[0] = p[0] * x[0] * (1.0 - x[0])
+        })
+        .with_jacobian(|_t, x, p, j| j[0] = p[0] * (1.0 - 2.0 * x[0]));
+        for fp in fixed_points(&g, &[2.5], &[(-1.5, 1.5)], 20) {
+            check_eigenpairs(&g, &[2.5], &fp, 1e-12);
+            assert_eq!(fp.eigenvectors, vec![Some(vec![1.0])]);
+        }
+    }
+
+    #[test]
+    fn eigenvectors_of_stars_degenerate_nodes_and_centres() {
+        // Star: J = -2I, any basis (here the axes).
+        let fps = fixed_points(&linear([-2.0, 0.0, 0.0, -2.0]), &[], &[(-1.0, 1.0); 2], 3);
+        let fp = &expect_points(&fps, &[(&[0.0, 0.0], StableStar)], 1e-12)[0];
+        check_eigenpairs(&linear([-2.0, 0.0, 0.0, -2.0]), &[], fp, 1e-12);
+        assert!(fp.eigenvectors.iter().all(Option::is_some));
+        // Degenerate node: one eigenvector (the x axis), the other missing.
+        let f = linear([-1.0, 1.0, 0.0, -1.0]);
+        let fps = fixed_points(&f, &[], &[(-1.0, 1.0); 2], 3);
+        let fp = &expect_points(&fps, &[(&[0.0, 0.0], StableDegenerateNode)], 1e-12)[0];
+        check_eigenpairs(&f, &[], fp, 1e-12);
+        assert_eq!(fp.eigenvectors, vec![Some(vec![1.0, 0.0]), None]);
+        // Centre (non-hyperbolic in the linearisation): a conjugate pair of
+        // finite vectors, the ellipse axes of x² + y²/4.
+        let f = linear([0.0, 1.0, -4.0, 0.0]);
+        let fps = fixed_points(&f, &[], &[(-1.0, 1.0); 2], 3);
+        let fp = &expect_points(&fps, &[(&[0.0, 0.0], Centre)], 1e-12)[0];
+        check_eigenpairs(&f, &[], fp, 1e-12);
+        assert!(fp.eigenvectors_im.iter().all(Option::is_some));
+        // Non-isolated line: both directions, no NaN.
+        let f = linear([0.0, 0.0, 0.0, -1.0]);
+        for fp in fixed_points(&f, &[], &[(-1.0, 1.0); 2], 3) {
+            check_eigenpairs(&f, &[], &fp, 1e-12);
+            assert!(fp.eigenvectors.iter().all(Option::is_some));
+        }
     }
 
     #[test]
@@ -747,12 +873,29 @@ mod tests {
         let fp = FixedPoint {
             x: vec![1.0, 2.0],
             eigenvalues: vec![(-1.0, 0.5), (-1.0, -0.5)],
+            eigenvectors: vec![Some(vec![1.0, 0.0]), Some(vec![1.0, 0.0])],
+            eigenvectors_im: vec![Some(vec![0.0, 0.5]), Some(vec![0.0, -0.5])],
             classification: StableSpiral,
+            stable: true,
+        };
+        let json = serde_json::to_string(&fp).unwrap();
+        assert_eq!(
+            json,
+            r#"{"x":[1.0,2.0],"eigenvalues":[[-1.0,0.5],[-1.0,-0.5]],"eigenvectors":[[1.0,0.0],[1.0,0.0]],"eigenvectorsIm":[[0.0,0.5],[0.0,-0.5]],"classification":"stable spiral","stable":true}"#
+        );
+        assert_eq!(serde_json::from_str::<FixedPoint>(&json).unwrap(), fp);
+        // A degenerate node: the missing eigenvector is null.
+        let fp = FixedPoint {
+            x: vec![0.0, 0.0],
+            eigenvalues: vec![(-1.0, 0.0), (-1.0, 0.0)],
+            eigenvectors: vec![Some(vec![1.0, 0.0]), None],
+            eigenvectors_im: vec![None, None],
+            classification: StableDegenerateNode,
             stable: true,
         };
         assert_eq!(
             serde_json::to_string(&fp).unwrap(),
-            r#"{"x":[1.0,2.0],"eigenvalues":[[-1.0,0.5],[-1.0,-0.5]],"classification":"stable spiral","stable":true}"#
+            r#"{"x":[0.0,0.0],"eigenvalues":[[-1.0,0.0],[-1.0,0.0]],"eigenvectors":[[1.0,0.0],null],"eigenvectorsIm":[null,null],"classification":"stable degenerate node","stable":true}"#
         );
     }
 
@@ -824,7 +967,7 @@ mod tests {
         assert!(!fps[0].stable);
         assert_eq!(
             serde_json::to_string(&fps[0]).unwrap(),
-            r#"{"x":[0.0],"eigenvalues":[],"classification":"non-hyperbolic","stable":false}"#
+            r#"{"x":[0.0],"eigenvalues":[],"eigenvectors":[],"eigenvectorsIm":[],"classification":"non-hyperbolic","stable":false}"#
         );
     }
 }

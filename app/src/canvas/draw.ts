@@ -2,8 +2,10 @@
 //
 // Follows the PhasePlane conventions of the design system:
 // - z-order, bottom to top: plot-bg, grid, axes and tick marks, direction field,
-//   tick labels (on a halo), nullclines, trajectories (the selected one last),
-//   fixed points, start points (the selected one last);
+//   nullclines, trajectories (the selected one last), eigenvector lines, fixed
+//   points, tick labels and eigenvalue labels (on a halo, so no curve crosses
+//   them), start points (the selected one last). Tick labels sit in the top
+//   layer below the drag handles, so curves run under them, never through them;
 // - two scales from the theme: s = --line-scale for line widths, and the gentler
 //   g = 0.6 + 0.4 s for glyphs, heads and handles;
 // - every colour comes from the plot tokens, read at draw time (theme.ts).
@@ -18,6 +20,7 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import type { InitialCondition, TrajectoryMeta } from "../state/model";
+import { eigenDirections } from "./eigenvectors";
 import type { PlotTheme } from "./theme";
 import { niceTicks, sx, sy, tickLabel, type Viewport } from "./viewport";
 
@@ -47,6 +50,8 @@ export interface Scene {
   selectedFp: number | null;
   hoverIc: number | null;
   hoverFp: number | null;
+  /** "Show eigenvectors": draw each fixed point's real eigenvector directions. */
+  eigenvectors: boolean;
   /** True while the drawn data belongs to an older view or system (drawn dimmer). */
   stale: boolean;
   /**
@@ -79,6 +84,10 @@ export function fixedPointPx(vp: Viewport, scene: SceneAxes, fp: FixedPointOut):
   const py = scene.yAxis.kind === "time" ? vp.top + vp.height - 12 : sy(vp, fp.x[scene.yAxis.index]);
   return [px, py];
 }
+
+// The eigenvector projection lives with the other pure eigenvector helpers
+// (React- and DOM-free, so node --test can import it).
+export { eigenDirections, type EigenDirection } from "./eigenvectors";
 
 /** Screen position of an initial-condition handle. */
 export function icPx(vp: Viewport, scene: SceneAxes, ic: InitialCondition): [number, number] {
@@ -175,16 +184,17 @@ export function drawScene(
     xAbove: scene.yAxis.kind === "time",
   });
   const fade = scene.stale ? 0.55 : 1;
-  // 4. direction field
+  // 4. direction field, clear of the labels drawn later on top
   ctx.globalAlpha = fade;
   drawField(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.field]);
-  // 5. tick labels on a halo, above the field
-  ctx.globalAlpha = 1;
-  drawLabels(ctx, labels, th);
-  // 6. nullclines, 7. trajectories
-  ctx.globalAlpha = fade;
+  // 5. nullclines, 6. trajectories
   drawNullclines(ctx, vp, scene, th);
   drawTrajectories(ctx, vp, scene, th, fade);
+  // 7. eigenvector lines, under the glyphs they pass through
+  ctx.globalAlpha = fade;
+  const eigenLabels = scene.eigenvectors
+    ? drawEigenvectors(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.labels])
+    : [];
   // 8. fixed points, the selected one last
   ctx.globalAlpha = fade;
   const order = scene.fixedPoints.map((_, i) => i).filter((i) => i !== scene.selectedFp);
@@ -197,7 +207,12 @@ export function drawScene(
       selected: scene.selectedFp === i,
     });
   }
-  // 9. start points (drag handles), the selected one last
+  // 9. tick labels and eigenvalue labels on a halo, above every curve and glyph
+  ctx.globalAlpha = 1;
+  drawLabels(ctx, labels, th);
+  ctx.globalAlpha = fade;
+  drawLabels(ctx, eigenLabels, th);
+  // 10. start points (drag handles), the selected one last
   ctx.globalAlpha = 1;
   drawHandles(ctx, vp, scene, th);
   ctx.restore();
@@ -298,18 +313,8 @@ function layoutLabels(
   ctx.font = th.tickFont;
   const both = axes.xIn && axes.yIn;
   const out: Label[] = [];
-  const make = (
-    text: string,
-    x: number,
-    y: number,
-    align: CanvasTextAlign,
-    base: CanvasTextBaseline,
-  ): Label => {
-    const wid = ctx.measureText(text).width;
-    const l = align === "center" ? x - wid / 2 : align === "right" ? x - wid : x;
-    const t = base === "top" ? y : base === "middle" ? y - hgt / 2 : y - hgt;
-    return { text, x, y, align, base, box: [l - 3, t - 3, l + wid + 3, t + hgt + 3] };
-  };
+  const make = (text: string, x: number, y: number, align: CanvasTextAlign, base: CanvasTextBaseline) =>
+    makeLabel(ctx, hgt, text, x, y, align, base);
   const keep = (lab: Label) => {
     const [l, t, r, b] = lab.box;
     if (l < vp.left || r > right || t < vp.top || b > bottom) return;
@@ -345,6 +350,22 @@ function layoutLabels(
     );
   }
   return out;
+}
+
+/** A label and its box (text box plus 3px). `ctx.font` must already be the tick font. */
+function makeLabel(
+  ctx: CanvasRenderingContext2D,
+  hgt: number,
+  text: string,
+  x: number,
+  y: number,
+  align: CanvasTextAlign,
+  base: CanvasTextBaseline,
+): Label {
+  const wid = ctx.measureText(text).width;
+  const l = align === "center" ? x - wid / 2 : align === "right" ? x - wid : x;
+  const t = base === "top" ? y : base === "middle" ? y - hgt / 2 : y - hgt;
+  return { text, x, y, align, base, box: [l - 3, t - 3, l + wid + 3, t + hgt + 3] };
 }
 
 function drawLabels(ctx: CanvasRenderingContext2D, labels: Label[], th: PlotTheme) {
@@ -608,6 +629,94 @@ function drawHeads(
     ctx.closePath();
   }
   ctx.fill();
+}
+
+/**
+ * Eigenvector directions (FixedPoint `.ds-fp-eigen`): for each fixed point, one
+ * segment through it per real eigenvector that shows in these axes, 12% of the
+ * plot diagonal long, 1 × s, solid (nullclines are the dashed lines). It is
+ * stroked in plot-fp, the fixed point's own ink, on a 3px plot-halo outline:
+ * the field marks are plot-field grey with V heads too, so a grey line would
+ * read as one more field mark in the dark theme. Open V heads (6g, ±36°) point
+ * out at both ends along an unstable
+ * direction and in, halfway along each arm, along a stable one, as Strogatz
+ * draws the tangents of the unstable and stable manifolds; a zero eigenvalue
+ * (|μ| = 1 for maps) gets no heads. The selected fixed point's lines are
+ * labelled λ₁, λ₂ … at one end, matching its Inspector row; the labels are
+ * returned for the top layer and skip any spot that would cover another label
+ * or the chrome in `clear`.
+ */
+function drawEigenvectors(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  scene: Scene,
+  th: PlotTheme,
+  clear: Box[],
+): Label[] {
+  const s = th.lineScale;
+  const g = th.glyphScale;
+  const half = Math.max(20 * g, 0.06 * Math.hypot(vp.width, vp.height));
+  const head = 6 * g;
+  const spread = Math.tan(Math.PI / 5);
+  const sxu = vp.width / (vp.xRange[1] - vp.xRange[0]);
+  const syu = vp.height / (vp.yRange[1] - vp.yRange[0]);
+  const right = vp.left + vp.width;
+  const bottom = vp.top + vp.height;
+  const labels: Label[] = [];
+  ctx.font = th.tickFont;
+  const path = new Path2D();
+  /** An open V with its vertex at (x, y), pointing along (ux, uy). */
+  const vee = (x: number, y: number, ux: number, uy: number) => {
+    path.moveTo(x - ux * head - uy * head * spread, y - uy * head + ux * head * spread);
+    path.lineTo(x, y);
+    path.lineTo(x - ux * head + uy * head * spread, y - uy * head - ux * head * spread);
+  };
+  scene.fixedPoints.forEach((fp, i) => {
+    const [cx, cy] = fixedPointPx(vp, scene, fp);
+    for (const e of eigenDirections(scene, fp)) {
+      const dx = e.p[0] * sxu;
+      const dy = -e.p[1] * syu;
+      const m = Math.hypot(dx, dy);
+      if (!Number.isFinite(m) || m === 0) continue;
+      const ux = dx / m;
+      const uy = dy / m;
+      path.moveTo(cx - ux * half, cy - uy * half);
+      path.lineTo(cx + ux * half, cy + uy * half);
+      for (const sg of [1, -1]) {
+        if (e.flow > 0) vee(cx + sg * ux * half, cy + sg * uy * half, sg * ux, sg * uy);
+        else if (e.flow < 0) vee(cx + sg * ux * half * 0.5, cy + sg * uy * half * 0.5, -sg * ux, -sg * uy);
+      }
+      if (scene.selectedFp !== i) continue;
+      // Label the end to the right (the upper one when the line is near vertical).
+      const sg = Math.abs(ux) > 0.3 ? Math.sign(ux) : -Math.sign(uy) || 1;
+      const ex = sg * ux;
+      const ey = sg * uy;
+      const off = half + 4 * g + 2;
+      const lab = makeLabel(
+        ctx,
+        th.tickSize,
+        e.label,
+        cx + ex * off,
+        cy + ey * off,
+        ex > 0.38 ? "left" : ex < -0.38 ? "right" : "center",
+        ey > 0.38 ? "top" : ey < -0.38 ? "bottom" : "middle",
+      );
+      const [l, t, r, b] = lab.box;
+      if (l < vp.left || r > right || t < vp.top || b > bottom) continue;
+      if ([...clear, ...labels.map((o) => o.box)].some((c) => overlaps(lab.box, c))) continue;
+      labels.push(lab);
+    }
+  });
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([]);
+  ctx.strokeStyle = th.halo;
+  ctx.lineWidth = s + 3;
+  ctx.stroke(path);
+  ctx.strokeStyle = th.fp;
+  ctx.lineWidth = s;
+  ctx.stroke(path);
+  return labels;
 }
 
 /**

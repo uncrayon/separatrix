@@ -18,15 +18,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, SymbolInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
-import { axisLabelLatex, axisLatex, classificationTitle, complexTex, fmtTex, latexToPlain, sameAxis } from "../math/format";
+import { axisLabelLatex, axisLatex, classificationTitle, fmtTex, latexToPlain, sameAxis } from "../math/format";
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { stateExtent } from "../state/model";
 import { NumberField, Slider } from "../components/controls";
+import { numberedEigenvalues, useShowEigenvectors, type NumberedEigenvalue } from "./eigen";
 import {
   axisLines,
   drawScene,
+  eigenDirections,
   fixedPointGlyph,
   fixedPointPx,
   icPx,
@@ -113,6 +115,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const [sliceChoice, setSliceOpen] = useState<boolean | null>(null);
   const sliceOpen = sliceChoice ?? size.w >= SLICE_CARD_MIN_PLOT_W;
   const tool = useCanvasTool();
+  const showEigen = useShowEigenvectors();
 
   const { compiled, view } = state;
   /** Glyph scale g: hit radii grow with the glyphs in projector mode. */
@@ -217,6 +220,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       selectedFp: state.selection?.kind === "fp" ? state.selection.index : null,
       hoverIc: hover.ic,
       hoverFp: hover.fp,
+      eigenvectors: showEigen,
       stale: !state.compileOk,
     };
   }, [
@@ -229,6 +233,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     view.xAxis,
     view.yAxis,
     hover,
+    showEigen,
   ]);
 
   // ---- keep the default view clear of the toolbar (CanvasToolbar README: "keep
@@ -943,6 +948,33 @@ function Legend({
       text: glyphName(k, glyphs.get(k)!),
     })),
   ];
+  // Eigenvector directions, one key per kind of head on the plot.
+  const flows = new Set<number>();
+  if (scene?.eigenvectors) {
+    for (const fp of scene.fixedPoints) for (const e of eigenDirections(scene, fp)) flows.add(e.flow);
+  }
+  const eigenSample = (flow: number) => (
+    <svg viewBox="0 0 24 16" aria-hidden="true">
+      <path
+        className="ds-phase-mark ds-fp-eigen"
+        d={
+          flow > 0
+            ? "M2 8H22M5.5 5.5L2 8L5.5 10.5M18.5 5.5L22 8L18.5 10.5"
+            : flow < 0
+              ? "M2 8H22M4.5 5.5L8 8L4.5 10.5M19.5 5.5L16 8L19.5 10.5"
+              : "M2 8H22"
+        }
+      />
+      <circle className="legend-eigen-point" cx="12" cy="8" r="2" />
+    </svg>
+  );
+  const eigenKeys = [
+    { flow: 1, text: "Unstable eigenvector" },
+    { flow: -1, text: "Stable eigenvector" },
+    { flow: 0, text: isMap ? "Eigenvector, |μ| = 1" : "Eigenvector, λ = 0" },
+  ]
+    .filter((k) => flows.has(k.flow))
+    .map((k) => ({ key: `eigen${k.flow}`, sample: eigenSample(k.flow), text: k.text }));
   const background: { key: string; sample: ReactNode; text: ReactNode }[] = [
     ...(scene && scene.arrows.length > 0
       ? [
@@ -971,6 +1003,7 @@ function Legend({
         </span>
       ),
     })),
+    ...eigenKeys,
   ];
   const keys: typeof data = [];
   for (let i = 0; i < Math.max(data.length, background.length); i++) {
@@ -993,6 +1026,15 @@ function Legend({
       {scene && <p className="legend-help caption">{help}</p>}
     </div>
   );
+}
+
+/** The tooltip line for one eigenvalue or pair ("λ₂,₃ = 0.094 ± 10.2i" as TeX), numbered as the Inspector row. */
+function eigenvalueTex(ev: NumberedEigenvalue, sym: string): string {
+  const label = ev.numbers.length ? `${sym}_{${ev.numbers.join(",")}}` : sym;
+  const im = `${fmtTex(ev.im, 3)}i`;
+  const value =
+    ev.im === 0 ? fmtTex(ev.re, 3) : Math.abs(ev.re) < 5e-4 ? `\\pm ${im}` : `${fmtTex(ev.re, 3)} \\pm ${im}`;
+  return `${label} = ${value}${ev.double ? "\\ (\\text{double})" : ""}`;
 }
 
 function FixedPointTooltip(props: {
@@ -1038,9 +1080,9 @@ function FixedPointTooltip(props: {
       <div className="fp-tooltip-math math">
         <Tex latex={point} />
       </div>
-      {fp.eigenvalues.map((ev, i) => (
+      {numberedEigenvalues(fp).map((ev, i) => (
         <div className="fp-tooltip-math math" key={i}>
-          <Tex latex={`${sym}_{${i + 1}} = ${complexTex(ev)}`} />
+          <Tex latex={eigenvalueTex(ev, sym)} />
         </div>
       ))}
       <p className="ds-tooltip-desc caption">Click for details in the inspector.</p>
@@ -1061,6 +1103,10 @@ function describePlot(
   const name = (a: AxisRef) => latexToPlain(axisLatex(a, states, kind));
   const num = (v: number) => fmtPlain(v).replace("-", "−");
   const r = ([a, b]: [number, number]) => `${num(a)} to ${num(b)}`;
+  // Fixed-point coordinates that are zero up to Newton's rounding (−6.58e-14 at
+  // the origin) read as 0, as the Inspector rows show them.
+  const span = Math.max(Math.abs(xRange[1] - xRange[0]), Math.abs(yRange[1] - yRange[0]));
+  const coord = (v: number) => num(Math.abs(v) < 1e-9 * span ? 0 : v);
   const parts = [
     `${kind === "map" ? "Orbit plot" : "Phase plane"}: ${name(xAxis)} from ${r(xRange)} across, ${name(yAxis)} from ${r(yRange)} up.`,
   ];
@@ -1080,11 +1126,14 @@ function describePlot(
         scene.fixedPoints
           .map(
             (fp) =>
-              `${classificationTitle(fp.classification, states.length).toLowerCase()}${states.length === 1 ? " fixed point" : ""} at (${fp.x.map(num).join(", ")})`,
+              `${classificationTitle(fp.classification, states.length).toLowerCase()}${states.length === 1 ? " fixed point" : ""} at (${fp.x.map(coord).join(", ")})`,
           )
           .join("; ") +
         ".",
     );
+  }
+  if (scene.eigenvectors && scene.fixedPoints.some((fp) => eigenDirections(scene, fp).length > 0)) {
+    parts.push("Eigenvector directions are drawn through the fixed points.");
   }
   return parts.join(" ");
 }

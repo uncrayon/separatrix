@@ -208,6 +208,18 @@ pub struct FixedPointOut {
     pub x: Vec<f64>,
     /// Eigenvalues as `[re, im]` pairs.
     pub eigenvalues: Vec<(f64, f64)>,
+    /// One entry per eigenvalue (same order): the unit eigenvector of a real
+    /// eigenvalue, sign-normalised so its largest-magnitude component is
+    /// positive, or the real part of the eigenvector of a complex one.
+    /// `null` for the missing direction of a defective eigenvalue (a
+    /// degenerate node has one vector and one `null`); stars get an
+    /// orthonormal basis.
+    pub eigenvectors: Vec<Option<Vec<f64>>>,
+    /// Imaginary parts of the eigenvectors of complex eigenvalues, `null`
+    /// for real ones. For a pair `α ± iω` the real and imaginary parts are
+    /// orthogonal, `|re|² + |im|² = 1`, `|re| ≥ |im|`: the major and minor
+    /// semi-axes of the linearised orbits' ellipses.
+    pub eigenvectors_im: Vec<Option<Vec<f64>>>,
     /// Strogatz's name for the point.
     pub classification: Classification,
     /// Asymptotically stable.

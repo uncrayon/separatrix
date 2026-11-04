@@ -12,6 +12,14 @@ import { Button, IconButton, NumberField, Select, Switch, withMinus, type Select
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
 import {
+  displayEigenvalues,
+  hasComplexEigenvalue,
+  othersHaveRealEigenvectors,
+  realEigenvectors,
+  setShowEigenvectors,
+  useShowEigenvectors,
+} from "../canvas/eigen";
+import {
   IconClose,
   IconEye,
   IconEyeOff,
@@ -600,20 +608,52 @@ function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undef
 }
 
 /**
- * "Show eigenvectors" (FixedPoint anatomy). The core does not return
- * eigenvectors yet, so the plot cannot draw `.ds-fp-eigen`: the switch is shown
- * disabled with the reason, as the guidelines ask for complex λ.
+ * "Show eigenvectors" (FixedPoint anatomy): one switch for the whole plot (the
+ * canvas draws `.ds-fp-eigen` through every fixed point with real
+ * eigenvectors), shown in the selected row's detail. Disabled, with the reason,
+ * for a point with no real eigenvector to draw (spirals, centers), as the
+ * guidelines ask; but never stuck on: while it is on, it stays enabled there so
+ * it can be turned off from any row.
  */
-function EigenvectorSwitch({ fp }: { fp: FixedPointOut }) {
+function EigenvectorSwitch({
+  fps,
+  index,
+  kind,
+}: {
+  fps: FixedPointOut[];
+  index: number;
+  kind: SystemKind | undefined;
+}) {
   const reasonId = useId();
-  const complex = fp.eigenvalues.some(([, im]) => Math.abs(im) > 1e-9);
+  const on = useShowEigenvectors();
+  const fp = fps[index];
+  const sym = kind === "map" ? "μ" : "λ";
+  const real = realEigenvectors(fp, kind);
+  const complex = hasComplexEigenvalue(fp);
+  const rule = kind === "map" ? "in where |μ| < 1, out where |μ| > 1" : "in where λ < 0, out where λ > 0";
+  const others = on
+    ? othersHaveRealEigenvectors(fps, index, kind)
+      ? " Other fixed points show theirs."
+      : " No fixed point in this system has real eigenvectors."
+    : "";
+  const hint =
+    real.length === 0
+      ? (complex ? `Complex ${sym}, so no real eigenvectors.` : "No eigenvectors could be computed at this point.") +
+        others
+      : `Lines along each fixed point's real eigenvectors, arrows ${rule}.` +
+        (complex ? ` Complex ${sym} have none.` : "") +
+        (fp.x.length > 2 ? " Directions seen end-on in this view are left out." : "");
   return (
     <>
-      <Switch label="Show eigenvectors" checked={false} disabled describedBy={reasonId} onChange={() => {}} />
+      <Switch
+        label="Show eigenvectors"
+        checked={on}
+        disabled={real.length === 0 && !on}
+        describedBy={reasonId}
+        onChange={setShowEigenvectors}
+      />
       <p className="ds-fp-hint caption" id={reasonId}>
-        {complex
-          ? "Complex λ, so no real eigenvectors."
-          : "Eigenvector lines on the plot are not available in this version."}
+        {hint}
       </p>
     </>
   );
@@ -665,13 +705,13 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
                     <span className="ds-fp-row-text">
                       <span className="ds-fp-class body-strong">{label}</span>
                       <span className="ds-fp-coords numeric">{coords}</span>
-                      <span className="ds-fp-eig numeric-sm">{eigenText(fp.eigenvalues, sym)}</span>
+                      <span className="ds-fp-eig numeric-sm">{eigenText(displayEigenvalues(fp), sym)}</span>
                     </span>
                   </button>
                   {isSel && (
                     <div className="ds-fp-detail">
                       <FpHint fp={fp} kind={sys.kind} dim={dim} />
-                      {dim >= 2 && <EigenvectorSwitch fp={fp} />}
+                      {dim >= 2 && <EigenvectorSwitch fps={fps} index={i} kind={sys.kind} />}
                     </div>
                   )}
                 </li>

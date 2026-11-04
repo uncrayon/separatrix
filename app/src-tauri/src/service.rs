@@ -227,6 +227,8 @@ pub fn compute_portrait(
             .map(|fp| FixedPointOut {
                 x: fp.x,
                 eigenvalues: fp.eigenvalues,
+                eigenvectors: fp.eigenvectors,
+                eigenvectors_im: fp.eigenvectors_im,
                 classification: fp.classification,
                 stable: fp.stable,
             })
@@ -568,7 +570,13 @@ mod tests {
         for fp in &res.fixed_points {
             assert_eq!(fp.x.len(), dim, "{id}");
             assert_eq!(fp.eigenvalues.len(), dim, "{id}");
+            assert_eq!(fp.eigenvectors.len(), dim, "{id}");
+            assert_eq!(fp.eigenvectors_im.len(), dim, "{id}");
             assert!(all_finite(&fp.x), "{id}: {fp:?}");
+            for v in fp.eigenvectors.iter().chain(&fp.eigenvectors_im).flatten() {
+                assert_eq!(v.len(), dim, "{id}");
+                assert!(all_finite(v), "{id}: {fp:?}");
+            }
         }
         for tr in &res.trajectories {
             assert!(!tr.t.is_empty(), "{id}: empty trajectory");
@@ -579,7 +587,14 @@ mod tests {
             );
         }
         // The JSON must not contain `null` where the UI expects numbers.
-        let json = serde_json::to_string(res).unwrap();
+        // (Missing eigenvectors are `null` by design; their entries were
+        // checked to be finite above.)
+        let mut numbers_only = res.clone();
+        for fp in &mut numbers_only.fixed_points {
+            fp.eigenvectors.clear();
+            fp.eigenvectors_im.clear();
+        }
+        let json = serde_json::to_string(&numbers_only).unwrap();
         for bad in [":null", "[null", ",null"] {
             assert!(!json.contains(bad), "{id}: JSON has null");
         }
@@ -984,6 +999,11 @@ mod tests {
         // 1D flows use sink/source (Strogatz ch. 2 "stable"/"unstable").
         assert_eq!(json["fixedPoints"][0]["classification"], "sink");
         assert!(json["fixedPoints"][0]["eigenvalues"][0].is_array());
+        assert_eq!(
+            json["fixedPoints"][0]["eigenvectors"][0],
+            serde_json::json!([1.0])
+        );
+        assert!(json["fixedPoints"][0]["eigenvectorsIm"][0].is_null());
         assert_eq!(json["trajectories"][0]["status"], "completed");
         assert!(json["trajectories"][0]["stats"]["evals"].is_u64());
         assert!(json["nullclines"][0]["polylines"][0][0].is_array());

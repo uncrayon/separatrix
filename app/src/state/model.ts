@@ -99,6 +99,70 @@ export interface PortraitState {
 /** Number of colours in the trajectory palette (tokens --traj-1 … --traj-7). */
 export const PALETTE_SIZE = 7;
 
+/**
+ * The palette index for a new trajectory, given the ones already in the list
+ * (hidden ones included: their start point is still drawn in their colour).
+ *
+ * The first colour no trajectory uses, so an empty list starts again at
+ * traj-1 and deleting one trajectory frees its colour for the next. When all
+ * seven are taken, the least-used colour, the first one on a tie: the cycle
+ * carries on as traj-1, traj-2, … for the eighth and later trajectories.
+ */
+export function nextIcColor(ics: readonly Pick<InitialCondition, "color">[]): number {
+  const count = new Array<number>(PALETTE_SIZE).fill(0);
+  for (const ic of ics) {
+    const c = ((ic.color % PALETTE_SIZE) + PALETTE_SIZE) % PALETTE_SIZE;
+    if (Number.isInteger(c)) count[c]++;
+  }
+  let best = 0;
+  for (let c = 1; c < PALETTE_SIZE; c++) if (count[c] < count[best]) best = c;
+  return best;
+}
+
+/** The name shown for a system that does not come from a template. */
+export const UNTITLED_SYSTEM = "Untitled system";
+
+/**
+ * One equation line in a canonical form, for comparing systems as typed. Only
+ * spellings that mean the same thing are merged, so the text-mode round trip
+ * of a template (`x(3-x)`, `x^{2}`) still matches it (`x\left(3-x\right)`, `x^2`):
+ *
+ * - `\left` and `\right` are dropped (they only size the delimiter);
+ * - a one-character script loses its braces (`x^{2}` is `x^2`);
+ * - blank space is dropped next to anything that is not a letter (`x = y` is
+ *   `x=y`), and runs of it become one space between letters, where it still
+ *   ends a control word (`\alpha x` is not `\alphax`).
+ */
+function canonicalLine(latex: string): string {
+  return latex
+    .replace(/\\(?:left|right)(?![A-Za-z])/g, "")
+    .replace(/([_^])\s*\{\s*([A-Za-z0-9])\s*\}/g, "$1$2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/ ?([^A-Za-z ]) ?/g, "$1");
+}
+
+/** Do two lists of equation lines describe the same system text? Blank lines are ignored, as the compiler ignores them. */
+export function sameEquations(a: readonly string[], b: readonly string[]): boolean {
+  const norm = (lines: readonly string[]) => lines.map(canonicalLine).filter((l) => l !== "");
+  const x = norm(a);
+  const y = norm(b);
+  return x.length === y.length && x.every((l, i) => l === y[i]);
+}
+
+/**
+ * The name of the open system for the top bar. A template keeps its title
+ * when its equations are edited and is marked `edited` until the text is the
+ * template's again; anything else (a blank system) is "Untitled system".
+ */
+export function systemTitle(
+  template: Template | undefined,
+  equations: readonly string[],
+): { name: string; edited: boolean } {
+  if (!template) return { name: UNTITLED_SYSTEM, edited: false };
+  return { name: template.title, edited: !sameEquations(template.equations, equations) };
+}
+
 export const DEFAULT_LAYERS: Layers = {
   field: true,
   fieldGrid: 21,

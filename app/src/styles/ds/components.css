@@ -637,10 +637,12 @@
 .ds-fp.is-selected .ds-fp-ring { display: inline; }
 
 /* Eigenvector directions through a fixed point ("Show eigenvectors"). Arrowheads
-   point in along a stable direction (λ < 0) and out along an unstable one (λ > 0). */
+   point in along a stable direction (λ < 0) and out along an unstable one (λ > 0).
+   `plot-fp`, the fixed point's own ink, so the lines read as part of the point and never
+   as more field marks (`plot-tick` is the field's grey family in the dark theme). */
 .ds-fp-eigen {
   fill: none;
-  stroke: var(--plot-tick);
+  stroke: var(--plot-fp);
   stroke-width: calc(1px * var(--line-scale));
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -719,11 +721,11 @@
   background: transparent;
   color: var(--ink-2);
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .ds-root .ds-icon-button { color: var(--ink-2); }
-/* A layer toggle that is off dims its icon to `ink-3`, so on (active fill, `ink`)
-   and off differ by more than the subtle fill step. Before hover, so hover still lifts it. */
+/* A layer toggle that is off dims its icon to `ink-3`, a second cue beside the "on"
+   outline below. Before hover, so hover still lifts it. */
 .ds-root .ds-icon-button[aria-pressed="false"]:not(.ds-icon-button--tool) { color: var(--ink-3); }
 .ds-root .ds-icon-button:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--hover); color: var(--ink); }
 .ds-root .ds-icon-button:is(:active, .is-pressed):not(:disabled, .is-disabled) { background: var(--active); color: var(--ink); }
@@ -732,12 +734,21 @@
 /* Outlined: a standalone icon button in a panel, next to secondary buttons. */
 .ds-root .ds-icon-button--outline { background: var(--raised); border-color: var(--edge); color: var(--ink); }
 
-/* Toggle (layer on/off): aria-pressed="true" fills it and brings the icon to ink. */
-.ds-root .ds-icon-button[aria-pressed="true"] { background: var(--active); color: var(--ink); }
+/* Toggle (layer on/off): aria-pressed="true" gets an `edge` outline (3.8:1 on `panel`),
+   the `active` fill and an `ink` icon. The fill and icon steps alone are under 3:1 against
+   off and hover (WCAG 1.4.11), so the outline is what carries "on"; off and hover never have one. */
+.ds-root .ds-icon-button[aria-pressed="true"] { background: var(--active); border-color: var(--edge); color: var(--ink); }
 .ds-icon-button[aria-pressed="true"]:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--active); }
+/* Row visibility toggle (`--sm`, eye / eye-off in a list row): the icon swap carries the state,
+   so "on" has no outline and no fill (a column of outlined boxes down a list adds weight and no
+   meaning); "off" keeps the `ink-3` icon. Hover still shows the `hover` fill. */
+.ds-root .ds-icon-button--sm[aria-pressed="true"]:not(.ds-icon-button--tool) { background: transparent; border-color: transparent; }
+.ds-root .ds-icon-button--sm[aria-pressed]:is(:hover, .is-hover):not(:disabled, .is-disabled, .ds-icon-button--tool) { background: var(--hover); }
 
-/* Tool (one of a set, e.g. Select / Pan / Add trajectory): the chosen one is accent. */
-.ds-root .ds-icon-button--tool[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+/* Tool (one of a set, e.g. Select / Pan / Add trajectory): the chosen one is accent:
+   `accent` outline (6.4:1 or more on `panel`), `accent-soft` fill, `accent-ink` icon. Blue
+   outline and tint versus a toggle's grey outline and fill, so a chosen tool never reads as a layer that is on. */
+.ds-root .ds-icon-button--tool[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
 .ds-root .ds-icon-button--tool[aria-pressed="true"]:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--accent-soft); color: var(--accent-ink); }
 
 .ds-root .ds-icon-button:disabled,

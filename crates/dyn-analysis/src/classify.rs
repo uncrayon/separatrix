@@ -187,11 +187,7 @@ pub fn classify_jacobian(
     let class = if kind == SystemKind::Ode && n == 2 {
         let tau = jac[0] + jac[3];
         let delta = jac[0] * jac[3] - jac[1] * jac[2];
-        // J = λI up to the resolution at which eigenvalues count as repeated.
-        let resolution = REL_TOL.sqrt() * scale_2d(tau, delta);
-        let scalar = jac[1].abs() <= resolution
-            && jac[2].abs() <= resolution
-            && 0.5 * (jac[0] - jac[3]).abs() <= resolution;
+        let scalar = is_scalar_2d(jac, repeat_resolution_2d(tau, delta));
         classify_2d(tau, delta, scalar)
     } else {
         classify(kind, &ev)
@@ -200,8 +196,28 @@ pub fn classify_jacobian(
 }
 
 /// Size of a 2x2 linearisation, roughly its largest |eigenvalue|.
-fn scale_2d(tau: f64, delta: f64) -> f64 {
+pub(crate) fn scale_2d(tau: f64, delta: f64) -> f64 {
     tau.abs().max(delta.abs().sqrt())
+}
+
+/// `δ = sqrt(REL_TOL)·s`: eigenvalues of a 2x2 `J` closer than this count as
+/// repeated (see the module docs).
+pub(crate) fn repeat_resolution_2d(tau: f64, delta: f64) -> f64 {
+    REL_TOL.sqrt() * scale_2d(tau, delta)
+}
+
+/// Is the 2x2 `jac` a multiple of `I` up to `resolution`, i.e. is every
+/// entry of `N = J - (τ/2)·I` at most `resolution`?
+pub(crate) fn is_scalar_2d(jac: &[f64], resolution: f64) -> bool {
+    jac[1].abs() <= resolution
+        && jac[2].abs() <= resolution
+        && 0.5 * (jac[0] - jac[3]).abs() <= resolution
+}
+
+/// Do the eigenvalues of a 2x2 `J` count as repeated (`τ² - 4Δ ≈ 0`)?
+pub(crate) fn is_repeated_2d(tau: f64, delta: f64) -> bool {
+    let s = scale_2d(tau, delta);
+    (tau * tau - 4.0 * delta).abs() <= REL_TOL * s * s
 }
 
 /// Strogatz trace–determinant classification. `scalar` says whether `J` is
@@ -224,7 +240,7 @@ fn classify_2d(tau: f64, delta: f64, scalar: bool) -> Classification {
     let stable = tau < 0.0;
     let disc = tau * tau - 4.0 * delta;
     let pick = |st, un| if stable { st } else { un };
-    if disc.abs() <= REL_TOL * s * s {
+    if is_repeated_2d(tau, delta) {
         if scalar {
             pick(StableStar, UnstableStar)
         } else {

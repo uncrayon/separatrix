@@ -48,6 +48,11 @@
   color: var(--ink-3);
 }
 
+/* The "Edited" tag never shrinks when a long name is ellipsised. */
+.topbar .doc-edited {
+  flex: none;
+}
+
 .topbar .topbar-actions {
   display: flex;
   flex: none;

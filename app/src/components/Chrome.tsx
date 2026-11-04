@@ -6,7 +6,7 @@ import type { AxisRef, Diagnostic, SymbolInfo, SystemKind } from "../api/types";
 import { insidePlot, makeViewport, toPlot, unitsPerPx, wantsEqualScales } from "../canvas/viewport";
 import { axisLabelLatex, fmt } from "../math/format";
 import { Tex } from "../math/Tex";
-import type { SolverSettings } from "../state/model";
+import { systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { IconCheck, IconError, IconGallery, IconLogo, IconMoon, IconProjector, IconWarning } from "./icons";
@@ -40,6 +40,7 @@ interface TopBarProps {
 
 export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarProps) {
   const tpl = state.templateId ? templateById(state.templateId) : undefined;
+  const title = systemTitle(tpl, state.equations.map((l) => l.latex));
   const projector = theme === "light";
   return (
     <header className="topbar">
@@ -48,14 +49,10 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
         <span className="title brand-name">Separatrix</span>
       </div>
       <div className="doc-title" aria-live="polite">
-        {tpl ? (
-          <>
-            <span className="body-strong doc-name">{tpl.title}</span>
-            {strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
-          </>
-        ) : (
-          state.compiled && <span className="body-strong doc-name">Untitled system</span>
-        )}
+        {(tpl || state.compiled) && <span className="body-strong doc-name">{title.name}</span>}
+        {/* A template whose equations no longer match it keeps its name, with a tag. */}
+        {title.edited && <span className="ds-template-card-tag doc-edited">Edited</span>}
+        {tpl && strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
       </div>
       <div className="topbar-actions">
         <button type="button" className="ds-button" onClick={onOpenGallery}>

@@ -82,7 +82,13 @@ pub struct EventHit { pub event: usize, pub t: f64, pub x: Vec<f64>, pub rising:
 pub fn integrate_with_events(..., events: &[Event]) -> (Solution, Vec<EventHit>);
 ```
 
-Blow-up: stop with `BlewUp` when any |x_i| > 1e12 (configurable later).
+Blow-up: stop with `BlewUp` when any |x_i| > 1e12 (configurable later), and also for blow-ups too
+fast to reach that in double precision: Dopri5's step size collapsing while |x| grows (`x' = x^3`),
+or a fixed step (Euler/Heun/RK4) overflowing to ±∞ in a growing component (`x' = e^x`) where `f` is
+still ±∞ just short of the overflowing point (a probe at `P - 1e-6·(P - x)`). `NonFinite` is kept
+for NaN/∞ that is not a blow-up (`sqrt` of a negative number, `-1/x` at 0, or a fixed step or stage
+landing exactly on a pole at a finite point, `x' = 1/(2 - x)^3` at 2, which Dopri5 reports as
+`StepTooSmall`).
 
 ### `dyn-analysis` (portrait analyses)
 
@@ -98,11 +104,42 @@ pub struct Nullcline { pub state: usize, pub polylines: Vec<Vec<(f64, f64)>> }
 pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) -> Vec<Nullcline>;
 
 pub struct FixedPoint { pub x: Vec<f64>, pub eigenvalues: Vec<(f64, f64)> /* re, im */,
+                        pub eigenvectors: Vec<Option<Vec<f64>>>,    // one per eigenvalue
+                        pub eigenvectors_im: Vec<Option<Vec<f64>>>, // complex λ only
                         pub classification: Classification, pub stable: bool }
 pub fn fixed_points(f: &dyn VectorField, p: &[f64], search: &[(f64, f64)] /* per state */,
                     seeds_per_axis: usize) -> Vec<FixedPoint>;     // ODE: f = 0; map: f(x) = x
 pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification;
+
+pub struct Eigenvectors { pub re: Vec<Option<Vec<f64>>>, pub im: Vec<Option<Vec<f64>>> }
+pub fn eigenvectors(kind: SystemKind, n: usize, a: &[f64], eigenvalues: &[(f64, f64)]) -> Eigenvectors;
 ```
+
+Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in the same order:
+
+- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalised so that its
+  largest-magnitude component is positive (the first one on a tie); `eigenvectorsIm[k]` is `null`.
+- **Repeated λ** (same resolution as the classification, `|λ1 - λ2| ≲ 3e-5·max|λ|`; for 2D flows
+  `τ² - 4Δ ≈ 0`): as many vectors as the eigenspace has dimensions, the rest `null`. A star
+  (`J = λI`) gets an orthonormal basis (any basis is valid); a degenerate node gets its single
+  eigenvector and one `null`. Eigenvalues of different stability (flows: sign of `Re λ`; maps: sign
+  of `|μ| - 1`, as in the classification) are never treated as repeated, however close, so a
+  saddle's stable and unstable vectors are never mixed up (`kind` says which rule applies).
+  Distinct eigenvalues that are only nearly repeated (e.g. `diag(-1, -1 - 1e-5)`, drawn as a star)
+  still get each the vector of its own eigenvalue.
+- **Rounded repeated λ**: a repeated real eigenvalue that rounding turned into a slightly complex
+  pair (`|Im λ| ≤ 1.6e-5·max|λ|`, e.g. a degenerate node computed as `-1 ± 1e-6 i`) is treated as
+  real: `eigenvectors[k]` is a real vector (or `null` for the missing direction) and
+  `eigenvectorsIm[k]` is `null`, although `Im λ ≠ 0`. Consumers should take an entry with a vector
+  and a `null` Im part as a real eigenvector of `Re λ`, not re-test `Im λ`.
+- **Complex pair α ± iω**: `v = re + i·im` with `J v = λ v`, returned as `eigenvectors[k] = re`
+  and `eigenvectorsIm[k] = im`; the conjugate eigenvalue gets `(re, -im)`. The phase is fixed so
+  that `|re|² + |im|² = 1`, `re ⊥ im` and `|re| ≥ |im|`: re and im are the major and minor
+  semi-axes of the ellipses traced by the linearised orbits `Re(c·e^{λt}·v)` (spirals and
+  centres), and span the invariant plane. For a circle the largest component of `v` is made real
+  and positive. Sign as for real vectors, by `re`.
+- No linearisation (non-finite Jacobian): `eigenvalues`, `eigenvectors`, `eigenvectorsIm` are all
+  empty. Never NaN.
 
 Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stable/unstable spiral,
 centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
@@ -116,6 +153,10 @@ JSON, camelCase. Types mirrored in `app/src/api/types.ts`.
 | --- | --- | --- |
 | `compile_system` | `{ source, format: "latex" \| "text" }` | `CompileResponse` |
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
+
+`PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
+eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,
+with the eigenvector conventions of `dyn-analysis` above.
 
 The UI never sends anything stale: it sends a monotonically increasing `requestId`
 and drops responses older than the latest it has drawn.

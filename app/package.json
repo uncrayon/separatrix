@@ -10,7 +10,6 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@cortex-js/compute-engine": "0.177.0",
     "@tauri-apps/api": "~2.12.4",
     "mathlive": "0.111.4",
     "react": "^19.3.1",

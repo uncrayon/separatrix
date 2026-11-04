@@ -90,3 +90,147 @@ test("Van der Pol: the fixed point at the origin can be selected with one click"
     await browser.close();
   }
 });
+
+// ------------------------------------------------- eigenvectors, colours, title
+
+/** Selects a fixed point by its Inspector row name ("Saddle at (1.000, 1.000)"). */
+async function selectFixedPoint(page, name) {
+  const row = page.locator(`.panel-right ul[aria-label="Fixed points"] .ds-fp-row[aria-label="${name}"]`);
+  await row.waitFor();
+  await row.click();
+  await page.waitForTimeout(300);
+}
+const eigenSwitch = (page) => page.getByRole("switch", { name: "Show eigenvectors" });
+const legendText = (page) =>
+  page.evaluate(() => document.querySelector('.legend-bar ul[aria-label="Legend"]')?.textContent ?? "");
+
+test("Show eigenvectors: the saddle's switch draws stable and unstable lines, with legend keys", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Rabbits vs sheep");
+    await selectFixedPoint(page, "Saddle at (1.000, 1.000)");
+    const sw = eigenSwitch(page);
+    assert.equal(await sw.getAttribute("aria-checked"), "false");
+    assert.ok(!(await legendText(page)).includes("eigenvector"), "no eigenvector keys while off");
+    await sw.click();
+    await page.waitForTimeout(400);
+    assert.equal(await sw.getAttribute("aria-checked"), "true");
+    const legend = await legendText(page);
+    assert.ok(legend.includes("Unstable eigenvector"), legend);
+    assert.ok(legend.includes("Stable eigenvector"), legend);
+    const label = await page.locator("canvas.plot-canvas").getAttribute("aria-label");
+    assert.match(label, /Eigenvector directions are drawn through the fixed points\./);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Show eigenvectors: a spiral's hint only promises other points' lines when there are some", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Rabbits vs sheep");
+    await selectFixedPoint(page, "Saddle at (1.000, 1.000)");
+    await eigenSwitch(page).click();
+    await page.waitForTimeout(300);
+    // The switch keeps its value across templates. Van der Pol's only fixed
+    // point is a spiral: nothing has real eigenvectors to draw.
+    await page.getByRole("button", { name: /Templates/ }).click();
+    await page.waitForSelector(".gallery");
+    await pick(page, "Van der Pol");
+    const row = page.locator('.panel-right ul[aria-label="Fixed points"] .ds-fp-row').first();
+    await row.click();
+    await page.waitForTimeout(300);
+    const sw = eigenSwitch(page);
+    assert.equal(await sw.getAttribute("aria-checked"), "true");
+    const hint = await page.locator(`#${(await sw.getAttribute("aria-describedby")).replace(/:/g, "\\:")}`).textContent();
+    assert.match(hint, /no real eigenvectors\./);
+    assert.ok(!hint.includes("Other fixed points show theirs."), hint);
+    assert.match(hint, /No fixed point in this system has real eigenvectors\./);
+    assert.ok(!(await legendText(page)).includes("eigenvector"), "nothing is drawn, so no keys");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("trajectory colours restart at traj-1 after Delete all trajectories", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Rabbits vs sheep");
+    await page.locator('.panel-right [aria-label="Delete all trajectories"]').click();
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.panel-right ul[aria-label="Trajectories"] .ds-traj-row').count(), 0);
+    await page.locator('.canvas-toolbar [aria-label="Add trajectory"]').click();
+    const b = await page.locator("canvas.plot-canvas").boundingBox();
+    await page.mouse.click(b.x + b.width * 0.3, b.y + b.height * 0.4);
+    await page.waitForTimeout(400);
+    const rows = page.locator('.panel-right ul[aria-label="Trajectories"] .ds-traj-row');
+    assert.equal(await rows.count(), 1);
+    const style = (await rows.first().getAttribute("style")).replace(/\s+/g, "");
+    assert.equal(style, "--traj:var(--traj-1);");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("trajectory rows: the show/hide eye toggle has no outline or fill when on", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Rabbits vs sheep");
+    const looks = await page.evaluate(() =>
+      [...document.querySelectorAll('.panel-right .ds-traj-actions .ds-icon-button[aria-pressed="true"]')].map((b) => {
+        const cs = getComputedStyle(b);
+        return [cs.borderTopColor, cs.backgroundColor];
+      }),
+    );
+    assert.ok(looks.length > 0, "the template has visible trajectories");
+    for (const [border, bg] of looks) {
+      assert.equal(border, "rgba(0, 0, 0, 0)");
+      assert.equal(bg, "rgba(0, 0, 0, 0)");
+    }
+    // Toolbar layer toggles keep their outline.
+    const toolbar = await page.evaluate(() => {
+      const b = document.querySelector('.canvas-toolbar .ds-icon-button:not(.ds-icon-button--tool)[aria-pressed="true"]');
+      return b ? getComputedStyle(b).borderTopColor : null;
+    });
+    assert.ok(toolbar && toolbar !== "rgba(0, 0, 0, 0)", String(toolbar));
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Text mode: editing a template tags it Edited, and undoing the edit removes the tag", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Van der Pol");
+    const name = await page.locator(".topbar .doc-name").textContent();
+    assert.equal(await page.locator(".topbar .doc-edited").count(), 0);
+    await page.getByRole("radio", { name: "Text" }).click();
+    const first = page.locator(".panel-left input.ds-equation-editor-field").first();
+    await first.click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("1");
+    await page.waitForTimeout(800);
+    assert.equal(await page.locator(".topbar .doc-edited").count(), 1, "Edited appears");
+    assert.equal(await page.locator(".topbar .doc-name").textContent(), name, "the name stays the template's");
+    await page.keyboard.press("Backspace");
+    await page.waitForTimeout(800);
+    assert.equal(await page.locator(".topbar .doc-edited").count(), 0, "Edited goes away");
+    assert.equal(await page.locator(".topbar .doc-name").textContent(), name);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the plot's accessible name reads near-zero fixed-point coordinates as 0", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Rabbits vs sheep");
+    const label = await page.locator("canvas.plot-canvas").getAttribute("aria-label");
+    const fixed = label.slice(label.indexOf("Fixed points:"));
+    assert.ok(!/e[-−+]?\d/.test(fixed), fixed);
+    assert.match(fixed, /unstable node at \(0, 0\)/);
+    assert.match(fixed, /saddle at \(1, 1\)/);
+  } finally {
+    await browser.close();
+  }
+});

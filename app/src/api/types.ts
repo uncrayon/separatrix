@@ -121,6 +121,21 @@ export interface FixedPointOut {
   x: number[];
   /** [re, im] pairs. */
   eigenvalues: [number, number][];
+  /**
+   * One entry per eigenvalue, same order. Real eigenvalue: its unit
+   * eigenvector, sign-normalised so the largest-magnitude component is
+   * positive. Complex eigenvalue: the real part of its eigenvector. `null`
+   * for the missing direction of a defective eigenvalue (a degenerate node
+   * has one vector and one `null`). Stars get an orthonormal basis.
+   */
+  eigenvectors: (number[] | null)[];
+  /**
+   * Imaginary parts of the eigenvectors of complex eigenvalues; `null` for
+   * real ones. For a pair α ± iω, re and im are orthogonal with
+   * |re|² + |im|² = 1 and |re| ≥ |im|: the major and minor semi-axes of the
+   * linearised orbits' ellipses (the conjugate has im negated).
+   */
+  eigenvectorsIm: (number[] | null)[];
   classification: Classification;
   stable: boolean;
 }

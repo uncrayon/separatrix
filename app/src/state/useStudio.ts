@@ -10,12 +10,13 @@ import type { Template } from "../templates";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
-  PALETTE_SIZE,
+  UNTITLED_SYSTEM,
   adaptInitialConditions,
   axisValid,
   buildPortraitJob,
   defaultParamRange,
   defaultView,
+  nextIcColor,
   stateExtent,
   templateView,
   type EquationLine,
@@ -35,7 +36,7 @@ const COMPILE_DEBOUNCE_MS = 160;
 /** A blank starting point: the harmonic oscillator, ready to edit. */
 const BLANK_TEMPLATE: Template = {
   id: "blank",
-  title: "Untitled system",
+  title: UNTITLED_SYSTEM,
   chapter: "",
   description: "",
   format: "latex",
@@ -54,6 +55,11 @@ export interface StudioState extends StudioSnapshot {
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
+  /**
+   * The gallery template the system was loaded from (null for a blank
+   * system). It stays set while the equations are edited; compare them with
+   * the template's (`systemTitle`) to tell whether they still match.
+   */
   templateId: string | null;
   computeError: string | null;
 }
@@ -110,15 +116,19 @@ export function useStudio() {
 
   const nextLineId = useRef(1);
   const nextIcId = useRef(1);
-  const nextColor = useRef(0);
   const compileSeq = useRef(0);
   const compileTimer = useRef<number | undefined>(undefined);
 
-  const makeIc = useCallback((x0: number[], t0: number): InitialCondition => {
-    const ic = { id: nextIcId.current++, x0, t0, color: nextColor.current % PALETTE_SIZE };
-    nextColor.current++;
-    return ic;
-  }, []);
+  /** A new initial condition, coloured with the first palette colour `others` leave free. */
+  const makeIc = useCallback(
+    (x0: number[], t0: number, others: readonly InitialCondition[]): InitialCondition => ({
+      id: nextIcId.current++,
+      x0,
+      t0,
+      color: nextIcColor(others),
+    }),
+    [],
+  );
 
   // ------------------------------------------------------------ portrait
 
@@ -189,15 +199,17 @@ export function useStudio() {
         setHomeView(v);
         setBaseState(new Array(dim).fill(0));
         setFieldTimeState(0);
-        nextColor.current = 0;
-        setIcs(
-          template.initialConditions.map((x0) =>
+        const fresh: InitialCondition[] = [];
+        for (const x0 of template.initialConditions) {
+          fresh.push(
             makeIc(
               Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
               0,
+              fresh,
             ),
-          ),
-        );
+          );
+        }
+        setIcs(fresh);
         setSolverState((s) => ({ ...s, tEnd: template.tEnd }));
         setLayersState((l) => ({
           ...l,
@@ -261,7 +273,6 @@ export function useStudio() {
     (id: number, latex: string) => {
       const lines = latest.current.equations.map((l) => (l.id === id ? { ...l, latex } : l));
       setEquations(lines);
-      setTemplateId(null);
       scheduleCompile(lines);
     },
     [scheduleCompile],
@@ -283,7 +294,6 @@ export function useStudio() {
     (id: number) => {
       const lines = latest.current.equations.filter((l) => l.id !== id);
       setEquations(lines);
-      setTemplateId(null);
       scheduleCompile(lines);
     },
     [scheduleCompile],
@@ -375,8 +385,10 @@ export function useStudio() {
   const addIc = useCallback(
     (px: number, py: number): number => {
       const { x0, t0 } = liftPoint(px, py);
-      const ic = makeIc(x0, t0);
-      setIcs((list) => [...list, ic]);
+      const ic = makeIc(x0, t0, latest.current.ics);
+      // The colour is chosen against the list the update lands on, so two
+      // clicks before a re-render still get different colours.
+      setIcs((list) => [...list, { ...ic, color: nextIcColor(list) }]);
       setSelection({ kind: "ic", id: ic.id });
       return ic.id;
     },

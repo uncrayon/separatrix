@@ -68,6 +68,7 @@ function speak(src: string): string {
     .replace(/\\left|\\right/g, "")
     .replace(/\\(sin|cos|tan|exp|ln|log)\b/g, (_, f: string) => ` ${FUNCS[f] ?? f} `)
     .replace(/\\(cdot|times)\b/g, " times ")
+    .replace(/\\pm\b/g, " plus or minus ")
     .replace(/\\partial\b/g, " partial ")
     .replace(/\\infty\b/g, " infinity ")
     .replace(/\\([A-Za-z]+)/g, (m, name: string) => (GREEK.has(name) ? ` ${name} ` : m))
@@ -90,7 +91,7 @@ function speak(src: string): string {
 /** Words speak() itself writes; everything else made of letters is a product of symbols. */
 const WORDS = new Set([
   "dot", "double", "equals", "plus", "minus", "open", "close", "paren", "squared", "cubed", "to", "the",
-  "over", "sub", "sine", "cosine", "tangent", "exp", "log", "times", "partial", "infinity",
+  "over", "or", "sub", "sine", "cosine", "tangent", "exp", "log", "times", "partial", "infinity",
 ]);
 
 const FUNCS: Record<string, string> = { sin: "sine", cos: "cosine", tan: "tangent", exp: "exp", ln: "log", log: "log" };

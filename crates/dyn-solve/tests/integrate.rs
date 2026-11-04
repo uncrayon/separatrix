@@ -821,3 +821,171 @@ fn integrate_and_integrate_with_no_events_agree() {
     assert_eq!(a, b);
     assert!(hits.is_empty());
 }
+
+// ------------------------------------------------- fixed-step blow-up status
+
+#[test]
+fn fixed_step_exponential_blow_up_is_blew_up() {
+    // x' = e^x, x(0) = 0: x = -ln(1 - t) blows up at t = 1. The fixed-step
+    // methods reach a finite x at which e^x overflows (or a stage does)
+    // before |x| passes the threshold; that is still a blow-up.
+    let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0].exp());
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        for h in [0.1, 0.01, 0.001] {
+            for sampling in [Sampling::Steps, Sampling::Uniform(501)] {
+                let sol = integrate(&f, &[], 0.0, &[0.0], 5.0, &fixed(method, h), sampling);
+                let (t, x) = sol.last().unwrap();
+                assert_eq!(
+                    sol.status,
+                    Status::BlewUp,
+                    "{method:?}, h = {h}: stopped at t = {t}, x = {x:?}"
+                );
+                assert!(sol.x.iter().all(|v| v.is_finite()), "{method:?}, h = {h}");
+                assert!(t > 0.9 && t < 1.5, "{method:?}, h = {h}: t = {t}");
+                if sampling == Sampling::Steps {
+                    assert!(x[0] > 5.0, "{method:?}, h = {h}: x = {x:?}");
+                }
+            }
+        }
+    }
+    // Backwards in time: x' = e^{-x} from 0 (x = ln(1 + t)) blows up
+    // (x → -∞) at t = -1.
+    let g = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = (-x[0]).exp()
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &g,
+            &[],
+            0.0,
+            &[0.0],
+            -5.0,
+            &fixed(method, 0.01),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::BlewUp, "{method:?}");
+        let (t, x) = sol.last().unwrap();
+        assert!(t < -0.9 && t > -1.1, "{method:?}: t = {t}");
+        assert!(x[0] < -5.0, "{method:?}: x = {x:?}");
+    }
+    // Another component overflowing: x' = e^y, y' = 1 from (0, 700).
+    let k = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = x[1].exp();
+        out[1] = 1.0;
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &k,
+            &[],
+            0.0,
+            &[0.0, 700.0],
+            20.0,
+            &fixed(method, 0.1),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::BlewUp, "{method:?}");
+    }
+}
+
+#[test]
+fn fixed_step_nan_is_still_non_finite() {
+    // sqrt of a negative number: the field leaves its domain, no overflow.
+    let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = -x[0].sqrt() - 1.0
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        for h in [0.1, 0.01] {
+            let sol = integrate(
+                &f,
+                &[],
+                0.0,
+                &[1.0],
+                10.0,
+                &fixed(method, h),
+                Sampling::Steps,
+            );
+            assert_eq!(sol.status, Status::NonFinite, "{method:?}, h = {h}");
+            assert!(sol.x.iter().all(|v| v.is_finite()));
+        }
+    }
+    // A growing solution that leaves the domain: x' = x, y' = sqrt(5 - x).
+    let g = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = x[0];
+        out[1] = (5.0 - x[0]).sqrt();
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &g,
+            &[],
+            0.0,
+            &[1.0, 0.0],
+            10.0,
+            &fixed(method, 0.01),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "{method:?}");
+    }
+    // Division by zero at a shrinking component: x' = -1/x, Euler with
+    // h = 1 from x = 1 lands exactly on 0, where f = -∞.
+    let k = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = -1.0 / x[0]);
+    let sol = integrate(
+        &k,
+        &[],
+        0.0,
+        &[1.0],
+        5.0,
+        &fixed(Method::Euler, 1.0),
+        Sampling::Steps,
+    );
+    assert_eq!(sol.status, Status::NonFinite);
+    assert_eq!(sol.x, vec![1.0]);
+    // A pole at a finite, nonzero point, landed on exactly: the component
+    // grows towards the pole but the solution has a finite limit there
+    // (Dopri5 reports StepTooSmall). x' = 1/(2 - x)^m from x = 1 with
+    // h = 1: Euler lands on 2, Heun's stage lands on 2, RK4's second stage
+    // lands on 2 for m = 1.
+    for m in [1, 3] {
+        let pole = FnField::new(1, 0, SystemKind::Ode, move |_t, x, _p, out| {
+            out[0] = 1.0 / (2.0 - x[0]).powi(m)
+        });
+        for method in [Method::Euler, Method::Heun, Method::Rk4] {
+            let sol = integrate(
+                &pole,
+                &[],
+                0.0,
+                &[1.0],
+                5.0,
+                &fixed(method, 1.0),
+                Sampling::Steps,
+            );
+            assert_ne!(
+                sol.status,
+                Status::BlewUp,
+                "m = {m}, {method:?}: {:?}",
+                sol.x
+            );
+            assert!(sol.x.iter().all(|v| v.is_finite()));
+        }
+        let sol = integrate(
+            &pole,
+            &[],
+            0.0,
+            &[1.0],
+            5.0,
+            &fixed(Method::Euler, 1.0),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "m = {m}");
+        assert_eq!(sol.x, vec![1.0], "m = {m}");
+        let sol = integrate(
+            &pole,
+            &[],
+            0.0,
+            &[1.0],
+            5.0,
+            &fixed(Method::Heun, 1.0),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "m = {m}");
+    }
+}

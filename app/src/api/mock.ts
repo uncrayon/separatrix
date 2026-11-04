@@ -387,7 +387,14 @@ function findFixedPoints(
   return found.map((x) => {
     const jac = jacobian((y) => sys.f(0, y, req.params), x, dim);
     const eig = eigenvalues(jac, dim);
-    return { x, eigenvalues: eig, ...classifyMock(sys.kind, jac, eig, dim) };
+    const { re, im } = eigenvectors(jac, eig, dim);
+    return {
+      x,
+      eigenvalues: eig,
+      eigenvectors: re,
+      eigenvectorsIm: im,
+      ...classifyMock(sys.kind, jac, eig, dim),
+    };
   });
 }
 
@@ -501,6 +508,113 @@ function quadratic(a: number, b: number, c: number): [number, number][] {
   ];
 }
 
+// Eigenvectors, following the conventions of dyn-analysis (eigvec.rs): unit
+// length, largest-magnitude component positive; complex pairs as real and
+// imaginary parts with the phase making them the ellipse's semi-axes; `null`
+// for the missing direction of a defective (repeated) eigenvalue.
+
+type C = [number, number];
+const cmul = (a: C, b: C): C => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+const csub = (a: C, b: C): C => [a[0] - b[0], a[1] - b[1]];
+const cnorm = (v: C[]) => Math.sqrt(v.reduce((acc, z) => acc + z[0] * z[0] + z[1] * z[1], 0));
+
+/** Bilinear cross product: orthogonal (without conjugation) to both rows. */
+function ccross(a: C[], b: C[]): C[] {
+  return [
+    csub(cmul(a[1], b[2]), cmul(a[2], b[1])),
+    csub(cmul(a[2], b[0]), cmul(a[0], b[2])),
+    csub(cmul(a[0], b[1]), cmul(a[1], b[0])),
+  ];
+}
+
+/** Basis of the null space of the n×n complex matrix `m` (n ≤ 3), best effort. */
+function nullSpace(m: C[][], n: number, tol: number): C[][] {
+  const e = (k: number): C[] => Array.from({ length: n }, (_, i): C => [i === k ? 1 : 0, 0]);
+  const big = (v: C[]) => cnorm(v) > tol;
+  if (!m.some((row) => big(row))) return Array.from({ length: n }, (_, k) => e(k));
+  if (n === 1) return [];
+  if (n === 2) {
+    const cands: C[][] = [
+      [[-m[0][1][0], -m[0][1][1]], m[0][0]],
+      [[-m[1][1][0], -m[1][1][1]], m[1][0]],
+    ];
+    return [cands.reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a))];
+  }
+  const crosses = [ccross(m[0], m[1]), ccross(m[0], m[2]), ccross(m[1], m[2])];
+  const best = crosses.reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
+  if (cnorm(best) > tol * tol) return [best];
+  // Rank one: two vectors orthogonal to the largest row.
+  const r = m.reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
+  const u = [0, 1, 2].map((k) => ccross(r, e(k))).reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
+  return [u, ccross(r, u)];
+}
+
+function dominantIndex(mags: number[]): number {
+  const max = Math.max(...mags);
+  return mags.findIndex((v) => v >= (1 - 1e-9) * max);
+}
+
+function normaliseVector(v: C[], complex: boolean): { re: number[]; im: number[] | null } {
+  const len = cnorm(v);
+  let w = v.map(([a, b]): C => [a / len, b / len]);
+  if (complex) {
+    const aa = w.reduce((acc, z) => acc + z[0] * z[0], 0);
+    const bb = w.reduce((acc, z) => acc + z[1] * z[1], 0);
+    const ab = w.reduce((acc, z) => acc + z[0] * z[1], 0);
+    const p = aa - bb;
+    const q = 2 * ab;
+    let theta: number;
+    if (Math.hypot(p, q) <= 1e-8 * (aa + bb)) {
+      const k = dominantIndex(w.map(([a, b]) => Math.hypot(a, b)));
+      theta = -Math.atan2(w[k][1], w[k][0]);
+    } else {
+      theta = 0.5 * Math.atan2(-q, p);
+    }
+    const rot: C = [Math.cos(theta), Math.sin(theta)];
+    w = w.map((z) => cmul(z, rot));
+  }
+  const k = dominantIndex(w.map(([a]) => Math.abs(a)));
+  if (w[k][0] < 0) w = w.map(([a, b]): C => [-a, -b]);
+  return { re: w.map(([a]) => a), im: complex ? w.map(([, b]) => b) : null };
+}
+
+function eigenvectors(
+  j: number[],
+  eig: [number, number][],
+  n: number,
+): { re: (number[] | null)[]; im: (number[] | null)[] } {
+  const re: (number[] | null)[] = [];
+  const im: (number[] | null)[] = [];
+  const scale = Math.max(...eig.map(([a, b]) => Math.hypot(a, b)), ...j.map(Math.abs));
+  const tol = 1e-6 * Math.max(scale, 1e-300);
+  // Repeated eigenvalues (the mock's 3×3 roots are only accurate to ~1e-5
+  // when repeated) are replaced by the mean of their cluster.
+  const same = (a: [number, number], b: [number, number]) =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-4 * Math.max(scale, 1e-300);
+  for (let k = 0; k < eig.length; k++) {
+    const cluster = eig.filter((e) => same(e, eig[k]));
+    const occurrence = eig.slice(0, k).filter((e) => same(e, eig[k])).length;
+    const lr = cluster.reduce((acc, e) => acc + e[0], 0) / cluster.length;
+    const li = cluster.reduce((acc, e) => acc + e[1], 0) / cluster.length;
+    const complex = Math.abs(li) > tol;
+    const m: C[][] = Array.from({ length: n }, (_, r) =>
+      Array.from({ length: n }, (_, c): C => (r === c ? [j[r * n + c] - lr, complex ? -li : 0] : [j[r * n + c], 0])),
+    );
+    const basis = scale === 0 ? nullSpace(m, n, 0) : nullSpace(m, n, tol);
+    const v = basis[occurrence];
+    if (!v || !(cnorm(v) > 0)) {
+      re.push(null);
+      im.push(null);
+      continue;
+    }
+    const out = normaliseVector(v, complex);
+    const ok = out.re.every(Number.isFinite) && (out.im ?? []).every(Number.isFinite);
+    re.push(ok ? out.re : null);
+    im.push(ok ? out.im : null);
+  }
+  return { re, im };
+}
+
 function classifyMock(
   kind: SystemKind,
   jac: number[],
@@ -514,13 +628,16 @@ function classifyMock(
     if (mods.some((m) => Math.abs(m - 1) < eps)) return { classification: "non-hyperbolic", stable: false };
     if (stable) return { classification: "sink", stable };
     if (mods.every((m) => m > 1)) return { classification: "source", stable };
-    return { classification: dim === 2 ? "saddle" : "saddle (n-D)", stable };
+    // Maps of any dimension: "saddle (n-D)", as dyn-analysis (Strogatz's
+    // trace–determinant classes are for 2D flows only).
+    return { classification: "saddle (n-D)", stable };
   }
   const stable = eig.every(([re]) => re < -eps);
   if (dim === 1) {
     const l = eig[0][0];
     if (Math.abs(l) < eps) return { classification: "non-hyperbolic", stable: false };
-    return { classification: l < 0 ? "stable node" : "unstable node", stable };
+    // As dyn-analysis classify.rs: 1D flows are sink / source.
+    return { classification: l < 0 ? "sink" : "source", stable };
   }
   if (dim === 2) {
     const tau = jac[0] + jac[3];

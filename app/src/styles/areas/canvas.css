@@ -287,3 +287,10 @@
     padding-bottom: var(--space-2);
   }
 }
+
+/* The fixed point at the middle of an eigenvector key (the line itself is the
+   DS's .ds-fp-eigen). */
+.legend-eigen-point {
+  fill: var(--plot-fp);
+  stroke: none;
+}
