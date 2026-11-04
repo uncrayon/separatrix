@@ -700,6 +700,7 @@ dependencies = [
  "nalgebra",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
@@ -713,6 +714,7 @@ name = "dyn-core"
 version = "0.2.0"
 dependencies = [
  "serde",
+ "ts-rs",
 ]
 
 [[package]]
@@ -723,6 +725,7 @@ dependencies = [
  "dyn-core",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
@@ -733,6 +736,7 @@ dependencies = [
  "dyn-core",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

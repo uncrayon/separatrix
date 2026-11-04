@@ -7,3 +7,8 @@ license.workspace = true
 
 [dependencies]
 serde.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# TypeScript declarations (ts-rs) for the types sent to the UI.
+ts = ["dep:ts-rs"]

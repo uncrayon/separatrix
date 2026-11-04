@@ -57,6 +57,7 @@ pub const BLOW_UP_THRESHOLD: f64 = 1e12;
 
 /// Integration method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Method {
     /// Forward Euler, order 1, fixed step. (Strogatz §2.8.)
@@ -123,6 +124,7 @@ pub enum Sampling {
 
 /// Why an integration or iteration stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
     /// Reached `t1` (or performed all iterations).
@@ -157,6 +159,7 @@ pub enum Status {
 
 /// Work counters, useful to compare methods.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     /// Accepted steps (map iterations for [`iterate_map`]).

@@ -3,7 +3,14 @@ import type { AxisRef, Classification, FixedPointOut, Method, Status, SystemKind
 import { Tex } from "../math/Tex";
 import { classificationExplain, fmt, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { DEFAULT_FIXED_STEP, PALETTE_SIZE, trajectorySpans, type InitialCondition } from "../state/model";
+import {
+  DEFAULT_FIXED_STEP,
+  PALETTE_SIZE,
+  selectFixedPoint,
+  selectedFixedPointIndex,
+  trajectorySpans,
+  type InitialCondition,
+} from "../state/model";
 import { Button, IconButton, NumberField, Select, Switch, withMinus, type SelectOption } from "./controls";
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
@@ -70,7 +77,7 @@ export function Inspector({ state, actions }: Props) {
 
   const sel = state.selection;
   const selKind = sel?.kind ?? null;
-  const selId = sel ? (sel.kind === "ic" ? sel.id : sel.index) : null;
+  const selId = sel ? (sel.kind === "ic" ? sel.id : sel.key) : null;
   useEffect(() => {
     if (selKind === "fp") setOpen("fixedPoints", true);
     if (selKind === "ic") {
@@ -579,7 +586,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const p = state.portrait;
   const fps = p && p.meta.systemId === sys.systemId ? p.res.fixedPoints : [];
   const sym = sys.kind === "map" ? "μ" : "λ";
-  const selected = state.selection?.kind === "fp" ? state.selection.index : null;
+  const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
   const coordsText = (fp: FixedPointOut) =>
     dim === 1 ? `${plainName(sys.states[0].latex)}* = ${dec(fp.x[0], 3)}` : `(${fp.x.map((v) => dec(v, 3)).join(", ")})`;
 
@@ -613,7 +620,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
                     className="ds-fp-row"
                     aria-pressed={isSel}
                     aria-label={`${label} at ${coords}`}
-                    onClick={() => actions.select(isSel ? null : { kind: "fp", index: i })}
+                    onClick={() => actions.select(isSel ? null : selectFixedPoint(fp.x))}
                   >
                     <FixedPointIcon kind={fixedPointGlyph(fp.classification, fp.stable)} />
                     <span className="ds-fp-row-text">

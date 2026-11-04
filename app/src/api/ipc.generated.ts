@@ -1,5 +1,31 @@
 // Generated from app/src-tauri/src/ipc.rs by `UPDATE_IPC_BINDINGS=1 cargo test -p separatrix typescript_bindings`.
 
+export type InputFormat = "latex" | "text";
+
+export type SystemKind = "ode" | "map";
+
+export type Severity = "error" | "warning" | "info";
+
+export type Method = "euler" | "heun" | "rk4" | "dopri5";
+
+export type Status = "completed" | "blewUp" | "maxSteps" | "stepTooSmall" | "nonFinite";
+
+export type Stats = { 
+/**
+ * Accepted steps (map iterations for [`iterate_map`]).
+ */
+accepted: number, 
+/**
+ * Rejected steps (adaptive methods only).
+ */
+rejected: number, 
+/**
+ * Calls to [`VectorField::eval`].
+ */
+evals: number, };
+
+export type Classification = "saddle" | "stable node" | "unstable node" | "stable spiral" | "unstable spiral" | "center" | "stable star" | "unstable star" | "stable degenerate node" | "unstable degenerate node" | "non-isolated" | "sink" | "source" | "saddle (n-D)" | "non-hyperbolic";
+
 export type CompileRequest = { 
 /**
  * The equations, one per line (the UI joins its non-empty lines with `"\n"`).
@@ -8,13 +34,13 @@ source: string,
 /**
  * LaTeX (from MathLive) or plain text.
  */
-format: import("./types").InputFormat, };
+format: InputFormat, };
 
 export type Diagnostic = { 
 /**
  * Error, warning or info.
  */
-severity: import("./types").Severity, 
+severity: Severity, 
 /**
  * Plain-language explanation.
  */
@@ -23,7 +49,7 @@ message: string,
  * Byte offsets `[start, end]` into `CompileRequest::source`; absent when
  * the message is about the system as a whole.
  */
-span?: [number, number] | null, };
+span?: [number, number], };
 
 export type StateInfo = { 
 /**
@@ -33,7 +59,12 @@ name: string,
 /**
  * Display form, e.g. `"\\dot{\\theta}"`.
  */
-latex: string, };
+latex: string, 
+/**
+ * A lower derivative introduced by reducing a higher-order equation to
+ * first order (`theta'` for `theta'' = ...`).
+ */
+derived: boolean, };
 
 export type ParamInfo = { 
 /**
@@ -57,11 +88,11 @@ ok: boolean,
 /**
  * Handle for `compute_portrait`; present when `ok`.
  */
-systemId?: number | null, 
+systemId?: number, 
 /**
  * Flow or map; present when `ok`.
  */
-kind?: import("./types").SystemKind, 
+kind?: SystemKind, 
 /**
  * Entered as `H(q, p) = ...`.
  */
@@ -97,7 +128,7 @@ export type SolverOptions = {
 /**
  * Integration method.
  */
-method: import("./types").Method, 
+method: Method, 
 /**
  * Relative tolerance (dopri5 only).
  */
@@ -113,7 +144,7 @@ h: number,
 /**
  * Largest allowed step for dopri5; absent = no limit.
  */
-hMax?: number | null, 
+hMax?: number, 
 /**
  * Step limit per trajectory.
  */
@@ -252,7 +283,7 @@ eigenvectorsIm: Array<Array<number> | null>,
 /**
  * Strogatz's name for the point.
  */
-classification: import("./types").Classification, 
+classification: Classification, 
 /**
  * Asymptotically stable.
  */
@@ -270,11 +301,11 @@ x: Array<number>,
 /**
  * Why the computation stopped.
  */
-status: import("./types").Status, 
+status: Status, 
 /**
  * Work counters.
  */
-stats: import("./types").TrajectoryOut["stats"], };
+stats: Stats, };
 
 export type PortraitResponse = { 
 /**

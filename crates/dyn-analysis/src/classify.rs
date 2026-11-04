@@ -12,6 +12,7 @@ pub const ABS_TOL: f64 = 1e-12;
 /// Type of a fixed point. Serialises to the strings of the UI's
 /// `Classification` type (e.g. `"stable spiral"`, `"saddle (n-D)"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub enum Classification {
     /// 2D flow, `Δ < 0`.
     #[serde(rename = "saddle")]

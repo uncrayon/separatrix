@@ -509,6 +509,7 @@ impl StateTable {
         SymbolInfo {
             name: self.syms[i].derived_name(self.orders[i]),
             latex: self.syms[i].dotted(self.orders[i]),
+            derived: self.orders[i] > 0,
         }
     }
 }
@@ -557,22 +558,24 @@ fn const_eval(a: &Ast) -> Result<f64, ConstErr> {
     })
 }
 
-fn function_typo(name: &str, text: bool, table: &StateTable) -> Option<String> {
-    for f in FUNCTION_WORDS {
-        if name.len() > f.len() && name.starts_with(f) {
-            let rest = &name[f.len()..];
-            let plausible = rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
-            if plausible && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                let fix = if text {
-                    format!("{f}({rest})")
-                } else {
-                    format!("\\{f} {rest}")
-                };
-                return Some(format!("{name} is not a function; did you mean {fix}?"));
-            }
-        }
+/// The function a multi-letter name looks like, followed by a plausible
+/// argument (`cost` → `\cos t`), as `(function, rest)`.
+fn function_lookalike<'n>(name: &'n str, table: &StateTable) -> Option<(&'static str, &'n str)> {
+    FUNCTION_WORDS.iter().find_map(|&f| {
+        let rest = name.strip_prefix(f).filter(|r| !r.is_empty())?;
+        let plausible = rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
+        let word = rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        (plausible && word).then_some((f, rest))
+    })
+}
+
+/// How the function a name looks like would be written: `cos(t)` or `\cos t`.
+fn function_fix(f: &str, rest: &str, text: bool) -> String {
+    if text {
+        format!("{f}({rest})")
+    } else {
+        format!("\\{f} {rest}")
     }
-    None
 }
 
 /// What a plain name means in a system.
@@ -581,7 +584,6 @@ enum Meaning {
     Time,
     Pi,
     E,
-    Typo(String),
     Param,
 }
 
@@ -603,10 +605,11 @@ impl Scope<'_> {
             ("e", _) => return Meaning::E,
             _ => {}
         }
-        match function_typo(&s.name, self.text, self.table) {
-            Some(msg) => Meaning::Typo(msg),
-            None => Meaning::Param,
-        }
+        // A multi-letter name only reaches here when it was spelled as one
+        // name (`\mathrm{cost}`, or the word `cost` in text mode), so it is a
+        // parameter even if it looks like a function; `warn_function_lookalikes`
+        // points out the possible typo.
+        Meaning::Param
     }
 
     /// The state that `s_n` reads, in a map that has a state `s`.
@@ -670,10 +673,10 @@ impl Resolver<'_> {
     fn resolve(&mut self, a: &Ast) -> Node {
         match &a.kind {
             AstKind::Num(v) => Node::Num(*v),
-            AstKind::Sym(s) => self.symbol(s, a.span),
+            AstKind::Sym(s) => self.symbol(s),
             AstKind::Current(s) => match self.scope.current_state(s) {
                 Some(i) => Node::State(i),
-                None => self.symbol(&s.at_index_n(), a.span),
+                None => self.symbol(&s.at_index_n()),
             },
             AstKind::Deriv(s, k) => self.derivative(s, *k, a.span),
             AstKind::Next(s) => self.fail(
@@ -697,13 +700,12 @@ impl Resolver<'_> {
         }
     }
 
-    fn symbol(&mut self, s: &SymName, span: Span) -> Node {
+    fn symbol(&self, s: &SymName) -> Node {
         match self.scope.meaning(s) {
             Meaning::State(i) => Node::State(i),
             Meaning::Time => Node::Time,
             Meaning::Pi => Node::Pi,
             Meaning::E => Node::E,
-            Meaning::Typo(msg) => self.fail(msg, span),
             Meaning::Param => Node::Param(self.index[&s.name]),
         }
     }
@@ -753,7 +755,7 @@ impl Resolver<'_> {
                     Some(span),
                 ));
             }
-            let l = self.symbol(s, span);
+            let l = self.symbol(s);
             let r = self.resolve(&args[0]);
             return Node::bin(BinOp::Mul, l, r);
         }
@@ -766,8 +768,15 @@ impl Resolver<'_> {
                 span,
             );
         }
-        if let Some(msg) = function_typo(&s.name, true, self.scope.table) {
-            return self.fail(msg, span);
+        if let Some((f, rest)) = function_lookalike(&s.name, self.scope.table) {
+            return self.fail(
+                format!(
+                    "{0} is not a function; did you mean {1}? To multiply, write {0}*(…)",
+                    s.name,
+                    function_fix(f, rest, true)
+                ),
+                span,
+            );
         }
         self.fail(
             format!(
@@ -988,6 +997,40 @@ fn warn_parameter_lookalikes(
     }
 }
 
+/// A parameter whose name starts with a function name (`\mathrm{cost}`,
+/// `signal`) compiles as that parameter, but may be a missing space or
+/// bracket, so say how the function would be written. A parameter given a
+/// value on its own line is clearly meant as a name, and a name already
+/// reported as an error where it first appears (`cost(x)` in text mode) needs
+/// no second note.
+fn warn_function_lookalikes(
+    params: &[(SymName, Span)],
+    defaults: &Defaults,
+    table: &StateTable,
+    text: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (s, span) in params {
+        let reported = diags
+            .iter()
+            .any(|d| d.is_error() && d.span.is_some_and(|(a, _)| a == span.0));
+        if reported || defaults.values.contains_key(&s.name) {
+            continue;
+        }
+        if let Some((f, rest)) = function_lookalike(&s.name, table) {
+            diags.push(Diagnostic::warning(
+                format!(
+                    "{} is read as a parameter named {}; did you mean {}?",
+                    show(s, text),
+                    s.name,
+                    function_fix(f, rest, text)
+                ),
+                Some(*span),
+            ));
+        }
+    }
+}
+
 fn display_latex(form: &Form, kind: SystemKind, table: &StateTable, names: &Names) -> Vec<String> {
     match (form, kind) {
         (Form::Hamiltonian { dof, .. }, _) => {
@@ -1063,6 +1106,7 @@ pub(crate) fn analyze(
     };
     let mut roots = resolve_rhs(&mut resolver, &table, &eqns, &accepted);
     let index = resolver.index;
+    warn_function_lookalikes(&params, &defaults, &table, text, diags);
 
     for (s, span) in &defaults.lines {
         if !index.contains_key(&s.name) {

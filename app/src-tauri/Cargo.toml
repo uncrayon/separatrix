@@ -22,4 +22,9 @@ dyn-solve.workspace = true
 dyn-analysis.workspace = true
 
 [dev-dependencies]
-ts-rs = "12"
+ts-rs.workspace = true
+# The bindings test needs the TypeScript declarations of the maths crates' types.
+dyn-core = { workspace = true, features = ["ts"] }
+dyn-expr = { workspace = true, features = ["ts"] }
+dyn-solve = { workspace = true, features = ["ts"] }
+dyn-analysis = { workspace = true, features = ["ts"] }

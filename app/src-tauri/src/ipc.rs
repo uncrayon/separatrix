@@ -1,11 +1,14 @@
 //! The JSON shapes exchanged with the webview.
 //!
-//! This file is the Rust mirror of `app/src/api/types.ts` (see also
-//! `docs/contracts.md`). Field names are camelCase on the wire. If you change
-//! anything here, change `types.ts` in the same way.
+//! This file is the source of the UI's IPC types: the `bindings` test
+//! renders every type here (with ts-rs) into `app/src/api/ipc.generated.ts`,
+//! which `app/src/api/types.ts` re-exports, so the UI compiles against these
+//! exact shapes and CI fails when the generated file is stale (see also
+//! `docs/contracts.md`). Field names are camelCase on the wire.
 //!
 //! Small enums whose wire names are already fixed (and tested) in the maths
-//! crates are reused directly: [`SystemKind`] (`"ode"`/`"map"`),
+//! crates are reused directly, and their TypeScript comes from the same
+//! derive (the crates' `ts` feature): [`SystemKind`] (`"ode"`/`"map"`),
 //! [`InputFormat`] (`"latex"`/`"text"`), [`Severity`], [`Method`]
 //! (`"dopri5"`, ...), [`Status`] (`"blewUp"`, ...), [`Stats`] and
 //! [`Classification`] (`"stable spiral"`, ...).
@@ -25,7 +28,6 @@ pub struct CompileRequest {
     /// The equations, one per line (the UI joins its non-empty lines with `"\n"`).
     pub source: String,
     /// LaTeX (from MathLive) or plain text.
-    #[cfg_attr(test, ts(type = "import(\"./types\").InputFormat"))]
     pub format: InputFormat,
 }
 
@@ -35,13 +37,13 @@ pub struct CompileRequest {
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostic {
     /// Error, warning or info.
-    #[cfg_attr(test, ts(type = "import(\"./types\").Severity"))]
     pub severity: Severity,
     /// Plain-language explanation.
     pub message: String,
     /// Byte offsets `[start, end]` into `CompileRequest::source`; absent when
     /// the message is about the system as a whole.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub span: Option<(usize, usize)>,
 }
 
@@ -54,6 +56,9 @@ pub struct StateInfo {
     pub name: String,
     /// Display form, e.g. `"\\dot{\\theta}"`.
     pub latex: String,
+    /// A lower derivative introduced by reducing a higher-order equation to
+    /// first order (`theta'` for `theta'' = ...`).
+    pub derived: bool,
 }
 
 /// A parameter and its default value.
@@ -78,10 +83,11 @@ pub struct CompileResponse {
     pub ok: bool,
     /// Handle for `compute_portrait`; present when `ok`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub system_id: Option<u32>,
     /// Flow or map; present when `ok`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(type = "import(\"./types\").SystemKind"))]
+    #[cfg_attr(test, ts(optional))]
     pub kind: Option<SystemKind>,
     /// Entered as `H(q, p) = ...`.
     pub hamiltonian: bool,
@@ -119,7 +125,6 @@ pub enum AxisRef {
 #[serde(rename_all = "camelCase")]
 pub struct SolverOptions {
     /// Integration method.
-    #[cfg_attr(test, ts(type = "import(\"./types\").Method"))]
     pub method: Method,
     /// Relative tolerance (dopri5 only).
     pub rtol: f64,
@@ -129,6 +134,7 @@ pub struct SolverOptions {
     pub h: f64,
     /// Largest allowed step for dopri5; absent = no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub h_max: Option<f64>,
     /// Step limit per trajectory.
     pub max_steps: usize,
@@ -233,7 +239,6 @@ pub struct FixedPointOut {
     /// semi-axes of the linearised orbits' ellipses.
     pub eigenvectors_im: Vec<Option<Vec<f64>>>,
     /// Strogatz's name for the point.
-    #[cfg_attr(test, ts(type = "import(\"./types\").Classification"))]
     pub classification: Classification,
     /// Asymptotically stable.
     pub stable: bool,
@@ -249,10 +254,8 @@ pub struct TrajectoryOut {
     /// States, row-major, length `t.len() * dim`.
     pub x: Vec<f64>,
     /// Why the computation stopped.
-    #[cfg_attr(test, ts(type = "import(\"./types\").Status"))]
     pub status: Status,
     /// Work counters.
-    #[cfg_attr(test, ts(type = "import(\"./types\").TrajectoryOut[\"stats\"]"))]
     pub stats: Stats,
 }
 
@@ -284,11 +287,19 @@ mod bindings {
     use super::*;
 
     const GENERATED: &str = "../src/api/ipc.generated.ts";
+    const UI_TYPES: &str = "../src/api/types.ts";
     const UPDATE: &str = "UPDATE_IPC_BINDINGS";
 
     fn render() -> String {
         let cfg = Config::new().with_large_int("number");
         let decls = [
+            InputFormat::decl(&cfg),
+            SystemKind::decl(&cfg),
+            Severity::decl(&cfg),
+            Method::decl(&cfg),
+            Status::decl(&cfg),
+            Stats::decl(&cfg),
+            Classification::decl(&cfg),
             CompileRequest::decl(&cfg),
             Diagnostic::decl(&cfg),
             StateInfo::decl(&cfg),
@@ -328,5 +339,48 @@ mod bindings {
             "app/src/api/ipc.generated.ts is out of date; run {UPDATE}=1 cargo test -p separatrix \
              typescript_bindings"
         );
+        ui_types_are_the_generated_ones(&want);
+    }
+
+    /// The UI imports its IPC types from `types.ts`; it must re-export every
+    /// generated type rather than declare its own, or a stale hand-written
+    /// copy would compile while the generated file goes unused.
+    fn ui_types_are_the_generated_ones(generated: &str) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(UI_TYPES);
+        let ui = std::fs::read_to_string(&path).expect("read app/src/api/types.ts");
+        let block = ui
+            .split("export type {")
+            .nth(1)
+            .and_then(|rest| rest.split_once("} from \"./ipc.generated\";"))
+            .map(|(names, _)| names)
+            .expect("types.ts re-exports from ./ipc.generated");
+        let reexported: Vec<&str> = block
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let names: Vec<&str> = generated
+            .lines()
+            .filter_map(|l| l.strip_prefix("export type "))
+            .filter_map(|l| l.split([' ', '=']).next())
+            .collect();
+        assert!(!names.is_empty());
+        for name in &names {
+            assert!(
+                reexported.contains(name),
+                "types.ts does not re-export {name} from ipc.generated.ts"
+            );
+            for own in [
+                format!("interface {name} "),
+                format!("interface {name}<"),
+                format!("type {name} ="),
+                format!("type {name}<"),
+            ] {
+                assert!(
+                    !ui.contains(&own),
+                    "types.ts declares its own {name}; re-export the generated one"
+                );
+            }
+        }
     }
 }

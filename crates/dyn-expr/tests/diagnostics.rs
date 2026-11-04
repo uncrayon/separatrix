@@ -35,16 +35,96 @@ fn empty_input() {
     }
 }
 
+fn warnings(src: &str, f: InputFormat) -> Vec<Diagnostic> {
+    compile(src, f)
+        .diagnostics
+        .into_iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .collect()
+}
+
 #[test]
 fn unknown_function_in_text_mode() {
+    // A whole word is one name: `sinx` is a parameter, with a hint.
     let src = "x' = sinx";
-    let d = text_err(src);
-    assert_eq!(d.message, "sinx is not a function; did you mean sin(x)?");
-    assert_eq!(spanned(src, &d), "sinx");
+    let sys = text(src);
+    assert_eq!(names(&sys).1, ["sinx"]);
+    let w = warnings(src, InputFormat::Text);
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert_eq!(
+        w[0].message,
+        "sinx is read as a parameter named sinx; did you mean sin(x)?"
+    );
+    assert_eq!(spanned(src, &w[0]), "sinx");
     let d = text_err("x' = f(x)");
     assert!(d.message.contains("f is not a known function"), "{d:?}");
     let d = text_err("x' = costheta(x)");
     assert!(d.message.contains("did you mean cos(theta)"), "{d:?}");
+    assert!(d.message.contains("costheta*(…)"), "{d:?}");
+    // The error already names the fix; no second note on the same name.
+    assert!(warnings("x' = costheta(x)", InputFormat::Text).is_empty());
+}
+
+/// Names spelled as one identifier that begin with a function name compile
+/// as parameters; the possible typo is a warning, not an error.
+#[test]
+fn names_that_start_with_a_function_compile_with_a_warning() {
+    let cases = [
+        (
+            r"\dot{x}=-\mathrm{cost}\,x",
+            InputFormat::Latex,
+            "cost",
+            r"\cos t",
+        ),
+        (
+            r"\dot{x}=\mathrm{tank}-x",
+            InputFormat::Latex,
+            "tank",
+            r"\tan k",
+        ),
+        (
+            r"\dot{x}=\mathrm{signal}-x",
+            InputFormat::Latex,
+            "signal",
+            r"\sign al",
+        ),
+        (
+            r"\dot{x}=\text{cost}x",
+            InputFormat::Latex,
+            "cost",
+            r"\cos t",
+        ),
+        ("x' = -cost*x", InputFormat::Text, "cost", "cos(t)"),
+        ("x' = signal - x", InputFormat::Text, "signal", "sign(al)"),
+    ];
+    for (src, f, name, fix) in cases {
+        let out = compile(src, f);
+        let sys = out
+            .system
+            .unwrap_or_else(|| panic!("{src:?} should compile: {:?}", out.diagnostics));
+        assert_eq!(names(&sys).1, [name], "{src:?}");
+        assert!(!out.diagnostics.iter().any(Diagnostic::is_error), "{src:?}");
+        let w: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .collect();
+        assert_eq!(w.len(), 1, "{src:?}: {w:?}");
+        assert!(
+            w[0].message.contains(&format!("did you mean {fix}?")),
+            "{src:?}: {w:?}"
+        );
+    }
+    // The parameter is a real parameter: 2·cost at cost = 3 is 6.
+    let sys = latex(r"\dot{x}=2\mathrm{cost}\\\mathrm{cost}=3");
+    assert_eq!(sys.default_params(), [3.0]);
+    assert_eq!(sys.eval_alloc(0.0, &[0.0], &[3.0]), [6.0]);
+    // Given a value on its own line, the name is clearly meant: no warning.
+    assert!(warnings(
+        r"\dot{x}=\mathrm{cost}\\\mathrm{cost}=3",
+        InputFormat::Latex
+    )
+    .is_empty());
 }
 
 #[test]
@@ -197,7 +277,7 @@ fn text_mode_style_errors() {
 
 #[test]
 fn errors_on_several_lines_are_all_reported() {
-    let out = compile("x' = (y\ny' = 1,5\nz' = sinx", InputFormat::Text);
+    let out = compile("x' = (y\ny' = 1,5\nz' = sinx(x)", InputFormat::Text);
     let errors: Vec<_> = out.diagnostics.iter().filter(|d| d.is_error()).collect();
     assert_eq!(errors.len(), 3, "{errors:#?}");
     assert!(errors

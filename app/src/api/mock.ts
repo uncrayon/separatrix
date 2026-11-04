@@ -9,7 +9,7 @@ import type {
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
-  SymbolInfo,
+  StateInfo,
   SystemKind,
   TrajectoryOut,
   TrajectoryRequest,
@@ -22,17 +22,17 @@ interface MockSystem {
   kind: SystemKind;
   hamiltonian?: boolean;
   autonomous?: boolean;
-  states: SymbolInfo[];
+  states: StateInfo[];
   params: ParamInfo[];
   equationsLatex: string[];
   f: Rhs;
 }
 
-const s = (name: string, latex = name): SymbolInfo => ({ name, latex });
+const s = (name: string, latex = name, derived = false): StateInfo => ({ name, latex, derived });
 const par = (name: string, latex = name): ParamInfo => ({ name, latex, default: 1 });
 const xy = [s("x"), s("y")];
 const xyz = [s("x"), s("y"), s("z")];
-const theta = [s("theta", "\\theta"), { ...s("theta'", "\\dot{\\theta}"), derived: true }];
+const theta = [s("theta", "\\theta"), s("theta'", "\\dot{\\theta}", true)];
 
 const SYSTEMS: Record<string, MockSystem> = {
   "slope-field-x2-minus-t": {

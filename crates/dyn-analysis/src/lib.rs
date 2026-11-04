@@ -40,7 +40,7 @@ mod slope;
 
 pub use classify::{classify, classify_jacobian, Classification, ABS_TOL, REL_TOL};
 pub use eigvec::{eigenvectors, Eigenvectors};
-pub use fixed::{fixed_points, FixedPoint, MAX_SEEDS};
+pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
 pub use linalg::eigenvalues;
 pub use nullcline::{nullclines, Nullcline, JUMP_FACTOR};
 pub use plane::{Axis, Plane};

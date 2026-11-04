@@ -37,7 +37,8 @@ pub struct SystemInfo {
     pub params: Vec<ParamInfo>,           // in order of first appearance
     pub equations_latex: Vec<String>,     // first-order system, display form (\dot{x} = ...)
 }
-pub struct SymbolInfo { pub name: String, pub latex: String }
+pub struct SymbolInfo { pub name: String, pub latex: String,
+                         pub derived: bool /* introduced by order reduction: x' for x'' */ }
 pub struct ParamInfo { pub name: String, pub latex: String, pub default: f64 }
 ```
 
@@ -57,6 +58,11 @@ for multi-letter names, `\frac`, `\sqrt`, `\sqrt[n]`, `^`, `\cdot`, `\times`, `\
 `\sin \cos \tan \exp \ln \log \sinh \cosh \tanh \arcsin \arccos \arctan`, `|x|`, `\pi`, `e`.
 Text mode: identifiers are whole words (`sigma`, `theta` map to Greek), explicit `*` between names,
 implicit multiplication only after numbers or between parenthesised groups, functions as `sin(x)`.
+A name spelled as one identifier (`\mathrm{cost}` in LaTeX, the word `cost` in text mode) is that
+name, even when it begins with a function name: it compiles (as a parameter, unless it has an
+equation) with a warning that suggests the function (`did you mean \cos t?` / `cos(t)`). Letters
+typed one by one that spell a function (`cost` in LaTeX) are still an error, since they would read
+as a product `c·o·s·t`.
 Reserved: `t` (time, ODE), `n` (iterate, maps), `\pi`, `e`.
 
 ### `dyn-solve` (integrate and iterate)
@@ -109,6 +115,9 @@ pub struct FixedPoint { pub x: Vec<f64>, pub eigenvalues: Vec<(f64, f64)> /* re,
                         pub classification: Classification, pub stable: bool }
 pub fn fixed_points(f: &dyn VectorField, p: &[f64], search: &[(f64, f64)] /* per state */,
                     seeds_per_axis: usize) -> Vec<FixedPoint>;     // ODE: f = 0; map: f(x) = x
+pub fn fixed_points_with_budget(f: &dyn VectorField, p: &[f64], search: &[(f64, f64)],
+                                seeds_per_axis: usize, max_seeds: usize) -> Vec<FixedPoint>;
+pub fn seed_count(dim: usize, seeds_per_axis: usize, max_seeds: usize) -> usize;
 pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification;
 
 pub struct Eigenvectors { pub re: Vec<Option<Vec<f64>>>, pub im: Vec<Option<Vec<f64>>> }
@@ -145,9 +154,25 @@ Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stab
 centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
 for higher dimensions; maps classify by |μ| relative to 1.
 
+Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it has at most
+`max_seeds` points, otherwise the first `max_seeds` points of a Halton sequence in the box, so
+`max_seeds` (clamped to `MAX_SEEDS = 4096`; `fixed_points` uses `MAX_SEEDS`) is a hard cap in every
+dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
+(40, 14², 9³ grid points in 1D–3D; 2^10 = 1024 does not fit, so 10D and up use Halton points).
+
 ## IPC (Tauri commands)
 
-JSON, camelCase. Types mirrored in `app/src/api/types.ts`.
+JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
+every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputFormat`, `Severity`,
+`Method`, `Status`, `Stats`, `Classification`, derived behind each crate's `ts` feature), into
+`app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
+typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
+compiles against what Rust sends, and CI fails while the generated file is stale.
+
+`CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
+added by reducing a higher-order equation to first order (`\theta'` for `\ddot{\theta} = …`), never a
+Hamiltonian momentum or a first-order state, and the UI uses it (not the display LaTeX) to decide
+when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 
 | Command | Request | Response |
 | --- | --- | --- |
@@ -157,6 +182,12 @@ JSON, camelCase. Types mirrored in `app/src/api/types.ts`.
 `PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
 eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,
 with the eigenvector conventions of `dyn-analysis` above.
+
+The UI selects a fixed point by position, not by its index in `fixedPoints` (which is re-sorted
+on every recompute): after each response the selection moves to the nearest fixed point within 10%
+of the larger visible state-axis span, provided that point is not nearer to another of the
+previous response's fixed points (so a point that merges into a neighbour does not hand the
+selection to it), and is cleared otherwise.
 
 The UI never sends anything stale: it sends a monotonically increasing `requestId`
 and drops responses older than the latest it has drawn.

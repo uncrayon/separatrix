@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { isTauri } from "../api/client";
-import type { AxisRef, SymbolInfo, SystemKind } from "../api/types";
+import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt } from "../math/format";
 import { Tex } from "../math/Tex";
@@ -120,7 +120,7 @@ function focusSolverSettings() {
   target?.focus();
 }
 
-function axisName(axis: AxisRef, other: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
+function axisName(axis: AxisRef, other: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "state" && !states[axis.index]) return axis.index === 0 ? "x" : axis.index === 1 ? "y" : "?";
   return axisLabelLatex(axis, other, states, kind);
 }

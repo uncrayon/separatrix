@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Whether the right-hand side is a flow (ODE) or an iterated map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum SystemKind {
     /// `dx/dt = f(t, x; p)`.

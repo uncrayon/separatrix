@@ -445,3 +445,46 @@ fn info_serializes_in_camel_case() {
     assert!(d.contains("\"severity\":\"warning\""), "{d}");
     assert!(d.contains("\"span\":[5,6]"), "{d}");
 }
+
+#[test]
+fn states_introduced_by_order_reduction_are_marked_derived() {
+    let derived = |src: &str, f: InputFormat| -> Vec<(String, bool)> {
+        let out = compile(src, f);
+        let sys = out
+            .system
+            .unwrap_or_else(|| panic!("{src}: {:?}", out.diagnostics));
+        sys.info
+            .states
+            .iter()
+            .map(|s| (s.name.clone(), s.derived))
+            .collect()
+    };
+    let own = |v: &[(&str, bool)]| -> Vec<(String, bool)> {
+        v.iter().map(|(n, d)| (n.to_string(), *d)).collect()
+    };
+    assert_eq!(
+        derived("\\ddot{\\theta}=-\\sin\\theta", InputFormat::Latex),
+        own(&[("theta", false), ("theta'", true)])
+    );
+    assert_eq!(
+        derived("x''' = -x\ny' = x - y", InputFormat::Text),
+        own(&[("x", false), ("x'", true), ("x''", true), ("y", false)])
+    );
+    // First-order states, Hamiltonian momenta and maps are never derived,
+    // even when their display form is dotted.
+    assert_eq!(
+        derived("\\dot{x}=y\\\\\\dot{y}=-x", InputFormat::Latex),
+        own(&[("x", false), ("y", false)])
+    );
+    assert_eq!(
+        derived("H(q,p)=\\frac{p^2}{2}-\\cos q", InputFormat::Latex),
+        own(&[("q", false), ("p", false)])
+    );
+    assert_eq!(
+        derived("x_{n+1}=rx_n\\left(1-x_n\\right)", InputFormat::Latex),
+        own(&[("x", false)])
+    );
+    let json = serde_json::to_value(&latex("\\ddot{x}=-x").info).unwrap();
+    assert_eq!(json["states"][1]["derived"], true);
+    assert_eq!(json["states"][0]["derived"], false);
+}

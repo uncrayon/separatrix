@@ -91,6 +91,7 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
                     .map(|s| StateInfo {
                         name: s.name,
                         latex: s.latex,
+                        derived: s.derived,
                     })
                     .collect(),
                 params: info
@@ -170,7 +171,7 @@ pub fn compute_portrait(
 
     let fixed_points = if req.fixed_points && f.is_autonomous() {
         let search = fixed_point_search_box(req, dim);
-        dyn_analysis::fixed_points(f, p, &search, seeds_per_axis(dim))
+        dyn_analysis::fixed_points_with_budget(f, p, &search, seeds_per_axis(dim), MAX_TOTAL_SEEDS)
             .into_iter()
             .filter(|fp| {
                 fp.x.iter().all(|v| v.is_finite())
@@ -292,16 +293,31 @@ pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f6
         .collect()
 }
 
-/// Newton seeds in total for systems of dimension 4 and up.
-const MAX_TOTAL_SEEDS: f64 = 1000.0;
+/// Newton seeds in total, in every dimension: a hard cap on the work of the
+/// fixed-point search. When the grid of [`seeds_per_axis`] points per axis
+/// would be larger (2^10 = 1024 in 10D), `dyn_analysis` uses the first
+/// `MAX_TOTAL_SEEDS` points of a Halton sequence instead.
+pub const MAX_TOTAL_SEEDS: usize = 1000;
 
+/// Grid points per axis: hand-tuned in 1D to 3D, otherwise the largest `k`
+/// with `k^dim <= MAX_TOTAL_SEEDS` (at least 2; a grid that still does not
+/// fit is replaced by a Halton sample of `MAX_TOTAL_SEEDS` points).
 fn seeds_per_axis(dim: usize) -> usize {
     match dim {
         0 => 0,
         1 => 40,
         2 => 14,
         3 => 9,
-        d => (MAX_TOTAL_SEEDS.powf(1.0 / d as f64).floor() as usize).max(2),
+        d => {
+            let fits = |k: usize| {
+                (0..d)
+                    .try_fold(1usize, |t, _| {
+                        t.checked_mul(k).filter(|&t| t <= MAX_TOTAL_SEEDS)
+                    })
+                    .is_some()
+            };
+            (2..).take_while(|&k| fits(k)).last().unwrap_or(2)
+        }
     }
 }
 
@@ -887,6 +903,50 @@ mod tests {
         assert!(store.get(*ids.last().unwrap()).is_some());
     }
 
+    /// Every state's equation is `x_i' = 0`, so every Newton start is a
+    /// fixed point and the number of points found is the number of starts.
+    fn zero_system_fixed_point_count(dim: usize) -> usize {
+        let store = SystemStore::new();
+        let src: Vec<String> = (1..=dim).map(|i| format!("x{i}' = 0")).collect();
+        let res = compile_system(
+            &store,
+            &CompileRequest {
+                source: src.join("\n"),
+                format: InputFormat::Text,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let sys = store.get(res.system_id.unwrap()).unwrap();
+        let mut req = simple_request(res.system_id.unwrap(), dim);
+        req.field_grid = 0;
+        req.fixed_points = true;
+        compute_portrait(&sys, &req).unwrap().fixed_points.len()
+    }
+
+    #[test]
+    fn the_newton_seed_budget_is_a_hard_cap_in_every_dimension() {
+        for (dim, want) in [
+            (1, 40),
+            (2, 14 * 14),
+            (3, 9 * 9 * 9),
+            (10, 1000),
+            (12, 1000),
+        ] {
+            let per_axis = seeds_per_axis(dim);
+            let starts = dyn_analysis::seed_count(dim, per_axis, MAX_TOTAL_SEEDS);
+            assert_eq!(starts, want, "dim {dim}");
+            assert!(starts <= MAX_TOTAL_SEEDS, "dim {dim}: {starts} seeds");
+            assert_eq!(zero_system_fixed_point_count(dim), want, "dim {dim}");
+        }
+        for dim in 1..=20 {
+            let starts = dyn_analysis::seed_count(dim, seeds_per_axis(dim), MAX_TOTAL_SEEDS);
+            assert!(starts <= MAX_TOTAL_SEEDS, "dim {dim}: {starts} seeds");
+        }
+        assert_eq!(seeds_per_axis(4), 5);
+        assert_eq!(seeds_per_axis(5), 3);
+        assert_eq!(seeds_per_axis(10), 2);
+    }
+
     #[test]
     fn json_matches_the_typescript_contract() {
         let req: PortraitRequest = serde_json::from_value(serde_json::json!({
@@ -925,6 +985,22 @@ mod tests {
         }
         assert!(json.get("equationsLatex").is_some() && json.get("diagnostics").is_some());
         assert_eq!(json["kind"], "ode");
+        assert_eq!(json["states"][0]["derived"], false);
+        let second_order = compile_system(
+            &SystemStore::new(),
+            &CompileRequest {
+                source: "\\ddot{\\theta}=-\\sin\\theta".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        let states = serde_json::to_value(&second_order.states).unwrap();
+        assert_eq!(
+            states,
+            serde_json::json!([
+                { "name": "theta", "latex": "\\theta", "derived": false },
+                { "name": "theta'", "latex": "\\dot{\\theta}", "derived": true }
+            ])
+        );
 
         let out = compute_portrait(&store.get(1).unwrap(), &req).unwrap();
         let json = serde_json::to_value(&out).unwrap();

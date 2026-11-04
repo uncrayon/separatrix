@@ -79,8 +79,8 @@ test("stateExtent: completed runs set the range, non-finite samples are ignored"
 });
 
 const pendulumStates = [
-  { name: "theta", latex: "\\theta" },
-  { name: "theta'", latex: "\\dot{\\theta}" },
+  { name: "theta", latex: "\\theta", derived: false },
+  { name: "theta'", latex: "\\dot{\\theta}", derived: true },
 ];
 
 test("first-order form of a 2nd-order equation does not read as θ̇ = θ̇", () => {
@@ -94,8 +94,8 @@ test("first-order form of a 2nd-order equation does not read as θ̇ = θ̇", ()
 
 test("first-order form is unchanged for systems without derived states, and for maps", () => {
   const xy = [
-    { name: "x", latex: "x" },
-    { name: "y", latex: "y" },
+    { name: "x", latex: "x", derived: false },
+    { name: "y", latex: "y", derived: false },
   ];
   const eqs = ["\\dot{x} = y", "\\dot{y} = -x"];
   assert.deepEqual(firstOrderDisplay(eqs, xy, "ode"), eqs);

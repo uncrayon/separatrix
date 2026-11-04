@@ -53,6 +53,7 @@ pub use system::CompiledSystem;
 
 /// Which syntax the source uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum InputFormat {
     /// LaTeX as produced by MathLive: single-letter names, `\sigma`,
@@ -99,6 +100,12 @@ pub struct SymbolInfo {
     pub name: String,
     /// Display form, e.g. `"x"`, `"\theta"`, `"x_{1}"`, `"\dot{x}"`.
     pub latex: String,
+    /// `true` for a state introduced by reducing a higher-order equation to
+    /// first order (`x'` for `x'' = …`; `x'` and `x''` for `x''' = …`);
+    /// `false` for the states the user wrote equations for, including the
+    /// momenta of a Hamiltonian and `x` itself in `x' = …`.
+    #[serde(default)]
+    pub derived: bool,
 }
 
 /// A parameter and its default value.

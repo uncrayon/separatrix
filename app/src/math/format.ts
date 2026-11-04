@@ -1,4 +1,4 @@
-import type { AxisRef, Classification, SymbolInfo, SystemKind } from "../api/types";
+import type { AxisRef, Classification, StateInfo, SystemKind } from "../api/types";
 
 export function fmt(v: number, digits = 3): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
@@ -94,7 +94,7 @@ export function diagnosticText(message: string): string {
   return latexToPlain(message).replace(/'([^'\s]{1,12})'/g, "‘$1’");
 }
 
-export function axisLatex(axis: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
+export function axisLatex(axis: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "time") return kind === "map" ? "n" : "t";
   return states[axis.index]?.latex ?? "?";
 }
@@ -102,14 +102,14 @@ export function axisLatex(axis: AxisRef, states: SymbolInfo[], kind: SystemKind 
 export function axisLabelLatex(
   axis: AxisRef,
   other: AxisRef,
-  states: SymbolInfo[],
+  states: StateInfo[],
   kind: SystemKind | undefined,
 ): string {
   const base = axisLatex(axis, states, kind);
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
 }
 
-export function stateLatexForKind(s: SymbolInfo, kind: SystemKind | undefined): string {
+export function stateLatexForKind(s: StateInfo, kind: SystemKind | undefined): string {
   return kind === "map" ? `${s.latex}_n` : s.latex;
 }
 
@@ -210,10 +210,10 @@ export function clamp(v: number, lo: number, hi: number): number {
 
 export function firstOrderDisplay(
   equationsLatex: string[],
-  states: SymbolInfo[],
+  states: StateInfo[],
   kind: SystemKind | undefined,
 ): string[] {
-  const derived = states.some((s) => s.derived ?? /^\\dot\{/.test(s.latex));
+  const derived = states.some((s) => s.derived);
   if (kind === "map" || !derived || equationsLatex.length !== states.length) return equationsLatex;
   return equationsLatex.map((eq, i) => {
     const k = eq.indexOf("=");

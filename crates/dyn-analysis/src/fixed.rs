@@ -78,6 +78,25 @@ pub fn fixed_points(
     search: &[(f64, f64)],
     seeds_per_axis: usize,
 ) -> Vec<FixedPoint> {
+    fixed_points_with_budget(f, p, search, seeds_per_axis, MAX_SEEDS)
+}
+
+/// [`fixed_points`] with at most `max_seeds` Newton starting points in
+/// total, whatever the dimension: the grid of `seeds_per_axis^dim` cell
+/// centres when it has at most `max_seeds` points, otherwise the first
+/// `max_seeds` points of a Halton sequence in the box. `max_seeds` is
+/// clamped to [`MAX_SEEDS`]; 0 finds nothing.
+pub fn fixed_points_with_budget(
+    f: &dyn VectorField,
+    p: &[f64],
+    search: &[(f64, f64)],
+    seeds_per_axis: usize,
+    max_seeds: usize,
+) -> Vec<FixedPoint> {
+    let max_seeds = max_seeds.min(MAX_SEEDS);
+    if max_seeds == 0 {
+        return Vec::new();
+    }
     let n = f.dim();
     if !f.is_autonomous() || n == 0 || search.len() != n || seeds_per_axis == 0 {
         return Vec::new();
@@ -94,8 +113,8 @@ pub fn fixed_points(
     let dedup_tol = (DEDUP_REL * diag).max(1e-12);
     let mut seed = vec![0.0; n];
 
-    for k in 0..seed_count(n, seeds_per_axis) {
-        seed_point(k, search, seeds_per_axis, &mut seed);
+    for k in 0..seed_count(n, seeds_per_axis, max_seeds) {
+        seed_point(k, search, seeds_per_axis, max_seeds, &mut seed);
         let Some(root) = newton.solve(&seed, search) else {
             continue;
         };
@@ -146,21 +165,25 @@ pub fn fixed_points(
     points
 }
 
-fn seed_count(n: usize, per_axis: usize) -> usize {
-    grid_size(n, per_axis).unwrap_or(MAX_SEEDS)
+/// How many Newton starting points [`fixed_points_with_budget`] uses in
+/// dimension `n`: `per_axis^n` if that is at most `max_seeds` (itself
+/// clamped to [`MAX_SEEDS`]), otherwise `max_seeds`.
+pub fn seed_count(n: usize, per_axis: usize, max_seeds: usize) -> usize {
+    let max_seeds = max_seeds.min(MAX_SEEDS);
+    grid_size(n, per_axis, max_seeds).unwrap_or(max_seeds)
 }
 
-fn grid_size(n: usize, per_axis: usize) -> Option<usize> {
+fn grid_size(n: usize, per_axis: usize, max_seeds: usize) -> Option<usize> {
     let mut total: usize = 1;
     for _ in 0..n {
-        total = total.checked_mul(per_axis).filter(|&t| t <= MAX_SEEDS)?;
+        total = total.checked_mul(per_axis).filter(|&t| t <= max_seeds)?;
     }
     Some(total)
 }
 
-fn seed_point(k: usize, search: &[(f64, f64)], per_axis: usize, out: &mut [f64]) {
+fn seed_point(k: usize, search: &[(f64, f64)], per_axis: usize, max_seeds: usize, out: &mut [f64]) {
     let n = search.len();
-    if grid_size(n, per_axis).is_some() {
+    if grid_size(n, per_axis, max_seeds).is_some() {
         let mut rest = k;
         for d in (0..n).rev() {
             let i = rest % per_axis;
@@ -707,12 +730,51 @@ mod tests {
         });
         let fps = fixed_points(&f, &[], &[(-1.0, 1.0); 5], 8);
         expect_points(&fps, &[(&[0.25; 5], Sink)], 1e-9);
-        assert_eq!(grid_size(5, 8), None);
-        assert_eq!(seed_count(5, 8), MAX_SEEDS);
-        assert_eq!(seed_count(2, 12), 144);
-        assert_eq!(seed_count(12, 2), MAX_SEEDS);
-        assert_eq!(grid_size(12, 2), Some(4096));
-        assert_eq!(grid_size(13, 2), None);
+        assert_eq!(grid_size(5, 8, MAX_SEEDS), None);
+        assert_eq!(seed_count(5, 8, MAX_SEEDS), MAX_SEEDS);
+        assert_eq!(seed_count(2, 12, MAX_SEEDS), 144);
+        assert_eq!(seed_count(12, 2, MAX_SEEDS), MAX_SEEDS);
+        assert_eq!(grid_size(12, 2, MAX_SEEDS), Some(4096));
+        assert_eq!(grid_size(13, 2, MAX_SEEDS), None);
+    }
+
+    /// A field that vanishes everywhere has a root at every seed, so the
+    /// number of points found is the number of Newton starts.
+    fn zero_field(n: usize) -> FnField {
+        FnField::new(n, 0, SystemKind::Ode, |_t, _x, _p, o| o.fill(0.0))
+    }
+
+    #[test]
+    fn the_seed_budget_is_a_hard_cap_in_every_dimension() {
+        // 2^10 = 1024 grid points do not fit in 1000: Halton instead.
+        assert_eq!(seed_count(10, 2, 1000), 1000);
+        assert_eq!(grid_size(10, 2, 1000), None);
+        assert_eq!(seed_count(3, 9, 1000), 729);
+        assert_eq!(seed_count(3, 10, 1000), 1000);
+        assert_eq!(seed_count(3, 11, 1000), 1000);
+        // The budget never exceeds MAX_SEEDS.
+        assert_eq!(seed_count(2, 100, usize::MAX), MAX_SEEDS);
+        for (n, per_axis, budget, want) in [
+            (1, 40, 1000, 40),
+            (2, 14, 1000, 196),
+            (10, 2, 1000, 1000),
+            (12, 2, 1000, 1000),
+            (12, 2, 37, 37),
+        ] {
+            let f = zero_field(n);
+            let fps = fixed_points_with_budget(&f, &[], &vec![(-1.0, 1.0); n], per_axis, budget);
+            assert_eq!(
+                fps.len(),
+                want,
+                "n = {n}, {per_axis} per axis, budget {budget}"
+            );
+        }
+        assert!(fixed_points_with_budget(&zero_field(2), &[], &[(-1.0, 1.0); 2], 4, 0).is_empty());
+        // Without a budget the old limit applies: 2^12 = 4096 grid points.
+        assert_eq!(
+            fixed_points(&zero_field(12), &[], &[(-1.0, 1.0); 12], 2).len(),
+            4096
+        );
     }
 
     #[test]

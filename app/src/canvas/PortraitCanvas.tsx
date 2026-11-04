@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { AxisRef, FixedPointOut, SymbolInfo, SystemKind } from "../api/types";
+import type { AxisRef, FixedPointOut, StateInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
 import { axisLabelLatex, axisLatex, classificationTitle, fmtTex, latexToPlain, sameAxis } from "../math/format";
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { stateExtent } from "../state/model";
+import { selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
 import { NumberField, Slider } from "../components/controls";
 import { numberedEigenvalues, useShowEigenvectors, type NumberedEigenvalue } from "./eigen";
 import {
@@ -168,7 +168,10 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       trajectories,
       ics: state.ics,
       selectedIc: state.selection?.kind === "ic" ? state.selection.id : null,
-      selectedFp: state.selection?.kind === "fp" ? state.selection.index : null,
+      selectedFp:
+        valid && state.layers.fixedPoints
+          ? selectedFixedPointIndex(state.selection, p.res.fixedPoints, p.meta.view)
+          : null,
       hoverIc: hover.ic,
       hoverFp: hover.fp,
       eigenvectors: showEigen,
@@ -330,7 +333,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
         actions.select({ kind: "ic", id: hit.ic });
         setAnnounce("Selected trajectory");
       } else if (hit.fp !== null) {
-        actions.select({ kind: "fp", index: hit.fp });
+        actions.select(selectFixedPoint(scene.fixedPoints[hit.fp].x));
         setAnnounce("Selected fixed point");
       } else {
         actions.addIc(cur[0], cur[1]);
@@ -343,11 +346,11 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
         setAnnounce("No fixed points in view");
         return;
       }
-      const now = state.selection?.kind === "fp" ? state.selection.index : e.shiftKey ? 0 : -1;
+      const now = scene.selectedFp ?? (e.shiftKey ? 0 : -1);
       const i = (((now + (e.shiftKey ? -1 : 1)) % n) + n) % n;
       const [px, py] = fixedPointPx(vp, scene, scene.fixedPoints[i]);
       setKbd(toPlot(vp, px, py));
-      actions.select({ kind: "fp", index: i });
+      actions.select(selectFixedPoint(scene.fixedPoints[i].x));
       setAnnounce(`Fixed point ${i + 1} of ${n}`);
     } else if (e.key === "+" || e.key === "=" || e.key === "-" || e.key === "_") {
       handled();
@@ -416,7 +419,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       drag.current = { mode: "ic", id: hit.ic };
       setDragging("ic");
     } else if (hit.fp !== null) {
-      actions.select({ kind: "fp", index: hit.fp });
+      actions.select(selectFixedPoint(scene.fixedPoints[hit.fp].x));
       drag.current = null;
     } else {
       startPan(px, py, true);
@@ -775,7 +778,7 @@ function Legend({
   tool,
 }: {
   scene: Omit<Scene, "avoid"> | null;
-  states: SymbolInfo[];
+  states: StateInfo[];
   kind?: SystemKind;
   tool: "select" | "pan" | "add";
 }) {
@@ -953,7 +956,7 @@ function eigenvalueTex(ev: NumberedEigenvalue, sym: string): string {
 
 function FixedPointTooltip(props: {
   fp: FixedPointOut;
-  states: SymbolInfo[];
+  states: StateInfo[];
   kind?: SystemKind;
   pos: [number, number];
   width: number;
@@ -1005,7 +1008,7 @@ function FixedPointTooltip(props: {
 
 function describePlot(
   scene: Omit<Scene, "avoid">,
-  states: SymbolInfo[],
+  states: StateInfo[],
   kind: SystemKind | undefined,
   xRange: [number, number],
   yRange: [number, number],

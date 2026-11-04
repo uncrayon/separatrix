@@ -13,6 +13,7 @@ import {
   leastUsedPaletteIndex,
   stateExtent,
   templateView,
+  trackSelection,
   type EquationLine,
   type InitialCondition,
   type Layers,
@@ -135,7 +136,9 @@ export function useStudio() {
       new PortraitScheduler<PortraitMeta>(
         () => buildPortraitJob(latest.current),
         (res, meta, roundTripMs) => {
+          const prev = latest.current.portrait?.res.fixedPoints ?? [];
           setPortrait({ res, meta, roundTripMs });
+          setSelection((sel) => trackSelection(sel, res.fixedPoints, meta.view, prev));
           setComputeError(null);
         },
         (err) => setComputeError(err instanceof Error ? err.message : String(err)),

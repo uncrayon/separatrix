@@ -1,9 +1,10 @@
 import type {
   AxisRef,
   CompileResponse,
+  FixedPointOut,
   Method,
   PortraitResponse,
-  SymbolInfo,
+  StateInfo,
   SystemKind,
   TrajectoryRequest,
 } from "../api/types";
@@ -56,7 +57,103 @@ export interface SolverSettings {
   samples: number;
 }
 
-export type Selection = { kind: "ic"; id: number } | { kind: "fp"; index: number } | null;
+/**
+ * What the user selected. A trajectory by its id; a fixed point by where it
+ * is (`x`, its full state vector), because the list of fixed points is
+ * recomputed and re-sorted on every change, so a list index would jump to
+ * another point. `key` tells one selection apart from the next (it stays
+ * the same while the point is tracked across recomputes).
+ */
+export type Selection = { kind: "ic"; id: number } | { kind: "fp"; x: number[]; key: number } | null;
+
+let nextFixedPointKey = 1;
+
+/** A new selection of the fixed point at `x`. */
+export function selectFixedPoint(x: readonly number[]): Selection {
+  return { kind: "fp", x: x.slice(), key: nextFixedPointKey++ };
+}
+
+/**
+ * After a recompute, the selected fixed point is the nearest one within this
+ * fraction of the view's larger state-axis span (Euclidean distance over the
+ * full state vector); farther than that, it is taken to have disappeared.
+ * Generous, because one slider move can carry a point a long way (near a
+ * saddle-node a point moves like the square root of the parameter); the
+ * mutual-nearest test in [`trackSelection`] keeps it from jumping to a
+ * neighbour.
+ */
+export const FIXED_POINT_MATCH_FRACTION = 0.1;
+
+/** Distance within which a recomputed fixed point is the selected one, in state units. */
+export function fixedPointMatchTolerance(view: View): number {
+  const spans = (axes: [AxisRef, [number, number]][]) =>
+    axes.map(([, [lo, hi]]) => Math.abs(hi - lo)).filter((v) => Number.isFinite(v) && v > 0);
+  const all: [AxisRef, [number, number]][] = [
+    [view.xAxis, view.xRange],
+    [view.yAxis, view.yRange],
+  ];
+  const onState = spans(all.filter(([a]) => a.kind === "state"));
+  const pick = onState.length ? onState : spans(all);
+  return FIXED_POINT_MATCH_FRACTION * (pick.length ? Math.max(...pick) : 1);
+}
+
+/** Index of the fixed point nearest `x` within `tol`, or -1. */
+export function nearestFixedPoint(
+  fps: readonly Pick<FixedPointOut, "x">[],
+  x: readonly number[],
+  tol: number,
+): number {
+  let best = -1;
+  let bestD = Infinity;
+  fps.forEach((fp, i) => {
+    if (fp.x.length !== x.length) return;
+    const d = Math.hypot(...fp.x.map((v, k) => v - x[k]));
+    if (d <= tol && d < bestD) {
+      best = i;
+      bestD = d;
+    }
+  });
+  return best;
+}
+
+/** Index in `fps` of the selected fixed point, or null. */
+export function selectedFixedPointIndex(
+  sel: Selection,
+  fps: readonly Pick<FixedPointOut, "x">[],
+  view: View,
+): number | null {
+  if (sel?.kind !== "fp") return null;
+  const i = nearestFixedPoint(fps, sel.x, fixedPointMatchTolerance(view));
+  return i >= 0 ? i : null;
+}
+
+/**
+ * The selection after fixed points were recomputed for `view`: a selected
+ * fixed point follows the nearest new one (so it keeps up as a parameter
+ * moves it) and is cleared when none is near; other selections are kept.
+ * Given the points it was selected among (`prev`), the new point must also
+ * be nearer to the selected one than to any other old point: when the
+ * selected point vanishes into a neighbour (a pitchfork or saddle-node), the
+ * neighbour that is left is not taken for it.
+ */
+export function trackSelection(
+  sel: Selection,
+  fps: readonly Pick<FixedPointOut, "x">[],
+  view: View,
+  prev: readonly Pick<FixedPointOut, "x">[] = [],
+): Selection {
+  if (sel?.kind !== "fp") return sel;
+  const i = selectedFixedPointIndex(sel, fps, view);
+  if (i === null) return null;
+  const own = nearestFixedPoint(prev, sel.x, 0);
+  if (own >= 0) {
+    const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(...a.map((v, k) => v - b[k]));
+    const d = dist(fps[i].x, sel.x);
+    if (prev.some((q, k) => k !== own && q.x.length === sel.x.length && dist(fps[i].x, q.x) < d)) return null;
+  }
+  const x = fps[i].x;
+  return x.every((v, k) => v === sel.x[k]) ? sel : { ...sel, x: x.slice() };
+}
 
 export interface TrajectoryMeta {
   icId: number;
@@ -156,7 +253,7 @@ export function defaultView(sys: CompileResponse): View {
   return { xAxis: stateAxis(0), yAxis: stateAxis(1), xRange: [-5, 5], yRange: [-5, 5] };
 }
 
-export function resolveAxis(name: string, states: SymbolInfo[]): AxisRef | null {
+export function resolveAxis(name: string, states: StateInfo[]): AxisRef | null {
   if (name === "t" || name === "n") return TIME_AXIS;
   const i = states.findIndex((s) => s.name === name || s.latex === name);
   return i >= 0 ? stateAxis(i) : null;
@@ -190,8 +287,8 @@ export function niceCeil(v: number): number {
 
 export function adaptInitialConditions(
   ics: InitialCondition[],
-  oldStates: SymbolInfo[],
-  newStates: SymbolInfo[],
+  oldStates: StateInfo[],
+  newStates: StateInfo[],
 ): InitialCondition[] {
   return ics.map((ic) => ({
     ...ic,
