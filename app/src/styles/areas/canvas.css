@@ -1,0 +1,289 @@
+/* Canvas area: canvas toolbar, plot overlays, legend (CanvasToolbar.tsx, PortraitCanvas.tsx). Owner: canvas agent.
+   Tokens only. The ds-* classes come from styles/ds/components.css and are not
+   restyled here; this file places them and draws the app-only overlays. */
+
+/* ------------------------------------------------------------ toolbar */
+
+/* The floating CanvasToolbar is a child of the plot well (.plot-wrap, position:
+   relative), so the DS placement (space-3 from the top-left) applies as it is.
+   It must stay on one row (CanvasToolbar README): on a plot too narrow for
+   every control (projector mode on a 1024px screen), the view actions go first.
+   They are not lost: double-click and the 0 key reset the view. rem in the
+   query is the root size, so the threshold follows projector mode: the full
+   row is about 400px on the chalkboard and 440px in projector mode, and 29rem
+   of plot area (464px / 534px) leaves it room. */
+.canvas-area {
+  --plot-well-inset: var(--space-3);
+  container-type: inline-size;
+}
+@container (max-width: 29rem) {
+  .toolbar-view {
+    display: none;
+  }
+}
+
+/* The axis picker opens its menu under the toolbar. */
+.axes-picker {
+  position: relative;
+  display: flex;
+}
+
+.axes-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: var(--space-1);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+
+.axes-menu-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.axes-menu-head {
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-2);
+}
+
+.axes-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.axes-menu-item:hover {
+  background: var(--hover);
+}
+.axes-menu-item[aria-checked="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.axes-menu-dir {
+  color: var(--ink-2);
+}
+.axes-menu-hint {
+  color: var(--ink-2);
+}
+.axes-menu-check {
+  margin-left: auto;
+}
+
+.axes-menu-sep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .axes-menu-item {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------ plot overlays */
+
+/* Hidden probe that carries the numeric-sm type style: the renderer reads the
+   tick-label font from it. */
+.plot-probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Axis names in the math style (class `math` in the markup), plot-tick, on a
+   plot-halo outline so field marks never cut them (the renderer also keeps the
+   field clear of them). */
+.axis-label {
+  position: absolute;
+  z-index: 1;
+  color: var(--plot-tick);
+  pointer-events: none;
+  text-shadow:
+    0 0 2px var(--plot-halo),
+    1px 0 0 var(--plot-halo),
+    -1px 0 0 var(--plot-halo),
+    0 1px 0 var(--plot-halo),
+    0 -1px 0 var(--plot-halo);
+}
+
+/* Keyboard cursor: a focus-coloured ring with a dot, centred on the point. */
+.kbd-cursor {
+  position: absolute;
+  z-index: 2;
+  width: var(--space-5);
+  height: var(--space-5);
+  border: 2px solid var(--focus);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 2px var(--plot-halo);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.kbd-cursor::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--focus);
+  transform: translate(-50%, -50%);
+}
+
+/* The field slice of an nD or non-autonomous system: a floating card at the
+   well's top-right, level with the toolbar (below it on narrow plots). */
+.slice-card {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 15rem;
+  max-width: calc(100% - 2 * var(--space-3));
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+}
+
+.slice-folded {
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+  height: calc(var(--control-h) + 2 * var(--space-1) + 2px);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.slice-folded:hover {
+  background: var(--raised);
+}
+.slice-folded .slice-label {
+  color: var(--ink-2);
+}
+.slice-folded-chevron {
+  color: var(--ink-2);
+}
+
+.slice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-right: calc(var(--space-1) * -1);
+}
+.slice-head .label {
+  color: var(--ink-2);
+}
+/* The fold chevron points up: it folds the card. */
+.slice-fold-icon {
+  transform: rotate(180deg);
+}
+
+/* Flex, not grid: the ParamSlider track carries a grid-area of its own. */
+.slice-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.slice-row > .slice-num {
+  flex: 0 0 6.5rem;
+}
+.slice-row > .slice-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Fixed-point tooltip (ds-tooltip), next to the hovered glyph. The glyph is
+   drawn in plot-fp, as on the plot; the maths rows carry the `math` style. */
+.fp-tooltip-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--plot-fp);
+}
+.fp-tooltip-word {
+  color: var(--ink-2);
+}
+.fp-tooltip-math {
+  color: var(--ink);
+}
+
+/* Hints and messages float at the bottom centre of the well, on a panel card
+   (they float, so they cast shadow-pop). A Diagnostic inside keeps its own
+   fill and radius; the card's padding leaves room around it. They never take
+   the pointer: the plot under them stays clickable. */
+.plot-hint {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  z-index: 4;
+  max-width: calc(100% - 2 * var(--space-3));
+  width: max-content;
+  padding: var(--space-1);
+  transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+.plot-hint-note {
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------ legend */
+
+/* Under the well, aligned with it: the keys (ds-phase-legend), then one line of
+   help for the current tool. */
+.legend-bar {
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--plot-well-inset) var(--space-3);
+}
+/* Backward-time halves are drawn at half strength; so is their sample. */
+.legend-faint svg {
+  opacity: 0.5;
+}
+.legend-help {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------ narrow screens */
+
+/* Mirrors app.css: the well's margin shrinks to space-2 at ≤ 1180px. */
+@media (max-width: 1180px) {
+  .canvas-area {
+    --plot-well-inset: var(--space-2);
+  }
+  .legend-bar {
+    padding-bottom: var(--space-2);
+  }
+}

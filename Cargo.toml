@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "app/src-tauri"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/uncrayon/slope-field-vizualiser"
+rust-version = "1.80"
+
+[workspace.dependencies]
+dyn-core = { path = "crates/dyn-core" }
+dyn-expr = { path = "crates/dyn-expr" }
+dyn-solve = { path = "crates/dyn-solve" }
+dyn-analysis = { path = "crates/dyn-analysis" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+approx = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# Keep the maths fast in `tauri dev` (debug builds): optimise our own numeric crates.
+[profile.dev.package.dyn-core]
+opt-level = 3
+[profile.dev.package.dyn-expr]
+opt-level = 3
+[profile.dev.package.dyn-solve]
+opt-level = 3
+[profile.dev.package.dyn-analysis]
+opt-level = 3

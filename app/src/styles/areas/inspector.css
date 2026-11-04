@@ -1,0 +1,37 @@
+/* Inspector area: right panel contents (Inspector.tsx). Owner: inspector agent.
+   Only layout glue between ds-* components; tokens only, no ds-* restyling. */
+
+/* Flush bodies (switch rows, lists) are inset by space-2; text and fields inside
+   them line up with the section title at space-4. */
+.inspector .inspector-inset {
+  padding: var(--space-2) var(--space-2) 0;
+}
+.inspector .inspector-inset-text {
+  padding: var(--space-2) var(--space-2) 0;
+}
+
+/* A switch row inside a padded body: the row's own space-2 padding and hover fill
+   reach out to the flush column, so its label lines up with the keys above. */
+.inspector .inspector-switch-row {
+  margin: 0 calc(-1 * var(--space-2));
+}
+
+/* Run statistics of the selected trajectory: subhead over its key-value rows. */
+.inspector .inspector-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* A visible <label> as a key keeps the key's colour and truncation. */
+.inspector .inspector-key-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* With no system yet. */
+.inspector .inspector-empty {
+  margin: 0;
+  padding: var(--space-4);
+}

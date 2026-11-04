@@ -1,0 +1,2315 @@
+/* ===== Button ===== */
+/* A text button, optionally with a leading 16px icon. Variant sets local
+   properties; states shift them. Hover and pressed on accent and danger fills
+   move toward `ink`, which raises label contrast in both themes. */
+.ds-button {
+  --btn-bg: var(--raised);
+  --btn-fg: var(--ink);
+  --btn-bd: var(--edge);
+  --btn-gap: var(--space-2);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--btn-gap);
+  height: var(--control-h);
+  min-width: var(--control-h);
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--btn-bd);
+  border-radius: var(--radius-sm);
+  background: var(--btn-bg);
+  /* Hover and pressed on filled buttons lay an `ink` tint over the fill (an inset
+     shadow paints above the background, below the label). */
+  box-shadow: inset 0 0 0 var(--control-h) var(--btn-tint, transparent);
+  color: var(--btn-fg);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+/* _base.css gives every button `font: inherit; color: inherit` under .ds-root; win it back. */
+.ds-root .ds-button { color: var(--btn-fg); font-family: var(--font-ui); font-size: 0.8125rem; line-height: 1.25rem; font-weight: 500; }
+.ds-root .ds-button--sm { font-size: 0.75rem; line-height: 1rem; }
+/* Leading icon sits a little closer to the edge so the label looks centred. */
+.ds-button > .ds-icon:first-child,
+.ds-button-label > .ds-icon:first-child,
+.ds-button-busy > .ds-icon:first-child { margin-left: calc(var(--space-1) * -1); }
+
+/* Secondary is the default look; the modifier exists for explicit markup. */
+.ds-button--secondary { --btn-bg: var(--raised); --btn-fg: var(--ink); --btn-bd: var(--edge); }
+.ds-button:is(:hover, .is-hover):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--hover); }
+.ds-button:is(:active, .is-pressed):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--active); }
+
+.ds-button--primary { --btn-bg: var(--accent); --btn-fg: var(--on-accent); --btn-bd: var(--accent); }
+.ds-button--primary:is(:hover, .is-hover):not(:disabled, .is-disabled, .is-loading) {
+  --btn-bg: var(--accent);
+  --btn-tint: color-mix(in srgb, var(--ink) 18%, transparent);
+  --btn-bd: color-mix(in srgb, var(--accent) 82%, var(--ink));
+}
+.ds-button--primary:is(:active, .is-pressed):not(:disabled, .is-disabled, .is-loading) {
+  --btn-bg: var(--accent);
+  --btn-tint: color-mix(in srgb, var(--ink) 32%, transparent);
+  --btn-bd: color-mix(in srgb, var(--accent) 68%, var(--ink));
+}
+
+.ds-button--ghost { --btn-bg: transparent; --btn-fg: var(--ink); --btn-bd: transparent; }
+.ds-button--ghost:is(:hover, .is-hover):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--hover); }
+.ds-button--ghost:is(:active, .is-pressed):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--active); }
+
+/* Danger, solid: the confirming action of a destructive dialog. */
+.ds-button--danger { --btn-bg: var(--danger); --btn-fg: var(--on-accent); --btn-bd: var(--danger); }
+.ds-button--danger:is(:hover, .is-hover):not(:disabled, .is-disabled, .is-loading) {
+  --btn-bg: var(--danger);
+  --btn-tint: color-mix(in srgb, var(--ink) 18%, transparent);
+  --btn-bd: color-mix(in srgb, var(--danger) 82%, var(--ink));
+}
+.ds-button--danger:is(:active, .is-pressed):not(:disabled, .is-disabled, .is-loading) {
+  --btn-bg: var(--danger);
+  --btn-tint: color-mix(in srgb, var(--ink) 32%, transparent);
+  --btn-bd: color-mix(in srgb, var(--danger) 68%, var(--ink));
+}
+/* Danger, quiet (ghost + danger): a destructive action inside a panel. */
+.ds-button--ghost.ds-button--danger { --btn-bg: transparent; --btn-fg: var(--danger); --btn-bd: transparent; --btn-tint: transparent; }
+/* Reset the solid-danger ink tint: the quiet version only gets the soft red fill. */
+.ds-button--ghost.ds-button--danger:is(:hover, .is-hover):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--danger-soft); --btn-bd: transparent; --btn-tint: transparent; }
+.ds-button--ghost.ds-button--danger:is(:active, .is-pressed):not(:disabled, .is-disabled, .is-loading) { --btn-bg: var(--danger-soft); --btn-bd: var(--danger); --btn-tint: transparent; }
+
+/* Static focus, for previews only. Real focus comes from :focus-visible in _base.css. */
+.ds-button.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.ds-button:disabled,
+.ds-button.is-disabled,
+.ds-button[aria-disabled="true"]:not(.is-loading) {
+  /* The disabled look every control shares: no fill, `line-strong` outline, `ink-3`. */
+  --btn-bg: transparent;
+  --btn-fg: var(--ink-3);
+  --btn-bd: var(--line-strong);
+  --btn-tint: transparent;
+  cursor: not-allowed;
+}
+.ds-button--ghost:is(:disabled, .is-disabled, [aria-disabled="true"]:not(.is-loading)) { --btn-bg: transparent; --btn-bd: transparent; }
+
+/* Small: dense rows (trajectory list, table cells). */
+.ds-button--sm {
+  --btn-gap: var(--space-1);
+  height: var(--control-h-sm);
+  min-width: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.ds-button--sm > .ds-icon:first-child,
+.ds-button--sm .ds-button-label > .ds-icon:first-child,
+.ds-button--sm .ds-button-busy > .ds-icon:first-child { margin-left: 0; }
+
+/* Loading. Both labels share one grid cell, so the button is always as wide as
+   the wider of the two and never jumps when a computation starts or ends. */
+.ds-button-stack { display: inline-grid; }
+.ds-button-label,
+.ds-button-busy {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--btn-gap);
+}
+.ds-button-busy { visibility: hidden; }
+.ds-button.is-loading { cursor: progress; }
+.ds-button.is-loading .ds-button-label { visibility: hidden; }
+.ds-button.is-loading .ds-button-busy { visibility: visible; }
+.ds-button-spinner { animation: ds-button-spin 0.9s linear infinite; transform-origin: 50% 50%; }
+@keyframes ds-button-spin { to { transform: rotate(360deg); } }
+
+/* ===== CanvasToolbar ===== */
+/* Floats over the top-left of the plot. The plot container must be
+   position: relative. Built from .ds-icon-button (IconButton). */
+.ds-canvas-toolbar {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+}
+.ds-canvas-toolbar-group { display: flex; align-items: center; gap: var(--space-1); }
+.ds-canvas-toolbar-divider {
+  flex: none;
+  width: 1px;
+  height: var(--control-h-sm);
+  margin: 0 var(--space-1);
+  background: var(--line);
+}
+
+/* Axis picker summary ("→ x ↑ y"): opens the axis menu. */
+.ds-canvas-toolbar-axes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  margin: 0;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.ds-root .ds-canvas-toolbar-axes { color: var(--ink); }
+.ds-canvas-toolbar-axes:is(:hover, .is-hover) { background: var(--hover); }
+.ds-canvas-toolbar-axes:is(:active, .is-pressed, [aria-expanded="true"]) { background: var(--active); }
+.ds-canvas-toolbar-axes.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-canvas-toolbar-axes .math { line-height: 1.25rem; }
+/* Direction arrows: → before the horizontal axis, ↑ before the vertical one,
+   as in the app today. Unambiguous, unlike "x vs y", whose order readers disagree on. */
+.ds-canvas-toolbar-dir { color: var(--ink-2); font-family: var(--font-ui); font-size: 0.75rem; line-height: 1rem; }
+.ds-canvas-toolbar-dir:not(:first-child) { margin-left: var(--space-1); }
+.ds-canvas-toolbar-axes > .ds-icon { color: var(--ink-2); }
+
+/* ===== Diagnostic ===== */
+/* One message from the parser or the solver: icon + severity word + message.
+   The icon and the word carry the status colour; the message stays `ink` so it is
+   easy to read. Severity is set by a modifier that sets one local property. */
+.ds-diagnostic {
+  --diag-tone: var(--ink-2);
+  --diag-fill: var(--raised);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+}
+.ds-diagnostic--error { --diag-tone: var(--danger); --diag-fill: var(--danger-soft); }
+.ds-diagnostic--warning { --diag-tone: var(--warn); --diag-fill: var(--warn-soft); }
+.ds-diagnostic--info { --diag-tone: var(--ink-2); --diag-fill: var(--raised); }
+
+/* The icon sits centred on the first text line. */
+.ds-diagnostic-icon {
+  flex: none;
+  width: var(--icon);
+  height: var(--icon);
+  margin-top: calc((1.25rem - var(--icon)) / 2);
+  color: var(--diag-tone);
+}
+.ds-diagnostic-body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.ds-diagnostic-word { margin-right: var(--space-1); color: var(--diag-tone); font-weight: 600; }
+.ds-diagnostic-msg { color: var(--ink); }
+.ds-diagnostic-body math { font-family: var(--font-math); font-size: 1rem; }
+
+/* Compact: under an equation line. No fill, `label` scale, tighter gap. */
+.ds-diagnostic--compact {
+  gap: var(--space-1);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+.ds-diagnostic--compact .ds-diagnostic-icon { margin-top: calc((1rem - var(--icon)) / 2); }
+.ds-diagnostic--compact .ds-diagnostic-msg { font-weight: 400; }
+.ds-diagnostic--compact .ds-diagnostic-body math { line-height: 1; }
+
+/* Block: in a panel (inspector, trajectory list, a section's general messages).
+   A soft fill in the status tone, no border, no coloured edge. */
+.ds-diagnostic--block {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--diag-fill);
+}
+.ds-diagnostic-meta {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--ink-2);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+.ds-diagnostic-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* A list of diagnostics (one live region). */
+.ds-diagnostic-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ds-diagnostic-list--block { gap: var(--space-2); }
+
+/* ===== EquationEditor ===== */
+/* The system panel's equation list. Each line is a grid: line number (gutter), the
+   MathLive field, a remove button; diagnostics for that line sit in the second row,
+   aligned with the field's left edge. The field is `sunken` with an `edge` outline,
+   like every text input. In the app the field is a <math-field>; the static
+   rendition puts MathML inside .ds-equation-editor-field instead. */
+.ds-equation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ds-equation-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+}
+.ds-equation-editor-title { margin: 0; color: var(--ink); }
+
+/* LaTeX | Text: a small SegmentedControl (`ds-segmented ds-segmented--sm`), so the
+   selected option reads the same as every other segmented control. This class only
+   keeps it from shrinking in the header. */
+.ds-equation-editor-mode { flex: none; }
+
+/* Lines */
+.ds-equation-editor-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ds-equation-editor-line {
+  display: grid;
+  grid-template-columns: var(--space-5) minmax(0, 1fr) var(--control-h-sm);
+  column-gap: var(--space-2);
+  row-gap: var(--space-1);
+  align-items: center;
+}
+
+.ds-equation-editor-gutter {
+  justify-self: end;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.ds-equation-editor-line.is-focus .ds-equation-editor-gutter { color: var(--ink); }
+.ds-equation-editor-line.is-error .ds-equation-editor-gutter { color: var(--danger); font-weight: 500; }
+
+.ds-equation-editor-field {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: calc(var(--control-h) + var(--space-1));
+  padding: 0 var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--ink);
+  font-family: var(--font-math);
+  font-size: 1rem;
+  line-height: 1.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: text;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.ds-equation-editor-field math { font-family: var(--font-math); font-size: 1rem; }
+.ds-equation-editor-field:hover,
+.ds-equation-editor-line.is-hover .ds-equation-editor-field { border-color: var(--ink-3); }
+
+/* Editing: accent edge, a caret, and the global ring (keyboard focus on a text field
+   always matches :focus-visible). */
+.ds-equation-editor-field:focus-within,
+.ds-equation-editor-line.is-focus .ds-equation-editor-field { border-color: var(--accent); }
+.ds-equation-editor-line.is-focus .ds-equation-editor-field { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-equation-editor-caret {
+  display: inline-block;
+  flex: none;
+  width: 1px;
+  height: 1.25rem;
+  margin-left: 1px;
+  background: var(--ink);
+}
+
+/* Empty line: the placeholder is the left-hand side the user is expected to type. */
+.ds-equation-editor-placeholder { color: var(--ink-3); }
+
+/* Error on this line: danger edge, a danger-soft wash, and a Diagnostic below. */
+.ds-equation-editor-line.is-error .ds-equation-editor-field {
+  border-color: var(--danger);
+  box-shadow: inset 0 0 0 var(--space-10) var(--danger-soft);
+}
+/* The token the parser points at, when it can: `danger` text with a wavy underline.
+   The Diagnostic below says the same in words, so colour is not the only cue. */
+.ds-equation-editor-bad {
+  color: var(--danger); /* a lone "(" is too narrow for the underline alone */
+  text-decoration: underline wavy var(--danger);
+  text-decoration-thickness: 1px;
+}
+
+/* Plain-text mode: the same field holding the `code` style. */
+.ds-equation-editor--text .ds-equation-editor-field {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-variant-numeric: tabular-nums;
+  min-height: var(--control-h);
+}
+.ds-equation-editor--text .ds-equation-editor-caret { height: 1.125rem; }
+
+/* Remove-line button keeps its column even when absent, so fields line up. */
+.ds-equation-editor-remove { justify-self: center; }
+
+/* Diagnostics for a line: second row, under the field. */
+.ds-equation-editor-diags {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 0 0 var(--space-2);
+  list-style: none;
+}
+
+/* Footer: Add equation, aligned with the fields. */
+.ds-equation-editor-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-left: calc(var(--space-5) + var(--space-2));
+}
+.ds-equation-editor-hint { color: var(--ink-3); }
+
+/* ===== ExportDialog ===== */
+/* The export dialog: format, preview, options, the LaTeX snippet, actions.
+   A `panel` sheet with `radius-lg` and `shadow-modal`, over `scrim`. LaTeX
+   (pgfplots) is the default format because the figure usually ends up in a thesis,
+   a problem sheet or lecture notes. Reuses Button, IconButton, SegmentedControl,
+   NumberField and the compact Checkbox; this file only lays them out. */
+
+/* Full-window overlay. In the app it is fixed; in a preview it fills its box. */
+.ds-export-scrim {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10);
+  background: var(--scrim);
+}
+
+.ds-export {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: calc(var(--space-10) * 18);
+  max-height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-modal);
+  color: var(--ink);
+}
+
+/* Header: title, the figure it exports, close. */
+.ds-export-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+.ds-export-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 1.125rem;
+  line-height: 1.5rem;
+  font-weight: 600;
+}
+.ds-export-sub {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+.ds-export-sub math { font-family: var(--font-math); }
+.ds-export-head .ds-icon-button { margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1) 0 0; }
+
+/* Body scrolls when the window is short; head and foot stay put. */
+.ds-export-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+/* Format row: a full-width SegmentedControl (`ds-segmented ds-segmented--fill`). */
+.ds-export-format { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ds-export-label {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+
+/* Preview beside options. The preview is the exported figure, drawn in the plot
+   tokens at the chosen size's aspect ratio. */
+.ds-export-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--space-10) * 6);
+  gap: var(--space-5);
+  align-items: start;
+}
+.ds-export-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+.ds-export-preview-well {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: var(--ds-export-aspect, 1.25);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--plot-bg);
+}
+.ds-export-preview-well > canvas { display: block; width: 100%; height: 100%; }
+.ds-export-preview-cap {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+.ds-export-preview-cap .ds-num { color: var(--ink-2); }
+
+/* Options column: groups separated by `space-4`, rows by `space-2`. */
+.ds-export-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ds-export-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.ds-export-group > legend { padding: 0; margin-bottom: var(--space-2); }
+.ds-export-size {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.ds-export-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+/* Field labels under a legend: `caption` type in `ink-3`. */
+.ds-export-field > .ds-export-label { color: var(--ink-3); font-size: 0.6875rem; font-weight: 400; letter-spacing: 0.01em; }
+.ds-export-hint {
+  margin: 0;
+  padding-left: calc(var(--icon) + var(--space-2));
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+.ds-export-hint code { font-family: var(--font-mono); font-size: inherit; color: var(--ink-2); }
+
+/* The snippet: `code` type on `sunken`, `line` border, scrolls inside itself. */
+.ds-export-code { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.ds-export-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+}
+.ds-export-code-head .ds-export-label code { font-family: var(--font-mono); font-size: inherit; color: var(--ink); }
+.ds-export-snippet {
+  margin: 0;
+  /* 14 whole lines of `code` type, top padding and border (266px). The bottom padding
+     only shows once scrolled to the end, so this edge never cuts a line in half. */
+  max-height: calc(1.125rem * 14 + var(--space-3) + 2px);
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  tab-size: 2;
+}
+.ds-export-snippet code { font: inherit; }
+.ds-export-snippet .ds-export-cm { color: var(--ink-3); }
+.ds-export-snippet [hidden] { display: none; }
+
+/* Footer: a note on the left, actions on the right; primary last. */
+.ds-export-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--line);
+}
+.ds-export-foot-note {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+.ds-export-foot-note .ds-num { color: var(--ink-2); }
+.ds-export-actions { display: flex; flex: none; gap: var(--space-2); }
+
+/* ===== FixedPoint ===== */
+/* Glyphs follow Strogatz: filled = stable, open = unstable (saddles included),
+   half-filled = linearization does not decide (half-stable, center, non-hyperbolic).
+   A glyph is an SVG <g class="ds-fp"> centred on (0,0); geometry is in user units
+   (1 unit = 1px on the plot). It grows with --line-scale (1, or 1.75 in projector
+   mode) more gently than lines do: 1.3x at 1.75. */
+.ds-fp {
+  --fp-scale: calc(0.6 + 0.4 * var(--line-scale));
+  transform: scale(var(--fp-scale));
+  cursor: pointer;
+}
+.ds-fp-mark { transition: transform var(--dur-fast) var(--ease); }
+.ds-fp-halo { fill: var(--plot-halo); }
+.ds-fp-body { fill: var(--plot-bg); stroke: var(--plot-fp); stroke-width: 1.5; }
+.ds-fp--stable .ds-fp-body { fill: var(--plot-fp); }
+.ds-fp-half { display: none; fill: var(--plot-fp); }
+.ds-fp--half .ds-fp-half { display: inline; }
+.ds-fp-ring { display: none; fill: none; stroke: var(--accent); stroke-width: 2; }
+
+/* Hover grows the mark; selection adds an accent ring outside the halo. */
+.ds-fp:hover .ds-fp-mark,
+.ds-fp.is-hover .ds-fp-mark { transform: scale(1.2); }
+.ds-fp.is-selected .ds-fp-ring { display: inline; }
+
+/* Eigenvector directions through a fixed point ("Show eigenvectors"). Arrowheads
+   point in along a stable direction (λ < 0) and out along an unstable one (λ > 0). */
+.ds-fp-eigen {
+  fill: none;
+  stroke: var(--plot-tick);
+  stroke-width: calc(1px * var(--line-scale));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ds-fp-eigen-label { fill: var(--plot-tick); paint-order: stroke; stroke: var(--plot-halo); stroke-width: 3; stroke-linejoin: round; }
+
+/* The same glyph as a 16px icon in chrome (inspector rows, tooltips, legend).
+   viewBox="-8 -8 16 16"; no halo, no ring, open fill shows the row behind it. */
+.ds-fp-icon { width: var(--icon); height: var(--icon); flex: none; overflow: visible; }
+.ds-fp-icon .ds-fp { transform: none; cursor: inherit; }
+.ds-fp-icon .ds-fp-halo,
+.ds-fp-icon .ds-fp-ring { display: none; }
+.ds-fp-icon .ds-fp-body { fill: transparent; }
+.ds-fp-icon .ds-fp--stable .ds-fp-body { fill: var(--plot-fp); }
+
+/* ---- Inspector: the fixed-point list ---- */
+.ds-fp-list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+
+.ds-fp-item { border-radius: var(--radius-sm); }
+.ds-fp-item:has(> .ds-fp-row:hover),
+.ds-fp-item.is-hover { background: var(--hover); }
+.ds-fp-item.is-selected,
+.ds-fp-item.is-selected:has(> .ds-fp-row:hover) { background: var(--accent-soft); }
+
+.ds-fp-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.ds-fp-row.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-fp-row .ds-fp-icon { margin-top: var(--space-1); color: var(--plot-fp); }
+.ds-fp-row-text { display: flex; flex-direction: column; min-width: 0; }
+.ds-fp-class { color: var(--ink); }
+/* accent-soft alone is barely lighter than hover, so the selected row's name also
+   turns accent-ink (as a chosen tool button does) and selection never rests on hue. */
+.ds-fp-item.is-selected .ds-fp-class { color: var(--accent-ink); }
+.ds-fp-coords { color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ds-fp-eig { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* Detail under the selected row: trace/determinant hint and the eigenvector switch.
+   Indented to the text column (row padding + icon + gap). */
+.ds-fp-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2) calc(var(--space-3) + var(--icon) + var(--space-2));
+}
+.ds-fp-hint { margin: 0; color: var(--ink-2); }
+.ds-fp-hint .ds-num { color: var(--ink); }
+
+/* ===== IconButton ===== */
+/* Square, icon-only. Always has aria-label; data-tip holds the tooltip text,
+   drawn below the button after a short hover or on keyboard focus. */
+.ds-icon-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-h);
+  height: var(--control-h);
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ds-root .ds-icon-button { color: var(--ink-2); }
+/* A layer toggle that is off dims its icon to `ink-3`, so on (active fill, `ink`)
+   and off differ by more than the subtle fill step. Before hover, so hover still lifts it. */
+.ds-root .ds-icon-button[aria-pressed="false"]:not(.ds-icon-button--tool) { color: var(--ink-3); }
+.ds-root .ds-icon-button:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--hover); color: var(--ink); }
+.ds-root .ds-icon-button:is(:active, .is-pressed):not(:disabled, .is-disabled) { background: var(--active); color: var(--ink); }
+.ds-icon-button.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Outlined: a standalone icon button in a panel, next to secondary buttons. */
+.ds-root .ds-icon-button--outline { background: var(--raised); border-color: var(--edge); color: var(--ink); }
+
+/* Toggle (layer on/off): aria-pressed="true" fills it and brings the icon to ink. */
+.ds-root .ds-icon-button[aria-pressed="true"] { background: var(--active); color: var(--ink); }
+.ds-icon-button[aria-pressed="true"]:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--active); }
+
+/* Tool (one of a set, e.g. Select / Pan / Add trajectory): the chosen one is accent. */
+.ds-root .ds-icon-button--tool[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+.ds-root .ds-icon-button--tool[aria-pressed="true"]:is(:hover, .is-hover):not(:disabled, .is-disabled) { background: var(--accent-soft); color: var(--accent-ink); }
+
+.ds-root .ds-icon-button:disabled,
+.ds-root .ds-icon-button.is-disabled { color: var(--ink-3); opacity: 0.5; cursor: not-allowed; }
+
+.ds-icon-button--sm { width: var(--control-h-sm); height: var(--control-h-sm); }
+
+/* Tooltip. No box exists until it shows, so a hidden tooltip never widens a
+   scroll area; it fades in after a short hover, at once on keyboard focus. */
+.ds-icon-button[data-tip]:is(:hover, :focus-visible, .is-tip)::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: ds-icon-button-tip var(--dur-fast) var(--ease) 500ms both;
+}
+.ds-icon-button[data-tip]:focus-visible::after { animation-delay: 0ms; }
+.ds-icon-button[data-tip].is-tip::after { animation: none; }
+.ds-icon-button[data-tip][data-tip-align="end"]::after { left: auto; right: 0; }
+/* Escape dismisses an open tooltip (WCAG 1.4.13); the app adds the class and removes it on pointer leave or blur. */
+.ds-icon-button[data-tip].is-tip-dismissed::after { content: none; }
+@keyframes ds-icon-button-tip { from { opacity: 0; } to { opacity: 1; } }
+
+/* ===== Icons ===== */
+/* Icons are inline <svg class="ds-icon"> with stroke="currentColor"; these classes set
+   their colour and lay out the reference grid. Size is always var(--icon). */
+.ds-icons { display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-6); }
+
+.ds-icons-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+.ds-icons-cell {
+  margin: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-2) var(--space-3);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+.ds-icons-name { color: var(--ink-2); text-align: center; }
+.ds-icons-logo { width: calc(var(--icon) + var(--space-1)); height: calc(var(--icon) + var(--space-1)); flex: none; color: var(--accent); }
+
+.ds-icons-tones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.ds-icons-tone {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.ds-icons-tone--wide { grid-column: 1 / -1; }
+.ds-icons-status {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2) var(--space-4);
+  margin: 0; padding: 0; list-style: none;
+}
+.ds-icons-tone-head { display: flex; flex-direction: column; }
+.ds-icons-tone-head code { color: var(--ink); }
+.ds-icons-note { color: var(--ink-2); }
+.ds-icons-strip { display: flex; gap: var(--space-3); }
+
+/* Icon + label pair: the default way to show an icon. */
+.ds-icons-label { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+/* Colours. Pick by meaning; an icon takes its label's colour. */
+.ds-icons-ink { color: var(--ink); }
+.ds-icons-ink-2 { color: var(--ink-2); }
+.ds-icons-accent { color: var(--accent-ink); }
+.ds-icons-danger { color: var(--danger); }
+.ds-icons-warn { color: var(--warn); }
+.ds-icons-ok { color: var(--ok); }
+
+/* ===== InferenceChips ===== */
+/* What the app read from the equations: kind, states, parameters, time variable.
+   A two-column definition list: `label` keys on the left, chips on the right.
+   Static chips are `raised` with a `line` hairline; parameter chips are buttons
+   with an `edge` outline, because they do something (focus that slider). */
+.ds-inference-chips {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  align-items: center;
+  margin: 0;
+  min-width: 0;
+}
+.ds-inference-chips-key {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+.ds-inference-chips-set {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h-sm); /* a row of "none" is as tall as a row of chips */
+  margin: 0;
+  min-width: 0;
+}
+.ds-inference-chips-none { color: var(--ink-3); font-size: 0.75rem; line-height: 1rem; }
+
+.ds-inference-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--control-h-sm);
+  min-width: var(--control-h-sm);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.ds-inference-chip math { font-family: var(--font-math); font-size: 1rem; line-height: 1; }
+
+/* Kind: "ODE · 3D · autonomous". The kind word is strong, the qualifiers are ink-2. */
+.ds-inference-chip-kind { font-weight: 600; }
+.ds-inference-chip-sep { color: var(--ink-3); }
+.ds-inference-chip-qual { color: var(--ink-2); }
+
+/* Math: one symbol per chip (x, y, z, ẋ, q, p). Narrow padding so single letters
+   make square chips. */
+.ds-inference-chip--math { padding: 0 var(--space-1); }
+
+/* Parameter: a button that focuses that parameter's slider. */
+.ds-inference-chip--param {
+  border-color: var(--edge);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.ds-root .ds-inference-chip--param { color: var(--ink); font-family: var(--font-ui); font-size: 0.75rem; line-height: 1rem; font-weight: 500; }
+/* "=" is typeset like the symbol before it, so "σ = 10" reads as one expression. */
+.ds-inference-chip-eq { color: var(--ink-2); font-family: var(--font-math); font-size: 1rem; line-height: 1; }
+/* Value: the `code` style (mono 12px), tabular. */
+.ds-inference-chip-value {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ds-inference-chip--param:is(:hover, .is-hover) { background: var(--hover); border-color: var(--ink-3); }
+.ds-inference-chip--param:is(:active, .is-pressed) { background: var(--active); }
+.ds-inference-chip--param.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* Current: this parameter's slider has focus. */
+.ds-inference-chip--param.is-current,
+.ds-inference-chip--param[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.ds-inference-chip--param.is-current .ds-inference-chip-value,
+.ds-inference-chip--param[aria-current="true"] .ds-inference-chip-value { color: var(--accent-ink); }
+
+/* ===== NumberField ===== */
+/* A one-line numeric input: mono, tabular, right-aligned. The box is the wrapper
+   .ds-numfield; the <input> inside is borderless. Keyboard focus is shown on the
+   wrapper with the same 2px ring as _base.css, so the ring wraps label, unit and
+   steppers together instead of only the text. */
+.ds-numfield {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  background: var(--sunken);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: text;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.ds-numfield:hover,
+.ds-numfield.is-hover { border-color: var(--ink-3); }
+
+.ds-numfield:focus-within,
+.ds-numfield.is-focus { border-color: var(--accent); }
+.ds-numfield:has(.ds-numfield-input:focus-visible),
+.ds-numfield.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-numfield .ds-numfield-input:focus-visible { outline: none; }
+
+/* Invalid: danger edge plus a message below (never colour alone). */
+.ds-numfield.is-invalid,
+.ds-numfield:has(.ds-numfield-input[aria-invalid="true"]) { border-color: var(--danger); }
+
+/* Disabled: read-only look, no hover. */
+.ds-numfield.is-disabled,
+.ds-numfield:has(.ds-numfield-input:disabled) {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+/* The text itself. Same scale as the `numeric` type style. */
+.ds-numfield .ds-numfield-input {
+  flex: 1 1 auto;
+  align-self: baseline;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: inherit;
+}
+.ds-numfield .ds-numfield-input::placeholder { color: var(--ink-3); opacity: 1; }
+.ds-numfield .ds-numfield-input:disabled { color: var(--ink-3); }
+
+/* Leading symbol: t₀, t₁, rtol, σ … typeset in the math font, on the value's baseline. */
+.ds-numfield-lead {
+  display: block;
+  flex: none;
+  padding-left: var(--space-2);
+  color: var(--ink-2);
+  font-family: var(--font-math);
+  font-size: 1rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+.ds-numfield-lead math { font-family: var(--font-math); }
+
+/* Trailing unit or suffix: rad, samples. Sits on the value's baseline. */
+.ds-numfield-unit {
+  display: block;
+  flex: none;
+  padding-right: var(--space-2);
+  margin-left: calc(-1 * var(--space-1));
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Optional steppers: − and + at the right end, mouse only (keyboard uses ↑ ↓). */
+.ds-numfield-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  align-self: stretch;
+  width: var(--control-h);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ds-numfield-step:last-child { border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0; }
+.ds-numfield-step:hover,
+.ds-numfield-step.is-hover { background: var(--hover); color: var(--ink); }
+.ds-numfield-step:active { background: var(--active); }
+.ds-numfield-step:disabled { color: var(--ink-3); background: transparent; cursor: not-allowed; }
+.ds-numfield.is-disabled .ds-numfield-step,
+.ds-numfield:has(.ds-numfield-input:disabled) .ds-numfield-step { color: var(--ink-3); background: transparent; cursor: not-allowed; }
+
+/* Small: dense rows (control-h-sm), `numeric-sm` scale. */
+.ds-numfield--sm { height: var(--control-h-sm); }
+.ds-numfield--sm .ds-numfield-input {
+  padding: 0 var(--space-1);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+.ds-numfield--sm .ds-numfield-lead { padding-left: var(--space-2); font-size: 0.75rem; }
+.ds-numfield--sm .ds-numfield-unit { padding-right: var(--space-1); margin-left: 0; font-size: 0.6875rem; }
+.ds-numfield--sm .ds-numfield-step { width: var(--control-h-sm); }
+
+/* Message under the field: error (danger) or hint (ink-3). Add the `caption` class. */
+.ds-numfield-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  color: var(--danger);
+}
+.ds-numfield-msg--hint { color: var(--ink-3); }
+
+/* ===== PanelSection ===== */
+/* The side panels (system panel left, inspector right) and the collapsible
+   sections inside them. Sections are divided by `line` hairlines, never shadows. */
+
+/* The panel itself: panel fill, a line on the side that faces the plot. */
+.ds-panel-section-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--panel);
+  color: var(--ink);
+}
+.ds-panel-section-panel--left { width: var(--panel-left-w); border-right: 1px solid var(--line); }
+.ds-panel-section-panel--right { width: var(--panel-right-w); border-left: 1px solid var(--line); }
+/* Free-standing (previews, popovers that reuse sections): line all round. */
+.ds-panel-section-panel--framed { border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
+
+.ds-panel-section { min-width: 0; }
+.ds-panel-section + .ds-panel-section { border-top: 1px solid var(--line); }
+
+/* Header: the whole row is the toggle button. Actions float over its right end,
+   just left of the chevron, so the chevron always sits in the same column. */
+.ds-panel-section-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+.ds-panel-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--control-h) + var(--space-3));
+  margin: 0;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.ds-panel-section-toggle:is(:hover, .is-hover) { background: var(--hover); }
+.ds-panel-section-toggle:is(:active, .is-pressed) { background: var(--active); }
+/* Full-bleed row: the ring is drawn inside so the panel edge and the neighbouring
+   sections never clip or cover it. Same colour and width as the global ring. */
+.ds-root .ds-panel-section-toggle:focus-visible,
+.ds-panel-section-toggle.is-focus { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+.ds-panel-section-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink);
+}
+.ds-panel-section-count {
+  flex: none;
+  min-width: var(--icon);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.ds-panel-section-toggle:is(:hover, .is-hover, :active, .is-pressed) .ds-panel-section-count { background: var(--panel); }
+
+.ds-panel-section-chevron {
+  margin-left: auto;
+  color: var(--ink-2);
+  transition: transform var(--dur) var(--ease);
+}
+.ds-panel-section-toggle:is(:hover, .is-hover) .ds-panel-section-chevron { color: var(--ink); }
+.ds-panel-section-toggle[aria-expanded="false"] .ds-panel-section-chevron { transform: rotate(-90deg); }
+
+/* Up to two small icon buttons (ds-icon-button--sm). */
+.ds-panel-section-actions {
+  position: absolute;
+  top: 50%;
+  right: calc(var(--space-3) + var(--icon) + var(--space-2));
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  transform: translateY(-50%);
+}
+.ds-panel-section-head:has(.ds-panel-section-actions) .ds-panel-section-toggle {
+  padding-right: calc(var(--space-3) + var(--icon) + var(--space-3) + var(--control-h-sm));
+}
+.ds-panel-section-head:has(.ds-panel-section-actions > :nth-child(2)) .ds-panel-section-toggle {
+  padding-right: calc(var(--space-3) + var(--icon) + var(--space-3) + 2 * var(--control-h-sm) + var(--space-1));
+}
+.ds-panel-section-head:has(.ds-panel-section-actions) .ds-panel-section-chevron {
+  position: absolute;
+  right: var(--space-3);
+}
+
+/* Body: space-4 at the sides and bottom; the header row supplies the space above. */
+.ds-panel-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-4);
+}
+.ds-panel-section-body[hidden] { display: none; }
+/* Switch rows and list rows run to the panel edge minus space-2, so their hover fill
+   lines up with the header's text. */
+.ds-panel-section-body--flush { padding: 0 var(--space-2) var(--space-3); gap: 0; }
+
+.ds-panel-section-hint { margin: 0; color: var(--ink-3); }
+.ds-panel-section-subhead { margin: var(--space-1) 0 0; color: var(--ink-2); }
+
+/* Key-value rows: label left in ink-2, value right in mono. */
+.ds-panel-section-kv {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+}
+.ds-panel-section-kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--control-h-sm);
+}
+.ds-panel-section-kv--fields .ds-panel-section-kv-row { min-height: var(--control-h); }
+.ds-panel-section-kv--fields { gap: var(--space-1); }
+.ds-panel-section-key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+.ds-panel-section-key > span { overflow: hidden; text-overflow: ellipsis; }
+.ds-panel-section-value {
+  flex: none;
+  margin: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+/* A value that is text, not a number ("follows the t axis", "auto"). */
+.ds-panel-section-value--text { font-family: var(--font-ui); color: var(--ink-2); }
+/* A value that is an editable field: a fixed share of the row so fields line up. */
+.ds-panel-section-value--field { flex: 0 0 55%; min-width: 0; }
+
+/* A key may start with a fixed point's glyph (FixedPoint's `.ds-fp-icon`) or a
+   trajectory's swatch (TrajectoryList's `.ds-traj-swatch`); this file adds no glyphs. */
+
+/* ===== ParamSlider ===== */
+/* One parameter row in the system panel: typeset name, slider, exact value, and the
+   slider's range underneath (click a bound to edit it). Rows live in .ds-paramlist,
+   a grid whose rows are subgrids, so names, sliders and values line up down the list
+   whatever the names are (σ, r, b, μ, k₁). The list is also the size container
+   for the narrow layout. */
+.ds-paramlist {
+  --param-value-w: calc(var(--space-10) * 2 + var(--space-2));
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(var(--space-4), max-content) minmax(0, 1fr) var(--param-value-w);
+  column-gap: var(--space-3);
+  row-gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+
+.ds-param {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-areas:
+    "name slider value"
+    ".    range  ."
+    ".    hint   hint";
+  align-items: center;
+  min-width: 0;
+}
+
+/* Name: a <label for> the slider, typeset in the math font. */
+.ds-param-name {
+  grid-area: name;
+  justify-self: start;
+  color: var(--ink);
+  font-family: var(--font-math);
+  font-size: 1rem;
+  line-height: 1.5rem;
+  white-space: nowrap;
+  cursor: default;
+}
+.ds-param-name math { font-family: var(--font-math); }
+
+/* ----- Slider: native <input type="range">, restyled ----- */
+/* The app sets --frac (0…1) on input; the fill ends at the thumb's centre. */
+.ds-param-slider {
+  --frac: 0;
+  --thumb: var(--icon);
+  --track: var(--space-1);
+  --halo: transparent;
+  --halo-w: 0;
+  grid-area: slider;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h-sm);
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ds-param-slider::-webkit-slider-runnable-track {
+  box-sizing: content-box;
+  height: var(--track);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background:
+    linear-gradient(var(--accent), var(--accent)) 0 0 / calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--frac)) 100% no-repeat,
+    var(--sunken);
+}
+.ds-param-slider::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc((var(--track) - var(--thumb)) / 2);
+  border: calc(var(--space-1) / 2) solid var(--panel);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 var(--halo-w) var(--halo);
+  -webkit-appearance: none;
+  appearance: none;
+  transition: box-shadow var(--dur-fast) var(--ease);
+}
+.ds-param-slider::-moz-range-track {
+  box-sizing: content-box;
+  height: var(--track);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+}
+.ds-param-slider::-moz-range-progress { height: var(--track); border-radius: var(--radius-pill); background: var(--accent); }
+.ds-param-slider::-moz-range-thumb {
+  box-sizing: border-box;
+  width: var(--thumb);
+  height: var(--thumb);
+  border: calc(var(--space-1) / 2) solid var(--panel);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 var(--halo-w) var(--halo);
+}
+
+/* Hover: a soft accent halo around the thumb. Dragging: a wider one. */
+.ds-param-slider:hover,
+.ds-param-slider.is-hover { --halo: var(--accent-soft); --halo-w: var(--space-1); }
+.ds-param-slider:active,
+.ds-param.is-dragging .ds-param-slider { --halo: var(--accent-soft); --halo-w: var(--space-2); cursor: grabbing; }
+.ds-param-slider.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ----- Value: the exact number, editable (NumberField look, compact) ----- */
+.ds-param-value {
+  grid-area: value;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  margin: 0;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  text-align: right;
+  cursor: text;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+/* `.ds-root input { font: inherit }` in _base.css outranks a single class, so the
+   `numeric` style (mono, tabular) is set at the same specificity. */
+.ds-root .ds-param-value { color: var(--ink); font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.25rem; font-weight: 400; font-variant-numeric: tabular-nums; }
+.ds-param-value:hover,
+.ds-param-value.is-hover { border-color: var(--ink-3); }
+.ds-param-value:focus,
+.ds-param-value.is-focus { border-color: var(--accent); }
+.ds-param-value.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-param-value[aria-invalid="true"] { border-color: var(--danger); }
+/* Live while dragging: the field follows the thumb, outlined in accent. */
+.ds-param.is-dragging .ds-param-value { border-color: var(--accent); }
+
+/* ----- Range: min and max under the slider's ends; each is a button that turns into a field ----- */
+.ds-param-range {
+  grid-area: range;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 1rem;
+}
+.ds-param-bound {
+  margin: 0 calc(var(--space-1) * -1);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ds-root .ds-param-bound { color: var(--ink-3); font-family: var(--font-mono); font-size: 0.6875rem; line-height: 1rem; font-weight: 400; font-variant-numeric: tabular-nums; }
+.ds-root .ds-param-bound:is(:hover, .is-hover) {
+  background: var(--hover);
+  color: var(--ink);
+  text-decoration: underline dotted;
+  text-underline-offset: calc(var(--space-1) / 2);
+}
+.ds-param-bound.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Editing a bound: a small field in place, same width at either end. */
+.ds-param-bound-input {
+  width: calc(var(--space-10) + var(--space-6));
+  height: var(--control-h-sm);
+  margin: var(--space-1) calc(var(--space-1) * -1) 0;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  font-variant-numeric: tabular-nums;
+}
+.ds-root .ds-param-bound-input { color: var(--ink); font-family: var(--font-mono); font-size: 0.6875rem; line-height: 1rem; font-weight: 400; font-variant-numeric: tabular-nums; }
+.ds-param-bound-input--max { text-align: right; }
+.ds-param-bound-input.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-param-bound-input[aria-invalid="true"] { border-color: var(--danger); }
+
+/* ----- Hint: information about this row (defaulted value, range note) ----- */
+.ds-param-hint {
+  grid-area: hint;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+}
+.ds-param-hint .ds-icon { margin-top: 0; color: var(--ink-2); }
+.ds-param-hint--error { color: var(--danger); }
+.ds-param-hint--error .ds-icon { color: var(--danger); }
+.ds-param-hint-action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: calc(var(--space-1) / 2);
+  cursor: pointer;
+}
+.ds-root .ds-param-hint-action { color: var(--accent-ink); font: inherit; }
+
+/* ----- Narrow panel: name and value on top, slider full width beneath ----- */
+@container (width < 15rem) {
+  .ds-param {
+    grid-template-areas:
+      "name   .      value"
+      "slider slider slider"
+      "range  range  range"
+      "hint   hint   hint";
+    row-gap: var(--space-1);
+  }
+}
+.ds-paramlist--stacked .ds-param {
+  grid-template-areas:
+    "name   .      value"
+    "slider slider slider"
+    "range  range  range"
+    "hint   hint   hint";
+  row-gap: var(--space-1);
+}
+
+/* ===== PhasePlane ===== */
+/* The plot well and its legend. The plot itself is a <canvas> drawn from the plot
+   tokens (plot-*, traj-*, null-*) and --line-scale; see the README for every width,
+   dash, arrow and glyph size. The canvas is square when the domain is square. */
+.ds-phase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+
+.ds-phase-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  background: var(--plot-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  cursor: crosshair;
+  touch-action: none;
+}
+.ds-phase-canvas.is-grab { cursor: grab; }
+.ds-phase-canvas.is-dragging { cursor: grabbing; }
+
+/* Legend: HTML under the plot, one key per kind of mark. Each sample sits on a
+   plot-bg chip so the plot colours keep the contrast they have on the plot. */
+.ds-phase-legend {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10.5rem), 1fr));
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+}
+.ds-phase-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ds-phase-key .math { font-size: 0.8125rem; line-height: 1rem; color: var(--ink); }
+.ds-phase-sample {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--space-6);
+  height: var(--icon);
+  background: var(--plot-bg);
+  border-radius: var(--radius-xs);
+}
+.ds-phase-sample svg { display: block; width: var(--space-6); height: var(--icon); overflow: visible; }
+
+.ds-phase-mark { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ds-phase-mark--field { stroke: var(--plot-field); stroke-width: calc(1 * var(--line-scale)); }
+.ds-phase-mark--null {
+  stroke-width: calc(1.5 * var(--line-scale));
+  stroke-linecap: butt;
+  stroke-dasharray: calc(6 * var(--line-scale)) calc(5 * var(--line-scale));
+}
+.ds-phase-mark--null-1 { stroke: var(--null-1); }
+.ds-phase-mark--null-2 { stroke: var(--null-2); }
+.ds-phase-mark--null-3 { stroke: var(--null-3); }
+.ds-phase-mark--null-4 { stroke: var(--null-4); }
+.ds-phase-mark--traj { stroke: var(--traj, var(--traj-1)); stroke-width: calc(1.5 * var(--line-scale)); }
+.ds-phase-mark--head { fill: var(--traj, var(--traj-1)); stroke: none; }
+.ds-phase-mark--halo { fill: var(--plot-halo); stroke: none; }
+.ds-phase-mark--ring { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.ds-phase-mark--handle { fill: var(--traj, var(--traj-1)); stroke: none; }
+
+/* ===== SegmentedControl ===== */
+/* 2–5 mutually exclusive options in one `edge`-outlined track (role="radiogroup").
+   Selected = `active` fill, a 1px `accent` outline and `accent-ink` text, not a solid
+   accent fill: a panel often holds three or four of these at once (input mode,
+   direction, view, method), and solid accent blocks would out-shout the one primary
+   action and the plot. The accent outline is the 3:1 non-text cue; fill and text
+   colour back it up. State is read from aria-checked; no extra "on" class. */
+.ds-segmented {
+  display: inline-flex;
+  align-items: stretch;
+  width: fit-content;
+  max-width: 100%;
+  height: var(--control-h);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  vertical-align: middle;
+}
+
+.ds-segmented-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+/* _base.css gives buttons `font: inherit; color: inherit`; set ours explicitly. */
+.ds-root .ds-segmented-item {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+.ds-segmented-item > .ds-icon:first-child:not(:last-child) { margin-left: calc(var(--space-1) * -1); }
+.ds-segmented-text { overflow: hidden; text-overflow: ellipsis; }
+
+/* Hairline divider between two unselected neighbours. */
+.ds-segmented-item + .ds-segmented-item::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  width: 1px;
+  background: var(--line-strong);
+  pointer-events: none;
+}
+.ds-segmented-item[aria-checked="true"]::before,
+.ds-segmented-item[aria-checked="true"] + .ds-segmented-item::before,
+.ds-segmented-item:is(:hover, .is-hover)::before,
+.ds-segmented-item:is(:hover, .is-hover) + .ds-segmented-item::before { opacity: 0; }
+
+/* Hover and press (unselected). */
+.ds-root .ds-segmented-item:is(:hover, .is-hover):not(:disabled, [aria-disabled="true"]) { background: var(--hover); color: var(--ink); }
+.ds-root .ds-segmented-item:is(:active, .is-pressed):not(:disabled, [aria-disabled="true"]) { background: var(--active); color: var(--ink); }
+
+/* Selected: the outline sits on top of the track's edge, so it reads as one raised key. */
+.ds-root .ds-segmented-item[aria-checked="true"] {
+  z-index: 1;
+  background: var(--active);
+  box-shadow: 0 0 0 1px var(--accent);
+  color: var(--accent-ink);
+}
+.ds-root .ds-segmented-item[aria-checked="true"]:is(:hover, .is-hover) { background: var(--active); color: var(--accent-ink); }
+
+/* Static focus for previews: the same ring as _base.css. */
+.ds-segmented-item.is-focus { z-index: 2; outline: 2px solid var(--focus); outline-offset: 2px; }
+.ds-segmented-item:focus-visible { z-index: 2; }
+
+/* One option unavailable (3D for a 2D system): text drops to ink-3, outline stays. */
+.ds-root .ds-segmented-item:is(:disabled, [aria-disabled="true"]) { color: var(--ink-3); cursor: not-allowed; }
+
+/* Whole control disabled: no fill, `line-strong` outline, selected stays visible. */
+.ds-segmented:is(.is-disabled, [aria-disabled="true"]) { background: transparent; border-color: var(--line-strong); }
+.ds-root .ds-segmented:is(.is-disabled, [aria-disabled="true"]) .ds-segmented-item { color: var(--ink-3); cursor: not-allowed; }
+.ds-root .ds-segmented:is(.is-disabled, [aria-disabled="true"]) .ds-segmented-item[aria-checked="true"] {
+  background: var(--hover);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+/* Icon only: a key `control-h` wide (near-square), so the 16px icon keeps air on both
+   sides of the dividers. Give the item an aria-label and a title. */
+.ds-segmented-item--icon { width: var(--control-h); padding: 0; }
+.ds-segmented-item--icon > .ds-icon:first-child { margin-left: 0; }
+
+/* Fill: stretch to the container, equal-width segments (panels, inspector rows). */
+.ds-segmented--fill { display: flex; width: 100%; }
+.ds-segmented--fill .ds-segmented-item { flex: 1 1 0; padding: 0 var(--space-2); }
+
+/* Small: dense rows, `control-h-sm`, `label` scale. */
+.ds-segmented--sm { height: var(--control-h-sm); }
+.ds-root .ds-segmented--sm .ds-segmented-item { padding: 0 var(--space-2); gap: var(--space-1); font-size: 0.75rem; line-height: 1rem; }
+.ds-root .ds-segmented--sm .ds-segmented-item--icon { width: calc(var(--control-h-sm) + var(--space-1)); padding: 0; }
+.ds-segmented--sm .ds-segmented-item + .ds-segmented-item::before { top: var(--space-1); bottom: var(--space-1); }
+
+/* ===== Select ===== */
+/* A native <select> with the platform arrow removed and a chevron-down icon on top.
+   The wrapper .ds-select holds the icon; the <select> itself takes focus, so the
+   global ring from _base.css applies unchanged. */
+.ds-select {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  color: var(--ink);
+}
+.ds-select .ds-select-input {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  margin: 0;
+  padding: 0 calc(var(--space-2) + var(--icon) + var(--space-1)) 0 var(--space-2);
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.ds-select .ds-select-input option { background: var(--panel); color: var(--ink); }
+
+.ds-select-chevron {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  transform: translateY(-50%);
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+/* Hover */
+.ds-select:hover .ds-select-input,
+.ds-select.is-hover .ds-select-input { background: var(--hover); border-color: var(--ink-3); }
+.ds-select:hover .ds-select-chevron,
+.ds-select.is-hover .ds-select-chevron { color: var(--ink); }
+
+/* Focus: accent edge plus the global ring (is-focus shows it statically). */
+.ds-select .ds-select-input:focus,
+.ds-select.is-focus .ds-select-input { border-color: var(--accent); }
+.ds-select.is-focus .ds-select-input { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Disabled */
+.ds-select .ds-select-input:disabled,
+.ds-select.is-disabled .ds-select-input {
+  background: transparent;
+  border-color: var(--line-strong);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+.ds-select:has(.ds-select-input:disabled) .ds-select-chevron,
+.ds-select.is-disabled .ds-select-chevron { color: var(--ink-3); }
+
+/* Small: dense rows and the canvas toolbar (control-h-sm, `label` scale). */
+.ds-select--sm .ds-select-input {
+  height: var(--control-h-sm);
+  padding: 0 calc(var(--space-1) + var(--icon) + var(--space-1)) 0 var(--space-2);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+.ds-select--sm .ds-select-chevron { right: var(--space-1); }
+
+/* Math: the options are variables (x, y, z, t), set in the math font. */
+.ds-select--math .ds-select-input {
+  font-family: var(--font-math);
+  font-style: italic;
+  font-size: 1rem;
+}
+.ds-select--math.ds-select--sm .ds-select-input { font-size: 0.8125rem; }
+
+/* Fit the content instead of filling the row. */
+.ds-select--auto { display: inline-flex; width: auto; }
+.ds-select--auto .ds-select-input { width: auto; }
+
+/* ===== StatusBar ===== */
+/* One quiet line under everything: compile state left, cursor centre, compute right.
+   Caption type throughout; numbers in mono.
+   Narrow widths: each side zone is one line tall and wraps, so an item that no longer
+   fits drops whole (onto a clipped second line) instead of being cut mid-word. Items
+   drop from the end of a zone, so put the most important first. The first item of a
+   zone never drops; it truncates with an ellipsis as a last resort. */
+.ds-statusbar {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--statusbar-h);
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ds-statusbar-zone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-1);
+  row-gap: var(--space-2);
+  min-width: 0;
+  height: var(--control-h-sm);
+  overflow: clip;
+  overflow-clip-margin: var(--space-1);
+}
+.ds-statusbar-zone--end { justify-content: flex-end; }
+
+/* One piece of status: optional icon + text. */
+.ds-statusbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+}
+.ds-statusbar-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ds-statusbar-strong { color: var(--ink); }
+/* Detail that continues the item before it ("Compiled · 2 states, 0 parameters"). */
+.ds-statusbar-item--detail { padding-left: 0; margin-left: calc(-1 * var(--space-2)); }
+
+/* A group that drops as one (a separator and the item after it). */
+.ds-statusbar-group { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.ds-statusbar-sep { flex: none; width: 1px; height: var(--space-3); background: var(--line-strong); }
+
+/* Items that open something: the error opens its line, the solver opens Solver settings. */
+.ds-statusbar-item--button {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.ds-statusbar-item--button:is(:hover, .is-hover) { background: var(--hover); color: var(--ink); }
+.ds-statusbar-item--button:is(:active, .is-pressed) { background: var(--active); }
+/* The bar is statusbar-h (26px) at the window edge and the button control-h-sm (22px):
+   an offset ring would be cut off by the window. Same colour and width, offset 0. */
+.ds-root .ds-statusbar-item--button:focus-visible,
+.ds-statusbar-item--button.is-focus { outline: 2px solid var(--focus); outline-offset: 0; }
+
+.ds-statusbar-item--ok .ds-icon { color: var(--ok); }
+.ds-statusbar-item--warn, .ds-statusbar-item--warn .ds-icon { color: var(--warn); }
+.ds-statusbar-item--danger, .ds-statusbar-item--danger .ds-icon { color: var(--danger); }
+.ds-statusbar-item--warn.ds-statusbar-item--button:is(:hover, .is-hover) { background: var(--warn-soft); color: var(--warn); }
+.ds-statusbar-item--danger.ds-statusbar-item--button:is(:hover, .is-hover) { background: var(--danger-soft); color: var(--danger); }
+
+/* Numbers: mono, tabular. The cursor readout has a fixed width so it never jiggles. */
+.ds-statusbar-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.ds-statusbar-coords {
+  justify-content: center;
+  min-width: 21ch;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.ds-statusbar-coords.is-empty { color: var(--ink-3); }
+
+/* Running: a small spinning arc where the timing goes. */
+.ds-statusbar-spinner { animation: ds-statusbar-spin 900ms linear infinite; }
+@keyframes ds-statusbar-spin { to { transform: rotate(360deg); } }
+
+/* Words that only show when there is room ("Portrait" before the timing). */
+@container (max-width: 480px) {
+  .ds-statusbar-wide { display: none; }
+  .ds-statusbar-coords { min-width: 0; padding: 0; }
+}
+
+/* ===== Switch ===== */
+/* <button role="switch" aria-checked> with a pill track and its label inside, so the
+   whole row is the hit area and the global focus ring wraps track and label.
+   State is read from aria-checked; no extra "on" class. */
+.ds-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ds-switch-track {
+  position: relative;
+  flex: none;
+  width: var(--control-h);
+  height: var(--icon);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.ds-switch-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  /* Track inner height minus 1px air above and below: 12px on the chalkboard,
+     and it grows with --icon in projector mode. */
+  width: calc(var(--icon) - var(--space-1));
+  height: calc(var(--icon) - var(--space-1));
+  border-radius: var(--radius-pill);
+  background: var(--ink-3);
+  transition: transform var(--dur) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+
+.ds-switch-label { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ds-switch-label .ds-icon { color: var(--ink-2); }
+
+/* Hover (off): the track lightens and its edge firms up. */
+.ds-switch:hover .ds-switch-track,
+.ds-switch.is-hover .ds-switch-track { background: var(--hover); border-color: var(--ink-3); }
+.ds-switch:hover .ds-switch-thumb,
+.ds-switch.is-hover .ds-switch-thumb { background: var(--ink-2); }
+
+/* On: accent track, thumb to the right. */
+.ds-switch[aria-checked="true"] .ds-switch-track { background: var(--accent); border-color: var(--accent); }
+.ds-switch[aria-checked="true"] .ds-switch-thumb { background: var(--on-accent); transform: translateX(calc(var(--control-h) - var(--icon))); }
+.ds-switch[aria-checked="true"]:hover .ds-switch-track,
+.ds-switch[aria-checked="true"].is-hover .ds-switch-track { background: var(--accent-ink); border-color: var(--accent-ink); }
+
+/* Static focus for previews: same ring as _base.css. */
+.ds-switch.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Disabled: no edge contrast required, but on and off stay distinguishable. */
+.ds-switch:disabled,
+.ds-switch.is-disabled { color: var(--ink-3); cursor: not-allowed; }
+.ds-switch:disabled .ds-switch-track,
+.ds-switch.is-disabled .ds-switch-track { background: transparent; border-color: var(--line-strong); }
+.ds-switch:disabled .ds-switch-thumb,
+.ds-switch.is-disabled .ds-switch-thumb { background: var(--line-strong); }
+.ds-switch[aria-checked="true"]:disabled .ds-switch-track,
+.ds-switch[aria-checked="true"].is-disabled .ds-switch-track { background: var(--line-strong); border-color: var(--line-strong); }
+.ds-switch[aria-checked="true"]:disabled .ds-switch-thumb,
+.ds-switch[aria-checked="true"].is-disabled .ds-switch-thumb { background: var(--ink-3); }
+.ds-switch:disabled .ds-switch-label .ds-icon,
+.ds-switch.is-disabled .ds-switch-label .ds-icon { color: var(--ink-3); }
+
+/* Label on the left, track pushed to the far right: settings rows and layer lists. */
+.ds-switch--row {
+  display: flex;
+  width: 100%;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.ds-switch--row:hover,
+.ds-switch--row.is-hover { background: var(--hover); }
+.ds-switch--row:disabled:hover { background: transparent; }
+
+/* ----- Checkbox (compact variant) ----- */
+/* A native <input type="checkbox"> with appearance none, inside a <label>. */
+.ds-checkbox {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+  color: var(--ink);
+  cursor: pointer;
+}
+.ds-checkbox .ds-checkbox-input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: var(--icon);
+  height: var(--icon);
+  /* Centre the box on the first line of the label (body line, 1.25rem), so a
+     label that wraps keeps its box at the top. */
+  margin: calc((1.25rem - var(--icon)) / 2) 0 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  background: var(--sunken);
+  cursor: inherit;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+/* The tick is the `check` icon used as a mask, filled with `on-accent`. */
+.ds-checkbox .ds-checkbox-input::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: var(--on-accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E") center / 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E") center / 100% no-repeat;
+  opacity: 0;
+}
+.ds-checkbox:hover .ds-checkbox-input,
+.ds-checkbox.is-hover .ds-checkbox-input { border-color: var(--ink-3); background: var(--hover); }
+.ds-checkbox .ds-checkbox-input:checked { background: var(--accent); border-color: var(--accent); }
+.ds-checkbox .ds-checkbox-input:checked::before { opacity: 1; }
+.ds-checkbox:hover .ds-checkbox-input:checked { background: var(--accent-ink); border-color: var(--accent-ink); }
+.ds-checkbox.is-focus .ds-checkbox-input { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.ds-checkbox:has(.ds-checkbox-input:disabled) { color: var(--ink-3); cursor: not-allowed; }
+.ds-checkbox .ds-checkbox-input:disabled { background: transparent; border-color: var(--line-strong); }
+.ds-checkbox .ds-checkbox-input:disabled:checked { background: var(--line-strong); }
+.ds-checkbox .ds-checkbox-input:disabled:checked::before { background: var(--ink-3); }
+
+/* ===== TemplateCard ===== */
+/* One card in the first-launch template gallery: a real phase-portrait thumbnail,
+   the system's name, its equations, one line of guidance and a footer of tags plus the Strogatz section.
+   The whole card is one <button>; everything inside is phrasing content (spans
+   set to block), so the markup stays valid. Rest = `raised` fill with a `line`
+   hairline; hover raises the outline to `edge`. The plot well is the only colour. */
+
+/* Gallery grid: as many 200px-or-wider columns as fit, `space-6` apart. */
+.ds-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-10) * 5), 1fr));
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ds-template-grid > li { display: flex; min-width: 0; }
+
+.ds-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+/* _base.css gives buttons `font: inherit; color: inherit`; set ours explicitly. */
+.ds-root .ds-template-card { color: var(--ink); }
+
+.ds-template-card:is(:hover, .is-hover) { border-color: var(--edge); }
+.ds-template-card:is(:active, .is-pressed) { border-color: var(--edge); background: var(--hover); }
+/* Static focus, for previews only. Real focus comes from :focus-visible in _base.css. */
+.ds-template-card.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* The thumbnail: a small plot well, drawn into a <canvas> with the plot tokens. */
+.ds-template-card-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--plot-bg);
+}
+.ds-template-card-thumb > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Name and equations. */
+.ds-template-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ds-template-card-name {
+  display: block;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+}
+.ds-template-card-math {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--ink);
+  font-family: var(--font-math);
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  white-space: nowrap;
+}
+.ds-template-card-math > span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.ds-template-card-math math { font-family: var(--font-math); }
+
+/* One line of guidance from the template: what it shows or what to drag. */
+.ds-template-card-desc {
+  display: block;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+}
+
+/* Footer: tags left, the Strogatz section right. Pinned to the bottom so cards in
+   one row line up even when one system has three equations. */
+.ds-template-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: auto;
+  min-width: 0;
+}
+.ds-template-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ds-template-card-tag {
+  display: inline-block;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.ds-template-card-ref {
+  display: block;
+  flex: none;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* Blank system: the same frame, an empty well with a plus instead of a plot. */
+.ds-template-card-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--ink-2);
+  transition: color var(--dur-fast) var(--ease);
+}
+.ds-template-card-blank > .ds-icon { width: calc(var(--icon) * 1.5); height: calc(var(--icon) * 1.5); }
+.ds-template-card:is(:hover, .is-hover) .ds-template-card-blank { color: var(--ink); }
+.ds-template-card--blank .ds-template-card-math { color: var(--ink-2); }
+
+/* ===== Tooltip ===== */
+/* A small floating label for a control: its name, an optional shortcut, and at most
+   one teaching sentence. It floats, so it casts shadow-pop; no arrow. The app shows
+   and hides it (500ms hover delay, instant between tooltips); CSS only draws it. */
+.ds-tooltip {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: max-content;
+  max-width: calc(6 * var(--space-10));
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  text-align: left;
+  pointer-events: none;
+  animation: ds-tooltip-in var(--dur-fast) var(--ease) both;
+}
+.ds-tooltip[hidden] { display: none; }
+/* Shown straight after another tooltip closed: no fade, it just moves. */
+.ds-tooltip.is-instant { animation: none; }
+@keyframes ds-tooltip-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* The name line: label text, shortcut keys pushed to the right. */
+.ds-tooltip-row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.ds-tooltip-label { flex: 1 1 auto; min-width: 0; color: var(--ink); }
+.ds-tooltip-keys { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; margin-left: auto; }
+.ds-tooltip-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--icon);
+  height: var(--icon);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 400;
+}
+
+/* The teaching sentence, in caption type; wraps at the max width. */
+.ds-tooltip-desc { margin: 0; color: var(--ink-2); white-space: normal; text-wrap: pretty; }
+.ds-tooltip-desc .ds-num { color: var(--ink); }
+
+/* Anchored placement, when the tooltip can live next to its trigger (no clipping
+   ancestor). Otherwise render it in an overlay layer and position it in script. */
+.ds-tooltip-anchor { position: relative; display: inline-flex; }
+.ds-tooltip--below { top: calc(100% + var(--space-2)); left: 0; }
+.ds-tooltip--above { bottom: calc(100% + var(--space-2)); left: 0; }
+.ds-tooltip--right { top: 50%; left: calc(100% + var(--space-2)); transform: translateY(-50%); }
+.ds-tooltip--below.ds-tooltip--end,
+.ds-tooltip--above.ds-tooltip--end { left: auto; right: 0; }
+
+/* ===== TrajectoryList ===== */
+/* Inspector list of trajectories. Each row: a select button (swatch, start point,
+   time span, status) and two small icon buttons (show/hide, delete). The swatch is
+   a pill, not a dot: dots on the plot mean fixed points. */
+.ds-traj { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+.ds-traj-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+}
+.ds-traj-title { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--ink); }
+/* The count reads the same as a PanelSection header count: a quiet `raised` tag, `numeric-sm`. */
+.ds-traj-count {
+  min-width: var(--icon);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.ds-traj-list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+
+.ds-traj-row {
+  position: relative;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.ds-traj-row:hover,
+.ds-traj-row.is-hover { background: var(--hover); }
+.ds-traj-row.is-selected,
+.ds-traj-row.is-selected:hover { background: var(--accent-soft); }
+/* accent-soft alone is barely lighter than hover, so the selected start point also
+   turns accent-ink (as a chosen tool button does) and selection never rests on hue. */
+.ds-traj-row.is-selected .ds-traj-ic-value { color: var(--accent-ink); }
+
+.ds-traj-select {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.ds-traj-select.is-focus { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Line 1 is control-h-sm tall, level with the small icon buttons, and leaves room
+   for them on the right; line 2 runs the full width underneath. */
+.ds-traj-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-right: calc(2 * var(--control-h-sm));
+}
+/* The trajectory swatch: the one way to show a trajectory's colour in chrome.
+   PanelSection key rows and any other list reuse it; set --traj on it or a parent. */
+.ds-traj-swatch {
+  display: inline-block;
+  flex: none;
+  width: var(--icon);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--traj, var(--ink-3));
+}
+.ds-traj-line > .ds-traj-swatch { margin-top: calc((var(--control-h-sm) - var(--space-2)) / 2); }
+/* Never truncate a number: when the panel is narrow (projector type), the value
+   wraps under its name instead. */
+.ds-traj-ic { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-1); min-width: 0; line-height: var(--control-h-sm); color: var(--ink); font-variant-numeric: tabular-nums; }
+.ds-traj-ic-name, .ds-traj-ic-value { white-space: nowrap; }
+/* The name is numeric-sm (set in markup), kept on the control-h-sm line. */
+.ds-traj-ic-name { color: var(--ink-2); line-height: inherit; }
+
+/* Line 2: time span and run status, indented to the text. */
+.ds-traj-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+  padding-left: calc(var(--icon) + var(--space-2));
+  color: var(--ink-2);
+}
+.ds-traj-span { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ds-traj-status { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--ink-2); white-space: nowrap; }
+.ds-traj-status .ds-num { font-size: inherit; }
+.ds-traj-status--stopped { color: var(--warn); }
+
+.ds-traj-actions { position: absolute; top: var(--space-1); right: var(--space-1); display: flex; }
+
+/* Hidden: the swatch empties to an outline and the start point drops to ink-2.
+   Text never goes below ink-2 here, so a hidden row stays 4.5:1 on hover too. */
+.ds-traj-row.is-hidden .ds-traj-swatch,
+.ds-traj-swatch.is-hidden { background: transparent; box-shadow: inset 0 0 0 1px var(--traj, var(--ink-3)); }
+.ds-traj-row.is-hidden .ds-traj-ic { color: var(--ink-2); }
+
+/* Empty state. */
+.ds-traj-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+.ds-traj-empty .ds-icon { color: var(--ink-3); }
+.ds-traj-empty-text { margin: 0; color: var(--ink-2); }
+.ds-traj-empty-hint { margin: 0; color: var(--ink-3); }
+
+/* ===== Base ===== */
+/* Projector mode = the light theme plus larger type and heavier plot lines.
+   Type styles are in rem, so one root size scales the whole interface. */
+:root { --line-scale: 1; --ease: cubic-bezier(0.2, 0.7, 0.2, 1); --dur-fast: 120ms; --dur: 200ms; color-scheme: dark; }
+html[data-theme="light"] { font-size: 115%; --line-scale: 1.75; color-scheme: light; }
+
+.ds-root, body {
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+}
+.ds-root *, .ds-root *::before, .ds-root *::after { box-sizing: border-box; }
+.ds-root button, .ds-root input, .ds-root select, .ds-root textarea { font: inherit; color: inherit; }
+
+/* Keyboard focus: one ring everywhere, 2px solid, 2px offset. */
+.ds-root :focus { outline: none; }
+.ds-root :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.ds-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ds-muted { color: var(--ink-2); }
+.ds-faint { color: var(--ink-3); }
+.ds-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ds-icon { width: var(--icon); height: var(--icon); flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-root *, .ds-root *::before, .ds-root *::after { transition: none !important; animation: none !important; }
+}
