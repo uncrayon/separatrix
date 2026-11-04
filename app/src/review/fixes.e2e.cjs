@@ -6,10 +6,15 @@ const URL = process.env.UI_URL || "http://localhost:5198/";
 
 async function open(viewport = { width: 1440, height: 900 }) {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport });
-  await page.goto(URL);
-  await page.waitForSelector(".gallery");
-  return { browser, page };
+  try {
+    const page = await browser.newPage({ viewport });
+    await page.goto(URL);
+    await page.waitForSelector(".gallery");
+    return { browser, page };
+  } catch (err) {
+    await browser.close();
+    throw err;
+  }
 }
 
 async function pick(page, title) {

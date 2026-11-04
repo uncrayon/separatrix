@@ -196,8 +196,13 @@ export function NumberField({
   const msgId = useId();
   const reverting = useRef(false);
   const shown = draft ?? withMinus(format ? format(value) : fmt(value, digits));
+  const focusText = withMinus(fmt(value, 8));
 
   const commit = (s: string, quiet = false): boolean => {
+    if (s === focusText) {
+      setError(null);
+      return true;
+    }
     const v = parseNumber(s);
     const msg = !Number.isFinite(v) ? "Not a number" : (validate?.(v) ?? null);
     if (msg) {
@@ -247,7 +252,7 @@ export function NumberField({
           aria-invalid={invalid || undefined}
           aria-describedby={invalid || hint ? msgId : undefined}
           onFocus={(e) => {
-            if (draft === null) setDraft(withMinus(fmt(value, 8)));
+            if (draft === null) setDraft(focusText);
             const el = e.target;
             requestAnimationFrame(() => el.select());
           }}

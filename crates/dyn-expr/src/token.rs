@@ -517,7 +517,17 @@ impl<'s> Lexer<'s> {
                     self.pos += 1;
                 }
                 match self.read_group() {
-                    Some(content) => named_group(content),
+                    Some(content) => match named_group(content) {
+                        Tok::Ident(s) if name == "operatorname" && s.name.len() > 1 => {
+                            Tok::Bad(format!(
+                                "{} isn't a supported function. Known functions: sin, cos, \
+                                 tan, exp, ln, sqrt, abs, sign, sinh, cosh, tanh, arcsin, \
+                                 arccos, arctan, min, max",
+                                s.name
+                            ))
+                        }
+                        tok => tok,
+                    },
                     None => Tok::Bad(format!("\\{name} must be followed by {{…}}")),
                 }
             }
@@ -592,9 +602,9 @@ impl<'s> Lexer<'s> {
             return;
         };
         match env.trim().trim_end_matches('*') {
-            "cases" | "dcases" | "rcases" | "aligned" | "align" | "alignat" | "gathered"
-            | "gather" | "split" | "array" => {
-                if begin && matches!(env.trim(), "array" | "alignat") {
+            name @ ("cases" | "dcases" | "rcases" | "aligned" | "align" | "alignat"
+            | "gathered" | "gather" | "split" | "array") => {
+                if begin && matches!(name, "array" | "alignat") {
                     let _ = self.read_group(); // column spec
                 }
             }
@@ -732,6 +742,22 @@ mod tests {
             InputFormat::Latex,
         );
         assert_eq!(k, ["id:d", "fn:sin", "id:foo"]);
+    }
+
+    #[test]
+    fn unknown_operatorname_is_not_a_variable() {
+        let k = kinds("\\operatorname{floor}\\operatorname{d}", InputFormat::Latex);
+        assert!(
+            k[0].starts_with("bad:floor isn't a supported function"),
+            "{k:?}"
+        );
+        assert_eq!(k[1], "id:d");
+    }
+
+    #[test]
+    fn starred_alignat_skips_its_column_spec() {
+        let k = kinds("\\begin{alignat*}{2}x\\end{alignat*}", InputFormat::Latex);
+        assert_eq!(k, ["id:x"]);
     }
 
     #[test]

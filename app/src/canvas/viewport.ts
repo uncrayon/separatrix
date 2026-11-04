@@ -60,7 +60,11 @@ export function niceTicks(lo: number, hi: number, target: number): { ticks: numb
   const m = raw / p;
   const step = (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
   const ticks: number[] = [];
-  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) {
+  // Counted, not accumulated: deep in a zoom `v + step` rounds back to `v`.
+  const first = Math.ceil(lo / step);
+  const count = Math.floor(hi / step + 1e-9) - first;
+  for (let k = 0; k <= count; k++) {
+    const v = (first + k) * step;
     ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v);
   }
   return { ticks, step };

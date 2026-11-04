@@ -183,7 +183,9 @@ function drawGrid(
     const s = step / 2;
     const a = Math.min(lo, hi);
     const b = Math.max(lo, hi);
-    for (let v = Math.ceil(a / s) * s; v <= b + s * 1e-9; v += s) out.push(v);
+    const first = Math.ceil(a / s);
+    const count = Math.floor(b / s + 1e-9) - first;
+    for (let k = 0; k <= count; k++) out.push((first + k) * s);
     return out;
   };
   ctx.lineWidth = 1;

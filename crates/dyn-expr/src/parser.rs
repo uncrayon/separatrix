@@ -755,11 +755,19 @@ impl<'s> Parser<'s> {
         } else {
             let one = Ast::new(AstKind::Num(1.0), span);
             let n = Ast::new(AstKind::Num(index), span);
-            AstKind::Bin(
-                BinOp::Pow,
-                Box::new(arg),
-                Box::new(Ast::bin(BinOp::Div, one, n)),
-            )
+            let inv_n = Ast::bin(BinOp::Div, one, n);
+            if index % 2.0 == 1.0 {
+                // The real odd root, sign(x)·|x|^(1/n): powf gives NaN for x < 0.
+                let sign = Ast::new(AstKind::Call(Func::Sign, vec![arg.clone()]), span);
+                let abs = Ast::new(AstKind::Call(Func::Abs, vec![arg]), span);
+                AstKind::Bin(
+                    BinOp::Mul,
+                    Box::new(sign),
+                    Box::new(Ast::bin(BinOp::Pow, abs, inv_n)),
+                )
+            } else {
+                AstKind::Bin(BinOp::Pow, Box::new(arg), Box::new(inv_n))
+            }
         };
         Ok(Ast::new(kind, span))
     }
@@ -1003,6 +1011,7 @@ mod tests {
         assert_eq!(rhs("\\sqrt{x}"), "(sqrt x)");
         assert_eq!(rhs("\\sqrt[3]{x}"), "(cbrt x)");
         assert_eq!(rhs("\\sqrt[4]{x}"), "(^ x (/ 1 4))");
+        assert_eq!(rhs("\\sqrt[5]{x}"), "(* (sign x) (^ (abs x) (/ 1 5)))");
     }
 
     #[test]

@@ -42,16 +42,19 @@ export type Studio = ReturnType<typeof useStudio>;
 
 /**
  * A parameter after a compile: a template's value wins, then (only without
- * a template) the slider's previous value, then the default. The range
- * follows the same order.
+ * a template) the slider's previous value, then the default. A slider still
+ * at the previous default (`oldDefault`) was never moved, so it follows an
+ * edited default line such as `a = 3`. The range follows the same order.
  */
 function resolveParam(
   p: CompileResponse["params"][number],
   prev: ParamState | undefined,
+  oldDefault: number | undefined,
   template: Template | undefined,
 ): ParamState {
   const kept = template ? undefined : prev;
-  const value = template?.params[p.name] ?? kept?.value ?? p.default;
+  const untouched = kept !== undefined && kept.value === oldDefault;
+  const value = template?.params[p.name] ?? (untouched ? undefined : kept?.value) ?? p.default;
   const range = template?.paramRanges?.[p.name] ?? (kept ? [kept.min, kept.max] : defaultParamRange(value));
   return {
     name: p.name,
@@ -172,6 +175,7 @@ export function useStudio() {
           resolveParam(
             p,
             cur.params.find((q) => q.name === p.name),
+            old?.params.find((q) => q.name === p.name)?.default,
             template,
           ),
         ),

@@ -416,7 +416,8 @@ export function textToLatex(text: string): string {
     if ((m = /^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE]([+-]?[0-9]+))?/.exec(rest))) {
       const [all, exp] = m;
       const mant = exp !== undefined ? all.slice(0, all.search(/[eE]/)) : all;
-      out += exp !== undefined ? `${mant}\\times10^{${exp}}` : mant;
+      // One factor, so that x/1e3 stays x/(1×10³) and does not become (x/1)×10³.
+      out += exp !== undefined ? `\\left(${mant}\\times10^{${exp}}\\right)` : mant;
       i += all.length;
       last = "num";
       continue;
@@ -481,7 +482,7 @@ export function textToLatex(text: string): string {
         i = next;
         exp = textToLatex(inner);
       } else {
-        const em = /^-?(?:[0-9.]+|[A-Za-z][A-Za-z0-9]*)/.exec(src.slice(i));
+        const em = /^-?(?:[0-9.]+(?:[eE][+-]?[0-9]+)?|[A-Za-z][A-Za-z0-9]*)/.exec(src.slice(i));
         exp = em ? textToLatex(em[0]) : "";
         i += em ? em[0].length : 0;
       }

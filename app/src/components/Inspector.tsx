@@ -499,14 +499,14 @@ function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undef
     const [[a, b], [c, d]] = fp.eigenvalues;
     const tau = a + c;
     const delta = a * c - b * d;
-    const eps = 1e-9;
     const disc = tau * tau - 4 * delta;
     const aStab = tau < 0 ? "a stable" : "an unstable";
+    const cls = fp.classification;
     let tail: ReactNode;
-    if (delta < -eps) tail = ". Δ < 0, so a saddle.";
-    else if (Math.abs(delta) <= eps) tail = ". Δ = 0, so the fixed point is not isolated.";
-    else if (Math.abs(tau) <= eps) tail = ". τ = 0 and Δ > 0: a center of the linearization; nonlinear terms can change that.";
-    else if (Math.abs(disc) <= eps)
+    if (cls === "saddle") tail = ". Δ < 0, so a saddle.";
+    else if (cls === "non-isolated") tail = ". Δ = 0, so the fixed point is not isolated.";
+    else if (cls === "center") tail = ". τ = 0 and Δ > 0: a center of the linearization; nonlinear terms can change that.";
+    else if (cls.endsWith("star") || cls.endsWith("degenerate node"))
       tail = (
         <>
           , {n("τ² − 4Δ", 0)}: {aStab} star or degenerate node.
@@ -515,7 +515,7 @@ function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undef
     else
       tail = (
         <>
-          , {n("τ² − 4Δ", disc)} {disc < 0 ? `< 0: ${aStab} spiral.` : `> 0: ${aStab} node.`}
+          , {n("τ² − 4Δ", disc)} {cls.endsWith("spiral") ? `< 0: ${aStab} spiral.` : `> 0: ${aStab} node.`}
         </>
       );
     return (
