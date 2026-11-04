@@ -10,6 +10,7 @@
 //! | Command | Request | Response |
 //! | --- | --- | --- |
 //! | `compile_system` | [`ipc::CompileRequest`] | [`ipc::CompileResponse`] |
+//! | `convert_source` | [`ipc::ConvertRequest`] | [`ipc::ConvertResponse`] |
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
 
 pub mod ipc;
@@ -27,6 +28,12 @@ fn core_version() -> &'static str {
 #[tauri::command(async)]
 fn compile_system(req: ipc::CompileRequest, store: State<'_, SystemStore>) -> ipc::CompileResponse {
     service::compile_system(&store, &req)
+}
+
+/// Rewrites the equations in the other input format, for a mode switch.
+#[tauri::command(async)]
+fn convert_source(req: ipc::ConvertRequest) -> ipc::ConvertResponse {
+    service::convert_source(&req)
 }
 
 /// Computes field, nullclines, fixed points and trajectories for one view.
@@ -57,6 +64,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             core_version,
             compile_system,
+            convert_source,
             compute_portrait
         ])
         .run(tauri::generate_context!())

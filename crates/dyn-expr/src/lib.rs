@@ -31,6 +31,10 @@
 //!    subexpressions and folded constants.
 //! 5. [`ad`]: evaluation is generic over [`ad::Scalar`]; `f64` gives
 //!    values, [`ad::Dual`] gives exact derivatives.
+//!
+//! [`convert`] rewrites the equations from one [`InputFormat`] to the other
+//! with the same parser and analysis, checking that every converted line
+//! (and the whole system) still means exactly the same.
 
 #![warn(missing_docs)]
 
@@ -41,6 +45,7 @@ mod latex;
 mod parser;
 mod program;
 mod sema;
+mod source;
 mod system;
 mod token;
 
@@ -49,6 +54,7 @@ use serde::{Deserialize, Serialize};
 pub use diag::{Diagnostic, Severity};
 #[doc(hidden)]
 pub use program::SMALL_PROGRAM;
+pub use source::{convert, ConvertedLine};
 pub use system::CompiledSystem;
 
 /// Which syntax the source uses.
@@ -126,22 +132,7 @@ pub struct ParamInfo {
 /// spans into `source`, and `system` is `None` if any is an error.
 pub fn compile(source: &str, format: InputFormat) -> CompileOutput {
     let mut diags = Vec::new();
-    let lines = parser::parse_lines(source, format, &mut diags);
-    let analysis = if lines.is_empty() {
-        if diags.is_empty() {
-            let ex = match format {
-                InputFormat::Latex => "\\dot{x} = -x",
-                InputFormat::Text => "x' = -x",
-            };
-            diags.push(Diagnostic::error(
-                format!("Enter at least one equation, for example {ex}"),
-                None,
-            ));
-        }
-        None
-    } else {
-        sema::analyze(lines, format, &mut diags)
-    };
+    let analysis = analyze_source(source, format, &mut diags);
     let has_errors = diags.iter().any(Diagnostic::is_error);
     let system = match analysis {
         Some(a) if !has_errors => Some(CompiledSystem::new(a)),
@@ -152,4 +143,28 @@ pub fn compile(source: &str, format: InputFormat) -> CompileOutput {
         system,
         diagnostics: diags,
     }
+}
+
+/// Parse and analyse `source`, adding its problems to `diags` (unsorted).
+/// The analysis is only usable when no error was added.
+pub(crate) fn analyze_source(
+    source: &str,
+    format: InputFormat,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<sema::Analysis> {
+    let lines = parser::parse_lines(source, format, diags);
+    if lines.is_empty() {
+        if diags.is_empty() {
+            let ex = match format {
+                InputFormat::Latex => "\\dot{x} = -x",
+                InputFormat::Text => "x' = -x",
+            };
+            diags.push(Diagnostic::error(
+                format!("Enter at least one equation, for example {ex}"),
+                None,
+            ));
+        }
+        return None;
+    }
+    sema::analyze(lines, format, diags)
 }

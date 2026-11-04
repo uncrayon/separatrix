@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AxisRef, CompileResponse, Diagnostic } from "../api/types";
-import { compileSystem, PortraitScheduler } from "../api/client";
+import type { AxisRef, CompileResponse, Diagnostic, InputFormat } from "../api/types";
+import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
@@ -10,13 +10,17 @@ import {
   buildPortraitJob,
   defaultView,
   leastUsedPaletteIndex,
+  conversionOutcome,
+  planModeSwitch,
   resolveParam,
   stateExtent,
+  templateLines,
   templateView,
   trackSelection,
   type EquationLine,
   type InitialCondition,
   type Layers,
+  type ModeSnapshot,
   type ParamState,
   type PortraitMeta,
   type PortraitState,
@@ -28,8 +32,34 @@ import {
 
 const COMPILE_DEBOUNCE_MS = 160;
 
+/** The one input mode of the whole system, remembered across sessions. */
+const FORMAT_KEY = "separatrix.inputMode";
+
+function readFormat(): InputFormat {
+  try {
+    return localStorage.getItem(FORMAT_KEY) === "text" ? "text" : "latex";
+  } catch {
+    return "latex";
+  }
+}
+
+function saveFormat(format: InputFormat) {
+  try {
+    localStorage.setItem(FORMAT_KEY, format);
+  } catch {
+    // Storage may be unavailable (private mode); the mode then lasts this session only.
+  }
+}
+
 export interface StudioState extends StudioSnapshot {
+  /** The input format of every line in `equations`. */
+  format: InputFormat;
+  /** The lines exactly as typed, in `format`. */
   equations: EquationLine[];
+  /** Why a line was kept as typed by the last mode switch, by line id. */
+  conversionNotes: Record<number, string>;
+  /** A mode switch is waiting for the core. */
+  converting: boolean;
   diagnostics: Diagnostic[];
   compileOk: boolean;
   homeView: View;
@@ -47,7 +77,10 @@ function roundAspect(aspect: number | null): number | null {
 }
 
 export function useStudio() {
+  const [format, setFormatState] = useState<InputFormat>(readFormat);
   const [equations, setEquations] = useState<EquationLine[]>([]);
+  const [conversionNotes, setConversionNotes] = useState<Record<number, string>>({});
+  const [converting, setConverting] = useState(false);
   const [compiled, setCompiled] = useState<CompileResponse | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [compileOk, setCompileOk] = useState(true);
@@ -71,7 +104,10 @@ export function useStudio() {
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
 
   const state: StudioState = {
+    format,
     equations,
+    conversionNotes,
+    converting,
     compiled,
     diagnostics,
     compileOk,
@@ -96,6 +132,8 @@ export function useStudio() {
   const nextIcId = useRef(1);
   const compileSeq = useRef(0);
   const compileTimer = useRef<number | undefined>(undefined);
+  const modeSnapshot = useRef<ModeSnapshot | null>(null);
+  const switching = useRef(false);
 
   const makeIc = useCallback(
     (x0: number[], t0: number): Omit<InitialCondition, "color"> => ({
@@ -129,12 +167,12 @@ export function useStudio() {
   }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
   const runCompile = useCallback(
-    async (lines: string[], template?: Template) => {
+    async (lines: string[], format: InputFormat, template?: Template) => {
       const seq = ++compileSeq.current;
       const source = lines.filter((l) => l.trim() !== "").join("\n");
       let res: CompileResponse;
       try {
-        res = await compileSystem({ source, format: "latex" });
+        res = await compileSystem({ source, format });
       } catch (err) {
         if (seq !== compileSeq.current) return;
         setDiagnostics([{ severity: "error", message: `The maths core did not answer: ${String(err)}` }]);
@@ -208,23 +246,34 @@ export function useStudio() {
 
   const scheduleCompile = useCallback(
     (lines: EquationLine[]) => {
+      const format = latest.current.format;
       window.clearTimeout(compileTimer.current);
       compileTimer.current = window.setTimeout(
-        () => void runCompile(lines.map((l) => l.latex)),
+        () =>
+          void runCompile(
+            lines.map((l) => l.source),
+            format,
+          ),
         COMPILE_DEBOUNCE_MS,
       );
     },
     [runCompile],
   );
 
-  const toLines = (latexes: string[]) => latexes.map((latex) => ({ id: nextLineId.current++, latex }));
+  const toLines = (sources: string[]) => sources.map((source) => ({ id: nextLineId.current++, source }));
 
   const loadTemplate = useCallback(
     (t: Template) => {
       window.clearTimeout(compileTimer.current);
-      setEquations(toLines(t.equations));
+      const format = latest.current.format;
+      const lines = templateLines(t, format);
+      const next = toLines(lines);
+      setEquations(next);
+      latest.current = { ...latest.current, equations: next };
+      setConversionNotes({});
+      modeSnapshot.current = null;
       setSourceTemplateId(t.id);
-      void runCompile(t.equations, t);
+      void runCompile(lines, format, t);
     },
     [runCompile],
   );
@@ -235,16 +284,89 @@ export function useStudio() {
   }, [loadTemplate]);
 
   const setEquation = useCallback(
-    (id: number, latex: string) => {
-      const lines = latest.current.equations.map((l) => (l.id === id ? { ...l, latex } : l));
+    (id: number, source: string) => {
+      const lines = latest.current.equations.map((l) => (l.id === id ? { ...l, source } : l));
       setEquations(lines);
+      latest.current = { ...latest.current, equations: lines };
+      setConversionNotes((notes) => {
+        if (!(id in notes)) return notes;
+        const rest = { ...notes };
+        delete rest[id];
+        return rest;
+      });
       scheduleCompile(lines);
     },
     [scheduleCompile],
   );
 
+  /**
+   * Switch every line to the input format `to`. Straight back after a switch
+   * with nothing edited, the lines from before it are restored exactly;
+   * otherwise the core converts them. A line with an error is kept as typed,
+   * with a note; a valid line the core can't convert exactly calls the switch
+   * off (kept as typed, it would mean something else in `to`), with a note on
+   * it. A conversion that comes back after the lines have changed is dropped. Names are kept, so the recompile finds the same
+   * system and keeps the sliders, view and initial conditions.
+   */
+  const setFormat = useCallback(
+    async (to: InputFormat) => {
+      const cur = latest.current;
+      if (to === cur.format || switching.current) return;
+      window.clearTimeout(compileTimer.current);
+      const sent = cur.equations;
+      const plan = planModeSwitch(
+        sent.map((l) => l.source),
+        modeSnapshot.current,
+        to,
+      );
+      let next: string[];
+      const notes: Record<number, string> = {};
+      const noteLines = (list: (string | undefined)[]) =>
+        list.forEach((note, i) => {
+          if (note && sent[i]) notes[sent[i].id] = note;
+        });
+      if ("restore" in plan) {
+        next = plan.restore;
+      } else {
+        switching.current = true;
+        setConverting(true);
+        let outcome: ReturnType<typeof conversionOutcome>;
+        try {
+          const res = await convertSource({ lines: plan.convert, from: cur.format, to });
+          outcome = conversionOutcome(res);
+        } catch (err) {
+          setDiagnostics([{ severity: "error", message: `The maths core did not answer: ${String(err)}` }]);
+          setCompileOk(false);
+          return;
+        } finally {
+          switching.current = false;
+          setConverting(false);
+        }
+        if (latest.current.equations !== sent || outcome.notes.length !== sent.length) return;
+        noteLines(outcome.notes);
+        if (!outcome.switch) {
+          // A valid line would change meaning in `to`: stay, say which, and
+          // compile the lines as they are (the switch cancelled a pending compile).
+          setConversionNotes(notes);
+          void runCompile(sent.map((l) => l.source), cur.format);
+          return;
+        }
+        next = outcome.lines;
+      }
+      const lines = sent.map((l, i) => ({ id: l.id, source: next[i] }));
+      modeSnapshot.current = { from: cur.format, before: sent.map((l) => l.source), after: next };
+      setEquations(lines);
+      setFormatState(to);
+      latest.current = { ...latest.current, equations: lines, format: to };
+      setConversionNotes(notes);
+      saveFormat(to);
+      void runCompile(next, to);
+    },
+    [runCompile],
+  );
+
   const addEquation = useCallback((afterId?: number): number => {
-    const line = { id: nextLineId.current++, latex: "" };
+    const line = { id: nextLineId.current++, source: "" };
     setEquations((list) => {
       const i = afterId === undefined ? list.length - 1 : list.findIndex((l) => l.id === afterId);
       const copy = list.slice();
@@ -258,6 +380,7 @@ export function useStudio() {
     (id: number) => {
       const lines = latest.current.equations.filter((l) => l.id !== id);
       setEquations(lines);
+      latest.current = { ...latest.current, equations: lines };
       scheduleCompile(lines);
     },
     [scheduleCompile],
@@ -392,6 +515,7 @@ export function useStudio() {
       loadTemplate,
       newBlank,
       setEquation,
+      setFormat,
       addEquation,
       removeEquation,
       setParam,
@@ -416,6 +540,7 @@ export function useStudio() {
       loadTemplate,
       newBlank,
       setEquation,
+      setFormat,
       addEquation,
       removeEquation,
       setParam,

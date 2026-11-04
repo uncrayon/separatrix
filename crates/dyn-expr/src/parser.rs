@@ -274,6 +274,7 @@ impl<'s> Parser<'s> {
             | Tok::Open(_)
             | Tok::Frac
             | Tok::Sqrt
+            | Tok::Root
             | Tok::Dot(_)
             | Tok::Placeholder
             | Tok::AbsOpen => true,
@@ -466,6 +467,7 @@ impl<'s> Parser<'s> {
                 ))
             }
             Tok::Sqrt => self.parse_sqrt(),
+            Tok::Root => self.parse_root(),
             Tok::Dot(k) => self.parse_dot(k),
             Tok::Placeholder => err("Fill in the empty box", self.toks[self.pos].span),
             _ => Err(self.unexpected()),
@@ -762,23 +764,37 @@ impl<'s> Parser<'s> {
         }
         let arg = self.parse_latex_arg(false, "\\sqrt")?;
         let span = (t.span.0, self.prev_end());
-        let kind = if index == 2.0 {
-            AstKind::Call(Func::Sqrt, vec![arg])
-        } else if index == 3.0 {
-            AstKind::Call(Func::Cbrt, vec![arg])
-        } else if index % 2.0 == 1.0 {
-            // Odd indices are below 2^53, so the conversion is exact.
-            AstKind::Call(Func::OddRoot(index as u64), vec![arg])
-        } else {
-            let one = Ast::new(AstKind::Num(1.0), span);
-            let n = Ast::new(AstKind::Num(index), span);
-            AstKind::Bin(
-                BinOp::Pow,
-                Box::new(arg),
-                Box::new(Ast::bin(BinOp::Div, one, n)),
-            )
+        Ok(Ast::new(root_kind(index, arg, span), span))
+    }
+
+    /// Text mode's `root(x, n)`: the same tree as `\sqrt[n]{x}`.
+    #[inline(never)]
+    fn parse_root(&mut self) -> PResult<Ast> {
+        let t = self.bump();
+        if !matches!(self.peek(), Some(Tok::Open(Delim::Paren))) {
+            return err(
+                "Write root(x, n) with parentheses, as in root(x, 5) for the fifth root of x",
+                t.span,
+            );
+        }
+        let open = self.bump();
+        let mut args = self.parse_args(Delim::Paren, open.span, true)?;
+        let span = (t.span.0, self.prev_end());
+        let (Some(n), Some(arg), None) = (args.pop(), args.pop(), args.pop()) else {
+            return err(
+                "root takes two arguments: root(x, n) is the n-th root of x, as in root(x, 5)",
+                span,
+            );
         };
-        Ok(Ast::new(kind, span))
+        match n.kind {
+            AstKind::Num(v) if v >= 2.0 && v.fract() == 0.0 => {
+                Ok(Ast::new(root_kind(v, arg, span), span))
+            }
+            _ => err(
+                "The n in root(x, n) must be a whole number of at least 2, as in root(x, 5)",
+                n.span,
+            ),
+        }
     }
 
     #[inline(never)]
@@ -937,6 +953,28 @@ impl<'s> Parser<'s> {
     }
 }
 
+/// The `index`-th root of `arg`, a whole number of at least 2: `\sqrt`,
+/// `\sqrt[3]` and odd roots are real for negative `arg`, even roots are
+/// `arg^(1/index)`.
+fn root_kind(index: f64, arg: Ast, span: Span) -> AstKind {
+    if index == 2.0 {
+        AstKind::Call(Func::Sqrt, vec![arg])
+    } else if index == 3.0 {
+        AstKind::Call(Func::Cbrt, vec![arg])
+    } else if index % 2.0 == 1.0 {
+        // Odd indices are below 2^53, so the conversion is exact.
+        AstKind::Call(Func::OddRoot(index as u64), vec![arg])
+    } else {
+        let one = Ast::new(AstKind::Num(1.0), span);
+        let n = Ast::new(AstKind::Num(index), span);
+        AstKind::Bin(
+            BinOp::Pow,
+            Box::new(arg),
+            Box::new(Ast::bin(BinOp::Div, one, n)),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1031,6 +1069,20 @@ mod tests {
         assert_eq!(rhs("\\sqrt[3]{x}"), "(cbrt x)");
         assert_eq!(rhs("\\sqrt[4]{x}"), "(^ x (/ 1 4))");
         assert_eq!(rhs("\\sqrt[5]{x}"), "(root5 x)");
+        assert_eq!(rhs_text("root(x, 5)"), "(root5 x)");
+        assert_eq!(rhs_text("root(x, 3)"), "(cbrt x)");
+        assert_eq!(rhs_text("root(x, 4)"), "(^ x (/ 1 4))");
+        assert_eq!(rhs_text("2root(x+1, 2)"), "(* 2 (sqrt (+ x 1)))");
+        for bad in [
+            "root x",
+            "root(x)",
+            "root(x, 1)",
+            "root(x, n)",
+            "root(x, 2.5)",
+        ] {
+            let e = first_error(&format!("y={bad}"), InputFormat::Text);
+            assert!(e.message.contains("root"), "{bad}: {e:?}");
+        }
     }
 
     #[test]

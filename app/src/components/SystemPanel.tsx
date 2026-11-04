@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { Diagnostic } from "../api/types";
-import { MathField, latexToText, textToLatex } from "../math/MathField";
+import type { Diagnostic, InputFormat } from "../api/types";
+import { MathField } from "../math/MathField";
 import { Tex } from "../math/Tex";
 import { firstOrderDisplay, fmt, diagnosticText } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
@@ -98,33 +98,13 @@ function DiagnosticItem({
   );
 }
 
-type InputMode = "latex" | "text";
-const MODE_KEY = "separatrix.inputMode";
-
-function readMode(): InputMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === "text" ? "text" : "latex";
-  } catch {
-    return "latex";
-  }
-}
-
 const MAX_PER_LINE = 2;
 
 function EquationEditor({ state, actions }: Props) {
-  const [mode, setModeState] = useState<InputMode>(readMode);
+  const mode = state.format;
   const [focusedLine, setFocusedLine] = useState<number | null>(null);
-  const [drafts, setDrafts] = useState<Record<number, { text: string; latex: string }>>({});
   const focusNext = useRef<number | null>(null);
   const textRefs = useRef(new Map<number, HTMLInputElement>());
-
-  const setMode = (m: InputMode) => {
-    setModeState(m);
-    setDrafts({});
-    try {
-      localStorage.setItem(MODE_KEY, m);
-    } catch {}
-  };
 
   const addLine = (afterId?: number) => {
     focusNext.current = actions.addEquation(afterId);
@@ -144,21 +124,23 @@ function EquationEditor({ state, actions }: Props) {
     }
   });
 
-  const latexes = state.equations.map((l) => l.latex);
-  const located = state.diagnostics.map((d) => ({ d, line: diagnosticLine(d, latexes) }));
+  const sources = state.equations.map((l) => l.source);
+  const located = state.diagnostics.map((d) => ({ d, line: diagnosticLine(d, sources) }));
   const general: { d: Diagnostic; line: number }[] = located.filter((x) => x.line < 0);
   const single = state.equations.length === 1;
 
   const lines = state.equations.map((line, i) => {
+    const note = state.conversionNotes[line.id];
     const all = located.filter((x) => x.line === i).map((x) => x.d);
-    const here = all.slice(0, MAX_PER_LINE);
-    for (const d of all.slice(MAX_PER_LINE)) general.push({ d, line: i });
+    const here: Diagnostic[] = [...(note ? [{ severity: "info" as const, message: note }] : []), ...all].slice(
+      0,
+      MAX_PER_LINE,
+    );
+    for (const d of all.slice(MAX_PER_LINE - (note ? 1 : 0))) general.push({ d, line: i });
     const hasError = all.some((d) => d.severity === "error");
     const diagIds = here.map((_, k) => `eq-${line.id}-d${k}`);
     const label = `Equation ${i + 1}`;
     const describedBy = diagIds.length ? diagIds.join(" ") : undefined;
-    const draft = drafts[line.id];
-    const text = draft && draft.latex === line.latex ? draft.text : latexToText(line.latex);
     const focused = focusedLine === line.id;
     return (
       <li
@@ -172,14 +154,14 @@ function EquationEditor({ state, actions }: Props) {
         </span>
         {mode === "latex" ? (
           <MathField
-            value={line.latex}
+            value={line.source}
             onChange={(latex) => actions.setEquation(line.id, latex)}
             onEnter={() => addLine(line.id)}
             onFocusChange={(f) => setFocusedLine((cur) => (f ? line.id : cur === line.id ? null : cur))}
             placeholder={i === 0 ? "\\dot{x}=" : ""}
             ariaLabel={label}
             ariaDescribedBy={describedBy}
-            autoFocus={line.latex === ""}
+            autoFocus={line.source === ""}
             invalid={hasError}
           />
         ) : (
@@ -196,13 +178,8 @@ function EquationEditor({ state, actions }: Props) {
             autoComplete="off"
             autoCapitalize="off"
             placeholder={i === 0 ? "x' =" : undefined}
-            value={text}
-            onChange={(e) => {
-              const t = e.target.value;
-              const latex = textToLatex(t);
-              setDrafts((d) => ({ ...d, [line.id]: { text: t, latex } }));
-              actions.setEquation(line.id, latex);
-            }}
+            value={line.source}
+            onChange={(e) => actions.setEquation(line.id, e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -252,7 +229,7 @@ function EquationEditor({ state, actions }: Props) {
     <div className={"ds-equation-editor" + (mode === "text" ? " ds-equation-editor--text" : "")}>
       <header className="ds-equation-editor-head">
         <h2 className="ds-equation-editor-title heading">Equations</h2>
-        <ModeSwitch mode={mode} onChange={setMode} />
+        <ModeSwitch mode={mode} disabled={state.converting} onChange={(m) => void actions.setFormat(m)} />
       </header>
       <ol className="ds-equation-editor-lines">{lines}</ol>
       <div className="ds-equation-editor-foot">
@@ -274,16 +251,25 @@ function EquationEditor({ state, actions }: Props) {
   );
 }
 
-function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMode) => void }) {
-  const refs = useRef<Record<InputMode, HTMLButtonElement | null>>({ latex: null, text: null });
-  const options: { value: InputMode; label: string; title: string }[] = [
+function ModeSwitch({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: InputFormat;
+  disabled: boolean;
+  onChange: (m: InputFormat) => void;
+}) {
+  const refs = useRef<Record<InputFormat, HTMLButtonElement | null>>({ latex: null, text: null });
+  const options: { value: InputFormat; label: string; title: string }[] = [
     { value: "latex", label: "LaTeX", title: "Type maths as you would write it (MathLive)" },
     { value: "text", label: "Text", title: "Plain text: x' = x*(3 - x - 2y)" },
   ];
   const onKey = (e: KeyboardEvent) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
-    const next: InputMode =
+    if (disabled) return;
+    const next: InputFormat =
       e.key === "Home" ? "latex" : e.key === "End" ? "text" : mode === "latex" ? "text" : "latex";
     onChange(next);
     refs.current[next]?.focus();
@@ -293,6 +279,7 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
       className="ds-segmented ds-segmented--sm ds-equation-editor-mode"
       role="radiogroup"
       aria-label="Input mode"
+      aria-busy={disabled || undefined}
       onKeyDown={onKey}
     >
       {options.map((o) => (
@@ -306,8 +293,11 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
           role="radio"
           aria-checked={mode === o.value}
           tabIndex={mode === o.value ? 0 : -1}
+          aria-disabled={disabled || undefined}
           data-tooltip={o.title}
-          onClick={() => onChange(o.value)}
+          onClick={() => {
+            if (!disabled) onChange(o.value);
+          }}
         >
           {o.label}
         </button>

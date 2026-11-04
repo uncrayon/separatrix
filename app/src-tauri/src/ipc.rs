@@ -31,6 +31,52 @@ pub struct CompileRequest {
     pub format: InputFormat,
 }
 
+/// Request of the `convert_source` command: rewrite the equations from one
+/// input format to the other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertRequest {
+    /// The UI's lines, as typed (one entry per line; empty lines allowed).
+    pub lines: Vec<String>,
+    /// The format the lines are in.
+    pub from: InputFormat,
+    /// The format to write them in.
+    pub to: InputFormat,
+}
+
+/// One line of a [`ConvertResponse`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertedLineOut {
+    /// The line in the target format, or exactly as typed when `converted`
+    /// is false.
+    pub source: String,
+    /// False when the line was kept as typed (it has an error, or the
+    /// target format can't write it exactly).
+    pub converted: bool,
+    /// True when the line was kept because it has an error in its own
+    /// format. A line kept with `error` false is valid but can't be written
+    /// exactly in the target format; it would mean something else (or
+    /// nothing) there, so the UI doesn't switch.
+    pub error: bool,
+    /// Why the line was kept as typed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub note: Option<String>,
+}
+
+/// Response of the `convert_source` command: one entry per requested line,
+/// in order. A converted line means exactly the same and keeps every name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertResponse {
+    /// The converted lines.
+    pub lines: Vec<ConvertedLineOut>,
+}
+
 /// A message about the user's input.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -305,6 +351,9 @@ mod bindings {
             StateInfo::decl(&cfg),
             ParamInfo::decl(&cfg),
             CompileResponse::decl(&cfg),
+            ConvertRequest::decl(&cfg),
+            ConvertedLineOut::decl(&cfg),
+            ConvertResponse::decl(&cfg),
             AxisRef::decl(&cfg),
             SolverOptions::decl(&cfg),
             TrajectoryRequest::decl(&cfg),

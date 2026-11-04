@@ -4,6 +4,8 @@ import type {
   Classification,
   CompileRequest,
   CompileResponse,
+  ConvertRequest,
+  ConvertResponse,
   FixedPointOut,
   NullclineOut,
   ParamInfo,
@@ -14,7 +16,8 @@ import type {
   TrajectoryOut,
   TrajectoryRequest,
 } from "./types";
-import { BLANK_TEMPLATE, TEMPLATES, templateSource, type Template } from "../templates";
+import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
+import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -144,8 +147,6 @@ const SYSTEMS: Record<string, MockSystem> = {
   },
 };
 
-const squash = (src: string) => src.replace(/\s+/g, "");
-
 const MOCK_TEMPLATES: Template[] = [...TEMPLATES, BLANK_TEMPLATE];
 
 const byId = new Map<number, MockSystem>();
@@ -154,14 +155,19 @@ MOCK_TEMPLATES.forEach((t, i) => {
   if (sys) byId.set(i + 1, sys);
 });
 
+/** A template's system, by its LaTeX or text source: both give the same `systemId`. */
 function lookup(src: string): { id: number; sys: MockSystem } | null {
-  const index = MOCK_TEMPLATES.findIndex((t) => squash(templateSource(t)) === src);
+  const index = mockTemplateIndex(MOCK_TEMPLATES, src);
   const sys = index >= 0 ? SYSTEMS[MOCK_TEMPLATES[index].id] : undefined;
   return sys ? { id: index + 1, sys } : null;
 }
 
+export async function mockConvert(req: ConvertRequest): Promise<ConvertResponse> {
+  return mockConvertLines(MOCK_TEMPLATES, req);
+}
+
 export async function mockCompile(req: CompileRequest): Promise<CompileResponse> {
-  const src = squash(req.source);
+  const src = req.source.trim();
   const empty: CompileResponse = {
     ok: false,
     hamiltonian: false,
@@ -175,7 +181,10 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
     return {
       ...empty,
       diagnostics: [
-        { severity: "info", message: "Type an equation, for example \\dot{x} = y, or pick a template." },
+        {
+          severity: "info",
+          message: `Type an equation, for example ${req.format === "text" ? "x' = y" : "\\dot{x} = y"}, or pick a template.`,
+        },
       ],
     };
   }

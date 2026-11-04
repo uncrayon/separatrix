@@ -34,7 +34,11 @@ interface TopBarProps {
 
 export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarProps) {
   const tpl = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
-  const title = systemTitle(tpl, state.equations.map((l) => l.latex));
+  const title = systemTitle(
+    tpl,
+    state.equations.map((l) => l.source),
+    state.format,
+  );
   const projector = theme === "light";
   return (
     <header className="topbar">
@@ -225,7 +229,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const solverGaveUpIcs = [...new Set(solverGaveUpIcIds)].filter((id) => state.ics.some((ic) => ic.id === id));
 
   const errors = state.diagnostics.filter((d) => d.severity === "error");
-  const lines = state.equations.map((l) => l.latex);
+  const lines = state.equations.map((l) => l.source);
   const firstBad = errors.length ? diagnosticLine(errors[0], lines) : -1;
 
   const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
@@ -272,7 +276,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
         ) : (
           <span className="ds-statusbar-item">
             <span className="ds-statusbar-text">
-              {state.equations.some((l) => l.latex.trim() !== "") ? "Not compiled" : "No equations"}
+              {state.equations.some((l) => l.source.trim() !== "") ? "Not compiled" : "No equations"}
             </span>
           </span>
         )}

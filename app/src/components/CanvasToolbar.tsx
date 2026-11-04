@@ -4,6 +4,7 @@ import { fitRanges } from "../canvas/viewport";
 import { Tex } from "../math/Tex";
 import { axisLabelLatex, axisLatex, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
+import { hasNullclineLayer } from "../state/model";
 import {
   IconCheck,
   IconChevronDown,
@@ -69,7 +70,6 @@ export function CanvasToolbar({ state, actions }: Props) {
   const sys = state.compiled;
   if (!sys) return null;
   const isMap = sys.kind === "map";
-  const timeOnAxis = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
 
   const zoomToFit = () => {
     const fit = fitView(state);
@@ -106,7 +106,8 @@ export function CanvasToolbar({ state, actions }: Props) {
           },
         ]
       : []),
-    ...(!isMap && (!timeOnAxis || sys.states.length === 1)
+    // Shown whenever the layer is requested and drawn, time on an axis or not.
+    ...(hasNullclineLayer(sys.kind)
       ? [
           {
             key: "nullclines",

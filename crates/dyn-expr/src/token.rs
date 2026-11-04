@@ -194,6 +194,8 @@ pub(crate) enum Tok {
     Sep,
     Frac,
     Sqrt,
+    /// `root` in text mode: `root(x, n)` is the `n`-th root, as `\sqrt[n]{x}`.
+    Root,
     Dot(u32),
     Placeholder,
     Bad(String),
@@ -394,6 +396,7 @@ impl<'s> Lexer<'s> {
         self.pos = i;
         let tok = match Func::from_name(w) {
             Some(f) => Tok::Func(f),
+            None if w == "root" => Tok::Root,
             None => Tok::Ident(sym_from_word(w)),
         };
         self.push(tok, start);

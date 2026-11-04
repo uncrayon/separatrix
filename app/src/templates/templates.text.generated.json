@@ -1,0 +1,16 @@
+{
+  "slope-field-x2-minus-t": ["x' = x^2 - t"],
+  "saddle-node": ["x' = r + x^2"],
+  "rabbits-vs-sheep": ["x' = x*(3 - x - 2*y)", "y' = y*(2 - x - y)"],
+  "pendulum": ["theta'' = -sin(theta)"],
+  "damped-pendulum": ["theta'' + b*theta' + sin(theta) = 0"],
+  "van-der-pol": ["x' = y", "y' = -x - mu*(x^2 - 1)*y"],
+  "selkov-glycolysis": ["x' = -x + a*y + x^2*y", "y' = b - a*y - x^2*y"],
+  "linear-2d": ["x' = a*x + b*y", "y' = c*x + d*y"],
+  "lorenz": ["x' = sigma*(y - x)", "y' = r*x - y - x*z", "z' = x*y - b*z"],
+  "rossler": ["x' = -y - z", "y' = x + a*y", "z' = b + z*(x - c)"],
+  "logistic-map": ["x_{n+1} = r*x_n*(1 - x_n)"],
+  "henon-map": ["x_{n+1} = y_n + 1 - a*x_n^2", "y_{n+1} = b*x_n"],
+  "hamiltonian-pendulum": ["H(q, p) = p^2/2 - cos(q)"],
+  "blank": ["x' = y", "y' = -x"]
+}

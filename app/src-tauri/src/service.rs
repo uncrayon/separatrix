@@ -8,9 +8,9 @@ use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
 
 use crate::ipc::{
-    Arrow, AxisRef, CompileRequest, CompileResponse, Diagnostic, FixedPointOut, NullclineOut,
-    ParamInfo, PortraitRequest, PortraitResponse, SolverOptions, StateInfo, TrajectoryOut,
-    TrajectoryRequest,
+    Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
+    ConvertedLineOut, Diagnostic, FixedPointOut, NullclineOut, ParamInfo, PortraitRequest,
+    PortraitResponse, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -119,6 +119,22 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
             diagnostics,
         },
     }
+}
+
+/// Rewrites the UI's lines in the other input format (see
+/// [`dyn_expr::convert`]): lines that can't be converted exactly come back
+/// as typed, with a note.
+pub fn convert_source(req: &ConvertRequest) -> ConvertResponse {
+    let lines = dyn_expr::convert(&req.lines, req.from, req.to)
+        .into_iter()
+        .map(|l| ConvertedLineOut {
+            source: l.source,
+            converted: l.converted,
+            error: l.error,
+            note: l.note,
+        })
+        .collect();
+    ConvertResponse { lines }
 }
 
 pub fn compute_portrait(
@@ -368,6 +384,8 @@ mod tests {
     use serde::Deserialize;
 
     const TEMPLATES_JSON: &str = include_str!("../../src/templates/templates.json");
+    const TEMPLATE_TEXT_JSON: &str =
+        include_str!("../../src/templates/templates.text.generated.json");
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -1025,5 +1043,83 @@ mod tests {
         assert_eq!(json["trajectories"][0]["status"], "completed");
         assert!(json["trajectories"][0]["stats"]["evals"].is_u64());
         assert!(json["nullclines"][0]["polylines"][0][0].is_array());
+    }
+
+    #[test]
+    fn every_template_converts_to_its_generated_text_over_ipc() {
+        let text: HashMap<String, Vec<String>> =
+            serde_json::from_str(TEMPLATE_TEXT_JSON).expect("the template text parses");
+        let store = SystemStore::new();
+        for t in templates() {
+            let res = convert_source(&ConvertRequest {
+                lines: t.equations.clone(),
+                from: InputFormat::Latex,
+                to: InputFormat::Text,
+            });
+            let lines: Vec<String> = res
+                .lines
+                .iter()
+                .map(|l| {
+                    assert!(l.converted && l.note.is_none(), "{}: {l:?}", t.id);
+                    l.source.clone()
+                })
+                .collect();
+            assert_eq!(Some(&lines), text.get(&t.id), "{}", t.id);
+            let latex = compile_ok(&store, &t);
+            let plain = compile_system(
+                &store,
+                &CompileRequest {
+                    source: lines.join("\n"),
+                    format: InputFormat::Text,
+                },
+            );
+            assert!(plain.ok, "{}: {:?}", t.id, plain.diagnostics);
+            assert_eq!(plain.states, latex.states, "{}", t.id);
+            assert_eq!(plain.params, latex.params, "{}", t.id);
+        }
+    }
+
+    #[test]
+    fn convert_source_keeps_lines_it_cannot_convert_with_a_note() {
+        let res = convert_source(&ConvertRequest {
+            lines: vec!["x' = y".into(), "".into(), "y' = (x".into()],
+            from: InputFormat::Text,
+            to: InputFormat::Latex,
+        });
+        let json = serde_json::to_value(&res).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "lines": [
+                { "source": "\\dot{x} = y", "converted": true, "error": false },
+                { "source": "", "converted": true, "error": false },
+                { "source": "y' = (x", "converted": false, "error": true,
+                  "note": "This line has an error, so it was kept as typed" }
+            ]})
+        );
+        let req: ConvertRequest = serde_json::from_value(serde_json::json!({
+            "lines": ["\\dot{x}=-x"], "from": "latex", "to": "text"
+        }))
+        .expect("the request the UI sends deserializes");
+        assert_eq!(convert_source(&req).lines[0].source, "x' = -x");
+    }
+
+    #[test]
+    fn a_valid_line_the_target_cannot_write_is_not_an_error() {
+        // Kept as typed, LaTeX would read it as -x/9.109·e - 31: the UI must
+        // not switch, so the line is flagged as valid (`error: false`).
+        let res = convert_source(&ConvertRequest {
+            lines: vec!["x' = -x/9.109e-31".into(), "y' = (x".into()],
+            from: InputFormat::Text,
+            to: InputFormat::Latex,
+        });
+        let json = serde_json::to_value(&res).unwrap();
+        assert_eq!(json["lines"][0]["converted"], false);
+        assert_eq!(json["lines"][0]["error"], false);
+        assert_eq!(
+            json["lines"][0]["note"],
+            "LaTeX can't write the number 9.109e-31 exactly"
+        );
+        assert_eq!(json["lines"][1]["converted"], false);
+        assert_eq!(json["lines"][1]["error"], true);
     }
 }

@@ -118,6 +118,49 @@ equationsLatex: Array<string>,
  */
 diagnostics: Array<Diagnostic>, };
 
+export type ConvertRequest = { 
+/**
+ * The UI's lines, as typed (one entry per line; empty lines allowed).
+ */
+lines: Array<string>, 
+/**
+ * The format the lines are in.
+ */
+from: InputFormat, 
+/**
+ * The format to write them in.
+ */
+to: InputFormat, };
+
+export type ConvertedLineOut = { 
+/**
+ * The line in the target format, or exactly as typed when `converted`
+ * is false.
+ */
+source: string, 
+/**
+ * False when the line was kept as typed (it has an error, or the
+ * target format can't write it exactly).
+ */
+converted: boolean, 
+/**
+ * True when the line was kept because it has an error in its own
+ * format. A line kept with `error` false is valid but can't be written
+ * exactly in the target format; it would mean something else (or
+ * nothing) there, so the UI doesn't switch.
+ */
+error: boolean, 
+/**
+ * Why the line was kept as typed.
+ */
+note?: string, };
+
+export type ConvertResponse = { 
+/**
+ * The converted lines.
+ */
+lines: Array<ConvertedLineOut>, };
+
 export type AxisRef = { "kind": "state", 
 /**
  * Index into the state vector.

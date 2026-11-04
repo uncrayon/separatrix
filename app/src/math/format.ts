@@ -79,22 +79,33 @@ const GREEK: Record<string, string> = {
 /** The Greek letters the parser accepts, by command name (`varrho`, `Upsilon`, …). */
 export const GREEK_NAMES: ReadonlySet<string> = new Set(Object.keys(GREEK));
 
-export function latexToPlain(s: string): string {
+/** LaTeX as plain text, keeping every hyphen as typed. */
+function latexToPlainText(s: string): string {
   let out = s;
-  out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̈`);
-  out = out.replace(/\\dot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̇`);
+  out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlainText(a)}̈`);
+  out = out.replace(/\\dot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlainText(a)}̇`);
   out = out.replace(/\\(?:operatorname|mathrm|text)\{([^{}]*)\}/g, "$1");
   out = out.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
   out = out.replace(/\\left|\\right/g, "");
   out = out.replace(/\\cdot/g, "·").replace(/\\times/g, "×");
   out = out.replace(/\\([A-Za-z]+)/g, (m, name: string) => GREEK[name] ?? (name.length > 1 ? name : m));
   out = out.replace(/_\{([^{}]*)\}/g, "_$1").replace(/\^\{([^{}]*)\}/g, "^$1");
-  out = out.replace(/-/g, "−");
   return out;
 }
 
+/** A LaTeX expression (a name, an axis, an equation) as plain text, with true minus signs. */
+export function latexToPlain(s: string): string {
+  return latexToPlainText(s).replace(/-/g, "−");
+}
+
+/**
+ * A diagnostic from the core for display. Messages are prose that quote
+ * maths (`\dot{x} = -x`, `'*'`), so LaTeX is spelled out but hyphens stay
+ * hyphens ("right-hand side"). A token in single quotes gets curly quotes;
+ * a prime is not a quote (`x' + y'` stays as it is).
+ */
 export function diagnosticText(message: string): string {
-  return latexToPlain(message).replace(/'([^'\s]{1,12})'/g, "‘$1’");
+  return latexToPlainText(message).replace(/(^|[\s(])'([^'\s]{1,12})'(?=$|[\s,.;:)])/g, "$1‘$2’");
 }
 
 export function axisLatex(axis: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {

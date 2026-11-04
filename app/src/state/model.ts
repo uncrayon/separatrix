@@ -1,7 +1,9 @@
 import type {
   AxisRef,
   CompileResponse,
+  ConvertResponse,
   FixedPointOut,
+  InputFormat,
   Method,
   PortraitResponse,
   StateInfo,
@@ -11,9 +13,10 @@ import type {
 import type { PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 
+/** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
   id: number;
-  latex: string;
+  source: string;
 }
 
 export interface InitialCondition {
@@ -203,19 +206,95 @@ function canonicalLine(latex: string): string {
   return collapseSpaces(unbraceSingleScript(dropDelimiterSizing(latex)));
 }
 
-export function sameEquations(a: readonly string[], b: readonly string[]): boolean {
-  const norm = (lines: readonly string[]) => lines.map(canonicalLine).filter((l) => l !== "");
+/** Text mode: a space only matters between two word characters (`a b` is not `ab`). */
+const canonicalTextLine = (text: string) =>
+  text
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/(?<![A-Za-z0-9_]) | (?![A-Za-z0-9_])/g, "");
+
+/**
+ * The same equations, up to spelling that cannot change their meaning:
+ * blank lines and spacing, and in LaTeX also `\left`/`\right` and braces
+ * around a single-character sub- or superscript.
+ */
+export function sameEquations(a: readonly string[], b: readonly string[], format: InputFormat): boolean {
+  const canon = format === "text" ? canonicalTextLine : canonicalLine;
+  const norm = (lines: readonly string[]) => lines.map(canon).filter((l) => l !== "");
   const x = norm(a);
   const y = norm(b);
   return x.length === y.length && x.every((l, i) => l === y[i]);
 }
 
+/** A template's equations in `format`: as authored (LaTeX), or the generated text. */
+export function templateLines(t: Pick<Template, "equations" | "text">, format: InputFormat): string[] {
+  return format === "text" ? t.text : t.equations;
+}
+
 export function systemTitle(
   template: Template | undefined,
   equations: readonly string[],
+  format: InputFormat,
 ): { name: string; edited: boolean } {
   if (!template) return { name: UNTITLED_SYSTEM, edited: false };
-  return { name: template.title, edited: !sameEquations(template.equations, equations) };
+  return { name: template.title, edited: !sameEquations(templateLines(template, format), equations, format) };
+}
+
+/** The lines before and after the last input-mode switch, for switching straight back. */
+export interface ModeSnapshot {
+  /** The format before the switch. */
+  from: InputFormat;
+  before: string[];
+  after: string[];
+}
+
+export type ModeSwitchPlan = { restore: string[] } | { convert: string[] };
+
+/**
+ * What switching the input mode to `to` does with `lines`. Straight back to
+ * the format of the last switch with no line changed since, it restores the
+ * lines exactly as they were before (so LaTeX → text → LaTeX gives back the
+ * user's own spelling); otherwise the core converts them.
+ */
+export function planModeSwitch(
+  lines: readonly string[],
+  snapshot: ModeSnapshot | null,
+  to: InputFormat,
+): ModeSwitchPlan {
+  const unchanged =
+    snapshot !== null &&
+    snapshot.from === to &&
+    snapshot.after.length === lines.length &&
+    snapshot.before.length === lines.length &&
+    lines.every((l, i) => l === snapshot.after[i]);
+  return unchanged ? { restore: snapshot.before.slice() } : { convert: lines.slice() };
+}
+
+/** What the core's conversion of every line does to a mode switch. */
+export type ConversionOutcome =
+  /** Switch, with these lines; a note (by line index) for each line kept as typed. */
+  | { switch: true; lines: string[]; notes: (string | undefined)[] }
+  /** Stay in the current format with the lines unchanged; a note on each line that stopped it. */
+  | { switch: false; notes: (string | undefined)[] };
+
+/**
+ * Switch only if every line was converted or was kept because it has an
+ * error (it was broken before the switch). A valid line the target format
+ * can't write exactly is kept as typed by the core, and read in the other
+ * format it would mean something else (text `1e-40` is `1·e - 40` in LaTeX)
+ * or nothing, so the whole switch is called off.
+ */
+export function conversionOutcome(res: ConvertResponse): ConversionOutcome {
+  const blocked = res.lines.map((l) => !l.converted && !l.error);
+  if (blocked.some(Boolean)) {
+    return {
+      switch: false,
+      notes: res.lines.map((l, i) =>
+        blocked[i] ? `${l.note ?? "This line can't be converted exactly"}, so the input mode was not switched` : undefined,
+      ),
+    };
+  }
+  return { switch: true, lines: res.lines.map((l) => l.source), notes: res.lines.map((l) => l.note) };
 }
 
 export const DEFAULT_LAYERS: Layers = {
@@ -424,6 +503,16 @@ export function displayRanges(
     : { xRange: view.xRange, yRange: view.yRange };
 }
 
+/**
+ * Flows have a nullcline layer, in every view (with time on an axis it shows
+ * where each plotted state's rate vanishes on the slice); maps have none.
+ * The toolbar shows the Nullclines toggle exactly when the layer can be
+ * requested.
+ */
+export function hasNullclineLayer(kind: SystemKind | undefined): boolean {
+  return kind !== "map";
+}
+
 export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> | null {
   const sys = s.compiled;
   if (!sys || !sys.ok || sys.systemId === undefined) return null;
@@ -453,7 +542,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       baseState: Array.from({ length: dim }, (_, i) => s.baseState[i] ?? 0),
       fieldTime: s.fieldTime,
       fieldGrid: isOde && s.layers.field ? s.layers.fieldGrid : 0,
-      nullclines: isOde && s.layers.nullclines,
+      nullclines: hasNullclineLayer(sys.kind) && s.layers.nullclines,
       fixedPoints: s.layers.fixedPoints,
       trajectories,
       solver: {

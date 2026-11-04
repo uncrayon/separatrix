@@ -11,6 +11,7 @@ use crate::token::{is_greek, sym_from_word, Span, SymName};
 use crate::{InputFormat, ParamInfo, SymbolInfo, SystemInfo};
 
 /// The right-hand sides of a system, by how they define the field.
+#[derive(Debug, PartialEq)]
 pub(crate) enum Form {
     /// One expression per state.
     Direct(Vec<Node>),
@@ -225,7 +226,7 @@ fn leibniz(a: &Ast) -> Option<(SymName, u32)> {
     (var.name == "t").then_some((s, k))
 }
 
-fn leibniz_to_deriv(a: Ast) -> Ast {
+pub(crate) fn leibniz_to_deriv(a: Ast) -> Ast {
     if let Some((s, k)) = leibniz(&a) {
         return Ast::new(AstKind::Deriv(s, k), a.span);
     }
@@ -788,8 +789,8 @@ impl Resolver<'_> {
         self.fail(
             format!(
                 "{0} is not a known function. To multiply, write {0}*(…). Known functions: \
-                 sin, cos, tan, exp, ln, log, sqrt, abs, sign, sinh, cosh, tanh, arcsin, arccos, \
-                 arctan, min, max",
+                 sin, cos, tan, exp, ln, log, sqrt, cbrt, root, abs, sign, sinh, cosh, tanh, \
+                 arcsin, arccos, arctan, min, max",
                 s.name
             ),
             span,
@@ -1075,6 +1076,29 @@ fn display_latex(form: &Form, kind: SystemKind, table: &StateTable, names: &Name
             })
             .collect(),
     }
+}
+
+/// Whether two analyses define the same system: the same kind, flags,
+/// states, parameters (names and default values, bit for bit) and
+/// right-hand sides. The display LaTeX is not compared.
+pub(crate) fn same_meaning(a: &Analysis, b: &Analysis) -> bool {
+    let (x, y) = (&a.info, &b.info);
+    let states = x.states.len() == y.states.len()
+        && x.states
+            .iter()
+            .zip(&y.states)
+            .all(|(s, t)| s.name == t.name && s.derived == t.derived);
+    let params = x.params.len() == y.params.len()
+        && x.params
+            .iter()
+            .zip(&y.params)
+            .all(|(p, q)| p.name == q.name && p.default.to_bits() == q.default.to_bits());
+    x.kind == y.kind
+        && x.hamiltonian == y.hamiltonian
+        && x.autonomous == y.autonomous
+        && states
+        && params
+        && a.form == b.form
 }
 
 pub(crate) fn analyze(
