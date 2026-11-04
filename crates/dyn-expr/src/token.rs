@@ -60,6 +60,21 @@ impl SymName {
         }
     }
 
+    /// The variable whose current iterate this name is (`x` for `x_n`, `x_1`
+    /// for `x_{1,n}`), the inverse of [`SymName::at_index_n`].
+    pub(crate) fn of_index_n(&self) -> Option<SymName> {
+        let name = self.name.strip_suffix("_n")?;
+        let sub_latex = match self.sub_latex.as_deref()? {
+            "n" => None,
+            s => Some(s.strip_suffix(",n")?.to_string()),
+        };
+        Some(SymName {
+            name: name.to_string(),
+            base_latex: self.base_latex.clone(),
+            sub_latex,
+        })
+    }
+
     pub(crate) fn derived_name(&self, k: u32) -> String {
         format!("{}{}", self.name, "'".repeat(k as usize))
     }

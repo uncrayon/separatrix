@@ -4,7 +4,7 @@ import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt } from "../math/format";
 import { Tex } from "../math/Tex";
-import { systemTitle, type SolverSettings } from "../state/model";
+import { searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { IconCheck, IconError, IconGallery, IconLogo, IconMoon, IconProjector, IconWarning } from "./icons";
@@ -219,7 +219,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const kind = sys?.kind;
   const states = sys?.states ?? [];
   const current = !!p && !!sys && p.meta.systemId === sys.systemId;
-  const nFp = current && state.layers.fixedPoints && p.meta.fixedPoints ? p.res.fixedPoints.length : null;
+  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p)?.length ?? null) : null;
 
   const solverGaveUpIcIds = p
     ? p.res.trajectories.flatMap((t, i) =>

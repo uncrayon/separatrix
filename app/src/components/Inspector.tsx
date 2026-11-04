@@ -14,6 +14,7 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   DEFAULT_FIXED_STEP,
   PALETTE_SIZE,
+  searchedFixedPoints,
   selectFixedPoint,
   selectedFixedPointIndex,
   trajectorySpans,
@@ -565,9 +566,8 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const dim = sys.states.length;
   const p = state.portrait;
-  // A portrait asked for while the layer was off searched nothing: an empty list there means "not yet", not "none".
-  const searched = !!p && p.meta.systemId === sys.systemId && p.meta.fixedPoints;
-  const fps = searched ? p.res.fixedPoints : [];
+  const found = searchedFixedPoints(sys, p);
+  const fps = found ?? [];
   const sym = sys.kind === "map" ? "μ" : "λ";
   const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
   const coordsText = (fp: FixedPointOut) =>
@@ -580,7 +580,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
       sys.kind === "map"
         ? "Not searched: the map changes with n, so fixed points would move."
         : "Not searched: the field changes with t, so fixed points would move.";
-  else if (!searched) empty = "Searching…";
+  else if (found === null) empty = state.computeError ? "Not searched: the plot could not be computed." : "Searching…";
   else if (fps.length === 0) empty = "No fixed points in view.";
 
   return (

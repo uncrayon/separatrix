@@ -303,6 +303,8 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       const [ax, ay] = toPlot(port, e.clientX - r.left, e.clientY - r.top);
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       const f = Math.exp(Math.max(-0.5, Math.min(0.5, delta * 0.0015)));
+      // A sideways scroll (deltaY 0) is no zoom: a new view would recompute the whole portrait.
+      if (f === 1) return;
       const xRange = zoomRange(v.xRange, ax, f);
       const yRange = zoomRange(v.yRange, ay, f);
       if (xRange && yRange) act.setView({ ...v, xRange, yRange });
@@ -736,7 +738,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           </div>
         )}
       </div>
-      <Legend scene={scene} states={states} kind={kind} tool={tool} />
+      <Legend scene={scene} states={states} equations={compiled?.equationsLatex ?? []} kind={kind} tool={tool} />
     </>
   );
 }
@@ -790,14 +792,22 @@ const GLYPH_ORDER: FixedPointGlyphKind[] = ["stable", "unstable", "half"];
 function Legend({
   scene,
   states,
+  equations,
   kind,
   tool,
 }: {
   scene: Omit<Scene, "avoid"> | null;
   states: StateInfo[];
+  /** The core's first-order system, one `\dot{x} = …` per state: its left sides spell each rate (`\dddot{x}`). */
+  equations: string[];
   kind?: SystemKind;
   tool: "select" | "pan" | "add";
 }) {
+  const rateLatex = (i: number) => {
+    const eq = equations.length === states.length ? equations[i] : undefined;
+    const k = eq ? eq.indexOf(" = ") : -1;
+    return eq && k > 0 ? eq.slice(0, k) : dotted(states[i]?.latex ?? "x");
+  };
   const nulls = scene ? scene.nullclines.filter((n) => n.polylines.length > 0) : [];
   const glyphs = new Map<FixedPointGlyphKind, Set<string>>();
   for (const fp of scene?.fixedPoints ?? []) {
@@ -922,7 +932,7 @@ function Legend({
       text: (
         <span>
           Nullcline{" "}
-          <Tex latex={`${isMap ? states[n.state]?.latex : dotted(states[n.state]?.latex ?? "x")}=0`} />
+          <Tex latex={`${isMap ? states[n.state]?.latex : rateLatex(n.state)}=0`} />
         </span>
       ),
     })),

@@ -177,6 +177,21 @@ export interface PortraitState {
   roundTripMs: number;
 }
 
+/**
+ * The fixed points the portrait of `sys` found, or null when it searched
+ * none, so an empty list means "none in view": the portrait is of another
+ * system or was asked for with the layer off, or the field changes with
+ * time (the core only searches autonomous systems).
+ */
+export function searchedFixedPoints(
+  sys: CompileResponse | null,
+  portrait: PortraitState | null,
+): FixedPointOut[] | null {
+  if (!sys || !sys.autonomous || !portrait || portrait.meta.systemId !== sys.systemId || !portrait.meta.fixedPoints)
+    return null;
+  return portrait.res.fixedPoints;
+}
+
 export const PALETTE_SIZE = 7;
 
 export function leastUsedPaletteIndex(ics: readonly Pick<InitialCondition, "color">[]): number {

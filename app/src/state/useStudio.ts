@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic, InputFormat } from "../api/types";
 import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
+import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
@@ -417,11 +418,9 @@ export function useStudio() {
     const cur = latest.current;
     const v = cur.view;
     const other = which === "x" ? v.yAxis : v.xAxis;
-    const same = (a: AxisRef, b: AxisRef) =>
-      a.kind === b.kind && (a.kind === "time" || (b.kind === "state" && a.index === b.index));
     const rangeFor = (a: AxisRef): [number, number] => {
-      if (same(a, v.xAxis)) return v.xRange;
-      if (same(a, v.yAxis)) return v.yRange;
+      if (sameAxis(a, v.xAxis)) return v.xRange;
+      if (sameAxis(a, v.yAxis)) return v.yRange;
       if (a.kind === "time") return [-0.04 * cur.solver.tEnd, cur.solver.tEnd];
       const ext = stateExtent(cur.portrait?.res, cur.compiled?.states.length ?? 0, a.index);
       if (ext) {
@@ -431,7 +430,7 @@ export function useStudio() {
       return [-5, 5];
     };
     let next: View;
-    if (same(axis, other)) {
+    if (sameAxis(axis, other)) {
       next = { xAxis: v.yAxis, yAxis: v.xAxis, xRange: v.yRange, yRange: v.xRange };
     } else if (which === "x") {
       next = { ...v, xAxis: axis, xRange: rangeFor(axis) };

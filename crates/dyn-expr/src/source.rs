@@ -295,11 +295,16 @@ fn rewrite(a: Ast, scope: &Scope, fmt: InputFormat) -> Result<Ast, Fail> {
     let kind = match a.kind {
         AstKind::Apply(s, mut args) => {
             let is_t = args.len() == 1 && matches!(&args[0].kind, AstKind::Sym(t) if t.name == "t");
+            // `x_n(t)` keeps only the name of the iterate `x_n` it starts with.
+            let name = |s: SymName| match s.of_index_n() {
+                Some(of) => AstKind::Current(of),
+                None => AstKind::Sym(s),
+            };
             if is_t && scope.ode && scope.states.contains(&s.name) {
-                AstKind::Sym(s)
+                name(s)
             } else if fmt == InputFormat::Latex && args.len() == 1 {
                 let arg = rewrite(args.pop().expect("one argument"), scope, fmt)?;
-                let name = Ast::new(AstKind::Sym(s), (span.0, span.0));
+                let name = Ast::new(name(s), (span.0, span.0));
                 AstKind::Bin(BinOp::Mul, Box::new(name), Box::new(arg))
             } else {
                 return Err(Fail::Error);

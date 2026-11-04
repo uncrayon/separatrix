@@ -275,3 +275,52 @@ fn a_greek_letter_inside_a_subscript_keeps_its_name_in_the_display() {
     assert_eq!(sys.info.params[0].latex, r"k_{a\beta c}");
     assert_eq!(sys.info.equations_latex[0], r"\dot{x} = -k_{a\beta c} x");
 }
+
+#[test]
+fn a_map_iterate_with_no_equation_is_pointed_out() {
+    for (src, f) in [
+        (r"x_{n+1}=y_n+1-ax_n^2", InputFormat::Latex),
+        ("x_{n+1} = y_n + 1 - a*x_n^2", InputFormat::Text),
+    ] {
+        let out = compile(src, f);
+        assert!(out.system.is_some(), "{src}");
+        let warned: Vec<_> = out
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Warning)
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(warned.len(), 1, "{src}: {warned:?}");
+        assert!(warned[0].contains("has no equation"), "{src}: {warned:?}");
+    }
+    let out = compile(r"\dot{x}=-\omega_n^2y\\\dot{y}=x", InputFormat::Latex);
+    assert!(
+        out.diagnostics.is_empty(),
+        "a flow's ω_n is a name: {:?}",
+        out.diagnostics
+    );
+    let out = compile(r"x_{n+1}=y_n\\y_{n+1}=-x_n", InputFormat::Latex);
+    assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
+}
+
+#[test]
+fn a_maps_current_iterate_is_a_state_and_takes_no_value() {
+    for (src, f) in [
+        (
+            "x_{n+1}=rx_n\\left(1-x_n\\right)\nx_n=0.5",
+            InputFormat::Latex,
+        ),
+        ("x_{n+1} = r*x_n*(1 - x_n)\nx_n = 0.5", InputFormat::Text),
+    ] {
+        assert!(
+            error_message(src, f).contains("is a state variable"),
+            "{src}"
+        );
+    }
+    let sys = latex("\\dot{x}=-ax\nx_n=2");
+    assert_eq!(
+        names(&sys).1,
+        ["a"],
+        "a flow's x_n is a parameter of its own"
+    );
+}

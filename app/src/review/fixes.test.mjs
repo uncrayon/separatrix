@@ -119,8 +119,22 @@ test("an index joins a state's own subscript instead of doubling it (x_{1}_0 is 
   assert.equal(withSubscript("k_{\\mathrm{on}}", "n"), "k_{\\mathrm{on},n}");
   assert.equal(withSubscript("\\dot{x}", "0"), "\\dot{x}_{0}");
   assert.equal(withSubscript("\\mathrm{x1}", "0"), "\\mathrm{x1}_{0}");
+  assert.equal(withSubscript("x_{1}^{(4)}", "0"), "x_{1,0}^{(4)}");
+  assert.equal(withSubscript("x^{(4)}", "0"), "x^{(4)}_{0}");
   const states = [{ name: "x_1", latex: "x_{1}", derived: false }];
   const axis = { kind: "state", index: 0 };
   assert.equal(axisLabelLatex(axis, { kind: "time" }, states, "map"), "x_{1,n}");
   assert.equal(axisLabelLatex(axis, { kind: "time" }, states, "ode"), "x_{1}");
+});
+
+test("fixed points count only when the core searched them: never for a field that changes with time", async () => {
+  const { searchedFixedPoints } = await import("../state/model.ts");
+  const fp = { x: [0, 0] };
+  const portrait = (systemId, fixedPoints) => ({ res: { fixedPoints: [fp] }, meta: { systemId, fixedPoints } });
+  const sys = (autonomous) => ({ systemId: 3, autonomous });
+  assert.deepEqual(searchedFixedPoints(sys(true), portrait(3, true)), [fp]);
+  assert.equal(searchedFixedPoints(sys(true), portrait(3, false)), null, "asked for with the layer off");
+  assert.equal(searchedFixedPoints(sys(true), portrait(2, true)), null, "another system's portrait");
+  assert.equal(searchedFixedPoints(sys(false), { ...portrait(3, true), res: { fixedPoints: [] } }), null, "x' = x² − t");
+  assert.equal(searchedFixedPoints(null, portrait(3, true)), null);
 });

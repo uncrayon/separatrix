@@ -513,6 +513,18 @@ impl StateTable {
         self.syms.len()
     }
 
+    /// The state a plain name reads: the one it names, or in a map the one
+    /// whose current iterate it names (`x_n`, as `x_n(t)` keeps it, is `x`).
+    fn state_named(&self, name: &str, kind: SystemKind) -> Option<usize> {
+        if let Some(idx) = self.by_name.get(name) {
+            return Some(idx[0]);
+        }
+        let base = name
+            .strip_suffix("_n")
+            .filter(|_| kind == SystemKind::Map)?;
+        self.by_name.get(base).map(|idx| idx[0])
+    }
+
     fn info(&self, i: usize) -> SymbolInfo {
         SymbolInfo {
             name: self.syms[i].derived_name(self.orders[i]),
@@ -604,15 +616,7 @@ struct Scope<'a> {
 
 impl Scope<'_> {
     fn meaning(&self, s: &SymName) -> Meaning {
-        if let Some(idx) = self.table.by_name.get(&s.name) {
-            return Meaning::State(idx[0]);
-        }
-        // `x_n(t)` keeps only the name `x_n` of the iterate it starts with.
-        if let Some(i) = s
-            .name
-            .strip_suffix("_n")
-            .and_then(|base| self.current_state(&SymName::simple(base, base)))
-        {
+        if let Some(i) = self.table.state_named(&s.name, self.kind) {
             return Meaning::State(i);
         }
         match (s.name.as_str(), self.kind) {
@@ -932,7 +936,7 @@ fn parameter_defaults(
             continue;
         };
         let a = show(s, text);
-        if table.by_name.contains_key(&s.name) {
+        if table.state_named(&s.name, kind).is_some() {
             diags.push(error(
                 format!(
                     "{a} is a state variable, so it can't be given a fixed value here. \
@@ -995,6 +999,7 @@ fn warn_parameter_lookalikes(
     params: &[(SymName, Span)],
     defaults: &Defaults,
     table: &StateTable,
+    kind: SystemKind,
     text: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -1007,7 +1012,10 @@ fn warn_parameter_lookalikes(
             .syms
             .iter()
             .any(|t| t.sub_latex.is_some() && t.name.starts_with(&format!("{base}_")));
-        if STATE_LIKE.contains(&s.name.as_str()) || sibling {
+        // In a map `y_n` is written as an iterate, so without a `y_{n+1}`
+        // equation it is a forgotten one, as a bare `y` is.
+        let iterate = kind == SystemKind::Map && s.name.ends_with("_n");
+        if STATE_LIKE.contains(&s.name.as_str()) || sibling || iterate {
             diags.push(Diagnostic::warning(
                 format!(
                     "{} has no equation; treating it as a parameter",
@@ -1209,7 +1217,7 @@ pub(crate) fn analyze(
     if diags.iter().any(Diagnostic::is_error) {
         return None;
     }
-    warn_parameter_lookalikes(&params, &defaults, &table, text, diags);
+    warn_parameter_lookalikes(&params, &defaults, &table, kind, text, diags);
 
     let form = match hamiltonian_dof {
         Some(dof) => {

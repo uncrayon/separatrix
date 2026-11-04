@@ -117,21 +117,30 @@ export function axisLabelLatex(
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
+/** Where the `{…}` group that ends `latex` opens, or -1. */
+function lastGroupStart(latex: string): number {
+  if (!latex.endsWith("}")) return -1;
+  let depth = 0;
+  for (let i = latex.length - 1; i >= 0; i--) {
+    if (latex[i] === "}") depth++;
+    else if (latex[i] === "{" && --depth === 0) return i;
+  }
+  return -1;
+}
+
 /**
  * `latex` with `index` added to its subscript: `x_{0}`, and `x_{1,0}` for
  * `x_{1}` (as the core writes a map's `x_{1,n}`), not the double subscript
- * `x_{1}_0`, which is drawn as x₁₀.
+ * `x_{1}_0`, which is drawn as x₁₀. A superscript after the subscript stays
+ * after it: `x_{1}^{(4)}` (the core's fourth derivative) is `x_{1,0}^{(4)}`.
  */
 export function withSubscript(latex: string, index: string): string {
-  if (latex.endsWith("}")) {
-    let depth = 0;
-    for (let i = latex.length - 1; i >= 0; i--) {
-      if (latex[i] === "}") depth++;
-      else if (latex[i] === "{" && --depth === 0) {
-        if (latex[i - 1] === "_") return `${latex.slice(0, -1)},${index}}`;
-        break;
-      }
-    }
+  const open = lastGroupStart(latex);
+  if (open > 0 && latex[open - 1] === "_") return `${latex.slice(0, -1)},${index}}`;
+  if (open > 0 && latex[open - 1] === "^") {
+    const base = latex.slice(0, open - 1);
+    const sub = lastGroupStart(base);
+    if (sub > 0 && base[sub - 1] === "_") return `${base.slice(0, -1)},${index}}${latex.slice(open - 1)}`;
   }
   return `${latex}_{${index}}`;
 }

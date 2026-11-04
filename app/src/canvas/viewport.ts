@@ -122,8 +122,16 @@ export function fitRanges(
   const by = bounds(ys);
   if (!bx || !by) return null;
   const grow = ([lo, hi]: [number, number], below: number, above: number): [number, number] => {
-    const span = hi - lo || Math.max(1, Math.abs(lo));
-    return [lo - span * below, hi + span * above];
+    if (!(hi > lo)) {
+      const span = Math.max(1, Math.abs(lo));
+      return [lo - span * below, hi + span * above];
+    }
+    // Points that nearly coincide (a start at an equilibrium) fit no narrower than zoomRange lets a view get.
+    const floor = Math.max(MIN_REL_SPAN * Math.max(Math.abs(lo), Math.abs(hi)), MIN_SPAN);
+    const half = Math.max(hi - lo, floor) / 2;
+    const c = lo + (hi - lo) / 2;
+    const [a, b] = hi - lo < floor ? [c - half, c + half] : [lo, hi];
+    return [a - (b - a) * below, b + (b - a) * above];
   };
   return { xRange: grow(bx, 0.08, 0.08), yRange: grow(by, 0.08, 0.08 + padTop) };
 }

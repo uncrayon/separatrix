@@ -291,6 +291,21 @@ fn x_of_t_is_the_state_or_a_product() {
 }
 
 #[test]
+fn an_iterate_followed_by_t_converts_as_that_iterate() {
+    assert_eq!(l2t(r"x_{n+1}=x_n\left(t\right)"), "x_{n+1} = x_n*t");
+    assert_eq!(
+        l2t(r"x_{1,n+1}=x_{1,n}\left(t\right)"),
+        "x_1_{n+1} = x_1_n*t"
+    );
+    assert_eq!(l2t(r"\dot{x}_n=-x_n\left(t\right)"), "x_n' = -x_n");
+    assert_eq!(l2t(r"\dot{y}=x_n\left(t\right)"), "y' = x_n*t");
+    assert_eq!(t2l("x_n' = -x_n(t)"), r"\dot{x}_{n} = -x_{n}");
+    let mut r = Rng(2);
+    round_trip(&[r"x_{n+1}=x_n\left(t\right)"], LATEX, &mut r);
+    round_trip(&["x_n' = -x_n(t)"], TEXT, &mut r);
+}
+
+#[test]
 fn functions_keep_their_reach() {
     assert_eq!(l2t("\\dot{x}=\\sin x y"), "x' = sin(x*y)");
     assert_eq!(l2t("\\dot{x}=\\sin x\\cdot y"), "x' = sin(x)*y");
