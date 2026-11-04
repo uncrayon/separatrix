@@ -37,12 +37,19 @@ export function compileTemplate(t: Template): Promise<CompileResponse> {
   return p;
 }
 
-/** The thumbnail, computed once; null when the template does not compile. A failed computation is not kept. */
+/**
+ * The thumbnail, computed once; null when the template does not compile. A
+ * failed computation is not kept, and neither is the compile it used: its
+ * system may have been evicted from the core's store by the time of the
+ * retry, which must then compile afresh to get a live id.
+ */
 function computeThumb(t: Template): Promise<Thumb | null> {
   let p = cache.get(t.id);
   if (!p) {
+    let sysCall: Promise<CompileResponse> | undefined;
     const thumb: Promise<Thumb | null> = (async () => {
-      const sys = await compileTemplate(t);
+      sysCall = compileTemplate(t);
+      const sys = await sysCall;
       if (!sys.ok || sys.systemId === undefined) return null;
       const kind = sys.kind ?? "ode";
       const dim = sys.states.length;
@@ -80,6 +87,7 @@ function computeThumb(t: Template): Promise<Thumb | null> {
       return { kind, dim, view, res, icOf };
     })().catch(() => {
       if (cache.get(t.id) === thumb) cache.delete(t.id);
+      if (sysCall && compiled.get(t.id) === sysCall) compiled.delete(t.id);
       return null;
     });
     cache.set(t.id, thumb);

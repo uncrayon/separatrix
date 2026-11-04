@@ -1,8 +1,10 @@
 import type { AxisRef, Classification, StateInfo, SystemKind } from "../api/types";
 
-export function fmt(v: number, digits = 3): string {
+export const COMPUTED_ZERO = 1e-12;
+
+export function fmt(v: number, digits = 3, zeroBelow = 0): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  if (Math.abs(v) < 1e-12) return "0";
+  if (Math.abs(v) < zeroBelow || v === 0) return "0";
   const abs = Math.abs(v);
   if (abs >= 1e5 || abs < 1e-4) {
     const [m, e] = v.toExponential(digits - 1).split("e");
@@ -16,8 +18,8 @@ function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
-export function fmtTex(v: number, digits = 3): string {
-  const s = fmt(v, digits);
+export function fmtTex(v: number, digits = 3, zeroBelow = 0): string {
+  const s = fmt(v, digits, zeroBelow);
   const m = /^(-?[\d.]+)e(-?\d+)$/.exec(s);
   if (m) return `${m[1]}\\times 10^{${m[2]}}`;
   if (s === "∞") return "\\infty";

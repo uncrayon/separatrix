@@ -8,6 +8,7 @@ import {
   PALETTE_SIZE,
   UNTITLED_SYSTEM,
   adaptBaseState,
+  adaptInitialConditions,
   adaptView,
   leastUsedPaletteIndex,
   resolveParam,
@@ -166,4 +167,14 @@ test("slice: values follow their variables; a new one starts at 0, a renamed one
   assert.deepEqual(adaptBaseState([1, 5, 2], states("x", "y", "z"), states("x", "z")), [1, 2]);
   assert.deepEqual(adaptBaseState([1, 5], states("x", "y"), states("u", "y")), [1, 5]);
   assert.deepEqual(adaptBaseState([], [], states("x", "y")), [0, 0]);
+});
+
+test("start points: coordinates follow their variables like the slice; a renamed one keeps its value", () => {
+  const ic = { id: 1, x0: [1, 5, 2], t0: 0, color: 0 };
+  const [renamed] = adaptInitialConditions([ic], states("x", "y", "z"), states("x", "y", "w"));
+  assert.deepEqual(renamed.x0, [1, 5, 2], "z renamed to w keeps its start value, as its axis and slice do");
+  const [added] = adaptInitialConditions([ic], states("x", "y", "z"), states("x", "v", "y", "z"));
+  assert.deepEqual(added.x0, [1, 0, 5, 2]);
+  const [removed] = adaptInitialConditions([ic], states("x", "y", "z"), states("x", "z"));
+  assert.deepEqual(removed.x0, [1, 2]);
 });

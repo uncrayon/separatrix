@@ -102,3 +102,11 @@ test("first-order form is unchanged for systems without derived states, and for 
   const map = ["x_{n+1} = y_{n}", "y_{n+1} = x_{n}"];
   assert.deepEqual(firstOrderDisplay(map, xy, "map"), map);
 });
+
+test("user-entered small values are shown, computed noise snaps to zero", async () => {
+  const { fmt, COMPUTED_ZERO } = await import("../math/format.ts");
+  assert.equal(fmt(9.109e-31), "9.11e-31");
+  assert.equal(fmt(1e-14, 2), "1e-14");
+  assert.equal(fmt(3e-17, 4, COMPUTED_ZERO), "0");
+  assert.equal(fmt(0), "0");
+});

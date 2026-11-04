@@ -201,6 +201,31 @@ fn hamiltonian_duplicate_argument_in_users_notation() {
 }
 
 #[test]
+fn a_backslash_delimiter_before_a_non_ascii_character_is_an_error_not_a_panic() {
+    for src in [r"\dot{x}=\left\θ x\right)", r"\dot{x}=\left(x\right\·"] {
+        let m = error_message(src, InputFormat::Latex);
+        assert!(m.contains("isn't supported"), "{src}: {m}");
+        let out = dyn_expr::convert(&[src.to_string()], InputFormat::Latex, InputFormat::Text);
+        assert!(out[0].error && !out[0].converted, "{src}: {out:?}");
+    }
+}
+
+#[test]
+fn x_of_t_in_a_map_is_not_said_to_have_no_equation() {
+    let out = compile(r"x_{n+1}=x(t)", InputFormat::Latex);
+    assert!(out.system.is_some());
+    let w = &out.diagnostics[0].message;
+    assert!(
+        w.contains("x(t) is read as x·t") && !w.contains("has no equation"),
+        "{w}"
+    );
+    let out = compile(r"\dot{y}=-y+x(t)", InputFormat::Latex);
+    assert!(out.diagnostics[0]
+        .message
+        .contains("since x has no equation"));
+}
+
+#[test]
 fn parameters_in_order_of_first_appearance() {
     let sys = latex(r"m\ddot{x}+kx=mg");
     assert_eq!(names(&sys).1, ["m", "k", "g"]);

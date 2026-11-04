@@ -556,8 +556,10 @@ impl<'s> Lexer<'s> {
             match self.peek_byte() {
                 Some(c) if c.is_ascii_alphabetic() => self.command_name(),
                 Some(_) => {
+                    // A whole character: `\left\θ` must not be cut inside `θ`.
                     let s = self.pos;
-                    self.pos += 1;
+                    let ch = self.src[s..].chars().next().unwrap_or(' ');
+                    self.pos += ch.len_utf8();
                     &self.src[s..self.pos]
                 }
                 None => "",

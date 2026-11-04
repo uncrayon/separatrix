@@ -758,8 +758,14 @@ impl Resolver<'_> {
         if !text && args.len() == 1 {
             if arg_is_t {
                 let x = show(s, false);
+                // Reached for a state only in a map, where t is a parameter.
+                let why = if self.scope.table.by_name.contains_key(&s.name) {
+                    "t is not the time in a map".to_string()
+                } else {
+                    format!("{x} has no equation")
+                };
                 self.diags.push(Diagnostic::warning(
-                    format!("{x}(t) is read as {x}·t, since {x} has no equation"),
+                    format!("{x}(t) is read as {x}·t, since {why}"),
                     Some(span),
                 ));
             }

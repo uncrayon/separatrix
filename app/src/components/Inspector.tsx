@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
 import { Tex } from "../math/Tex";
-import { classificationExplain, classificationTitle, fmt, latexToPlain, sameAxis } from "../math/format";
+import { classificationExplain, classificationTitle, COMPUTED_ZERO, fmt, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   DEFAULT_FIXED_STEP,
@@ -45,17 +45,18 @@ interface Props {
 
 const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
 
-const short = (v: number, digits = 4) => withMinus(fmt(v, digits));
+const short = (v: number, digits = 4) => withMinus(fmt(v, digits, COMPUTED_ZERO));
 
 const atTime = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? withMinus(String(Math.round(v))) : dec(v, 2));
 
 const plainName = (latex: string) => latexToPlain(latex);
 
+const DOTS: Record<string, string> = { dot: "dot", ddot: "double dot", dddot: "triple dot" };
+
+/** `\dot{x}_{1}` as "x_1 dot": the dotted base, then any subscript after it. */
 function optionName(latex: string): string {
-  const dd = /^\\ddot\{(.*)\}$/.exec(latex);
-  if (dd) return `${latexToPlain(dd[1])} double dot`;
-  const d = /^\\dot\{(.*)\}$/.exec(latex);
-  if (d) return `${latexToPlain(d[1])} dot`;
+  const m = /^\\(d{0,2}dot)\{([^{}]*)\}(.*)$/.exec(latex);
+  if (m) return `${latexToPlain(m[2] + m[3])} ${DOTS[m[1]]}`;
   return latexToPlain(latex);
 }
 

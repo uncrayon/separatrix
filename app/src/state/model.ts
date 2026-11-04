@@ -391,18 +391,13 @@ export function niceCeil(v: number): number {
   return 10 * p;
 }
 
+/** Start points after a recompile that changed the states: each coordinate follows its variable as {@link adaptBaseState}. */
 export function adaptInitialConditions(
   ics: InitialCondition[],
   oldStates: StateInfo[],
   newStates: StateInfo[],
 ): InitialCondition[] {
-  return ics.map((ic) => ({
-    ...ic,
-    x0: newStates.map((s) => {
-      const k = oldStates.findIndex((o) => o.name === s.name);
-      return k >= 0 ? (ic.x0[k] ?? 0) : 0;
-    }),
-  }));
+  return ics.map((ic) => ({ ...ic, x0: adaptBaseState(ic.x0, oldStates, newStates) }));
 }
 
 /** Slot `i` of `newStates` holds a renamed variable: a new name where the old name is gone. */

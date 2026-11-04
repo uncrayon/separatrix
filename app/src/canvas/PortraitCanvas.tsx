@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, StateInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
-import { axisLabelLatex, axisLatex, classificationTitle, fmtTex, latexToPlain, sameAxis } from "../math/format";
+import { axisLabelLatex, axisLatex, classificationTitle, COMPUTED_ZERO, fmtTex, latexToPlain, sameAxis } from "../math/format";
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
@@ -212,22 +212,32 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     if (top > y1 + 1e-9 * Math.abs(y1 - y0)) actions.setView({ ...view, xRange: vp.xRange, yRange: [y0, top] });
   }, [scene, toolbarBox, size.w, vp, glyphScale, view, state.homeView, actions]);
 
+  // Every input of the last paint (the canvas holds its own size). A render
+  // that changes none of them (a keystroke in the equation editor) needs no repaint.
+  const painted = useRef<{ scene: typeof scene; vp: typeof vp; th: PlotTheme; boxes: string } | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.w === 0) return;
     const dpr = window.devicePixelRatio || 1;
     const W = Math.round(size.w * dpr);
     const H = Math.round(size.h * dpr);
-    if (canvas.width !== W || canvas.height !== H) {
+    const th = plotTheme();
+    const labels = [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes.current];
+    const boxes = labels.join(";");
+    const last = painted.current;
+    const sized = canvas.width === W && canvas.height === H;
+    if (sized && last && last.scene === scene && last.vp === vp && last.th === th && last.boxes === boxes) return;
+    if (!sized) {
       canvas.width = W;
       canvas.height = H;
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const th = plotTheme();
+    painted.current = { scene, vp, th, boxes };
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const avoid = {
-      labels: [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes.current],
+      labels,
       field: nameBoxes.current.map(([l, t, r, b]): Box => [l - 3, t - 3, r + 3, b + 3]),
     };
     drawScene(ctx, size.w, size.h, vp, scene && { ...scene, avoid }, th);
@@ -952,9 +962,9 @@ function snapNearZero(v: number, span: number): number {
 
 function eigenvalueTex(ev: NumberedEigenvalue, sym: string): string {
   const label = ev.numbers.length ? `${sym}_{${ev.numbers.join(",")}}` : sym;
-  const im = `${fmtTex(ev.im, 3)}i`;
+  const im = `${fmtTex(ev.im, 3, COMPUTED_ZERO)}i`;
   const value =
-    ev.im === 0 ? fmtTex(ev.re, 3) : Math.abs(ev.re) < 5e-4 ? `\\pm ${im}` : `${fmtTex(ev.re, 3)} \\pm ${im}`;
+    ev.im === 0 ? fmtTex(ev.re, 3, COMPUTED_ZERO) : Math.abs(ev.re) < 5e-4 ? `\\pm ${im}` : `${fmtTex(ev.re, 3, COMPUTED_ZERO)} \\pm ${im}`;
   return `${label} = ${value}${ev.double ? "\\ (\\text{double})" : ""}`;
 }
 
@@ -969,7 +979,7 @@ function FixedPointTooltip(props: {
 }) {
   const { fp, states, kind, pos, glyphScale } = props;
   const names = states.map((s) => s.latex).join(", ");
-  const values = fp.x.map((v) => fmtTex(v, 3)).join(", ");
+  const values = fp.x.map((v) => fmtTex(v, 3, COMPUTED_ZERO)).join(", ");
   const point = states.length === 1 ? `${names}^* = ${values}` : `(${names}) = (${values})`;
   const sym = kind === "map" ? "\\mu" : "\\lambda";
   const glyph = fixedPointGlyph(fp.classification, fp.stable);
