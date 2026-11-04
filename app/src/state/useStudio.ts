@@ -104,6 +104,7 @@ export function useStudio() {
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
+  const [shapeId, setShapeId] = useState(0);
 
   const state: StudioState = {
     format,
@@ -126,6 +127,7 @@ export function useStudio() {
     sourceTemplateId,
     computeError,
     plotAspect,
+    shapeId,
   };
   const latest = useRef(state);
   latest.current = state;
@@ -204,6 +206,7 @@ export function useStudio() {
       );
 
       if (template) {
+        setShapeId((n) => n + 1);
         const v = templateView(template, res);
         setViewState(v);
         setHomeView(v);
@@ -231,6 +234,7 @@ export function useStudio() {
           old.kind === res.kind &&
           old.states.map((s) => s.name).join() === res.states.map((s) => s.name).join();
         if (!sameShape) {
+          setShapeId((n) => n + 1);
           const oldStates = old?.states ?? [];
           const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states) : null;
           const v = kept ?? defaultView(res);

@@ -165,7 +165,10 @@ export interface TrajectoryMeta {
 
 export interface PortraitMeta {
   systemId: number;
+  /** The {@link StudioSnapshot.shapeId} it was asked for under. */
+  shapeId: number;
   trajectories: TrajectoryMeta[];
+  /** The view it was asked for, with the ranges as shown (equal scales on a flow's phase plane). */
   view: View;
   /** Fixed points were asked for, so an empty list means there are none (not that the layer is hidden). */
   fixedPoints: boolean;
@@ -178,17 +181,34 @@ export interface PortraitState {
 }
 
 /**
+ * The portrait can be drawn for `sys`: it is the portrait of `sys`, or of an
+ * earlier compile with the same `shapeId` (same kind and states, not a
+ * template load), which stays up until the portrait of `sys` arrives. Every
+ * compile gets a new id, so keyed on the id alone the plot, the fixed-point
+ * list and the legend would empty for a round trip after every edit, and the
+ * legend's change of height would resize the plot and ask for two more
+ * portraits.
+ */
+export function portraitFits(
+  sys: CompileResponse | null,
+  shapeId: number,
+  portrait: PortraitState | null,
+): portrait is PortraitState {
+  return !!sys && !!portrait && (portrait.meta.systemId === sys.systemId || portrait.meta.shapeId === shapeId);
+}
+
+/**
  * The fixed points the portrait of `sys` found, or null when it searched
- * none, so an empty list means "none in view": the portrait is of another
- * system or was asked for with the layer off, or the field changes with
- * time (the core only searches autonomous systems).
+ * none, so an empty list means "none in view": the portrait does not fit
+ * `sys` (see {@link portraitFits}) or was asked for with the layer off, or
+ * the field changes with time (the core only searches autonomous systems).
  */
 export function searchedFixedPoints(
   sys: CompileResponse | null,
   portrait: PortraitState | null,
+  shapeId: number,
 ): FixedPointOut[] | null {
-  if (!sys || !sys.autonomous || !portrait || portrait.meta.systemId !== sys.systemId || !portrait.meta.fixedPoints)
-    return null;
+  if (!sys || !sys.autonomous || !portraitFits(sys, shapeId, portrait) || !portrait.meta.fixedPoints) return null;
   return portrait.res.fixedPoints;
 }
 
@@ -516,6 +536,11 @@ export interface StudioSnapshot {
   layers: Layers;
   solver: SolverSettings;
   plotAspect: number | null;
+  /**
+   * Changes when a template is loaded or a compile changes the system's kind
+   * or states; recompiles that keep them share it (see {@link portraitFits}).
+   */
+  shapeId: number;
 }
 
 export function equalizeRanges(
@@ -602,7 +627,14 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       },
       samples: s.solver.samples > 0 ? s.solver.samples : autoSamples(maxSpan),
     },
-    meta: { systemId: sys.systemId, trajectories: metas, view: s.view, fixedPoints: s.layers.fixedPoints },
+    meta: {
+      systemId: sys.systemId,
+      shapeId: s.shapeId,
+      trajectories: metas,
+      // The visible spans, as the selection's match tolerance is a fraction of them.
+      view: { ...s.view, xRange: shown.xRange, yRange: shown.yRange },
+      fixedPoints: s.layers.fixedPoints,
+    },
   };
 }
 

@@ -324,3 +324,23 @@ fn a_maps_current_iterate_is_a_state_and_takes_no_value() {
         "a flow's x_n is a parameter of its own"
     );
 }
+
+#[test]
+fn a_text_word_that_starts_with_a_function_suggests_a_call_text_mode_can_read() {
+    for (src, want) in [
+        ("x' = sin_x", "did you mean sin(x)?"),
+        ("x' = -cosh_y*x", "did you mean cosh(y)?"),
+        ("x' = cost", "did you mean cos(t)?"),
+    ] {
+        let out = compile(src, InputFormat::Text);
+        assert!(out.system.is_some(), "{src}: {:?}", out.diagnostics);
+        let warned: Vec<_> = out.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert!(warned.iter().any(|m| m.contains(want)), "{src}: {warned:?}");
+        assert!(
+            !warned.iter().any(|m| m.contains("(_")),
+            "{src}: {warned:?}"
+        );
+    }
+    let error = error_message("x' = sin_x(t)", InputFormat::Text);
+    assert!(error.contains("did you mean sin(x)?"), "{error}");
+}

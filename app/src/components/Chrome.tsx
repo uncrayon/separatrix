@@ -219,7 +219,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const kind = sys?.kind;
   const states = sys?.states ?? [];
   const current = !!p && !!sys && p.meta.systemId === sys.systemId;
-  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p)?.length ?? null) : null;
+  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
 
   const solverGaveUpIcIds = p
     ? p.res.trajectories.flatMap((t, i) =>

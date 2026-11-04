@@ -579,10 +579,14 @@ fn const_eval(a: &Ast) -> Result<f64, ConstErr> {
 }
 
 /// The function a multi-letter name looks like, followed by a plausible
-/// argument (`cost` → `\cos t`), as `(function, rest)`.
+/// argument (`cost` → `\cos t`), as `(function, rest)`. A text-mode word
+/// joins its parts with `_`, which is not part of the argument: `sin_x`
+/// looks like `sin(x)`, not `sin(_x)`.
 fn function_lookalike<'n>(name: &'n str, table: &StateTable) -> Option<(&'static str, &'n str)> {
     FUNCTION_WORDS.iter().find_map(|&f| {
-        let rest = name.strip_prefix(f).filter(|r| !r.is_empty())?;
+        let rest = name.strip_prefix(f)?;
+        let rest = rest.strip_prefix('_').unwrap_or(rest);
+        let rest = Some(rest).filter(|r| !r.is_empty())?;
         let plausible = rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
         let word = rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
         (plausible && word).then_some((f, rest))

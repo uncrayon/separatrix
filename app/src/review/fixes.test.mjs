@@ -130,11 +130,103 @@ test("an index joins a state's own subscript instead of doubling it (x_{1}_0 is 
 test("fixed points count only when the core searched them: never for a field that changes with time", async () => {
   const { searchedFixedPoints } = await import("../state/model.ts");
   const fp = { x: [0, 0] };
-  const portrait = (systemId, fixedPoints) => ({ res: { fixedPoints: [fp] }, meta: { systemId, fixedPoints } });
+  const portrait = (systemId, fixedPoints, shapeId = 1) => ({
+    res: { fixedPoints: [fp] },
+    meta: { systemId, shapeId, fixedPoints },
+  });
   const sys = (autonomous) => ({ systemId: 3, autonomous });
-  assert.deepEqual(searchedFixedPoints(sys(true), portrait(3, true)), [fp]);
-  assert.equal(searchedFixedPoints(sys(true), portrait(3, false)), null, "asked for with the layer off");
-  assert.equal(searchedFixedPoints(sys(true), portrait(2, true)), null, "another system's portrait");
-  assert.equal(searchedFixedPoints(sys(false), { ...portrait(3, true), res: { fixedPoints: [] } }), null, "x' = x² − t");
-  assert.equal(searchedFixedPoints(null, portrait(3, true)), null);
+  assert.deepEqual(searchedFixedPoints(sys(true), portrait(3, true), 1), [fp]);
+  assert.equal(searchedFixedPoints(sys(true), portrait(3, false), 1), null, "asked for with the layer off");
+  assert.equal(searchedFixedPoints(sys(true), portrait(2, true, 0), 1), null, "a system of another shape");
+  assert.deepEqual(searchedFixedPoints(sys(true), portrait(2, true), 1), [fp], "a recompile keeping the states");
+  assert.equal(searchedFixedPoints(sys(false), { ...portrait(3, true), res: { fixedPoints: [] } }, 1), null, "x' = x² − t");
+  assert.equal(searchedFixedPoints(null, portrait(3, true), 1), null);
+});
+
+test("a recompile that keeps the kind and states keeps the last portrait up until its own arrives", async () => {
+  const { portraitFits, buildPortraitJob, DEFAULT_LAYERS, DEFAULT_SOLVER } = await import("../state/model.ts");
+  const compiled = (systemId) => ({
+    ok: true,
+    systemId,
+    kind: "ode",
+    hamiltonian: false,
+    autonomous: true,
+    states: [
+      { name: "x", latex: "x", derived: false },
+      { name: "y", latex: "y", derived: false },
+    ],
+    params: [],
+    equationsLatex: [],
+    diagnostics: [],
+  });
+  const snapshot = (systemId, shapeId) => ({
+    compiled: compiled(systemId),
+    params: [],
+    view: { xAxis: { kind: "state", index: 0 }, yAxis: { kind: "state", index: 1 }, xRange: [-5, 5], yRange: [-5, 5] },
+    baseState: [0, 0],
+    fieldTime: 0,
+    ics: [],
+    layers: DEFAULT_LAYERS,
+    solver: DEFAULT_SOLVER,
+    plotAspect: 2,
+    shapeId,
+  });
+  const portraitOf = (s) => ({ res: { fixedPoints: [] }, meta: buildPortraitJob(s).meta, roundTripMs: 1 });
+  const p = portraitOf(snapshot(7, 4));
+  assert.ok(portraitFits(compiled(7), 4, p), "its own system");
+  assert.ok(portraitFits(compiled(8), 4, p), "an edit that kept the states: no blank plot while it recomputes");
+  assert.ok(!portraitFits(compiled(8), 5, p), "a template load or new states: another stride or another system");
+  assert.ok(!portraitFits(null, 4, p) && !portraitFits(compiled(7), 4, null));
+  // The selection's match tolerance is a fraction of the spans shown (equal scales widen x here), not the stored ones.
+  assert.deepEqual(p.meta.view.xRange, [-10, 10]);
+  assert.deepEqual(p.meta.view.yRange, [-5, 5]);
+});
+
+/** viewport.ts imports "../state/model" as the bundler resolves it; Node needs the ".ts". */
+async function importViewport() {
+  const { register } = await import("node:module");
+  const hook = `export async function resolve(s, c, next) {
+    try { return await next(s, c); } catch (e) {
+      if (/^\\.\\.?\\//.test(s) && !/\\.[a-z]+$/.test(s)) return next(s + ".ts", c);
+      throw e;
+    }
+  }`;
+  register("data:text/javascript," + encodeURIComponent(hook));
+  return import("../canvas/viewport.ts");
+}
+
+test("tick labels show the digit neighbouring ticks differ in, at any size and down to the zoom floor", async () => {
+  const { niceTicks, tickLabel } = await importViewport();
+  const labels = (lo, hi) => {
+    const { ticks, step } = niceTicks(lo, hi, 8);
+    return ticks.map((v) => tickLabel(v, step));
+  };
+  for (const [lo, hi] of [
+    [1e7, 1.05e7],
+    [896000, 1020000],
+    [100000, 100010],
+    [2e-5, 2.4e-5],
+    [1 - 5e-9, 1 + 5e-9],
+    [1 - 5e-13, 1 + 5e-13],
+  ]) {
+    const l = labels(lo, hi);
+    assert.ok(l.length >= 2, `[${lo}, ${hi}]: ${l}`);
+    assert.equal(new Set(l).size, l.length, `[${lo}, ${hi}]: every tick reads the same: ${l}`);
+  }
+  assert.deepEqual(labels(1e7, 1.05e7).slice(0, 2), ["1.000e7", "1.005e7"]);
+  assert.deepEqual(labels(0, 2e5).slice(-2), ["1.8e5", "2.0e5"], "unchanged where one decimal was enough");
+  assert.deepEqual(labels(-1, 1), ["−1", "−0.8", "−0.6", "−0.4", "−0.2", "0", "0.2", "0.4", "0.6", "0.8", "1"]);
+});
+
+test("zoom to fit keeps states that are large but not a blow-up", async () => {
+  const { fitRanges } = await importViewport();
+  // A population of 1e7 growing to 6e7 (time on x): the start point sets the scale.
+  const ts = [0, 5, 10];
+  const xs = [1e7, 3e7, 6e7];
+  const fit = fitRanges(ts, xs, 0, [Infinity, 1e7]);
+  assert.ok(fit.yRange[0] <= 1e7 && fit.yRange[1] >= 6e7, JSON.stringify(fit));
+  // Started near 1, a run that blows up to 1e12 is still left out.
+  const blow = fitRanges([0, 1, 2], [1, 2, 1e12], 0, [Infinity, 1]);
+  assert.ok(blow.yRange[1] < 10, JSON.stringify(blow));
+  assert.ok(fitRanges([0, 1, 2], [1, 2, 1e12]).yRange[1] < 10, "the default scale is 1");
 });

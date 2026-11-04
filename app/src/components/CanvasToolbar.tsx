@@ -4,7 +4,7 @@ import { fitRanges } from "../canvas/viewport";
 import { Tex } from "../math/Tex";
 import { axisLabelLatex, axisLatex, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { hasNullclineLayer } from "../state/model";
+import { hasNullclineLayer, portraitFits } from "../state/model";
 import {
   IconCheck,
   IconChevronDown,
@@ -227,7 +227,7 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
   const xs: number[] = [];
   const ys: number[] = [];
   const p = state.portrait;
-  const valid = !!p && p.meta.systemId === sys.systemId;
+  const valid = portraitFits(sys, state.shapeId, p);
   for (const ic of state.ics) {
     if (ic.x0.length !== dim) continue;
     const t0 = sys.kind === "map" ? 0 : ic.t0;
@@ -240,7 +240,11 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
       ys.push(fp.x[yAxis.index]);
     }
   }
-  const core = fitRanges(xs, ys);
+  // The start points and fixed points set each axis's scale for telling a blow-up from large states.
+  const size = (vs: number[], axis: AxisRef) =>
+    axis.kind === "time" ? Infinity : vs.reduce((m, v) => (Number.isFinite(v) ? Math.max(m, Math.abs(v)) : m), 0);
+  const scale: [number, number] = [size(xs, xAxis), size(ys, yAxis)];
+  const core = fitRanges(xs, ys, 0, scale);
   const window = (r: [number, number] | undefined, axis: AxisRef): [number, number] => {
     if (!r || axis.kind === "time") return [-Infinity, Infinity];
     const span = Math.max(r[1] - r[0], 1);
@@ -260,7 +264,7 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
       }
     }
   }
-  return fitRanges(xs, ys, 0.1);
+  return fitRanges(xs, ys, 0.1, scale);
 }
 
 function menuItems(menu: HTMLElement | null): HTMLButtonElement[] {

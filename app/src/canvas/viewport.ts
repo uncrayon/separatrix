@@ -70,10 +70,18 @@ export function niceTicks(lo: number, hi: number, target: number): { ticks: numb
   return { ticks, step };
 }
 
+/** Most digits a tick label shows after the point: enough down to the narrowest span {@link zoomRange} allows. */
+const MAX_LABEL_DECIMALS = 20;
+
 export function tickLabel(v: number, step: number): string {
-  const decimals = Math.max(0, Math.min(8, -Math.floor(Math.log10(step) + 1e-9)));
+  // Neighbouring ticks differ in the step's digit, so a label shows down to it (1.005e7, not 1.0e7 for every tick).
+  const stepExp = Math.floor(Math.log10(step) + 1e-9);
   const abs = Math.abs(v);
-  if (abs >= 1e5 || (abs > 0 && abs < 1e-4)) return v.toExponential(1).replace("+", "");
+  if (abs >= 1e5 || (abs > 0 && abs < 1e-4)) {
+    const digits = Math.max(1, Math.min(15, Math.floor(Math.log10(abs) + 1e-9) - stepExp));
+    return v.toExponential(digits).replace("+", "");
+  }
+  const decimals = Math.max(0, Math.min(MAX_LABEL_DECIMALS, -stepExp));
   const text = v.toFixed(decimals);
   return (text.includes(".") ? text.replace(/\.?0+$/, "") : text).replace("-", "−");
 }
@@ -99,27 +107,38 @@ export function zoomRange(range: [number, number], anchor: number, factor: numbe
   return span > 0 && !tooNarrow && !tooWide ? next : null;
 }
 
-/** Points beyond this size belong to a blow-up and are left out of a fit. */
+/**
+ * Points this many times farther out than the size of the axis's start points
+ * and fixed points (at least 1) belong to a blow-up and are left out of a fit.
+ */
 const BLOWUP_CUTOFF = 1e6;
 
+/**
+ * Ranges that fit the points `(xs[i], ys[i])`, padded. `scale` is the size of
+ * the start points and fixed points on each axis (Infinity for a time axis,
+ * which has no blow-ups), so a system whose states are large (a population
+ * of 1e7) is fitted, not taken for a blow-up.
+ */
 export function fitRanges(
   xs: ArrayLike<number>,
   ys: ArrayLike<number>,
   padTop = 0,
+  scale: [number, number] = [1, 1],
 ): { xRange: [number, number]; yRange: [number, number] } | null {
-  const bounds = (vs: ArrayLike<number>): [number, number] | null => {
+  const bounds = (vs: ArrayLike<number>, size: number): [number, number] | null => {
+    const cutoff = BLOWUP_CUTOFF * Math.max(1, size);
     let lo = Infinity;
     let hi = -Infinity;
     for (let i = 0; i < vs.length; i++) {
       const v = vs[i];
-      if (!Number.isFinite(v) || Math.abs(v) > BLOWUP_CUTOFF) continue;
+      if (!Number.isFinite(v) || Math.abs(v) > cutoff) continue;
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
     return lo <= hi ? [lo, hi] : null;
   };
-  const bx = bounds(xs);
-  const by = bounds(ys);
+  const bx = bounds(xs, scale[0]);
+  const by = bounds(ys, scale[1]);
   if (!bx || !by) return null;
   const grow = ([lo, hi]: [number, number], below: number, above: number): [number, number] => {
     if (!(hi > lo)) {

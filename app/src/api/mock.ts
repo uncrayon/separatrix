@@ -272,7 +272,7 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   }
 
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
-  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples));
+  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps));
 
   return {
     requestId: req.requestId,
@@ -284,7 +284,10 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   };
 }
 
-function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: number): TrajectoryOut {
+/** MAX_ITERATES in app/src-tauri/src/service.rs. */
+const MAX_ITERATES = 1_000_000;
+
+function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: number, maxSteps: number): TrajectoryOut {
   const dim = sys.states.length;
   let x = tr.x0.slice(0, dim);
   const ts: number[] = [];
@@ -296,7 +299,7 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
   const tooBig = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
 
   if (sys.kind === "map") {
-    const n = Math.max(0, Math.round(tr.t1));
+    const n = Math.min(MAX_ITERATES, Math.max(0, Math.round(tr.t1)));
     push(0, x);
     for (let k = 0; k < n; k++) {
       x = sys.f(k, x, p);
@@ -309,8 +312,10 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
 
   const span = tr.t1 - tr.t0;
   const hMax = 0.01;
-  const steps = Math.max(1, Math.ceil(Math.abs(span) / hMax));
-  const h = span / steps;
+  // Steps of at most hMax cover the span in `needed`; like the core, a run stops at the step limit.
+  const needed = Math.max(1, Math.ceil(Math.abs(span) / hMax));
+  const steps = Math.min(needed, Math.max(1, maxSteps));
+  const h = span / needed;
   const every = Math.max(1, Math.floor(steps / Math.max(2, samples)));
   let t = tr.t0;
   push(t, x);
@@ -338,7 +343,8 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
     }
     if (k % every === 0 || k === steps) push(t, x);
   }
-  return { t: ts, x: xs, status: "completed", stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
+  const status = steps < needed ? "maxSteps" : "completed";
+  return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
 }
 
 function findFixedPoints(

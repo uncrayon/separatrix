@@ -14,6 +14,7 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   DEFAULT_FIXED_STEP,
   PALETTE_SIZE,
+  portraitFits,
   searchedFixedPoints,
   selectFixedPoint,
   selectedFixedPointIndex,
@@ -335,6 +336,9 @@ const METHODS: (SelectOption<Method> & { about: string })[] = [
 
 const positive = (v: number) => (v > 0 ? null : "Must be positive");
 
+/** MAX_SAMPLES in app/src-tauri/src/service.rs: the core takes no more per trajectory. */
+const MAX_SAMPLES = 200_000;
+
 function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
@@ -440,7 +444,9 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
             size="sm"
             value={s.samples}
             onCommit={(v) => actions.setSolver({ samples: Math.round(v) })}
-            validate={(v) => (v >= 0 ? null : "Must be 0 (auto) or more")}
+            validate={(v) =>
+              v >= 0 && v <= MAX_SAMPLES ? null : `Must be from 0 (auto) to ${MAX_SAMPLES.toLocaleString("en-US")}`
+            }
             digits={5}
             format={(v) => (v > 0 ? String(v) : "auto")}
             ariaLabel="Samples per trajectory (0 = automatic)"
@@ -566,7 +572,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const dim = sys.states.length;
   const p = state.portrait;
-  const found = searchedFixedPoints(sys, p);
+  const found = searchedFixedPoints(sys, p, state.shapeId);
   const fps = found ?? [];
   const sym = sys.kind === "map" ? "μ" : "λ";
   const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
@@ -650,7 +656,7 @@ function runsOf(state: StudioState, ic: InitialCondition): Run[] {
   const sys = state.compiled;
   const p = state.portrait;
   const runs: Run[] = [];
-  if (!sys || !p || p.meta.systemId !== sys.systemId) return runs;
+  if (!portraitFits(sys, state.shapeId, p)) return runs;
   p.meta.trajectories.forEach((m, i) => {
     const out = p.res.trajectories[i];
     if (m.icId === ic.id && out) runs.push({ out, direction: m.direction });

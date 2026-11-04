@@ -5,7 +5,7 @@ import { axisLabelLatex, axisLatex, classificationTitle, COMPUTED_ZERO, fmtTex, 
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
+import { portraitFits, selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
 import { NumberField, Slider } from "../components/controls";
 import { numberedEigenvalues, useShowEigenvectors, type NumberedEigenvalue } from "./eigen";
 import {
@@ -144,7 +144,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     if (!compiled || !compiled.ok) return null;
     const p = state.portrait;
     const dim = compiled.states.length;
-    const valid = !!p && p.meta.systemId === compiled.systemId;
+    const valid = portraitFits(compiled, state.shapeId, p);
     const sameAxes =
       valid && sameAxis(p.meta.view.xAxis, view.xAxis) && sameAxis(p.meta.view.yAxis, view.yAxis);
     const colorOf = new Map(state.ics.map((ic) => [ic.id, ic.color]));
@@ -175,15 +175,18 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       hoverIc: hover.ic,
       hoverFp: hover.fp,
       eigenvectors: showEigen,
-      stale: !state.compileOk,
+      // An earlier compile's portrait, kept up because this one's could not be computed, is faded too.
+      stale: !state.compileOk || (valid && p.meta.systemId !== compiled.systemId && !!state.computeError),
     };
   }, [
     compiled,
+    state.shapeId,
     state.portrait,
     state.ics,
     state.layers,
     state.selection,
     state.compileOk,
+    state.computeError,
     view.xAxis,
     view.yAxis,
     hover,
