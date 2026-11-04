@@ -50,6 +50,10 @@ pub(crate) fn lu_solve(a: &[f64], b: &[f64]) -> Option<Vec<f64>> {
 /// 1x1 and 2x2 use closed forms (exact and cheap); larger matrices use the
 /// real Schur decomposition from `nalgebra`. Complex pairs are returned with
 /// the positive imaginary part first. The order is otherwise unspecified.
+///
+/// The result is empty, rather than a wait without end, if the Schur QR
+/// iteration does not converge, even when retried on rotated copies of the
+/// matrix.
 pub fn eigenvalues(n: usize, a: &[f64]) -> Vec<(f64, f64)> {
     assert_eq!(a.len(), n * n, "matrix must be n x n");
     match n {
@@ -61,12 +65,9 @@ pub fn eigenvalues(n: usize, a: &[f64]) -> Vec<(f64, f64)> {
             eig2(tau, delta)
         }
         _ => {
-            let m = nalgebra::DMatrix::from_row_slice(n, n, a);
-            let mut ev: Vec<(f64, f64)> = m
-                .complex_eigenvalues()
-                .iter()
-                .map(|z| (z.re, z.im))
-                .collect();
+            let Some(mut ev) = schur_eigenvalues(n, a) else {
+                return Vec::new();
+            };
             for k in 0..ev.len().saturating_sub(1) {
                 if ev[k].1 < 0.0 && ev[k + 1].1 > 0.0 && ev[k].0 == ev[k + 1].0 {
                     ev.swap(k, k + 1);
@@ -75,6 +76,58 @@ pub fn eigenvalues(n: usize, a: &[f64]) -> Vec<(f64, f64)> {
             ev
         }
     }
+}
+
+/// QR sweeps allowed per attempt at the Schur form, as in LAPACK's `dhseqr`.
+fn max_schur_sweeps(n: usize) -> usize {
+    30 * n.max(10)
+}
+
+/// Orthogonal similarity transforms tried, the identity first.
+const SCHUR_ATTEMPTS: usize = 4;
+
+/// Eigenvalues from the real Schur form, or `None` if no attempt converges.
+///
+/// `nalgebra`'s implicit double-shift QR has no iteration limit by default
+/// and no exceptional shifts, so on some matrices it cycles for ever (the
+/// Jacobian of `x' = 2y, y' = -2x + 2y + 2z, z' = -2y`). Each attempt is
+/// bounded, and a stalled one is retried on `Qᵀ A Q` for a fixed orthogonal
+/// `Q`: the same eigenvalues, from another starting point of the iteration.
+fn schur_eigenvalues(n: usize, a: &[f64]) -> Option<Vec<(f64, f64)>> {
+    let m = nalgebra::DMatrix::from_row_slice(n, n, a);
+    (0..SCHUR_ATTEMPTS).find_map(|k| {
+        let mk = if k == 0 {
+            m.clone()
+        } else {
+            let q = givens_product(n, k);
+            q.transpose() * &m * &q
+        };
+        let schur = nalgebra::linalg::Schur::try_new(mk, f64::EPSILON, max_schur_sweeps(n))?;
+        Some(
+            schur
+                .complex_eigenvalues()
+                .iter()
+                .map(|z| (z.re, z.im))
+                .collect(),
+        )
+    })
+}
+
+/// A fixed orthogonal matrix: Givens rotations of adjacent coordinates by
+/// angles that depend on `attempt`, so each retry starts somewhere else.
+fn givens_product(n: usize, attempt: usize) -> nalgebra::DMatrix<f64> {
+    const GOLDEN_FRACTION: f64 = 0.618_033_988_749_895;
+    let mut q = nalgebra::DMatrix::<f64>::identity(n, n);
+    for i in 0..n - 1 {
+        let angle = 0.5 + GOLDEN_FRACTION * (attempt * n + i + 1) as f64;
+        let (s, c) = angle.sin_cos();
+        for r in 0..n {
+            let (qi, qj) = (q[(r, i)], q[(r, i + 1)]);
+            q[(r, i)] = c * qi + s * qj;
+            q[(r, i + 1)] = c * qj - s * qi;
+        }
+    }
+    q
 }
 
 /// Real roots of `λ² - τλ + δ = 0` (discriminant `disc >= 0`) without
@@ -132,6 +185,24 @@ mod tests {
         assert_eq!(ev, vec![(0.0, 2.0), (0.0, -2.0)]);
         let ev = eigenvalues(2, &[1e8, 0.0, 0.0, 1e-8]);
         assert!((ev[1].0 - 1e-8).abs() < 1e-22);
+    }
+
+    /// `nalgebra`'s QR cycles for ever on this Jacobian (of `x' = 2y,
+    /// y' = -2x + 2y + 2z, z' = -2y`); its eigenvalues are 0 and 1 ± i√7.
+    #[test]
+    fn eigenvalues_when_the_qr_iteration_stalls() {
+        let a = [0.0, 2.0, 0.0, -2.0, 2.0, 2.0, 0.0, -2.0, 0.0];
+        let mut ev = eigenvalues(3, &a);
+        ev.sort_by(|p, q| p.0.total_cmp(&q.0).then(q.1.total_cmp(&p.1)));
+        let r7 = 7f64.sqrt();
+        let expect = [(0.0, 0.0), (1.0, r7), (1.0, -r7)];
+        assert_eq!(ev.len(), 3, "{ev:?}");
+        for (u, v) in ev.iter().zip(expect) {
+            assert!(
+                (u.0 - v.0).abs() < 1e-12 && (u.1 - v.1).abs() < 1e-12,
+                "{ev:?}"
+            );
+        }
     }
 
     #[test]

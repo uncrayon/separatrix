@@ -164,9 +164,9 @@ pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification 
 /// nodes.
 ///
 /// If `jac` has a non-finite entry (an infinite slope, as for `x' = ∛x` at
-/// 0), or its eigenvalues overflow, there is no usable linearisation: the
-/// result is `(vec![], NonHyperbolic)`, so that no NaN or infinity reaches
-/// the UI (JSON would turn it into `null`).
+/// 0), or its eigenvalues overflow or cannot be computed, there is no usable
+/// linearisation: the result is `(vec![], NonHyperbolic)`, so that no NaN or
+/// infinity reaches the UI (JSON would turn it into `null`).
 pub fn classify_jacobian(
     kind: SystemKind,
     n: usize,
@@ -177,7 +177,7 @@ pub fn classify_jacobian(
         return no_linearisation;
     }
     let ev = linalg::eigenvalues(n, jac);
-    if !ev.iter().all(|(re, im)| re.is_finite() && im.is_finite()) {
+    if ev.len() != n || !ev.iter().all(|(re, im)| re.is_finite() && im.is_finite()) {
         return no_linearisation;
     }
     let class = if kind == SystemKind::Ode && n == 2 {

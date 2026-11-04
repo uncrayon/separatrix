@@ -7,6 +7,8 @@ import assert from "node:assert/strict";
 import {
   PALETTE_SIZE,
   UNTITLED_SYSTEM,
+  adaptBaseState,
+  adaptView,
   leastUsedPaletteIndex,
   resolveParam,
   sameEquations,
@@ -137,4 +139,31 @@ test("parameters: a slider the user moved keeps its value when the default line 
 
 test("parameters: a slider still at the old default follows the edited default line", () => {
   assert.equal(resolveParam(info("a", 3), param("a", 2), 2, undefined, undefined).value, 3);
+});
+
+const states = (...names) => names.map((name) => ({ name, latex: name, derived: false }));
+const axis = (index) => ({ kind: "state", index });
+const xz = { xAxis: axis(0), yAxis: axis(2), xRange: [-25, 25], yRange: [-2, 54] };
+
+test("view: an equation added in the middle leaves each axis on its own variable", () => {
+  const v = adaptView(xz, states("x", "y", "z"), states("x", "w", "y", "z"));
+  assert.deepEqual(v, { ...xz, xAxis: axis(0), yAxis: axis(3) });
+});
+
+test("view: removing another equation keeps the axes and their ranges", () => {
+  assert.deepEqual(adaptView(xz, states("x", "y", "z"), states("x", "z")), { ...xz, yAxis: axis(1) });
+});
+
+test("view: a renamed variable keeps its axis; one that was removed gives up the view", () => {
+  assert.deepEqual(adaptView(xz, states("x", "y", "z"), states("u", "y", "z")), xz);
+  assert.equal(adaptView(xz, states("x", "y", "z"), states("x", "y")), null);
+  const time = { xAxis: { kind: "time" }, yAxis: axis(0), xRange: [0, 10], yRange: [-3, 3] };
+  assert.deepEqual(adaptView(time, states("x"), states("w", "x")), { ...time, yAxis: axis(1) });
+});
+
+test("slice: values follow their variables; a new one starts at 0, a renamed one keeps its value", () => {
+  assert.deepEqual(adaptBaseState([1, 5, 2], states("x", "y", "z"), states("x", "w", "y", "z")), [1, 0, 5, 2]);
+  assert.deepEqual(adaptBaseState([1, 5, 2], states("x", "y", "z"), states("x", "z")), [1, 2]);
+  assert.deepEqual(adaptBaseState([1, 5], states("x", "y"), states("u", "y")), [1, 5]);
+  assert.deepEqual(adaptBaseState([], [], states("x", "y")), [0, 0]);
 });

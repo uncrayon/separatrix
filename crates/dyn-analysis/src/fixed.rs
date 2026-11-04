@@ -522,6 +522,36 @@ mod tests {
         }
     }
 
+    /// `x' = 2y, y' = -2x + 2y + 2z, z' = -2y`: a line of fixed points whose
+    /// Jacobian makes the unbounded Schur QR cycle for ever. The search must
+    /// finish, with the eigenvalues 0 and 1 ± i√7 at every point.
+    #[test]
+    fn a_jacobian_that_stalls_the_qr_iteration_still_finishes() {
+        let a = [0.0, 2.0, 0.0, -2.0, 2.0, 2.0, 0.0, -2.0, 0.0];
+        let f = FnField::new(3, 0, SystemKind::Ode, move |_t, x, _p, o| {
+            for (i, oi) in o.iter_mut().enumerate() {
+                *oi = (0..3).map(|j| a[i * 3 + j] * x[j]).sum();
+            }
+        })
+        .with_jacobian(move |_t, _x, _p, j| j.copy_from_slice(&a));
+        let fps = fixed_points_with_budget(&f, &[], &[(-1.0, 1.0); 3], 5, 1000);
+        assert!(!fps.is_empty());
+        for fp in &fps {
+            assert!(
+                fp.x[1].abs() < 1e-12 && (fp.x[0] - fp.x[2]).abs() < 1e-12,
+                "{fp:?}"
+            );
+            assert_eq!(fp.eigenvalues.len(), 3, "{fp:?}");
+            let zero = fp
+                .eigenvalues
+                .iter()
+                .filter(|e| e.0.hypot(e.1) < 1e-9)
+                .count();
+            assert_eq!(zero, 1, "{fp:?}");
+            assert_eq!(fp.classification, NonHyperbolic);
+        }
+    }
+
     fn rabbits_sheep() -> FnField {
         FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[0] * (3.0 - x[0] - 2.0 * x[1]);

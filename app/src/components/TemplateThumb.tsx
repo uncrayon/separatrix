@@ -23,20 +23,25 @@ const cache = new Map<string, Promise<Thumb | null>>();
 const compiled = new Map<string, Promise<CompileResponse>>();
 let nextRequestId = 1_000_000_000;
 
-/** The template compiled once, shared by its thumbnail and its gallery tags. */
+/** The template compiled once, shared by its thumbnail and its gallery tags. A failed call is not kept, so the next one tries again. */
 export function compileTemplate(t: Template): Promise<CompileResponse> {
   let p = compiled.get(t.id);
   if (!p) {
-    p = compileSystem({ source: templateSource(t), format: "latex" });
-    compiled.set(t.id, p);
+    const call = compileSystem({ source: templateSource(t), format: "latex" });
+    call.catch(() => {
+      if (compiled.get(t.id) === call) compiled.delete(t.id);
+    });
+    compiled.set(t.id, call);
+    p = call;
   }
   return p;
 }
 
+/** The thumbnail, computed once; null when the template does not compile. A failed computation is not kept. */
 function computeThumb(t: Template): Promise<Thumb | null> {
   let p = cache.get(t.id);
   if (!p) {
-    p = (async () => {
+    const thumb: Promise<Thumb | null> = (async () => {
       const sys = await compileTemplate(t);
       if (!sys.ok || sys.systemId === undefined) return null;
       const kind = sys.kind ?? "ode";
@@ -73,8 +78,12 @@ function computeThumb(t: Template): Promise<Thumb | null> {
         samples: autoSamples(maxSpan),
       });
       return { kind, dim, view, res, icOf };
-    })().catch(() => null);
-    cache.set(t.id, p);
+    })().catch(() => {
+      if (cache.get(t.id) === thumb) cache.delete(t.id);
+      return null;
+    });
+    cache.set(t.id, thumb);
+    p = thumb;
   }
   return p;
 }

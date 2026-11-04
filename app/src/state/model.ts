@@ -347,10 +347,6 @@ export function templateView(t: Template, sys: CompileResponse): View {
   return { xAxis, yAxis, xRange: [...t.view.xRange], yRange: [...t.view.yRange] };
 }
 
-export function axisValid(a: AxisRef, dim: number): boolean {
-  return a.kind === "time" || a.index < dim;
-}
-
 export function defaultParamRange(v: number): [number, number] {
   if (v === 0) return [-1, 1];
   const span = niceCeil(Math.abs(v) * 2);
@@ -407,6 +403,48 @@ export function adaptInitialConditions(
       return k >= 0 ? (ic.x0[k] ?? 0) : 0;
     }),
   }));
+}
+
+/** Slot `i` of `newStates` holds a renamed variable: a new name where the old name is gone. */
+function renamedSlot(i: number, oldStates: StateInfo[], newStates: StateInfo[]): boolean {
+  const before = oldStates[i]?.name;
+  const after = newStates[i]?.name;
+  return (
+    before !== undefined &&
+    after !== undefined &&
+    !newStates.some((s) => s.name === before) &&
+    !oldStates.some((s) => s.name === after)
+  );
+}
+
+/**
+ * The view after a recompile that changed the states. Each state axis
+ * follows its variable by name, so adding or removing another equation
+ * does not put a different variable on it; a renamed variable keeps its
+ * axis. Null when an axis lost its variable or both axes would show the
+ * same state.
+ */
+export function adaptView(view: View, oldStates: StateInfo[], newStates: StateInfo[]): View | null {
+  const follow = (a: AxisRef): AxisRef | null => {
+    if (a.kind === "time") return a;
+    const k = newStates.findIndex((s) => s.name === oldStates[a.index]?.name);
+    if (k >= 0) return stateAxis(k);
+    return renamedSlot(a.index, oldStates, newStates) ? a : null;
+  };
+  const xAxis = follow(view.xAxis);
+  const yAxis = follow(view.yAxis);
+  if (!xAxis || !yAxis) return null;
+  if (xAxis.kind === "state" && yAxis.kind === "state" && xAxis.index === yAxis.index) return null;
+  return { ...view, xAxis, yAxis };
+}
+
+/** Slice values after a recompile that changed the states: by name, as {@link adaptView}; a new variable starts at 0. */
+export function adaptBaseState(base: readonly number[], oldStates: StateInfo[], newStates: StateInfo[]): number[] {
+  return newStates.map((s, i) => {
+    const k = oldStates.findIndex((o) => o.name === s.name);
+    if (k >= 0) return base[k] ?? 0;
+    return renamedSlot(i, oldStates, newStates) ? (base[i] ?? 0) : 0;
+  });
 }
 
 export function visibleTimeRange(view: View): [number, number] | null {
@@ -576,6 +614,9 @@ export function stateExtent(
   let lo = Infinity;
   let hi = -Infinity;
   for (const tr of completedRuns(res)) {
+    // A response for a system with another number of states (the portrait
+    // of the previous compile) is laid out with another stride.
+    if (tr.x.length !== tr.t.length * dim) continue;
     for (let k = 0; k < tr.t.length; k++) {
       const v = tr.x[k * dim + index];
       if (Number.isFinite(v) && Math.abs(v) < OUTLIER_CAP) {

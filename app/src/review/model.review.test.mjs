@@ -60,3 +60,10 @@ test("stateExtent: a run the solver abandoned does not stretch the axis range", 
   assert.ok(ext, "extent exists");
   assert.ok(ext[0] >= -25, `x extent starts at ${ext[0]}, far outside the attractor`);
 });
+
+test("stateExtent: a portrait of a system with another number of states is not read with this one's stride", () => {
+  const res = response({ status: "completed", x: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] });
+  assert.deepEqual(stateExtent(res, 3, 1), [2, 8]);
+  assert.equal(stateExtent(res, 4, 3), null, "the new fourth state has no samples yet");
+  assert.equal(stateExtent(res, 2, 0), null);
+});

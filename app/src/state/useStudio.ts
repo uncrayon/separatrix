@@ -5,8 +5,9 @@ import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
+  adaptBaseState,
   adaptInitialConditions,
-  axisValid,
+  adaptView,
   buildPortraitJob,
   defaultView,
   leastUsedPaletteIndex,
@@ -229,13 +230,13 @@ export function useStudio() {
           old.kind === res.kind &&
           old.states.map((s) => s.name).join() === res.states.map((s) => s.name).join();
         if (!sameShape) {
-          const valid =
-            axisValid(cur.view.xAxis, dim) && axisValid(cur.view.yAxis, dim) && old?.kind === res.kind;
-          const v = valid ? cur.view : defaultView(res);
+          const oldStates = old?.states ?? [];
+          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states) : null;
+          const v = kept ?? defaultView(res);
           setViewState(v);
           setHomeView(v);
-          setBaseState((b) => Array.from({ length: dim }, (_, i) => b[i] ?? 0));
-          setIcs((list) => adaptInitialConditions(list, old?.states ?? [], res.states));
+          setBaseState((b) => adaptBaseState(b, oldStates, res.states));
+          setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
         }
       }
