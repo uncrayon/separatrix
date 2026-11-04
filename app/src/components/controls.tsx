@@ -166,13 +166,16 @@ interface NumberFieldProps {
   hint?: ReactNode;
 }
 
-const parseNumber = (s: string): number => {
-  const t = s.trim().replace(/−/g, "-").replace(/×/g, "*").toLowerCase();
+/** A number as typed: a typographic minus, `pi` or `π` are understood; NaN when it is not a number. */
+export const parseNumber = (s: string): number => {
+  const t = s.trim().replace(/−/g, "-").toLowerCase();
   if (t === "pi" || t === "π") return Math.PI;
   if (t === "-pi" || t === "-π") return -Math.PI;
-  if (t === "auto") return 0;
   return t === "" ? NaN : Number(t);
 };
+
+/** A number field's text, as {@link parseNumber}, where "auto" is 0 (the samples field shows 0 as "auto"). */
+const parseFieldNumber = (s: string): number => (s.trim().toLowerCase() === "auto" ? 0 : parseNumber(s));
 
 export function NumberField({
   value,
@@ -203,7 +206,7 @@ export function NumberField({
       setError(null);
       return true;
     }
-    const v = parseNumber(s);
+    const v = parseFieldNumber(s);
     const msg = !Number.isFinite(v) ? "Not a number" : (validate?.(v) ?? null);
     if (msg) {
       if (!quiet) setError(msg);
@@ -215,7 +218,7 @@ export function NumberField({
   };
   const nudge = (dir: 1 | -1, big: boolean) => {
     if (!step) return;
-    const cur = parseNumber(shown);
+    const cur = parseFieldNumber(shown);
     const base = Number.isFinite(cur) ? cur : value;
     const next = Number((base + dir * step * (big ? 10 : 1)).toPrecision(12));
     const msg = validate?.(next) ?? null;

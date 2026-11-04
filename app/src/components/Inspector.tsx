@@ -1,7 +1,15 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
 import { Tex } from "../math/Tex";
-import { classificationExplain, classificationTitle, COMPUTED_ZERO, fmt, latexToPlain, sameAxis } from "../math/format";
+import {
+  classificationExplain,
+  classificationTitle,
+  COMPUTED_ZERO,
+  fmt,
+  latexToPlain,
+  sameAxis,
+  withSubscript,
+} from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   DEFAULT_FIXED_STEP,
@@ -557,7 +565,9 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const dim = sys.states.length;
   const p = state.portrait;
-  const fps = p && p.meta.systemId === sys.systemId ? p.res.fixedPoints : [];
+  // A portrait asked for while the layer was off searched nothing: an empty list there means "not yet", not "none".
+  const searched = !!p && p.meta.systemId === sys.systemId && p.meta.fixedPoints;
+  const fps = searched ? p.res.fixedPoints : [];
   const sym = sys.kind === "map" ? "μ" : "λ";
   const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
   const coordsText = (fp: FixedPointOut) =>
@@ -570,6 +580,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
       sys.kind === "map"
         ? "Not searched: the map changes with n, so fixed points would move."
         : "Not searched: the field changes with t, so fixed points would move.";
+  else if (!searched) empty = "Searching…";
   else if (fps.length === 0) empty = "No fixed points in view.";
 
   return (
@@ -851,7 +862,7 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
           <FieldRow key={s.name} label={i === 0 ? "Start state" : ""}>
             <NumberField
               size="sm"
-              lead={<Tex latex={`${s.latex}_0`} />}
+              lead={<Tex latex={withSubscript(s.latex, "0")} />}
               value={ic.x0[i]}
               onCommit={(v) =>
                 actions.updateIc(

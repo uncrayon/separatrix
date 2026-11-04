@@ -78,8 +78,25 @@ export function tickLabel(v: number, step: number): string {
   return (text.includes(".") ? text.replace(/\.?0+$/, "") : text).replace("-", "−");
 }
 
-export function zoomRange(range: [number, number], anchor: number, factor: number): [number, number] {
-  return [anchor + (range[0] - anchor) * factor, anchor + (range[1] - anchor) * factor];
+/** Narrower than this fraction of its coordinates, a span has too few doubles across it to draw (it rounds to a point). */
+const MIN_REL_SPAN = 1e-12;
+/** Around 0 a span shrinks without that limit; below this a grid of cells across it underflows. */
+const MIN_SPAN = 1e-250;
+/** Wider than this, a span is far past any state the solvers follow (blow-up stops at 1e12) and heads for overflow. */
+const MAX_SPAN = 1e15;
+
+/**
+ * `range` zoomed by `factor` about `anchor`, or null when zooming in would
+ * leave it too narrow, or zooming out too wide, to show. A view already past
+ * either bound can always be zoomed back.
+ */
+export function zoomRange(range: [number, number], anchor: number, factor: number): [number, number] | null {
+  const next: [number, number] = [anchor + (range[0] - anchor) * factor, anchor + (range[1] - anchor) * factor];
+  const span = next[1] - next[0];
+  const size = Math.max(Math.abs(next[0]), Math.abs(next[1]));
+  const tooNarrow = factor < 1 && (span < MIN_REL_SPAN * size || span < MIN_SPAN);
+  const tooWide = factor > 1 && !(span <= MAX_SPAN);
+  return span > 0 && !tooNarrow && !tooWide ? next : null;
 }
 
 /** Points beyond this size belong to a blow-up and are left out of a fit. */

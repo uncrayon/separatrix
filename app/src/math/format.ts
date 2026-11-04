@@ -114,11 +114,26 @@ export function axisLabelLatex(
   kind: SystemKind | undefined,
 ): string {
   const base = axisLatex(axis, states, kind);
-  return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
+  return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
-export function stateLatexForKind(s: StateInfo, kind: SystemKind | undefined): string {
-  return kind === "map" ? `${s.latex}_n` : s.latex;
+/**
+ * `latex` with `index` added to its subscript: `x_{0}`, and `x_{1,0}` for
+ * `x_{1}` (as the core writes a map's `x_{1,n}`), not the double subscript
+ * `x_{1}_0`, which is drawn as x₁₀.
+ */
+export function withSubscript(latex: string, index: string): string {
+  if (latex.endsWith("}")) {
+    let depth = 0;
+    for (let i = latex.length - 1; i >= 0; i--) {
+      if (latex[i] === "}") depth++;
+      else if (latex[i] === "{" && --depth === 0) {
+        if (latex[i - 1] === "_") return `${latex.slice(0, -1)},${index}}`;
+        break;
+      }
+    }
+  }
+  return `${latex}_{${index}}`;
 }
 
 export function sameAxis(a: AxisRef, b: AxisRef): boolean {

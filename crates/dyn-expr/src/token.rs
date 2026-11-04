@@ -352,7 +352,8 @@ impl<'s> Lexer<'s> {
         }
         self.pos = i;
         match self.src[start..i].parse::<f64>() {
-            Ok(v) => self.push(Tok::Num(v), start),
+            Ok(v) if v.is_finite() => self.push(Tok::Num(v), start),
+            Ok(_) => self.bad("This number is too large to compute with", start),
             Err(_) => self.bad("A lone '.' isn't a number", start),
         }
     }
@@ -788,6 +789,16 @@ mod tests {
                 "num:2"
             ]
         );
+    }
+
+    #[test]
+    fn a_number_too_large_for_f64_is_an_error_not_infinity() {
+        let k = kinds("2e400*x", InputFormat::Text);
+        assert!(k[0].starts_with("bad:This number is too large"), "{k:?}");
+        let k = kinds(&"9".repeat(400), InputFormat::Latex);
+        assert!(k[0].starts_with("bad:This number is too large"), "{k:?}");
+        let t = tokenize("1e300", InputFormat::Text);
+        assert!(matches!(t[0].tok, Tok::Num(v) if v == 1e300), "{t:?}");
     }
 
     #[test]

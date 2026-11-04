@@ -234,3 +234,44 @@ fn parameters_in_order_of_first_appearance() {
     let sys = latex(r"\dot{x}=ay\\b\ddot{y}=-a y");
     assert_eq!(names(&sys).1, ["a", "b"]);
 }
+
+#[test]
+fn the_current_iterate_followed_by_t_reads_the_state_in_a_map() {
+    let out = compile(r"x_{n+1}=x_n\left(t\right)", InputFormat::Latex);
+    let sys = out.system.expect("compiles");
+    assert_eq!(names(&sys), (vec!["x".to_string()], vec!["t".to_string()]));
+    assert_close(&sys.eval_alloc(0.0, &[0.5], &[3.0]), &[1.5], 1e-15);
+    let w = &out.diagnostics[0].message;
+    assert!(w.contains("t is not the time in a map"), "{w}");
+}
+
+#[test]
+fn a_number_too_large_for_double_precision_is_an_error() {
+    for (src, f) in [
+        ("x' = 2e400*x", InputFormat::Text),
+        ("x' = -x/1e999", InputFormat::Text),
+    ] {
+        assert!(error_message(src, f).contains("too large"), "{src}");
+    }
+    let huge = format!(r"\dot{{x}}={}x", "9".repeat(400));
+    assert!(error_message(&huge, InputFormat::Latex).contains("too large"));
+}
+
+#[test]
+fn unbraced_one_digit_scripts_mean_what_mathlive_draws() {
+    let sys = latex(r"\dot{x}=-x^20.5");
+    assert_close(&sys.eval_alloc(0.0, &[3.0], &[]), &[-4.5], 1e-15);
+    let sys = latex(r"\dot{x}_1=-x_12");
+    assert_eq!(names(&sys).0, ["x_1"]);
+    assert_close(&sys.eval_alloc(0.0, &[3.0], &[]), &[-6.0], 1e-15);
+    let sys = latex(r"\dot{x}_{12}=-x_{12}");
+    assert_eq!(names(&sys).0, ["x_12"]);
+}
+
+#[test]
+fn a_greek_letter_inside_a_subscript_keeps_its_name_in_the_display() {
+    let sys = latex(r"\dot{x}=-k_{a\beta c}x");
+    assert_eq!(sys.info.params[0].name, "k_abetac");
+    assert_eq!(sys.info.params[0].latex, r"k_{a\beta c}");
+    assert_eq!(sys.info.equations_latex[0], r"\dot{x} = -k_{a\beta c} x");
+}

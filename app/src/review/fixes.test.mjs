@@ -110,3 +110,17 @@ test("user-entered small values are shown, computed noise snaps to zero", async 
   assert.equal(fmt(3e-17, 4, COMPUTED_ZERO), "0");
   assert.equal(fmt(0), "0");
 });
+
+test("an index joins a state's own subscript instead of doubling it (x_{1}_0 is drawn x₁₀)", async () => {
+  const { withSubscript, axisLabelLatex } = await import("../math/format.ts");
+  assert.equal(withSubscript("x", "0"), "x_{0}");
+  assert.equal(withSubscript("x_{1}", "0"), "x_{1,0}");
+  assert.equal(withSubscript("\\dot{x}_{1}", "0"), "\\dot{x}_{1,0}");
+  assert.equal(withSubscript("k_{\\mathrm{on}}", "n"), "k_{\\mathrm{on},n}");
+  assert.equal(withSubscript("\\dot{x}", "0"), "\\dot{x}_{0}");
+  assert.equal(withSubscript("\\mathrm{x1}", "0"), "\\mathrm{x1}_{0}");
+  const states = [{ name: "x_1", latex: "x_{1}", derived: false }];
+  const axis = { kind: "state", index: 0 };
+  assert.equal(axisLabelLatex(axis, { kind: "time" }, states, "map"), "x_{1,n}");
+  assert.equal(axisLabelLatex(axis, { kind: "time" }, states, "ode"), "x_{1}");
+});

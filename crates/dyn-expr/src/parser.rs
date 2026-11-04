@@ -524,10 +524,25 @@ impl<'s> Parser<'s> {
                 }
                 inner
             }
+            Some(Tok::Num(_)) if !self.text => match self.split_leading_digit() {
+                Some((v, span)) => vec![Token {
+                    tok: Tok::Num(v),
+                    span,
+                }],
+                None => vec![self.bump()],
+            },
             Some(Tok::Num(_) | Tok::Ident(_)) => vec![self.bump()],
             _ => return err("A subscript needs something after _, as in x_1", us.span),
         };
-        let full = (span.0, self.prev_end());
+        // A digit split off a number is not in `toks` before `pos`, so the
+        // subscript ends at whichever is later: it, or the last token read.
+        let full = (
+            span.0,
+            parts
+                .last()
+                .map_or(us.span.1, |t| t.span.1)
+                .max(self.prev_end()),
+        );
         if is_next_index(&parts) {
             return Ok(Ast::new(AstKind::Next(s), full));
         }
@@ -599,7 +614,7 @@ impl<'s> Parser<'s> {
                     )
                 }
             };
-            if latex.starts_with('\\') && l.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            if ends_with_control_word(&latex) && l.starts_with(|c: char| c.is_ascii_alphabetic()) {
                 latex.push(' ');
             }
             name.push_str(&n);
@@ -680,6 +695,28 @@ impl<'s> Parser<'s> {
         Ok(Ast::new(AstKind::Call(Func::Abs, vec![inner]), span))
     }
 
+    /// LaTeX takes one character as an unbraced argument or script, and
+    /// MathLive writes a one-digit script without braces, so `x_12` is
+    /// `x_1·2`, `x^23` is `x^2·3`, `x^20.5` is `x^2·0.5` and `\frac12` is
+    /// `1/2`, as they are drawn. When the number here is longer than one
+    /// digit, this takes its first digit, as `(value, span)`, and leaves the
+    /// rest here as a number of its own.
+    fn split_leading_digit(&mut self) -> Option<(f64, Span)> {
+        let span = self.toks.get(self.pos)?.span;
+        let text = self.text_of(span);
+        let first = *text.as_bytes().first()?;
+        let rest = text.get(1..).filter(|r| !r.is_empty())?;
+        if !first.is_ascii_digit() {
+            return None;
+        }
+        let rest: f64 = rest.parse().ok()?;
+        self.toks[self.pos] = Token {
+            tok: Tok::Num(rest),
+            span: (span.0 + 1, span.1),
+        };
+        Some((f64::from(first - b'0'), (span.0, span.0 + 1)))
+    }
+
     fn parse_latex_arg(&mut self, allow_minus: bool, ctx: &str) -> PResult<Ast> {
         self.nested(|p| p.parse_latex_arg_inner(allow_minus, ctx))
     }
@@ -711,21 +748,11 @@ impl<'s> Parser<'s> {
                 Ok(Ast::new(AstKind::Neg(Box::new(a)), span))
             }
             Some(Tok::Num(v)) => {
-                let span = here;
-                let text = self.text_of(span);
-                if text.len() > 1 && text.bytes().all(|b| b.is_ascii_digit()) {
-                    // LaTeX takes one digit: \frac12 = 1/2, x^23 = x^2·3.
-                    let first = f64::from(text.as_bytes()[0] - b'0');
-                    let rest: f64 = text[1..].parse().unwrap_or(0.0);
-                    self.toks[self.pos] = Token {
-                        tok: Tok::Num(rest),
-                        span: (span.0 + 1, span.1),
-                    };
-                    Ok(Ast::new(AstKind::Num(first), (span.0, span.0 + 1)))
-                } else {
+                let (v, span) = self.split_leading_digit().unwrap_or_else(|| {
                     self.bump();
-                    Ok(Ast::new(AstKind::Num(v), span))
-                }
+                    (v, here)
+                });
+                Ok(Ast::new(AstKind::Num(v), span))
             }
             Some(Tok::Ident(s)) => {
                 self.bump();
@@ -953,6 +980,21 @@ impl<'s> Parser<'s> {
     }
 }
 
+/// `latex` ends in a command name (`\beta`), which a letter written right
+/// after it would run into (`\betac`).
+fn ends_with_control_word(latex: &str) -> bool {
+    let letters = latex
+        .bytes()
+        .rev()
+        .take_while(u8::is_ascii_alphabetic)
+        .count();
+    letters > 0
+        && latex
+            .len()
+            .checked_sub(letters + 1)
+            .is_some_and(|i| latex.as_bytes()[i] == b'\\')
+}
+
 /// The `index`-th root of `arg`, a whole number of at least 2: `\sqrt`,
 /// `\sqrt[3]` and odd roots are real for negative `arg`, even roots are
 /// `arg^(1/index)`.
@@ -1058,6 +1100,44 @@ mod tests {
         assert_eq!(rhs_text("x^-2"), "(^ x (- 2))");
         assert_eq!(rhs("x^{-1}"), "(^ x (- 1))");
         assert_eq!(rhs("x^23"), "(* (^ x 2) 3)");
+    }
+
+    #[test]
+    fn unbraced_scripts_take_one_digit_as_mathlive_draws_them() {
+        assert_eq!(rhs("x^2.5"), "(* (^ x 2) 0.5)");
+        assert_eq!(rhs("x^20.5"), "(* (^ x 2) 0.5)");
+        assert_eq!(rhs("x^{2.5}"), "(^ x 2.5)");
+        assert_eq!(rhs("x^2."), "(^ x 2)");
+        assert_eq!(rhs("x_12"), "(* x_1 2)");
+        assert_eq!(rhs("x_1.5"), "(* x_1 0.5)");
+        assert_eq!(rhs("x_{12}"), "x_12");
+        assert_eq!(rhs("x_1"), "x_1");
+        assert_eq!(rhs_text("x^2.5"), "(^ x 2.5)");
+        let mut d = Vec::new();
+        let lines = parse_lines("y=x_12", InputFormat::Latex, &mut d);
+        let AstKind::Bin(_, sub, _) = &lines[0].rhs.kind else {
+            panic!("{:?}", lines[0].rhs)
+        };
+        assert_eq!(sub.span, (2, 5), "x_1 ends at its digit");
+    }
+
+    #[test]
+    fn a_command_in_a_subscript_is_kept_apart_from_the_next_letter() {
+        let mut d = Vec::new();
+        let lines = parse_lines("y=k_{a\\beta c}+k_{\\alpha b}", InputFormat::Latex, &mut d);
+        assert!(d.is_empty(), "{d:?}");
+        let AstKind::Bin(_, a, b) = &lines[0].rhs.kind else {
+            panic!("{:?}", lines[0].rhs)
+        };
+        let latex = |e: &Ast| match &e.kind {
+            AstKind::Sym(s) => s.latex(),
+            k => panic!("{k:?}"),
+        };
+        assert_eq!(latex(a), "k_{a\\beta c}");
+        assert_eq!(latex(b), "k_{\\alpha b}");
+        assert!(ends_with_control_word("a\\beta") && ends_with_control_word("\\beta"));
+        assert!(!ends_with_control_word("beta") && !ends_with_control_word("\\alpha b"));
+        assert!(!ends_with_control_word("\\mathrm{on}") && !ends_with_control_word(""));
     }
 
     #[test]

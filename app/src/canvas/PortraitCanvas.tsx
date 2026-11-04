@@ -303,7 +303,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       const [ax, ay] = toPlot(port, e.clientX - r.left, e.clientY - r.top);
       const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       const f = Math.exp(Math.max(-0.5, Math.min(0.5, delta * 0.0015)));
-      act.setView({ ...v, xRange: zoomRange(v.xRange, ax, f), yRange: zoomRange(v.yRange, ay, f) });
+      const xRange = zoomRange(v.xRange, ax, f);
+      const yRange = zoomRange(v.yRange, ay, f);
+      if (xRange && yRange) act.setView({ ...v, xRange, yRange });
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
@@ -369,11 +371,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     } else if (e.key === "+" || e.key === "=" || e.key === "-" || e.key === "_") {
       handled();
       const f = e.key === "+" || e.key === "=" ? 1 / 1.25 : 1.25;
-      actions.setView({
-        ...view,
-        xRange: zoomRange(view.xRange, cur[0], f),
-        yRange: zoomRange(view.yRange, cur[1], f),
-      });
+      const xRange = zoomRange(view.xRange, cur[0], f);
+      const yRange = zoomRange(view.yRange, cur[1], f);
+      if (xRange && yRange) actions.setView({ ...view, xRange, yRange });
       setKbd(cur);
     } else if (e.key === "0") {
       handled();
@@ -663,8 +663,10 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
             </div>
             {hiddenStates.map(({ s, i }) => {
               const ext = stateExtent(state.portrait?.res, dim, i);
-              const lo = Math.min(ext ? Math.floor(ext[0]) : -10, state.baseState[i] ?? 0);
-              const hi = Math.max(ext ? Math.ceil(ext[1]) : 10, state.baseState[i] ?? 0);
+              // Runs that all keep this state at one whole number (an invariant plane z = 0) give no span to slide over.
+              const spread = ext && Math.ceil(ext[1]) > Math.floor(ext[0]);
+              const lo = Math.min(spread ? Math.floor(ext[0]) : -10, state.baseState[i] ?? 0);
+              const hi = Math.max(spread ? Math.ceil(ext[1]) : 10, state.baseState[i] ?? 0);
               return (
                 <SliceRow
                   key={s.name}

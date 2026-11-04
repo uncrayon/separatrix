@@ -7,7 +7,7 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import type { InitialCondition, ParamState } from "../state/model";
 import { IconClose, IconError, IconInfo, IconPlus, IconTrajectoryAdd, IconTrash, IconWarning } from "./icons";
 import { tipDismiss } from "./Chrome";
-import { IconButton } from "./controls";
+import { IconButton, parseNumber as parseNum } from "./controls";
 import { focusAfterTrajectoryDelete, focusLater, neighbourAfterDelete } from "./focus";
 import { PanelSection, useSections } from "./PanelSection";
 import { diagnosticLine } from "./diagnostics";
@@ -50,13 +50,6 @@ const SECTIONS_KEY = "separatrix.system.sections";
 
 function fmtNum(v: number, digits = 4): string {
   return fmt(v, digits).replace(/^-/, "−");
-}
-
-function parseNum(s: string): number {
-  const t = s.trim().replace(/−/g, "-").toLowerCase();
-  if (t === "pi" || t === "π") return Math.PI;
-  if (t === "-pi" || t === "-π") return -Math.PI;
-  return t === "" ? NaN : Number(t);
 }
 
 const SEVERITY_WORD: Record<Diagnostic["severity"], string> = {
@@ -536,7 +529,8 @@ function ParamRow({
     setBoundDraft(fmt(which === "min" ? p.min : p.max, 8));
     setBoundInvalid(false);
   };
-  const endBound = (commit: boolean) => {
+  /** Close the bound editor; `refocus` puts focus back on its button (not after a blur, which moved it elsewhere). */
+  const endBound = (commit: boolean, refocus = true) => {
     const which = bound;
     if (!which) return;
     if (commit) {
@@ -560,7 +554,7 @@ function ParamRow({
     setHint(null);
     setBound(null);
     setBoundInvalid(false);
-    requestAnimationFrame(() => boundRefs.current[which]?.focus());
+    if (refocus) requestAnimationFrame(() => boundRefs.current[which]?.focus());
   };
 
   const describedBy = hint ? hintId : undefined;
@@ -586,7 +580,7 @@ function ParamRow({
               const v2 = parseNum(boundDraft);
               const lo = which === "min" ? v2 : p.min;
               const hi = which === "max" ? v2 : p.max;
-              if (Number.isFinite(v2) && lo < hi) endBound(true);
+              if (Number.isFinite(v2) && lo < hi) endBound(true, false);
               else {
                 setBound(null);
                 setBoundInvalid(false);

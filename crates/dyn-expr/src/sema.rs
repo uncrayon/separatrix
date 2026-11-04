@@ -607,6 +607,14 @@ impl Scope<'_> {
         if let Some(idx) = self.table.by_name.get(&s.name) {
             return Meaning::State(idx[0]);
         }
+        // `x_n(t)` keeps only the name `x_n` of the iterate it starts with.
+        if let Some(i) = s
+            .name
+            .strip_suffix("_n")
+            .and_then(|base| self.current_state(&SymName::simple(base, base)))
+        {
+            return Meaning::State(i);
+        }
         match (s.name.as_str(), self.kind) {
             ("t", SystemKind::Ode) | ("n", SystemKind::Map) => return Meaning::Time,
             ("pi", _) => return Meaning::Pi,
@@ -759,7 +767,7 @@ impl Resolver<'_> {
             if arg_is_t {
                 let x = show(s, false);
                 // Reached for a state only in a map, where t is a parameter.
-                let why = if self.scope.table.by_name.contains_key(&s.name) {
+                let why = if matches!(self.scope.meaning(s), Meaning::State(_)) {
                     "t is not the time in a map".to_string()
                 } else {
                     format!("{x} has no equation")
