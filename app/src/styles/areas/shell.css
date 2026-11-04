@@ -1,9 +1,3 @@
-/* Shell area: top bar, status bar, template gallery (Chrome.tsx, TemplateGallery.tsx). Owner: shell agent.
-   Tokens only; type comes from the type-style classes in the markup; ds-* classes are not restyled. */
-
-/* ------------------------------------------------------------ top bar */
-
-/* The mark in accent beside the name in `title` type, in ink. */
 .topbar .brand {
   display: flex;
   flex: none;
@@ -12,7 +6,6 @@
   color: var(--ink);
 }
 
-/* logo.svg is drawn on a 20px grid. */
 .topbar .brand-logo {
   width: calc(var(--icon) * 1.25);
   height: calc(var(--icon) * 1.25);
@@ -22,7 +15,6 @@
   white-space: nowrap;
 }
 
-/* The open system: its name, then its Strogatz chapter. A hairline separates it from the brand. */
 .topbar .doc-title {
   display: flex;
   flex: 1 1 auto;
@@ -48,7 +40,6 @@
   color: var(--ink-3);
 }
 
-/* The "Edited" tag never shrinks when a long name is ellipsised. */
 .topbar .doc-edited {
   flex: none;
 }
@@ -60,12 +51,6 @@
   gap: var(--space-2);
   margin-left: auto;
 }
-
-/* ------------------------------------------------------------ status bar */
-
-/* The look is .ds-statusbar; app.css places it in row 3. Nothing to add here. */
-
-/* ------------------------------------------------------------ template gallery */
 
 .gallery-head {
   display: flex;
@@ -93,8 +78,6 @@
   text-wrap: pretty;
 }
 
-/* The scrolling body (app.css) holds the card list; the padding leaves room for
-   the cards' focus ring (2px offset) inside the scroll box. */
 .gallery-grid {
   padding: var(--space-6);
   scrollbar-width: thin;

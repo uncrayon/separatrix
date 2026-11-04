@@ -1,7 +1,3 @@
-// Left panel: the system as the user wrote it (EquationEditor), what we inferred
-// from it (InferenceChips), its parameters (ParamSlider rows) and its initial
-// conditions. Markup follows the design system components of the same names.
-
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Diagnostic } from "../api/types";
 import { MathField, latexToText, textToLatex } from "../math/MathField";
@@ -14,6 +10,8 @@ import { tipDismiss } from "./Chrome";
 import { IconButton } from "./controls";
 import { focusAfterTrajectoryDelete, focusLater, neighbourAfterDelete } from "./focus";
 import { PanelSection, useSections } from "./PanelSection";
+import { diagnosticLine } from "./diagnostics";
+import { startPointParts } from "./startPoint";
 
 interface Props {
   state: StudioState;
@@ -21,22 +19,17 @@ interface Props {
 }
 
 export function SystemPanel({ state, actions }: Props) {
-  /** The parameter whose slider has focus (its chip shows "slider focused"). */
   const [currentParam, setCurrentParam] = useState<string | null>(null);
   const [open, setOpen] = useSections<"params" | "ics">(SECTIONS_KEY, {
     params: true,
-    // Long lists start closed (PanelSection guideline).
     ics: state.ics.length <= 5,
   });
-  // Selecting a trajectory on the plot opens the list that shows it.
   const selIc = state.selection?.kind === "ic" ? state.selection.id : null;
   useEffect(() => {
     if (selIc !== null) setOpen("ics", true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selIc]);
+  }, [selIc, setOpen]);
   return (
     <aside className="panel panel-left ds-panel-section-panel ds-panel-section-panel--left" aria-label="System">
-      {/* The equations never fold: the editor is the panel's reason to exist. */}
       <section className="ds-panel-section sys-top" aria-label="Equations">
         <EquationEditor state={state} actions={actions} />
         <InferenceChips state={state} currentParam={currentParam} />
@@ -53,23 +46,12 @@ export function SystemPanel({ state, actions }: Props) {
   );
 }
 
-/* ------------------------------------------------------------------ shared */
-
 const SECTIONS_KEY = "separatrix.system.sections";
 
-/** Fixed decimals with the true minus sign, and never "−0.00". */
-function dec(v: number, places: number): string {
-  if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  const s = v.toFixed(places);
-  return (Number(s) === 0 ? (0).toFixed(places) : s).replace(/^-/, "−");
-}
-
-/** A number as shown at rest: up to `digits` significant digits, real minus sign. */
 function fmtNum(v: number, digits = 4): string {
   return fmt(v, digits).replace(/^-/, "−");
 }
 
-/** Parse what a person types into a number field: `-`, `−`, `pi`, `π`, `1e-6`. */
 function parseNum(s: string): number {
   const t = s.trim().replace(/−/g, "-").toLowerCase();
   if (t === "pi" || t === "π") return Math.PI;
@@ -90,7 +72,6 @@ function SeverityIcon({ severity }: { severity: Diagnostic["severity"] }) {
   return <IconInfo className={cls} />;
 }
 
-/** One Diagnostic: icon + severity word + message (compact under a line, block elsewhere). */
 function DiagnosticItem({
   d,
   variant,
@@ -105,8 +86,7 @@ function DiagnosticItem({
   return (
     <li
       id={id}
-      // `diag <severity>` is kept for the e2e checks.
-      className={`ds-diagnostic ds-diagnostic--${variant} ds-diagnostic--${d.severity} diag ${d.severity}`}
+      className={`ds-diagnostic ds-diagnostic--${variant} ds-diagnostic--${d.severity}`}
     >
       <SeverityIcon severity={d.severity} />
       <span className="ds-diagnostic-body">
@@ -116,25 +96,6 @@ function DiagnosticItem({
       </span>
     </li>
   );
-}
-
-/* ------------------------------------------------------------------ equations */
-
-/**
- * Which equation line a diagnostic points at. Spans are byte offsets into the
- * compiled source: the non-empty lines joined with "\n". Returns -1 if unknown.
- */
-function diagnosticLine(d: Diagnostic, lines: string[]): number {
-  if (!d.span) return -1;
-  const enc = new TextEncoder();
-  let offset = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === "") continue;
-    const end = offset + enc.encode(lines[i]).length;
-    if (d.span[0] <= end) return i;
-    offset = end + 1;
-  }
-  return -1;
 }
 
 type InputMode = "latex" | "text";
@@ -148,15 +109,12 @@ function readMode(): InputMode {
   }
 }
 
-/** At most this many messages sit under one line; the rest go to the list at the end. */
 const MAX_PER_LINE = 2;
 
 function EquationEditor({ state, actions }: Props) {
   const [mode, setModeState] = useState<InputMode>(readMode);
   const [focusedLine, setFocusedLine] = useState<number | null>(null);
-  /** Text-mode drafts: what the person typed, valid while the stored LaTeX is what it produced. */
   const [drafts, setDrafts] = useState<Record<number, { text: string; latex: string }>>({});
-  /** A line created by Enter or "Add equation", to focus once it is rendered. */
   const focusNext = useRef<number | null>(null);
   const textRefs = useRef(new Map<number, HTMLInputElement>());
 
@@ -165,9 +123,7 @@ function EquationEditor({ state, actions }: Props) {
     setDrafts({});
     try {
       localStorage.setItem(MODE_KEY, m);
-    } catch {
-      /* storage unavailable: the choice lasts for this session */
-    }
+    } catch {}
   };
 
   const addLine = (afterId?: number) => {
@@ -177,7 +133,6 @@ function EquationEditor({ state, actions }: Props) {
   useEffect(() => {
     const id = focusNext.current;
     if (id === null) return;
-    // LaTeX mode: the new MathField focuses itself (autoFocus on an empty line).
     if (mode === "latex") {
       focusNext.current = null;
       return;
@@ -265,7 +220,6 @@ function EquationEditor({ state, actions }: Props) {
             type="button"
             className="ds-icon-button ds-icon-button--sm ds-equation-editor-remove"
             onClick={() => {
-              // Keep the keyboard user's place: the next line, else the previous one.
               const ids = state.equations.map((l) => l.id);
               const next = neighbourAfterDelete(ids, i);
               actions.removeEquation(line.id);
@@ -320,7 +274,6 @@ function EquationEditor({ state, actions }: Props) {
   );
 }
 
-/** LaTeX | Text: a small SegmentedControl, one tab stop, arrow keys move. */
 function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMode) => void }) {
   const refs = useRef<Record<InputMode, HTMLButtonElement | null>>({ latex: null, text: null });
   const options: { value: InputMode; label: string; title: string }[] = [
@@ -363,14 +316,11 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
   );
 }
 
-/* ------------------------------------------------------------------ inference */
-
 const sliderId = (name: string) => `param-slider-${name}`;
 const chipId = (name: string) => `param-chip-${name}`;
 
 function InferenceChips({ state, currentParam }: { state: StudioState; currentParam: string | null }) {
   const sys = state.compiled;
-  // Hidden while the equations do not compile: no stale chips next to an error.
   if (!sys || !state.compileOk) return null;
   const kind = sys.hamiltonian ? "Hamiltonian" : sys.kind === "map" ? "Map" : "ODE";
   const kindTitle = sys.hamiltonian
@@ -461,8 +411,6 @@ function InferenceChips({ state, currentParam }: { state: StudioState; currentPa
   );
 }
 
-/* ------------------------------------------------------------------ parameters */
-
 function ParamsSection({
   params,
   actions,
@@ -491,7 +439,6 @@ function ParamsSection({
 
 type Hint = { kind: "info" | "error"; text: string } | null;
 
-/** One ParamSlider row: name, slider, exact value, editable range, optional hint. */
 function ParamRow({
   p,
   actions,
@@ -526,7 +473,6 @@ function ParamRow({
     };
   }, [dragging]);
 
-  /** Set the value; a value outside the range widens it (never clamped), and says so. */
   const commitValue = useCallback(
     (v: number, announce: boolean) => {
       const rounded = Number(v.toPrecision(12));
@@ -581,7 +527,6 @@ function ParamRow({
   };
 
   const commitDraft = (s: string) => {
-    // Focus shows the value at full precision; leaving it untouched changes nothing.
     if (s === fmt(p.value, 10)) {
       setValueInvalid(false);
       return true;
@@ -649,7 +594,6 @@ function ParamRow({
           onChange={(e) => setBoundDraft(e.target.value)}
           onBlur={() => {
             if (bound === which) {
-              // Blur commits; an invalid bound reverts so the slider keeps a usable range.
               const v2 = parseNum(boundDraft);
               const lo = which === "min" ? v2 : p.min;
               const hi = which === "max" ? v2 : p.max;
@@ -773,22 +717,17 @@ function ParamRow({
   );
 }
 
-/* ------------------------------------------------------------------ initial conditions */
-
-/**
- * `(x₀, y₀, z₀) =` (typeset, so θ̇₀ keeps its dot) and `(0.00, 1.00, 0.00)`
- * for one initial condition, as TrajectoryList writes a start point.
- */
 function icParts(ic: InitialCondition, state: StudioState): { nameLatex: string; value: string } {
   const sys = state.compiled;
   if (!sys) return { nameLatex: "", value: "" };
   const withTime =
     sys.kind === "ode" &&
     (!sys.autonomous || state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time");
-  const names = [...(withTime ? ["t"] : []), ...sys.states.map((s) => s.latex)].map((n) => `${n}_0`);
-  const vals = [...(withTime ? [ic.t0] : []), ...ic.x0].map((v) => dec(v, 2));
-  if (names.length === 1) return { nameLatex: `${names[0]} =`, value: vals[0] };
-  return { nameLatex: `(${names.join(", ")}) =`, value: `(${vals.join(", ")})` };
+  return startPointParts(
+    sys.states.map((s) => s.latex),
+    ic.x0,
+    withTime ? ic.t0 : null,
+  );
 }
 
 function IcSection({ state, actions, open, onToggle }: Props & { open: boolean; onToggle: (open: boolean) => void }) {

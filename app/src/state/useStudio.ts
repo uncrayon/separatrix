@@ -1,22 +1,16 @@
-// All of the app's state, and every action that changes it, in one hook.
-//
-// Flow: equations → compile (debounced while typing) → params/view/ICs are
-// adapted → any change schedules a portrait recompute (coalesced per frame).
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic } from "../api/types";
 import { compileSystem, PortraitScheduler } from "../api/client";
-import type { Template } from "../templates";
+import { BLANK_TEMPLATE, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
-  UNTITLED_SYSTEM,
   adaptInitialConditions,
   axisValid,
   buildPortraitJob,
   defaultParamRange,
   defaultView,
-  nextIcColor,
+  leastUsedPaletteIndex,
   stateExtent,
   templateView,
   type EquationLine,
@@ -33,40 +27,46 @@ import {
 
 const COMPILE_DEBOUNCE_MS = 160;
 
-/** A blank starting point: the harmonic oscillator, ready to edit. */
-const BLANK_TEMPLATE: Template = {
-  id: "blank",
-  title: UNTITLED_SYSTEM,
-  chapter: "",
-  description: "",
-  format: "latex",
-  equations: ["\\dot{x}=y", "\\dot{y}=-x"],
-  params: {},
-  view: { x: "x", y: "y", xRange: [-4, 4], yRange: [-3, 3] },
-  initialConditions: [],
-  tEnd: 20,
-};
-
 export interface StudioState extends StudioSnapshot {
   equations: EquationLine[];
   diagnostics: Diagnostic[];
-  /** False while the latest edit does not compile (the last good system stays on screen). */
   compileOk: boolean;
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
-  /**
-   * The gallery template the system was loaded from (null for a blank
-   * system). It stays set while the equations are edited; compare them with
-   * the template's (`systemTitle`) to tell whether they still match.
-   */
-  templateId: string | null;
+  sourceTemplateId: string | null;
   computeError: string | null;
 }
 
 export type Studio = ReturnType<typeof useStudio>;
 
-/** The single source of truth for the UI. */
+/**
+ * A parameter after a compile: a template's value wins, then (only without
+ * a template) the slider's previous value, then the default. The range
+ * follows the same order.
+ */
+function resolveParam(
+  p: CompileResponse["params"][number],
+  prev: ParamState | undefined,
+  template: Template | undefined,
+): ParamState {
+  const kept = template ? undefined : prev;
+  const value = template?.params[p.name] ?? kept?.value ?? p.default;
+  const range = template?.paramRanges?.[p.name] ?? (kept ? [kept.min, kept.max] : defaultParamRange(value));
+  return {
+    name: p.name,
+    latex: p.latex,
+    value,
+    min: Math.min(range[0], value),
+    max: Math.max(range[1], value),
+  };
+}
+
+/** A usable plot aspect rounded to 3 significant digits, or null. */
+function roundAspect(aspect: number | null): number | null {
+  return aspect && Number.isFinite(aspect) && aspect > 0 ? Number(aspect.toPrecision(3)) : null;
+}
+
 export function useStudio() {
   const [equations, setEquations] = useState<EquationLine[]>([]);
   const [compiled, setCompiled] = useState<CompileResponse | null>(null);
@@ -87,7 +87,7 @@ export function useStudio() {
   const [solver, setSolverState] = useState<SolverSettings>(DEFAULT_SOLVER);
   const [selection, setSelection] = useState<Selection>(null);
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
-  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
 
@@ -106,11 +106,10 @@ export function useStudio() {
     solver,
     selection,
     portrait,
-    templateId,
+    sourceTemplateId,
     computeError,
     plotAspect,
   };
-  // Async callbacks (compile results, the scheduler) read the newest state here.
   const latest = useRef(state);
   latest.current = state;
 
@@ -119,18 +118,14 @@ export function useStudio() {
   const compileSeq = useRef(0);
   const compileTimer = useRef<number | undefined>(undefined);
 
-  /** A new initial condition, coloured with the first palette colour `others` leave free. */
   const makeIc = useCallback(
-    (x0: number[], t0: number, others: readonly InitialCondition[]): InitialCondition => ({
+    (x0: number[], t0: number): Omit<InitialCondition, "color"> => ({
       id: nextIcId.current++,
       x0,
       t0,
-      color: nextIcColor(others),
     }),
     [],
   );
-
-  // ------------------------------------------------------------ portrait
 
   const scheduler = useMemo(
     () =>
@@ -150,9 +145,6 @@ export function useStudio() {
     scheduler.request();
   }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
-  // ------------------------------------------------------------ compile
-
-  /** Compile `lines`; when `template` is given, apply its params, view and ICs. */
   const runCompile = useCallback(
     async (lines: string[], template?: Template) => {
       const seq = ++compileSeq.current;
@@ -166,7 +158,7 @@ export function useStudio() {
         setCompileOk(false);
         return;
       }
-      if (seq !== compileSeq.current) return; // a newer edit is already compiling
+      if (seq !== compileSeq.current) return;
       setDiagnostics(res.diagnostics);
       setCompileOk(res.ok);
       if (!res.ok || res.systemId === undefined) return;
@@ -175,22 +167,14 @@ export function useStudio() {
       const old = cur.compiled;
       const dim = res.states.length;
 
-      // Parameters: template value, else the current slider value, else the default.
       setParams(
-        res.params.map((p) => {
-          const prev = cur.params.find((q) => q.name === p.name);
-          const value = template?.params[p.name] ?? (template ? undefined : prev?.value) ?? p.default;
-          const range =
-            template?.paramRanges?.[p.name] ??
-            (prev && !template ? [prev.min, prev.max] : defaultParamRange(value));
-          return {
-            name: p.name,
-            latex: p.latex,
-            value,
-            min: Math.min(range[0], value),
-            max: Math.max(range[1], value),
-          };
-        }),
+        res.params.map((p) =>
+          resolveParam(
+            p,
+            cur.params.find((q) => q.name === p.name),
+            template,
+          ),
+        ),
       );
 
       if (template) {
@@ -201,20 +185,17 @@ export function useStudio() {
         setFieldTimeState(0);
         const fresh: InitialCondition[] = [];
         for (const x0 of template.initialConditions) {
-          fresh.push(
-            makeIc(
-              Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
-              0,
-              fresh,
-            ),
+          const ic = makeIc(
+            Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
+            0,
           );
+          fresh.push({ ...ic, color: leastUsedPaletteIndex(fresh) });
         }
         setIcs(fresh);
         setSolverState((s) => ({ ...s, tEnd: template.tEnd }));
         setLayersState((l) => ({
           ...l,
           backward: template.backward ?? true,
-          // Nullclines get busy in projections of 3D flows; start with them off.
           nullclines: dim <= 2,
         }));
         setSelection(null);
@@ -250,15 +231,13 @@ export function useStudio() {
     [runCompile],
   );
 
-  // ------------------------------------------------------------ actions
-
   const toLines = (latexes: string[]) => latexes.map((latex) => ({ id: nextLineId.current++, latex }));
 
   const loadTemplate = useCallback(
     (t: Template) => {
       window.clearTimeout(compileTimer.current);
       setEquations(toLines(t.equations));
-      setTemplateId(t.id);
+      setSourceTemplateId(t.id);
       void runCompile(t.equations, t);
     },
     [runCompile],
@@ -266,7 +245,7 @@ export function useStudio() {
 
   const newBlank = useCallback(() => {
     loadTemplate(BLANK_TEMPLATE);
-    setTemplateId(null);
+    setSourceTemplateId(null);
   }, [loadTemplate]);
 
   const setEquation = useCallback(
@@ -278,7 +257,6 @@ export function useStudio() {
     [scheduleCompile],
   );
 
-  /** Add an empty line after `afterId` (or at the end). Returns its id. */
   const addEquation = useCallback((afterId?: number): number => {
     const line = { id: nextLineId.current++, latex: "" };
     setEquations((list) => {
@@ -316,18 +294,15 @@ export function useStudio() {
   }, []);
 
   const setView = useCallback((v: View) => setViewState(v), []);
-  /** The plot's width / height, so a phase plane can use equal scales (rounded: no churn while resizing). */
   const setPlotAspect = useCallback((aspect: number | null) => {
-    const a = aspect && Number.isFinite(aspect) && aspect > 0 ? Number(aspect.toPrecision(3)) : null;
+    const a = roundAspect(aspect);
     setPlotAspectState((old) => (old === a ? old : a));
   }, []);
-  /** Show or hide one trajectory; a hidden one is not integrated, its start point stays. */
   const setIcHidden = useCallback((id: number, hidden: boolean) => {
     setIcs((list) => list.map((ic) => (ic.id === id ? { ...ic, hidden } : ic)));
   }, []);
   const resetView = useCallback(() => setViewState(latest.current.homeView), []);
 
-  /** Put `axis` on the horizontal or vertical axis (swapping if it is already on the other). */
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
     const v = cur.view;
@@ -367,7 +342,6 @@ export function useStudio() {
 
   const setFieldTime = useCallback((t: number) => setFieldTimeState(t), []);
 
-  /** The full state (and start time) for a point clicked on the canvas. */
   const liftPoint = useCallback((px: number, py: number, base?: InitialCondition) => {
     const cur = latest.current;
     const dim = cur.compiled?.states.length ?? 0;
@@ -385,10 +359,8 @@ export function useStudio() {
   const addIc = useCallback(
     (px: number, py: number): number => {
       const { x0, t0 } = liftPoint(px, py);
-      const ic = makeIc(x0, t0, latest.current.ics);
-      // The colour is chosen against the list the update lands on, so two
-      // clicks before a re-render still get different colours.
-      setIcs((list) => [...list, { ...ic, color: nextIcColor(list) }]);
+      const ic = makeIc(x0, t0);
+      setIcs((list) => [...list, { ...ic, color: leastUsedPaletteIndex(list) }]);
       setSelection({ kind: "ic", id: ic.id });
       return ic.id;
     },

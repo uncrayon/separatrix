@@ -1,14 +1,4 @@
-// UI review end-to-end checks, driven with Playwright against the Vite dev
-// server (browser preview: the JS mock computes the gallery templates).
-//
-// Run from app/ with a dev server up:
-//   npx vite --port 5198 &
-//   UI_URL=http://localhost:5198/ NODE_PATH=$(npm root -g) node --test src/review/ui.review.e2e.cjs
-//
-// CommonJS + plain JS so `tsc --noEmit` (npm run build) never sees it, and
-// Playwright can come from a global install (NODE_PATH).
-//
-// Each test asserts what the UI promises; a failing test is a review finding.
+// CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -38,8 +28,6 @@ test("1024x768 (common projector): the centre column stays inside its grid track
       const box = (s) => document.querySelector(s).getBoundingClientRect();
       return { area: box(".canvas-area").right, plot: box(".plot-wrap").right, inspector: box(".panel-right").left };
     });
-    // Today the legend's one-line help text forces the plot to 468px in a
-    // 384px column: the canvas covers the inspector and swallows its clicks.
     assert.ok(m.plot <= m.inspector + 0.5, `plot ends at x=${m.plot}, inspector starts at x=${m.inspector}`);
     const onTop = await page.evaluate(([x, y]) => document.elementFromPoint(x, y).closest(".panel-right") !== null, [
       m.inspector + 20,
@@ -68,32 +56,18 @@ test("Van der Pol: the fixed point at the origin can be selected with one click"
   try {
     await pick(page, "Van der Pol");
     const b = await page.locator("canvas.plot-canvas").boundingBox();
-    // Template view x in [-4, 4], y in [-5, 5], centred on the origin. The plot
-    // fills the canvas (viewport.ts MARGIN is 0 on every side) and equal scales
-    // widen the view about its centre, so the origin is the canvas centre.
-    // Keep this in step with MARGIN in src/canvas/viewport.ts.
-    const MARGIN = { left: 0, right: 0, top: 0, bottom: 0 };
-    const w = b.width - MARGIN.left - MARGIN.right;
-    const h = b.height - MARGIN.top - MARGIN.bottom;
-    await page.mouse.click(b.x + MARGIN.left + w / 2, b.y + MARGIN.top + h / 2);
+    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
     await page.waitForTimeout(300);
-    // The inspector marks the selection with a pressed row in its Fixed points
-    // list, named by what the user reads there ("Unstable spiral at (0.000, 0.000)").
     const fixedPoint = await page.evaluate(() => {
       const b = document.querySelector('.panel-right ul[aria-label="Fixed points"] .ds-fp-row[aria-pressed="true"]');
       return b ? b.getAttribute("aria-label") : "";
     });
-    // Today the start dot of the template's IC (0.1, 0) is 9px away and wins
-    // the hit test, so the click selects "Trajectory 1" instead.
     assert.match(fixedPoint, /^(Unstable|Stable) (spiral|node)\b.* at \(0\.000, 0\.000\)/);
   } finally {
     await browser.close();
   }
 });
 
-// ------------------------------------------------- eigenvectors, colours, title
-
-/** Selects a fixed point by its Inspector row name ("Saddle at (1.000, 1.000)"). */
 async function selectFixedPoint(page, name) {
   const row = page.locator(`.panel-right ul[aria-label="Fixed points"] .ds-fp-row[aria-label="${name}"]`);
   await row.waitFor();
@@ -132,8 +106,6 @@ test("Show eigenvectors: a spiral's hint only promises other points' lines when 
     await selectFixedPoint(page, "Saddle at (1.000, 1.000)");
     await eigenSwitch(page).click();
     await page.waitForTimeout(300);
-    // The switch keeps its value across templates. Van der Pol's only fixed
-    // point is a spiral: nothing has real eigenvectors to draw.
     await page.getByRole("button", { name: /Templates/ }).click();
     await page.waitForSelector(".gallery");
     await pick(page, "Van der Pol");
@@ -187,7 +159,6 @@ test("trajectory rows: the show/hide eye toggle has no outline or fill when on",
       assert.equal(border, "rgba(0, 0, 0, 0)");
       assert.equal(bg, "rgba(0, 0, 0, 0)");
     }
-    // Toolbar layer toggles keep their outline.
     const toolbar = await page.evaluate(() => {
       const b = document.querySelector('.canvas-toolbar .ds-icon-button:not(.ds-icon-button--tool)[aria-pressed="true"]');
       return b ? getComputedStyle(b).borderTopColor : null;

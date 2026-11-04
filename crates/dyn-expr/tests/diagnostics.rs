@@ -1,5 +1,3 @@
-//! Error and warning messages: plain language, with useful byte spans.
-
 mod common;
 
 use common::*;
@@ -99,14 +97,12 @@ fn symbol_that_looks_like_a_state_warns() {
     assert_eq!(d.message, "y has no equation; treating it as a parameter");
     assert_eq!(spanned(src, d), "y");
 
-    // Siblings of indexed states also warn; ordinary parameters don't.
     let out = compile("x_1' = x_2 + a", InputFormat::Text);
     assert_eq!(out.diagnostics.len(), 1, "{:?}", out.diagnostics);
     assert!(out.diagnostics[0]
         .message
         .starts_with("x_2 has no equation"));
 
-    // Giving it a value says "yes, it's a parameter": no warning.
     let out = compile("x' = y\ny = 2", InputFormat::Text);
     assert!(out.diagnostics.is_empty(), "{:?}", out.diagnostics);
 }
@@ -204,7 +200,6 @@ fn errors_on_several_lines_are_all_reported() {
     let out = compile("x' = (y\ny' = 1,5\nz' = sinx", InputFormat::Text);
     let errors: Vec<_> = out.diagnostics.iter().filter(|d| d.is_error()).collect();
     assert_eq!(errors.len(), 3, "{errors:#?}");
-    // sorted by position
     assert!(errors
         .windows(2)
         .all(|w| w[0].span.unwrap().0 < w[1].span.unwrap().0));

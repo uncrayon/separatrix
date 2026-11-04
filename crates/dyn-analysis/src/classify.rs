@@ -1,50 +1,9 @@
-//! Classification of fixed points from their linearisation.
-//!
-//! # Rules
-//!
-//! **2D flows** follow the trace–determinant plane of Strogatz (§5.2), with
-//! `τ = tr J`, `Δ = det J`:
-//!
-//! | condition | class |
-//! | --- | --- |
-//! | `Δ ≈ 0` | non-isolated |
-//! | `Δ < 0` | saddle |
-//! | `Δ > 0`, `τ ≈ 0` | center |
-//! | `Δ > 0`, `τ² - 4Δ ≈ 0` | star if `J` is a multiple of `I`, else degenerate node |
-//! | `Δ > 0`, `τ² - 4Δ > 0` | node |
-//! | `Δ > 0`, `τ² - 4Δ < 0` | spiral |
-//!
-//! Nodes, spirals, stars and degenerate nodes are *stable* when `τ < 0`.
-//!
-//! **Other dimensions of flows**: all `Re λ < 0` sink, all `> 0` source,
-//! mixed signs `saddle (n-D)`, any `Re λ ≈ 0` non-hyperbolic.
-//!
-//! **Maps** (any dimension) use the multipliers `μ` (eigenvalues of `Df`):
-//! all `|μ| < 1` sink, all `> 1` source, mixed `saddle (n-D)`, any
-//! `|μ| ≈ 1` non-hyperbolic.
-//!
-//! # Tolerances
-//!
-//! "≈" is relative to the size of the linearisation, `s`:
-//! for 2D flows `s = max(|τ|, sqrt|Δ|)` (roughly the largest |λ|) and
-//! `Δ ≈ 0` means `|Δ| ≤ REL_TOL·s²`, `τ ≈ 0` means `|τ| ≤ REL_TOL·s`,
-//! `τ² - 4Δ ≈ 0` means `|τ² - 4Δ| ≤ REL_TOL·s²` (so eigenvalues closer than
-//! about `δ = sqrt(REL_TOL)·s ≈ 3e-5·s` count as repeated: repeated
-//! eigenvalues are very sensitive to rounding). "Multiple of `I`" is decided
-//! at the same resolution: every entry of `N = J - (τ/2)·I` is `≤ δ`. With
-//! the same `δ` for both decisions a diagonalisable matrix (two independent
-//! eigenvectors, e.g. any diagonal or symmetric `J`) whose eigenvalues count
-//! as repeated is always a star, never a degenerate node: its `N` has
-//! entries of at most half the eigenvalue gap.
-//! For other flows `Re λ ≈ 0` means `|Re λ| ≤ max(REL_TOL·max|λ|, ABS_TOL)`.
-//! For maps `|μ| ≈ 1` means `||μ| - 1| ≤ REL_TOL`.
-
 use dyn_core::SystemKind;
 use serde::{Deserialize, Serialize};
 
 use crate::linalg;
 
-/// Relative tolerance used for all "≈ 0" decisions (see the module docs).
+/// Relative tolerance used for all "≈ 0" decisions (see [`classify`]).
 pub const REL_TOL: f64 = 1e-9;
 /// Absolute tolerance below which a real part counts as zero for flows that
 /// are not 2D (needed in 1D, where there is nothing to be relative to).
@@ -144,16 +103,52 @@ impl std::fmt::Display for Classification {
 }
 
 /// Classifies a fixed point from the eigenvalues `(re, im)` of its
-/// linearisation (`J` for flows, `Df` for maps). See the module docs.
+/// linearisation (`J` for flows, `Df` for maps).
 ///
 /// Eigenvalues alone cannot tell a star from a degenerate node (both have a
 /// repeated eigenvalue), so a repeated eigenvalue of a 2D flow is reported
 /// as a degenerate node. Use [`classify_jacobian`] when the matrix is known.
+///
+/// # Rules
+///
+/// **2D flows** follow the trace–determinant plane of Strogatz (§5.2), with
+/// `τ = tr J`, `Δ = det J`:
+///
+/// | condition | class |
+/// | --- | --- |
+/// | `Δ ≈ 0` | non-isolated |
+/// | `Δ < 0` | saddle |
+/// | `Δ > 0`, `τ ≈ 0` | center |
+/// | `Δ > 0`, `τ² - 4Δ ≈ 0` | star if `J` is a multiple of `I`, else degenerate node |
+/// | `Δ > 0`, `τ² - 4Δ > 0` | node |
+/// | `Δ > 0`, `τ² - 4Δ < 0` | spiral |
+///
+/// Nodes, spirals, stars and degenerate nodes are *stable* when `τ < 0`.
+///
+/// **Other dimensions of flows**: all `Re λ < 0` sink, all `> 0` source,
+/// mixed signs `saddle (n-D)`, any `Re λ ≈ 0` non-hyperbolic.
+///
+/// **Maps** (any dimension) use the multipliers `μ` (eigenvalues of `Df`):
+/// all `|μ| < 1` sink, all `> 1` source, mixed `saddle (n-D)`, any
+/// `|μ| ≈ 1` non-hyperbolic.
+///
+/// # Tolerances
+///
+/// "≈" is relative to the size of the linearisation, `s`:
+/// for 2D flows `s = max(|τ|, sqrt|Δ|)` and
+/// `Δ ≈ 0` means `|Δ| ≤ REL_TOL·s²`, `τ ≈ 0` means `|τ| ≤ REL_TOL·s`,
+/// `τ² - 4Δ ≈ 0` means `|τ² - 4Δ| ≤ REL_TOL·s²` (so eigenvalues closer than
+/// about `δ = sqrt(REL_TOL)·s ≈ 3e-5·s` count as repeated). "Multiple of
+/// `I`" is decided at the same resolution: every entry of `N = J - (τ/2)·I`
+/// is `≤ δ`. A diagonalisable matrix whose eigenvalues count as repeated is
+/// therefore always a star, never a degenerate node.
+/// For other flows `Re λ ≈ 0` means `|Re λ| ≤ max(REL_TOL·max|λ|, ABS_TOL)`.
+/// For maps `|μ| ≈ 1` means `||μ| - 1| ≤ REL_TOL`.
 pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification {
     match (kind, eigenvalues) {
         (SystemKind::Ode, [(a, b), (c, d)]) => {
             let tau = a + c;
-            let delta = a * c - b * d; // Re(λ1 λ2)
+            let delta = a * c - b * d;
             classify_2d(tau, delta, false)
         }
         (SystemKind::Ode, ev) => classify_flow_nd(ev),
@@ -195,33 +190,25 @@ pub fn classify_jacobian(
     (ev, class)
 }
 
-/// Size of a 2x2 linearisation, roughly its largest |eigenvalue|.
 pub(crate) fn scale_2d(tau: f64, delta: f64) -> f64 {
     tau.abs().max(delta.abs().sqrt())
 }
 
-/// `δ = sqrt(REL_TOL)·s`: eigenvalues of a 2x2 `J` closer than this count as
-/// repeated (see the module docs).
 pub(crate) fn repeat_resolution_2d(tau: f64, delta: f64) -> f64 {
     REL_TOL.sqrt() * scale_2d(tau, delta)
 }
 
-/// Is the 2x2 `jac` a multiple of `I` up to `resolution`, i.e. is every
-/// entry of `N = J - (τ/2)·I` at most `resolution`?
 pub(crate) fn is_scalar_2d(jac: &[f64], resolution: f64) -> bool {
     jac[1].abs() <= resolution
         && jac[2].abs() <= resolution
         && 0.5 * (jac[0] - jac[3]).abs() <= resolution
 }
 
-/// Do the eigenvalues of a 2x2 `J` count as repeated (`τ² - 4Δ ≈ 0`)?
 pub(crate) fn is_repeated_2d(tau: f64, delta: f64) -> bool {
     let s = scale_2d(tau, delta);
     (tau * tau - 4.0 * delta).abs() <= REL_TOL * s * s
 }
 
-/// Strogatz trace–determinant classification. `scalar` says whether `J` is
-/// a multiple of the identity (only matters for repeated eigenvalues).
 fn classify_2d(tau: f64, delta: f64, scalar: bool) -> Classification {
     use Classification::*;
     if !tau.is_finite() || !delta.is_finite() {
@@ -253,20 +240,16 @@ fn classify_2d(tau: f64, delta: f64, scalar: bool) -> Classification {
     }
 }
 
-/// Sink/source/saddle by the signs of the real parts (flows, `n != 2`).
 fn classify_flow_nd(ev: &[(f64, f64)]) -> Classification {
     let s = ev.iter().map(|&(re, im)| re.hypot(im)).fold(0.0, f64::max);
     let zero = (REL_TOL * s).max(ABS_TOL);
     by_sign(ev.iter().map(|&(re, _)| re), zero)
 }
 
-/// Sink/source/saddle by `|μ| - 1` (maps).
 fn classify_map(ev: &[(f64, f64)]) -> Classification {
     by_sign(ev.iter().map(|&(re, im)| re.hypot(im) - 1.0), REL_TOL)
 }
 
-/// Shared rule: all values negative → sink, all positive → source, mixed →
-/// saddle, any within `zero` of 0 (or non-finite) → non-hyperbolic.
 fn by_sign(values: impl Iterator<Item = f64>, zero: f64) -> Classification {
     let (mut neg, mut pos) = (0, 0);
     for v in values {
@@ -309,7 +292,7 @@ mod tests {
         assert_eq!(ode2([3.0, 0.0, 0.0, 3.0]), UnstableStar);
         assert_eq!(ode2([-1.0, 1.0, 0.0, -1.0]), StableDegenerateNode);
         assert_eq!(ode2([1.0, 0.0, 5.0, 1.0]), UnstableDegenerateNode);
-        assert_eq!(ode2([0.0, 1.0, 0.0, -1.0]), NonIsolated); // Δ = 0, τ ≠ 0
+        assert_eq!(ode2([0.0, 1.0, 0.0, -1.0]), NonIsolated);
         assert_eq!(ode2([1.0, 2.0, 2.0, 4.0]), NonIsolated);
         assert_eq!(ode2([0.0, 0.0, 0.0, 0.0]), NonIsolated);
         assert_eq!(ode2([0.0, 1.0, 0.0, 0.0]), NonIsolated);
@@ -317,18 +300,15 @@ mod tests {
 
     #[test]
     fn tolerances_are_relative() {
-        // Same shapes scaled by 1e-6 and 1e6 classify the same.
         for k in [1e-6, 1.0, 1e6] {
             assert_eq!(ode2([0.0, k, -k, 0.0]), Centre);
             assert_eq!(ode2([-0.1 * k, k, -k, -0.1 * k]), StableSpiral);
             assert_eq!(ode2([-k, k, 0.0, -k]), StableDegenerateNode);
             assert_eq!(ode2([-k, 0.0, 0.0, -k]), StableStar);
         }
-        // Rounding-level perturbations do not change the class.
         assert_eq!(ode2([1e-15, 1.0, -1.0, 0.0]), Centre);
         assert_eq!(ode2([-1.0, 1e-14, 0.0, -1.0 + 1e-14]), StableStar);
         assert_eq!(ode2([1e-13, 1.0, 0.0, 0.0]), NonIsolated);
-        // Genuinely distinct eigenvalues stay a node.
         assert_eq!(ode2([-1.0, 0.0, 0.0, -1.01]), StableNode);
     }
 
@@ -398,10 +378,10 @@ mod tests {
         assert_eq!(classify(k, &[(-1.5, 0.0)]), Source);
         assert_eq!(classify(k, &[(1.0, 0.0)]), NonHyperbolic);
         assert_eq!(classify(k, &[(-1.0, 0.0)]), NonHyperbolic);
-        assert_eq!(classify(k, &[(0.6, 0.8), (0.6, -0.8)]), NonHyperbolic); // |μ| = 1
+        assert_eq!(classify(k, &[(0.6, 0.8), (0.6, -0.8)]), NonHyperbolic);
         assert_eq!(classify(k, &[(0.3, 0.4), (0.3, -0.4)]), Sink);
         assert_eq!(classify(k, &[(2.0, 0.0), (0.1, 0.0)]), SaddleND);
-        assert_eq!(classify(k, &[(0.0, 0.0), (0.0, 0.0)]), Sink); // superstable
+        assert_eq!(classify(k, &[(0.0, 0.0), (0.0, 0.0)]), Sink);
     }
 
     #[test]
@@ -438,9 +418,6 @@ mod tests {
 
     #[test]
     fn diagonalisable_matrices_are_never_degenerate_nodes() {
-        // Diagonal and symmetric J have two independent eigenvectors, so a
-        // (nearly) repeated eigenvalue must give a star, never a degenerate
-        // node; well-separated eigenvalues give a node.
         for k in [1e-6, 1.0, 1e6] {
             for gap in [0.0, 1e-12, 1e-9, 1e-7, 1e-6, 1e-5, 3e-5, 6e-5, 1e-4, 1e-3] {
                 for sign in [-1.0, 1.0] {
@@ -455,7 +432,6 @@ mod tests {
                 }
             }
         }
-        // A genuine Jordan block stays degenerate, even a fairly mild one.
         assert_eq!(ode2([-1.0, 1e-3, 0.0, -1.0]), StableDegenerateNode);
         assert_eq!(ode2([2.0, 0.0, 0.1, 2.0]), UnstableDegenerateNode);
     }
@@ -468,7 +444,6 @@ mod tests {
         let (ev, class) = classify_jacobian(SystemKind::Ode, 2, &[f64::NAN, 0.0, 0.0, -1.0]);
         assert!(ev.is_empty());
         assert_eq!(class, NonHyperbolic);
-        // Finite entries whose eigenvalue computation overflows.
         let (ev, class) = classify_jacobian(SystemKind::Ode, 2, &[1e200, 1e200, -1e200, 1e200]);
         assert!(ev.is_empty());
         assert_eq!(class, NonHyperbolic);

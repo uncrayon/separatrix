@@ -20,3 +20,6 @@ dyn-core.workspace = true
 dyn-expr.workspace = true
 dyn-solve.workspace = true
 dyn-analysis.workspace = true
+
+[dev-dependencies]
+ts-rs = "12"

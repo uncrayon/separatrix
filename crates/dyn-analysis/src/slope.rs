@@ -1,5 +1,3 @@
-//! Direction field (slope field) sampling.
-
 use dyn_core::{SystemKind, VectorField};
 use serde::{Deserialize, Serialize};
 
@@ -79,7 +77,6 @@ mod tests {
         }
     }
 
-    /// x' = y + t, y' = -x, z' = z (z is hidden in the plane).
     fn field() -> FnField {
         FnField::new(3, 0, SystemKind::Ode, |t, x, _p, o| {
             o[0] = x[1] + t;
@@ -101,14 +98,13 @@ mod tests {
     fn state_components_use_plane_time() {
         let a = slope_field(&field(), &[], &plane(Axis::State(0), Axis::State(1)), 4);
         for arrow in &a {
-            assert_eq!(arrow.u, arrow.y + 2.0); // y + t with t = plane.t
+            assert_eq!(arrow.u, arrow.y + 2.0);
             assert_eq!(arrow.v, -arrow.x);
         }
     }
 
     #[test]
     fn hidden_variables_come_from_base_state() {
-        // Show (x, z): y is hidden at 0.25.
         let a = slope_field(&field(), &[], &plane(Axis::State(0), Axis::State(2)), 3);
         for arrow in &a {
             assert_eq!(arrow.u, 0.25 + 2.0);
@@ -118,24 +114,21 @@ mod tests {
 
     #[test]
     fn time_axis_component_is_one_and_sets_t() {
-        // (t, x): u = 1, v = f_0 = y + t with y = base 0.25 and t = arrow.x.
         let a = slope_field(&field(), &[], &plane(Axis::Time, Axis::State(0)), 5);
         assert_eq!(a.len(), 25);
         for arrow in &a {
             assert_eq!(arrow.u, 1.0);
             assert!((arrow.v - (0.25 + arrow.x)).abs() < 1e-15);
         }
-        // (x, t): v = 1.
         let a = slope_field(&field(), &[], &plane(Axis::State(1), Axis::Time), 5);
         for arrow in &a {
             assert_eq!(arrow.v, 1.0);
-            assert_eq!(arrow.u, -0.5); // f_1 = -x with x = base 0.5
+            assert_eq!(arrow.u, -0.5);
         }
     }
 
     #[test]
     fn one_dimensional_with_time_axis() {
-        // x' = x (1 - x)
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[0] * (1.0 - x[0])
         });
@@ -173,7 +166,6 @@ mod tests {
 
     #[test]
     fn non_finite_points_are_skipped() {
-        // x' = 1, y' = 1/x on a grid whose centre column is x = 0.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = 1.0;
             o[1] = 1.0 / x[0];

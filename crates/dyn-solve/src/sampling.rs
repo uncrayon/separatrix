@@ -1,47 +1,52 @@
-//! Collects the output points of an integration according to [`Sampling`].
-
+use crate::stepper::TimeDirection;
 use crate::{Sampling, Solution, Status, Stepper};
 
-/// Evenly spaced output times `t0 + (t1 - t0) * k / (n - 1)`, `k = 0..n`.
 struct Grid {
     t0: f64,
     t1: f64,
     n: usize,
-    /// Index of the next grid time not yet written.
     next: usize,
 }
 
 impl Grid {
+    /// The last sample sits exactly on `t1`, whatever the formula rounds to.
+    fn is_last(&self, k: usize) -> bool {
+        k + 1 == self.n
+    }
+
     fn time(&self, k: usize) -> f64 {
         if k == 0 {
             self.t0
-        } else if k + 1 == self.n {
-            self.t1 // exact, no rounding
+        } else if self.is_last(k) {
+            self.t1
         } else {
             self.t0 + (self.t1 - self.t0) * (k as f64 / (self.n - 1) as f64)
         }
     }
 }
 
-/// Accumulates `t` and row-major `x` while a [`Stepper`] runs.
+/// Where the recorder takes its samples, mirroring [`Sampling`].
+enum Output {
+    Steps,
+    Uniform(Grid),
+}
+
 pub(crate) struct Recorder {
-    dir: f64,
+    dir: TimeDirection,
     t: Vec<f64>,
     x: Vec<f64>,
-    /// `None` for [`Sampling::Steps`].
-    grid: Option<Grid>,
+    output: Output,
     buf: Vec<f64>,
 }
 
 impl Recorder {
-    /// Set up the recorder and write the initial point(s).
     pub(crate) fn new(sampling: Sampling, t0: f64, t1: f64, x0: &[f64]) -> Self {
-        let dir = if t1 < t0 { -1.0 } else { 1.0 };
+        let dir = TimeDirection::from_to(t0, t1);
         let mut r = Self {
             dir,
             t: Vec::new(),
             x: Vec::new(),
-            grid: None,
+            output: Output::Steps,
             buf: vec![0.0; x0.len()],
         };
         match sampling {
@@ -50,12 +55,11 @@ impl Recorder {
                 r.t.reserve(n);
                 r.x.reserve(n * x0.len());
                 let mut grid = Grid { t0, t1, n, next: 0 };
-                // Usually only k = 0; all of them when t0 == t1.
-                while grid.next < n && (grid.time(grid.next) - t0) * dir <= 0.0 {
+                while grid.next < n && (grid.time(grid.next) - t0) * dir.sign() <= 0.0 {
                     r.push(grid.time(grid.next), x0);
                     grid.next += 1;
                 }
-                r.grid = Some(grid);
+                r.output = Output::Uniform(grid);
             }
         }
         r
@@ -66,16 +70,15 @@ impl Recorder {
         self.x.extend_from_slice(x);
     }
 
-    /// Record whatever falls inside the step the stepper just accepted.
     pub(crate) fn record_step(&mut self, s: &Stepper) {
-        let Some(grid) = self.grid.as_mut() else {
+        let Output::Uniform(grid) = &mut self.output else {
             self.t.push(s.t());
             self.x.extend_from_slice(s.x());
             return;
         };
         while grid.next < grid.n {
             let tk = grid.time(grid.next);
-            if (tk - s.t()) * self.dir > 0.0 {
+            if (tk - s.t()) * self.dir.sign() > 0.0 {
                 break;
             }
             if tk == s.t() {
@@ -89,17 +92,15 @@ impl Recorder {
         }
     }
 
-    /// Build the [`Solution`]. If integration stopped early, the last
-    /// computed point is appended (unless it is already the last sample).
     pub(crate) fn finish(mut self, s: &Stepper, status: Status) -> Solution {
-        let wants_points = match &self.grid {
-            Some(g) => g.n > 0,
-            None => true,
+        let wants_points = match &self.output {
+            Output::Uniform(g) => g.n > 0,
+            Output::Steps => true,
         };
         if status != Status::Completed && wants_points && self.t.last() != Some(&s.t()) {
             self.push(s.t(), s.x());
         }
-        if let (Status::Completed, Some(g)) = (status, &self.grid) {
+        if let (Status::Completed, Output::Uniform(g)) = (status, &self.output) {
             debug_assert_eq!(g.next, g.n, "a completed run must fill the whole grid");
         }
         Solution {
@@ -108,5 +109,23 @@ impl Recorder {
             status,
             stats: s.stats(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_uniform_sample_is_exactly_t1() {
+        let grid = Grid {
+            t0: -0.1,
+            t1: 0.2,
+            n: 7,
+            next: 0,
+        };
+        let by_formula = grid.t0 + (grid.t1 - grid.t0) * (6.0 / 6.0);
+        assert_ne!(by_formula, grid.t1, "pick endpoints whose formula rounds");
+        assert_eq!(grid.time(6), grid.t1);
     }
 }

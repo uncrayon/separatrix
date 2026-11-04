@@ -1,9 +1,4 @@
-// Regression tests for the fixes made after the UI review (pure helpers only).
-//
-// Plain JavaScript for the same reason as model.review.test.mjs: tsc never
-// sees it, and Node (>= 22.18) strips the types from the .ts modules.
-//
-// Run from app/:   node --test src/review/
+// Node (>= 22.18) strips the types from the .ts modules.
 
 import test from "node:test";
 import assert from "node:assert/strict";

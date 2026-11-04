@@ -1,19 +1,3 @@
-// The app's tooltip layer (design system: Tooltip).
-//
-// IconButtons draw their own `data-tip` tooltip in CSS. Everything else that
-// needs one (status-bar items, text buttons, chips) sets
-//   data-tooltip="Name"            the name line
-//   data-tooltip-desc="Sentence."  optional teaching sentence
-// and this layer shows a `.ds-tooltip` for it in a fixed overlay, positioned in
-// script so panels and the status bar never clip it. Timing follows the
-// Tooltip guidelines: 500ms hover delay, instant when moving between tooltips
-// (300ms grace), at once on keyboard focus, hidden by Escape, pointer down,
-// scroll or leaving the trigger. Never the browser's `title`.
-//
-// The tooltip is for sight only. Put what a keyboard or screen-reader user
-// needs in the trigger itself (a `ds-sr` span or aria-describedby): many
-// triggers are plain spans that cannot take focus.
-
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -26,7 +10,6 @@ interface Shown {
 
 const HOVER_DELAY = 500;
 const GRACE = 300;
-/** space-2: gap to the trigger and to the window edge. */
 const GAP = 8;
 
 export function TooltipLayer() {
@@ -78,7 +61,6 @@ export function TooltipLayer() {
       if (current && e.target === current) hide();
     };
     const onKey = (e: KeyboardEvent) => {
-      // Escape closes the tooltip only, not the dialog or panel it sits in.
       if (e.key === "Escape" && current) {
         if (current === document.activeElement) e.stopPropagation();
         hide();
@@ -106,8 +88,6 @@ export function TooltipLayer() {
     };
   }, []);
 
-  // Place it: below the trigger with left edges aligned, above in the bottom
-  // half of the window; shifted to stay space-2 inside the window.
   useLayoutEffect(() => {
     const box = boxRef.current;
     if (!tip || !box) return;

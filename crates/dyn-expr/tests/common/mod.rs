@@ -1,10 +1,8 @@
-//! Helpers shared by the integration tests.
 #![allow(dead_code)]
 
 use dyn_core::{fd_jacobian, fd_param_jacobian, VectorField};
 use dyn_expr::{compile, CompiledSystem, Diagnostic, InputFormat, Severity};
 
-/// Compile and insist on success (warnings allowed).
 pub fn ok(src: &str, f: InputFormat) -> CompiledSystem {
     let out = compile(src, f);
     let errors: Vec<&Diagnostic> = out
@@ -24,7 +22,6 @@ pub fn text(src: &str) -> CompiledSystem {
     ok(src, InputFormat::Text)
 }
 
-/// Compile and return the diagnostics, insisting there is no system.
 pub fn fails(src: &str, f: InputFormat) -> Vec<Diagnostic> {
     let out = compile(src, f);
     assert!(out.system.is_none(), "{src:?} should fail");
@@ -58,7 +55,6 @@ pub fn jac(sys: &CompiledSystem, t: f64, x: &[f64], p: &[f64]) -> Vec<f64> {
     j
 }
 
-/// AD Jacobian and parameter Jacobians agree with central differences.
 pub fn check_derivatives(sys: &CompiledSystem, t: f64, x: &[f64], p: &[f64], tol: f64) {
     let n = sys.dim();
     let mut fd = vec![0.0; n * n];

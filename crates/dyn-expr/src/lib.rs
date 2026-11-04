@@ -47,6 +47,8 @@ mod token;
 use serde::{Deserialize, Serialize};
 
 pub use diag::{Diagnostic, Severity};
+#[doc(hidden)]
+pub use program::SMALL_PROGRAM;
 pub use system::CompiledSystem;
 
 /// Which syntax the source uses.

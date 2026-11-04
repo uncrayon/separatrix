@@ -1,13 +1,3 @@
-/* System area: left panel contents (SystemPanel.tsx). Owner: system agent.
- *
- * The components are the design system's (EquationEditor, Diagnostic,
- * InferenceChips, ParamSlider, PanelSection, TrajectoryList); this file only
- * lays them out in the panel, themes MathLive with the tokens, and sizes the
- * typeset maths that comes from MathLive's static markup (.tex). Tokens only. */
-
-/* ------------------------------------------------------------ sections */
-
-/* First section: the equation editor with the inference chips under it. */
 .panel-left .sys-top {
   display: flex;
   flex-direction: column;
@@ -15,16 +5,10 @@
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
 
-/* The initial-conditions list fills the rest of the panel. */
 .panel-left .sys-ics {
   flex: 1 0 auto;
 }
 
-/* ------------------------------------------------------------ equation editor */
-
-/* MathField: the wrapper is the DS field box (.ds-equation-editor-field, a flex
-   row); the <math-field> fills it as a block, so a click anywhere on the line
-   lands on the field and starts editing. Its type is the `math` style. */
 .panel-left .mathfield-host > math-field {
   display: block;
   flex: 1 1 auto;
@@ -38,8 +22,6 @@
   outline: none;
 }
 
-/* MathLive, themed with the tokens. The field's box (sunken fill, edge outline,
-   radius, states) is .ds-equation-editor-field; these are MathLive's own knobs. */
 .panel-left math-field {
   --caret-color: var(--ink);
   --primary-color: var(--accent);
@@ -55,8 +37,6 @@
   --correct-color: var(--ok);
   --incorrect-color: var(--danger);
 }
-/* No inner padding: the field's own min-height (control-h + space-1) and side
-   padding set the box; taller maths (fractions) grows it. */
 .panel-left math-field::part(container) {
   align-items: center;
   min-width: 0;
@@ -66,16 +46,12 @@
 .panel-left math-field::part(content) {
   padding: calc(var(--space-1) / 2) 0;
 }
-/* The placeholder (ẋ =) on an empty first line: ink-3, like any placeholder. */
 .panel-left math-field::part(placeholder) {
   color: var(--ink-3);
 }
-/* MathLive's menu stays on right-click; its toggle button is hidden. */
 .panel-left math-field::part(menu-toggle) {
   display: none;
 }
-/* Virtual keyboard toggle: kept, quiet until the line is hovered or edited,
-   and always shown on touch screens (no hover there). */
 .panel-left math-field::part(virtual-keyboard-toggle) {
   width: var(--control-h-sm);
   height: var(--control-h-sm);
@@ -98,7 +74,6 @@
   }
 }
 
-/* Text mode: the field is a plain input; its placeholder reads as a hint. */
 .panel-left .eq-text-input::placeholder {
   color: var(--ink-3);
   opacity: 1;
@@ -137,9 +112,6 @@
   --variant-keycap-background-active: var(--accent-soft);
 }
 
-/* ------------------------------------------------------------ inference chips */
-
-/* "Solved as the first-order system": the rewritten equations, quietly, under the chips. */
 .panel-left .sys-first-order {
   display: flex;
   flex-direction: column;
@@ -152,7 +124,6 @@
 .panel-left .sys-first-order-label {
   color: var(--ink-2);
 }
-/* Each equation carries the `math` style. */
 .panel-left .sys-first-order-eq {
   min-width: 0;
   overflow-x: auto;

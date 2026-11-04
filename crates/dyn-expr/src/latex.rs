@@ -1,20 +1,11 @@
-//! Print a resolved expression back as LaTeX, for `equations_latex`.
-//!
-//! Brackets are added only where precedence needs them, multiplication is
-//! written by juxtaposition (`\sigma\left(y - x\right)`, `xy`) except before
-//! a number, and functions of a single symbol drop their brackets
-//! (`\sin\theta`).
-
 use crate::ast::{BinOp, Func, Node};
 
-/// Display names for states, parameters and the time variable.
 pub(crate) struct Names<'a> {
     pub states: &'a [String],
     pub params: &'a [String],
     pub time: &'a str,
 }
 
-/// Binding strength of the printed form (higher binds tighter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Prec {
     Sum = 1,
@@ -27,9 +18,7 @@ enum Prec {
 struct Out {
     s: String,
     prec: Prec,
-    /// Ends with a bracket-less function argument (`\sin x`), so anything
-    /// juxtaposed after it would be read as part of the argument.
-    greedy: bool,
+    ends_in_bracketless_arg: bool,
 }
 
 impl Out {
@@ -37,12 +26,11 @@ impl Out {
         Out {
             s,
             prec,
-            greedy: false,
+            ends_in_bracketless_arg: false,
         }
     }
 }
 
-/// LaTeX for `n`.
 pub(crate) fn to_latex(n: &Node, names: &Names) -> String {
     go(n, names).s
 }
@@ -51,7 +39,6 @@ fn paren(s: &str) -> String {
     format!("\\left({s}\\right)")
 }
 
-/// The printed form, bracketed if it binds looser than `p`.
 fn at_least(o: &Out, p: Prec) -> String {
     if o.prec >= p {
         o.s.clone()
@@ -60,8 +47,6 @@ fn at_least(o: &Out, p: Prec) -> String {
     }
 }
 
-/// Format a number without trailing `.0`, using `\times 10^{k}` for very
-/// large or small magnitudes.
 pub(crate) fn fmt_num(v: f64) -> String {
     if !v.is_finite() {
         return if v.is_nan() {
@@ -97,7 +82,7 @@ fn go(n: &Node, names: &Names) -> Out {
             Out {
                 s: format!("-{}", at_least(&a, Prec::Product)),
                 prec: Prec::Sum,
-                greedy: false,
+                ends_in_bracketless_arg: false,
             }
         }
         Node::Bin(op, a, b) => bin(*op, a, b, names),
@@ -125,35 +110,10 @@ fn bin(op: BinOp, a: &Node, b: &Node, names: &Names) -> Out {
             let r = at_least(&go(b, names), Prec::Product);
             Out::new(format!("{l} - {r}"), Prec::Sum)
         }
-        BinOp::Mul if matches!(a, Node::Neg(_)) => {
-            // (-a) b is shown as -a b (the parser reads "-a b" that way).
-            let Node::Neg(inner) = a else { unreachable!() };
-            let o = bin(BinOp::Mul, inner, b, names);
-            Out {
-                s: format!("-{}", o.s),
-                prec: Prec::Sum,
-                greedy: o.greedy,
-            }
-        }
-        BinOp::Mul => {
-            let lo = go(a, names);
-            let ro = go(b, names);
-            let l = at_least(&lo, Prec::Product);
-            let r = at_least(&ro, Prec::Product);
-            let left_greedy = lo.greedy && lo.prec >= Prec::Product;
-            let digit_next = r.starts_with(|c: char| c.is_ascii_digit());
-            let mixed_number = l.ends_with(|c: char| c.is_ascii_digit()) && r.starts_with("\\frac");
-            let sep = if left_greedy || digit_next || mixed_number {
-                " \\cdot "
-            } else {
-                " "
-            };
-            Out {
-                s: format!("{l}{sep}{r}"),
-                prec: Prec::Product,
-                greedy: ro.greedy && ro.prec >= Prec::Product,
-            }
-        }
+        BinOp::Mul => match a {
+            Node::Neg(inner) => neg_product(inner, b, names),
+            _ => product(a, b, names),
+        },
         BinOp::Div => {
             let num = go(a, names).s;
             let den = go(b, names).s;
@@ -167,6 +127,36 @@ fn bin(op: BinOp, a: &Node, b: &Node, names: &Names) -> Out {
             let base = at_least(&go(a, names), Prec::Atom);
             Out::new(format!("{base}^{{{e}}}"), Prec::Power)
         }
+    }
+}
+
+/// `(-a) · b`, written `-a b`.
+fn neg_product(inner: &Node, b: &Node, names: &Names) -> Out {
+    let o = bin(BinOp::Mul, inner, b, names);
+    Out {
+        s: format!("-{}", o.s),
+        prec: Prec::Sum,
+        ends_in_bracketless_arg: o.ends_in_bracketless_arg,
+    }
+}
+
+fn product(a: &Node, b: &Node, names: &Names) -> Out {
+    let lo = go(a, names);
+    let ro = go(b, names);
+    let l = at_least(&lo, Prec::Product);
+    let r = at_least(&ro, Prec::Product);
+    let left_open = lo.ends_in_bracketless_arg && lo.prec >= Prec::Product;
+    let digit_next = r.starts_with(|c: char| c.is_ascii_digit());
+    let mixed_number = l.ends_with(|c: char| c.is_ascii_digit()) && r.starts_with("\\frac");
+    let sep = if left_open || digit_next || mixed_number {
+        " \\cdot "
+    } else {
+        " "
+    };
+    Out {
+        s: format!("{l}{sep}{r}"),
+        prec: Prec::Product,
+        ends_in_bracketless_arg: ro.ends_in_bracketless_arg && ro.prec >= Prec::Product,
     }
 }
 
@@ -192,7 +182,7 @@ fn call(f: Func, args: &[Node], names: &Names) -> Out {
                 Out {
                     s: format!("{name}{sep}{}", a.s),
                     prec: Prec::Product,
-                    greedy: true,
+                    ends_in_bracketless_arg: true,
                 }
             } else {
                 Out::new(format!("{name}{}", paren(&a.s)), Prec::Atom)

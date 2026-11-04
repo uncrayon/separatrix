@@ -24,8 +24,7 @@ fn core_version() -> &'static str {
 }
 
 /// Parses the equations and keeps the compiled system for later portraits.
-/// Compiling takes well under a millisecond, so this runs synchronously.
-#[tauri::command]
+#[tauri::command(async)]
 fn compile_system(req: ipc::CompileRequest, store: State<'_, SystemStore>) -> ipc::CompileResponse {
     service::compile_system(&store, &req)
 }

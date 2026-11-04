@@ -1,11 +1,4 @@
-// Regression tests for the eigenvector helpers behind "Show eigenvectors"
-// and their projection onto the plot axes (app/src/canvas/eigenvectors.ts,
-// React-free; draw.ts re-exports eigenDirections).
-//
-// Plain JavaScript for the same reason as model.review.test.mjs: tsc never
-// sees it, and Node (>= 22.18) strips the types from the .ts modules.
-//
-// Run from app/:   node --test src/review/
+// Node (>= 22.18) strips the types from the .ts modules.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +15,6 @@ import {
 const r2 = Math.SQRT2;
 const r3 = Math.sqrt(3);
 
-/** Rabbits vs sheep saddle at (1, 1): J = [[-1, -2], [-1, -1]], λ = −1 ± √2, as the core returns it. */
 const saddle = {
   x: [1, 1],
   eigenvalues: [
@@ -38,7 +30,6 @@ const saddle = {
   stable: false,
 };
 
-/** A stable spiral: complex pair, no real eigenvector. */
 const spiral = {
   x: [0, 0],
   eigenvalues: [
@@ -57,10 +48,6 @@ const spiral = {
   stable: true,
 };
 
-/**
- * J = [[-1, 1], [-1e-12, -1]] as the core returns it: λ = −1 ± 1.00004e-6 i by
- * rounding, classified a degenerate node, with a real vector and Im null.
- */
 const roundedDegenerate = {
   x: [0, 0],
   eigenvalues: [
@@ -86,7 +73,6 @@ test("saddle: unstable λ ≈ 0.414 flows out along (0.816, −0.577), stable λ
   assert.ok(Math.abs(inn.value + 2.41421356) < 1e-6, String(inn.value));
   assert.ok(close(out.v, [0.816496580927726, -0.5773502691896258]), String(out.v));
   assert.ok(close(inn.v, [0.816496580927726, 0.5773502691896258]), String(inn.v));
-  // Labels follow the Inspector row: reals ascending, λ₁ is the smaller.
   assert.equal(inn.label, "λ₁");
   assert.equal(out.label, "λ₂");
 });
@@ -118,7 +104,6 @@ test("complex eigenvalues have no real eigenvectors", () => {
 });
 
 test("a degenerate node that rounding made slightly complex still shows its real eigenvector", () => {
-  // The core treats it as real (vector present, Im null): trust it rather than re-testing Im λ.
   const evs = realEigenvectors(roundedDegenerate, "ode");
   assert.equal(evs.length, 1);
   assert.deepEqual(evs[0].v, [1, 0]);
@@ -130,7 +115,6 @@ test("a degenerate node that rounding made slightly complex still shows its real
     [-1, 0],
     [-1, 0],
   ]);
-  // The same in 3D: λ = −1 ± 1e-6 i with real vector (1, 0, 0), plus λ = 3.
   const fp3 = {
     x: [0, 0, 0],
     eigenvalues: [
@@ -155,7 +139,6 @@ test("a degenerate node that rounding made slightly complex still shows its real
 });
 
 test("a defective complex pair's missing direction stays complex", () => {
-  // 4D [[R, I], [0, R]] with R a rotation: ±i double, one vector per conjugate.
   const h = Math.SQRT1_2;
   const fp = {
     x: [0, 0, 0, 0],
@@ -195,11 +178,9 @@ test("eigenDirections: projected onto the axes; none with time on an axis or see
   const dirs = eigenDirections(axes(s(0), s(1)), saddle);
   assert.equal(dirs.length, 2);
   assert.ok(close(dirs[0].p, saddle.eigenvectors[0]));
-  // Swapped axes swap the projection.
   const swapped = eigenDirections(axes(s(1), s(0)), saddle);
   assert.ok(close(swapped[0].p, [saddle.eigenvectors[0][1], saddle.eigenvectors[0][0]]));
   assert.deepEqual(eigenDirections(axes({ kind: "time" }, s(0)), saddle), []);
-  // 3D: the z direction is seen end-on in the x–y view.
   const fp3 = {
     x: [0, 0, 0],
     eigenvalues: [
@@ -223,7 +204,6 @@ test("eigenDirections: projected onto the axes; none with time on an axis or see
 });
 
 test("numberedEigenvalues: the tooltip numbers eigenvalues as the Inspector row and the line labels do", () => {
-  // The core returns the saddle's λ ≈ 0.414 first; the row (and the λ₁ label on the stable line) puts −2.414 first.
   const sad = numberedEigenvalues(saddle);
   assert.deepEqual(
     sad.map((e) => e.numbers),
@@ -233,11 +213,8 @@ test("numberedEigenvalues: the tooltip numbers eigenvalues as the Inspector row 
   const labels = Object.fromEntries(realEigenvectors(saddle, "ode").map((e) => [e.label, e.value]));
   assert.equal(labels["λ₁"], sad[0].re);
   assert.equal(labels["λ₂"], sad[1].re);
-  // A planar complex pair is one unnumbered entry, α ± |ω|i.
   assert.deepEqual(numberedEigenvalues(spiral), [{ numbers: [], re: -0.1, im: 1, double: false }]);
-  // A rounded double eigenvalue is written once.
   assert.deepEqual(numberedEigenvalues(roundedDegenerate), [{ numbers: [], re: -1, im: 0, double: true }]);
-  // Lorenz C+: the real λ first, then the pair as λ₂,₃ (the core may list the pair first).
   const lorenz = {
     x: [8.485, 8.485, 27],
     eigenvalues: [

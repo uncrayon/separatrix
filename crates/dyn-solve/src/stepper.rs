@@ -1,30 +1,9 @@
-//! One-step-at-a-time integrator with dense output.
-//!
-//! [`Stepper`] holds the current point `(t, x)`, the derivative there and
-//! the next step size. Each call to [`Stepper::step`] advances by one
-//! accepted step (an adaptive method may internally reject and retry) and
-//! leaves behind an interpolant for that step, evaluated with
-//! [`Stepper::interpolate`].
-//!
-//! Every interpolant is stored in the same five-vector form as Hairer's
-//! `CONTD5`:
-//!
-//! ```text
-//! x(t_prev + θh) = c0 + θ (c1 + (1-θ) (c2 + θ (c3 + (1-θ) c4)))
-//! ```
-//!
-//! For Dopri5 this is the standard 4th-order continuous extension. For the
-//! fixed-step methods `c4 = 0` and the formula is the cubic Hermite
-//! interpolant through both end points with slopes `f` at both ends, with a
-//! monotonicity limiter for badly resolved steps (see
-//! [`limit_hermite_slopes`]).
-
 use dyn_core::VectorField;
 
 use crate::{all_finite, blew_up, Method, SolverOptions, Stats, Status};
 
 /// Dormand–Prince 5(4) coefficients, as in Hairer's DOPRI5.
-mod dp {
+mod dormand_prince {
     pub const C2: f64 = 1.0 / 5.0;
     pub const C3: f64 = 3.0 / 10.0;
     pub const C4: f64 = 4.0 / 5.0;
@@ -45,67 +24,61 @@ mod dp {
     pub const A63: f64 = 46732.0 / 5247.0;
     pub const A64: f64 = 49.0 / 176.0;
     pub const A65: f64 = -5103.0 / 18656.0;
-    // The last row doubles as the 5th-order weights b_i (b2 = 0, b7 = 0).
     pub const A71: f64 = 35.0 / 384.0;
     pub const A73: f64 = 500.0 / 1113.0;
     pub const A74: f64 = 125.0 / 192.0;
     pub const A75: f64 = -2187.0 / 6784.0;
     pub const A76: f64 = 11.0 / 84.0;
 
-    // Error weights e_i = b_i - b*_i (difference between orders 5 and 4).
-    pub const E1: f64 = 71.0 / 57600.0;
-    pub const E3: f64 = -71.0 / 16695.0;
-    pub const E4: f64 = 71.0 / 1920.0;
-    pub const E5: f64 = -17253.0 / 339200.0;
-    pub const E6: f64 = 22.0 / 525.0;
-    pub const E7: f64 = -1.0 / 40.0;
+    /// Fifth-order weights. The method is FSAL: the last stage row is the
+    /// solution row.
+    pub const B1: f64 = A71;
+    pub const B3: f64 = A73;
+    pub const B4: f64 = A74;
+    pub const B5: f64 = A75;
+    pub const B6: f64 = A76;
 
-    // Dense output (4th-order continuous extension).
-    pub const D1: f64 = -12715105075.0 / 11282082432.0;
-    pub const D3: f64 = 87487479700.0 / 32700410799.0;
-    pub const D4: f64 = -10690763975.0 / 1880347072.0;
-    pub const D5: f64 = 701980252875.0 / 199316789632.0;
-    pub const D6: f64 = -1453857185.0 / 822651844.0;
-    pub const D7: f64 = 69997945.0 / 29380423.0;
+    pub const ERR_1: f64 = 71.0 / 57600.0;
+    pub const ERR_3: f64 = -71.0 / 16695.0;
+    pub const ERR_4: f64 = 71.0 / 1920.0;
+    pub const ERR_5: f64 = -17253.0 / 339200.0;
+    pub const ERR_6: f64 = 22.0 / 525.0;
+    pub const ERR_7: f64 = -1.0 / 40.0;
+
+    pub const DENSE_1: f64 = -12715105075.0 / 11282082432.0;
+    pub const DENSE_3: f64 = 87487479700.0 / 32700410799.0;
+    pub const DENSE_4: f64 = -10690763975.0 / 1880347072.0;
+    pub const DENSE_5: f64 = 701980252875.0 / 199316789632.0;
+    pub const DENSE_6: f64 = -1453857185.0 / 822651844.0;
+    pub const DENSE_7: f64 = 69997945.0 / 29380423.0;
 }
 
 /// Step-size controller constants (Hairer's DOPRI5 defaults).
 mod ctrl {
-    /// Safety factor applied to the optimal step.
     pub const SAFETY: f64 = 0.9;
-    /// The step never shrinks by more than this factor at once.
-    pub const FAC_MIN: f64 = 0.2;
-    /// The step never grows by more than this factor at once.
-    pub const FAC_MAX: f64 = 10.0;
-    /// PI ("Lund") stabilisation exponent β.
-    pub const BETA: f64 = 0.04;
-    /// Proportional exponent: 1/5 - 0.75 β.
-    pub const EXPO1: f64 = 0.2 - BETA * 0.75;
+    pub const MAX_SHRINK: f64 = 0.2;
+    pub const MAX_GROWTH: f64 = 10.0;
+    pub const PI_BETA: f64 = 0.04;
+    pub const EXPO1: f64 = 0.2 - PI_BETA * 0.75;
 }
 
-/// Steps with `|h| < MIN_REL_STEP * max(1, |t|)` are considered too small.
 const MIN_REL_STEP: f64 = 1e-14;
+
+/// A fixed step this close to the remaining span is stretched to land on
+/// `t_end` rather than leave a sliver.
+const END_STRETCH_TOL: f64 = 1e-9;
+
+/// An adaptive step within this factor of the remaining span is stretched
+/// to land on `t_end`.
+const END_STRETCH: f64 = 1.01;
+
+/// Radius of the circle inside the Fritsch–Carlson monotonicity region
+/// that overshooting slopes are scaled back onto.
+const FRITSCH_CARLSON_RADIUS: f64 = 3.0;
 
 /// Limit the end slopes of one cubic Hermite piece so that it cannot
 /// overshoot (Fritsch & Carlson, *Monotone piecewise cubic interpolation*,
 /// SIAM J. Numer. Anal. 17, 1980).
-///
-/// `m0`, `m1` are the derivatives at the two ends and `secant` is
-/// `(x_new - x) / h`. Write `α = m0 / secant`, `β = m1 / secant`. When both
-/// are positive (the data are monotone and so is the true solution), the
-/// cubic is monotone exactly when `(α, β)` lies in the Fritsch–Carlson
-/// region; if it does not, both slopes are scaled by `3 / |(α, β)|`, which
-/// moves `(α, β)` onto the circle of radius 3 inside that region.
-///
-/// For a well-resolved step `α` and `β` are within `O(h)` of 1, so nothing
-/// changes and the interpolant keeps its order. The limiter acts on steps
-/// where the solution changes by orders of magnitude, most importantly the
-/// last steps of a finite-time blow-up (`x' = x^2`): there `f(x_new)` is
-/// far larger than the secant and the plain cubic swings to huge values of
-/// the wrong sign inside the step.
-///
-/// A turning point inside the step (an end slope of the opposite sign to
-/// the secant) or a zero secant is left alone.
 fn limit_hermite_slopes(m0: f64, m1: f64, secant: f64) -> (f64, f64) {
     if secant == 0.0 {
         return (m0, m1);
@@ -114,13 +87,10 @@ fn limit_hermite_slopes(m0: f64, m1: f64, secant: f64) -> (f64, f64) {
     if !(alpha >= 0.0 && beta >= 0.0) || hermite_is_monotone(alpha, beta) {
         return (m0, m1);
     }
-    let tau = 3.0 / alpha.hypot(beta);
+    let tau = FRITSCH_CARLSON_RADIUS / alpha.hypot(beta);
     (tau * m0, tau * m1)
 }
 
-/// The Fritsch–Carlson monotonicity region for `α, β >= 0`. Returns `false`
-/// when the test overflows to NaN (only for absurdly large `α` or `β`, which
-/// are far outside the region anyway).
 fn hermite_is_monotone(alpha: f64, beta: f64) -> bool {
     alpha + beta <= 2.0
         || 2.0 * alpha + beta <= 3.0
@@ -128,17 +98,172 @@ fn hermite_is_monotone(alpha: f64, beta: f64) -> bool {
         || alpha - (2.0 * alpha + beta - 3.0).powi(2) / (3.0 * (alpha + beta - 2.0)) >= 0.0
 }
 
-/// `v / w`, but `0` when `v == 0` (also when `w == 0`).
-///
-/// Used for the scaled error norm: with `atol = 0` a state component that
-/// is exactly zero has weight `w = 0`, and its (exactly zero) error must
-/// count as zero instead of `0 / 0 = NaN`.
-fn scaled(v: f64, w: f64) -> f64 {
+fn ratio_or_zero(v: f64, w: f64) -> f64 {
     if v == 0.0 {
         0.0
     } else {
         v / w
     }
+}
+
+/// Did component `x0 → x1` move away from 0 while `|f|` grew (`f0 → f1`)?
+fn moves_outward_with_growing_slope(x0: f64, x1: f64, f0: f64, f1: f64) -> bool {
+    x0 * x1 > 0.0 && x1.abs() > x0.abs() && f1 > f0 && f0 > 0.0
+}
+
+/// The PI controller's step-size divisor for error `err`, given the error
+/// of the last accepted step: `(err^EXPO1, clamped divisor)`.
+fn pi_step_factor(err: f64, err_old: f64) -> (f64, f64) {
+    use ctrl::*;
+    let fac11 = err.powf(EXPO1);
+    let fac = fac11 / err_old.powf(PI_BETA);
+    (
+        fac11,
+        (fac / SAFETY).clamp(1.0 / MAX_GROWTH, 1.0 / MAX_SHRINK),
+    )
+}
+
+/// A step cut short to land on `t_end` says nothing about the step size:
+/// the next proposal only replaces the planned one if it is larger.
+fn adopts_proposal(lands_on_t_end: bool, h_new: f64, h_planned: f64) -> bool {
+    !lands_on_t_end || h_new.abs() > h_planned.abs()
+}
+
+/// Which way time runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TimeDirection {
+    Forward,
+    Backward,
+}
+
+impl TimeDirection {
+    /// The direction from `t0` to `t1` (forward when they are equal).
+    pub(crate) fn from_to(t0: f64, t1: f64) -> TimeDirection {
+        if t1 < t0 {
+            TimeDirection::Backward
+        } else {
+            TimeDirection::Forward
+        }
+    }
+
+    pub(crate) fn sign(self) -> f64 {
+        match self {
+            TimeDirection::Forward => 1.0,
+            TimeDirection::Backward => -1.0,
+        }
+    }
+}
+
+/// Dense output of one step, per component:
+/// `x(t_prev + θh) = c0 + θ(c1 + (1-θ)(c2 + θ(c3 + (1-θ)c4)))`.
+struct DenseCoeffs {
+    c0: Vec<f64>,
+    c1: Vec<f64>,
+    c2: Vec<f64>,
+    c3: Vec<f64>,
+    c4: Vec<f64>,
+}
+
+impl DenseCoeffs {
+    fn new(n: usize) -> DenseCoeffs {
+        DenseCoeffs {
+            c0: vec![0.0; n],
+            c1: vec![0.0; n],
+            c2: vec![0.0; n],
+            c3: vec![0.0; n],
+            c4: vec![0.0; n],
+        }
+    }
+
+    fn eval(&self, theta: f64, out: &mut [f64]) {
+        let theta1 = 1.0 - theta;
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = self.c0[i]
+                + theta
+                    * (self.c1[i]
+                        + theta1 * (self.c2[i] + theta * (self.c3[i] + theta1 * self.c4[i])));
+        }
+    }
+
+    /// The straight line from `x` to `x_new`.
+    fn linear(&mut self, x: &[f64], x_new: &[f64]) {
+        for i in 0..x.len() {
+            self.c0[i] = x[i];
+            self.c1[i] = x_new[i] - x[i];
+            self.c2[i] = 0.0;
+            self.c3[i] = 0.0;
+            self.c4[i] = 0.0;
+        }
+    }
+
+    /// Monotonicity-limited cubic Hermite through `(x, f)` and `(x_new, f_new)`.
+    fn hermite(&mut self, h: f64, x: &[f64], x_new: &[f64], f: &[f64], f_new: &[f64]) {
+        for i in 0..x.len() {
+            let ydiff = x_new[i] - x[i];
+            let (m0, m1) = limit_hermite_slopes(f[i], f_new[i], ydiff / h);
+            let bspl = h * m0 - ydiff;
+            self.c0[i] = x[i];
+            self.c1[i] = ydiff;
+            self.c2[i] = bspl;
+            self.c3[i] = ydiff - h * m1 - bspl;
+            self.c4[i] = 0.0;
+        }
+    }
+
+    /// Dormand–Prince's fourth-order continuous extension.
+    fn dopri5(
+        &mut self,
+        h: f64,
+        x: &[f64],
+        x_new: &[f64],
+        k1: &[f64],
+        k: &[Vec<f64>; 5],
+        k7: &[f64],
+    ) {
+        use dormand_prince::*;
+        let [_, k3, k4, k5, k6] = k;
+        for i in 0..x.len() {
+            let ydiff = x_new[i] - x[i];
+            let bspl = h * k1[i] - ydiff;
+            self.c0[i] = x[i];
+            self.c1[i] = ydiff;
+            self.c2[i] = bspl;
+            self.c3[i] = ydiff - h * k7[i] - bspl;
+            self.c4[i] = h
+                * (DENSE_1 * k1[i]
+                    + DENSE_3 * k3[i]
+                    + DENSE_4 * k4[i]
+                    + DENSE_5 * k5[i]
+                    + DENSE_6 * k6[i]
+                    + DENSE_7 * k7[i]);
+        }
+    }
+}
+
+/// How the dense output of an accepted step is built.
+#[derive(Debug, Clone, Copy)]
+enum Dense {
+    /// Hermite from the end-point slopes; linear if `f` at the new point
+    /// is not finite.
+    Hermite,
+    /// Dormand–Prince's own interpolant from the stages.
+    Dopri5,
+}
+
+/// What a fixed step evaluated before it overflowed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Endpoint {
+    /// Only the stages; `f_new` holds stale data.
+    StagesOnly,
+    /// The stages and `f` at the new point.
+    FEvaluated,
+}
+
+/// One evaluation of `f` made during a step.
+struct StageEval<'s> {
+    t: f64,
+    x: Vec<f64>,
+    f: &'s [f64],
 }
 
 /// Result of one call to [`Stepper::step`].
@@ -172,7 +297,6 @@ pub enum StepOutcome {
 /// let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = -x[0]);
 /// let mut s = Stepper::new(&f, &[], 0.0, &[1.0], 1.0, &SolverOptions::default());
 /// while s.step() == StepOutcome::Accepted {
-///     // look at s.t(), s.x(), or s.interpolate(..) inside the step
 /// }
 /// assert_eq!(s.t(), 1.0);
 /// assert!((s.x()[0] - (-1.0f64).exp()).abs() < 1e-6);
@@ -183,38 +307,27 @@ pub struct Stepper<'a> {
     method: Method,
     rtol: f64,
     atol: f64,
-    /// Largest |h| allowed (`INFINITY` if unlimited).
     h_max: f64,
 
-    /// +1 forwards in time, -1 backwards.
-    dir: f64,
+    dir: TimeDirection,
     t_end: f64,
 
-    /// Current point and the derivative there.
     t: f64,
     x: Vec<f64>,
     fx: Vec<f64>,
-    /// Signed size of the next step to try.
-    h: f64,
+    h_next: f64,
 
-    /// The last accepted step went from `t_prev` to `t` with size `h_last`.
     t_prev: f64,
     h_last: f64,
-    /// Interpolation coefficients `c0..c4`, each of length `dim`, back to back.
-    cont: Vec<f64>,
+    cont: DenseCoeffs,
     has_dense: bool,
 
-    /// Adaptive controller memory.
     err_old: f64,
     last_rejected: bool,
 
-    /// State and derivative at the start of the last accepted step (at
-    /// `t_prev`). Used to tell a finite-time blow-up from other
-    /// singularities when the step size collapses.
     x_prev: Vec<f64>,
     f_prev: Vec<f64>,
 
-    /// Scratch space.
     k: [Vec<f64>; 5],
     x_stage: Vec<f64>,
     x_new: Vec<f64>,
@@ -223,8 +336,14 @@ pub struct Stepper<'a> {
     stats: Stats,
 }
 
-/// Call `f` and count the evaluation.
-fn eval(f: &dyn VectorField, p: &[f64], stats: &mut Stats, t: f64, x: &[f64], out: &mut [f64]) {
+fn counted_eval(
+    f: &dyn VectorField,
+    p: &[f64],
+    stats: &mut Stats,
+    t: f64,
+    x: &[f64],
+    out: &mut [f64],
+) {
     stats.evals += 1;
     f.eval(t, x, p, out);
 }
@@ -257,7 +376,7 @@ impl<'a> Stepper<'a> {
         } else {
             f64::INFINITY
         };
-        let dir = if t_end < t0 { -1.0 } else { 1.0 };
+        let dir = TimeDirection::from_to(t0, t_end);
 
         let mut s = Self {
             f,
@@ -271,10 +390,10 @@ impl<'a> Stepper<'a> {
             t: t0,
             x: x0.to_vec(),
             fx: vec![0.0; n],
-            h: 0.0,
+            h_next: 0.0,
             t_prev: t0,
             h_last: 0.0,
-            cont: vec![0.0; 5 * n],
+            cont: DenseCoeffs::new(n),
             has_dense: false,
             err_old: 1e-4,
             last_rejected: false,
@@ -286,7 +405,7 @@ impl<'a> Stepper<'a> {
             f_new: vec![0.0; n],
             stats: Stats::default(),
         };
-        eval(f, p, &mut s.stats, t0, &s.x, &mut s.fx);
+        counted_eval(f, p, &mut s.stats, t0, &s.x, &mut s.fx);
 
         let user_h = opts.h.abs();
         let h = if user_h > 0.0 && user_h.is_finite() {
@@ -305,7 +424,7 @@ impl<'a> Stepper<'a> {
                 1e-3
             }
         };
-        s.h = dir * h.min(h_max);
+        s.h_next = dir.sign() * h.min(h_max);
         s
     }
 
@@ -336,7 +455,7 @@ impl<'a> Stepper<'a> {
 
     /// Signed size of the next step that will be tried.
     pub fn h_next(&self) -> f64 {
-        self.h
+        self.h_next
     }
 
     /// Where integration stops.
@@ -361,21 +480,20 @@ impl<'a> Stepper<'a> {
 
     /// `true` once `t` has reached `t_end`.
     pub fn is_done(&self) -> bool {
-        (self.t_end - self.t) * self.dir <= 0.0
+        (self.t_end - self.t) * self.dir.sign() <= 0.0
     }
 
-    /// Move the end point (for example to keep integrating). If the new end
-    /// lies on the other side of `t`, the direction is flipped.
+    /// Move the end point. If the new end lies on the other side of `t`, the
+    /// direction is flipped.
     pub fn set_t_end(&mut self, t_end: f64) {
         self.t_end = t_end;
         if t_end != self.t {
-            self.dir = if t_end < self.t { -1.0 } else { 1.0 };
-            self.h = self.dir * self.h.abs();
+            self.dir = TimeDirection::from_to(self.t, t_end);
+            self.h_next = self.dir.sign() * self.h_next.abs();
         }
     }
 
-    /// Replace the current point, e.g. to renormalise a perturbation when
-    /// computing Lyapunov exponents. Keeps the step size, re-evaluates `f`
+    /// Replace the current point. Keeps the step size, re-evaluates `f`
     /// (one evaluation) and forgets the dense output of the last step.
     ///
     /// # Panics
@@ -386,7 +504,7 @@ impl<'a> Stepper<'a> {
         self.t_prev = t;
         self.h_last = 0.0;
         self.x.copy_from_slice(x);
-        eval(self.f, self.p, &mut self.stats, t, &self.x, &mut self.fx);
+        counted_eval(self.f, self.p, &mut self.stats, t, &self.x, &mut self.fx);
         self.has_dense = false;
         self.last_rejected = false;
         self.x_prev.copy_from_slice(x);
@@ -401,20 +519,11 @@ impl<'a> Stepper<'a> {
     /// step (or after [`set_state`](Self::set_state)) it returns the
     /// current state.
     pub fn interpolate(&self, t: f64, out: &mut [f64]) {
-        let n = self.dim();
         if !self.has_dense || self.h_last == 0.0 {
             out.copy_from_slice(&self.x);
             return;
         }
-        let theta = (t - self.t_prev) / self.h_last;
-        let theta1 = 1.0 - theta;
-        let c = &self.cont;
-        for i in 0..n {
-            out[i] = c[i]
-                + theta
-                    * (c[n + i]
-                        + theta1 * (c[2 * n + i] + theta * (c[3 * n + i] + theta1 * c[4 * n + i])));
-        }
+        self.cont.eval((t - self.t_prev) / self.h_last, out);
     }
 
     /// Take one step towards `t_end`. See [`StepOutcome`].
@@ -456,26 +565,12 @@ impl<'a> Stepper<'a> {
 
     /// Does the last accepted step look like a finite-time blow-up?
     ///
-    /// Meant to be called when the step size has collapsed, i.e. the
-    /// solution runs into a singularity at some time `t*`. There are two
-    /// kinds, and the last step tells them apart:
-    ///
-    /// * **blow-up**: `|x| → ∞`. Then `|f|` grows like a modest power of
-    ///   `|x|` (`x' = x^3`: `|f| = |x|^3`; `x' = e^x`: `ln|f| = x ≈ 31` when
-    ///   the steps collapse).
-    /// * **finite limit**: `x → c` with `|f| → ∞` (`x' = 1/(2 - x)^3`
-    ///   reaching 2, `x' = -1/x` reaching 0). Then `x` hardly changes while
-    ///   `|f|` explodes.
-    ///
-    /// So for each component that moved away from 0 in the last step while
-    /// its derivative grew, compute the *elasticity*
-    /// `E = Δ ln|f_i| / Δ ln|x_i|` over the step. It is a blow-up if some
-    /// such component has `E <= MAX_BLOW_UP_ELASTICITY` (1000); a finite
-    /// limit `c` gives `E ≈ m |c| / |c - x|`, typically `10^4` or more.
+    /// `true` if some component moved away from 0 in the last step while its
+    /// derivative grew, with elasticity `E = Δ ln|f_i| / Δ ln|x_i|` over the
+    /// step at most 1000.
     ///
     /// Always `false` before the first step.
     pub fn is_blowing_up(&self) -> bool {
-        /// Largest elasticity `d ln|f| / d ln|x|` still counted as blow-up.
         const MAX_BLOW_UP_ELASTICITY: f64 = 1000.0;
         if !self.has_dense {
             return false;
@@ -483,9 +578,7 @@ impl<'a> Stepper<'a> {
         (0..self.dim()).any(|i| {
             let (x0, x1) = (self.x_prev[i], self.x[i]);
             let (f0, f1) = (self.f_prev[i].abs(), self.fx[i].abs());
-            // Moving away from zero (without crossing it), derivative growing.
-            let outward = x0 * x1 > 0.0 && x1.abs() > x0.abs() && f1 > f0 && f0 > 0.0;
-            if !outward {
+            if !moves_outward_with_growing_slope(x0, x1, f0, f1) {
                 return false;
             }
             let elasticity = (f1 / f0).ln() / (x1 / x0).ln();
@@ -493,18 +586,21 @@ impl<'a> Stepper<'a> {
         })
     }
 
+    fn error_weight(&self, i: usize) -> f64 {
+        self.atol + self.rtol * self.x[i].abs()
+    }
+
     /// Hairer's `HINIT`: guess a starting step from the size of `x`, `f`
     /// and a finite-difference estimate of the second derivative.
     fn initial_step(&mut self) -> f64 {
         const ORDER: f64 = 5.0;
         let n = self.dim();
-        let sk = |xi: f64, atol: f64, rtol: f64| atol + rtol * xi.abs();
 
         let (mut dnf, mut dny) = (0.0, 0.0);
         for i in 0..n {
-            let w = sk(self.x[i], self.atol, self.rtol);
-            dnf += scaled(self.fx[i], w).powi(2);
-            dny += scaled(self.x[i], w).powi(2);
+            let w = self.error_weight(i);
+            dnf += ratio_or_zero(self.fx[i], w).powi(2);
+            dny += ratio_or_zero(self.x[i], w).powi(2);
         }
         let mut h = if dnf <= 1e-10 || dny <= 1e-10 {
             1e-6
@@ -513,25 +609,7 @@ impl<'a> Stepper<'a> {
         };
         h = h.min(self.h_max);
 
-        // One explicit Euler step to estimate the second derivative.
-        let hs = self.dir * h;
-        for i in 0..n {
-            self.x_stage[i] = self.x[i] + hs * self.fx[i];
-        }
-        eval(
-            self.f,
-            self.p,
-            &mut self.stats,
-            self.t + hs,
-            &self.x_stage,
-            &mut self.f_new,
-        );
-        let mut der2 = 0.0;
-        for i in 0..n {
-            let w = sk(self.x[i], self.atol, self.rtol);
-            der2 += scaled(self.f_new[i] - self.fx[i], w).powi(2);
-        }
-        let der2 = der2.sqrt() / h;
+        let der2 = self.estimate_second_derivative(h);
         let der12 = der2.max(dnf.sqrt());
         let h1 = if der12 <= 1e-15 {
             (h * 1e-3).max(1e-6)
@@ -546,8 +624,42 @@ impl<'a> Stepper<'a> {
         }
     }
 
-    /// Commit `x_new` / `f_new` as the new point after an accepted step of size `h`.
-    fn accept(&mut self, t_new: f64, h: f64) -> StepOutcome {
+    /// Weighted norm of `x''` from one explicit Euler step of size `h`.
+    fn estimate_second_derivative(&mut self, h: f64) -> f64 {
+        let n = self.dim();
+        let hs = self.dir.sign() * h;
+        for i in 0..n {
+            self.x_stage[i] = self.x[i] + hs * self.fx[i];
+        }
+        counted_eval(
+            self.f,
+            self.p,
+            &mut self.stats,
+            self.t + hs,
+            &self.x_stage,
+            &mut self.f_new,
+        );
+        let mut der2 = 0.0;
+        for i in 0..n {
+            der2 += ratio_or_zero(self.f_new[i] - self.fx[i], self.error_weight(i)).powi(2);
+        }
+        der2.sqrt() / h
+    }
+
+    /// Accept the step to `(t_new, x_new)`: build its dense output, then make
+    /// the new point current.
+    fn commit(&mut self, t_new: f64, h: f64, dense: Dense) {
+        match dense {
+            Dense::Hermite if all_finite(&self.f_new) => {
+                self.cont
+                    .hermite(h, &self.x, &self.x_new, &self.fx, &self.f_new)
+            }
+            Dense::Hermite => self.cont.linear(&self.x, &self.x_new),
+            Dense::Dopri5 => {
+                self.cont
+                    .dopri5(h, &self.x, &self.x_new, &self.fx, &self.k, &self.f_new)
+            }
+        }
         self.x_prev.copy_from_slice(&self.x);
         self.f_prev.copy_from_slice(&self.fx);
         self.t_prev = self.t;
@@ -557,6 +669,10 @@ impl<'a> Stepper<'a> {
         std::mem::swap(&mut self.fx, &mut self.f_new);
         self.has_dense = true;
         self.stats.accepted += 1;
+    }
+
+    fn accept(&mut self, t_new: f64, h: f64, dense: Dense) -> StepOutcome {
+        self.commit(t_new, h, dense);
         if blew_up(&self.x) {
             StepOutcome::BlewUp
         } else {
@@ -564,60 +680,39 @@ impl<'a> Stepper<'a> {
         }
     }
 
-    /// Fill `cont[0..4n]` with the cubic Hermite interpolant between
-    /// `(x, fx)` and `(x_new, f_new)`, and zero `cont[4n..]`.
-    ///
-    /// The end slopes go through [`limit_hermite_slopes`] so that a badly
-    /// resolved step (such as the last step of a blow-up) cannot produce
-    /// samples far outside the range of its end points.
-    fn hermite_dense(&mut self, h: f64) {
-        let n = self.dim();
-        let f_new_ok = all_finite(&self.f_new);
-        let c = &mut self.cont;
-        for i in 0..n {
-            let ydiff = self.x_new[i] - self.x[i];
-            c[i] = self.x[i];
-            c[n + i] = ydiff;
-            if f_new_ok {
-                let (m0, m1) = limit_hermite_slopes(self.fx[i], self.f_new[i], ydiff / h);
-                let bspl = h * m0 - ydiff;
-                c[2 * n + i] = bspl;
-                c[3 * n + i] = ydiff - h * m1 - bspl;
-            } else {
-                // Only happens on the final step of a blow-up: fall back to
-                // linear interpolation rather than producing NaN.
-                c[2 * n + i] = 0.0;
-                c[3 * n + i] = 0.0;
-            }
-            c[4 * n + i] = 0.0;
-        }
+    /// Keep a finite new point where `f` overflowed while growing: the run
+    /// stops there as a blow-up.
+    fn accept_overflowed_endpoint(&mut self, t_new: f64, h: f64) -> StepOutcome {
+        self.commit(t_new, h, Dense::Hermite);
+        StepOutcome::BlewUp
     }
 
-    // ----------------------------------------------------------------- fixed
-
     fn step_fixed(&mut self) -> StepOutcome {
-        let mut h = self.h;
+        let mut h = self.h_next;
         if self.too_small(h) {
             return StepOutcome::Failed(Status::StepTooSmall);
         }
-        // Shorten (or very slightly stretch) the last step to land exactly on t_end.
         let remaining = self.t_end - self.t;
-        let last = remaining.abs() <= h.abs() * (1.0 + 1e-9);
-        if last {
+        let lands_on_t_end = remaining.abs() <= h.abs() * (1.0 + END_STRETCH_TOL);
+        if lands_on_t_end {
             h = remaining;
         }
-        let t_new = if last { self.t_end } else { self.t + h };
+        let t_new = if lands_on_t_end {
+            self.t_end
+        } else {
+            self.t + h
+        };
 
         self.fixed_stages(h);
         if !all_finite(&self.x_new) {
-            let status = if self.overflowed_while_growing(h, t_new, false) {
+            let status = if self.overflowed_while_growing(h, t_new, Endpoint::StagesOnly) {
                 Status::BlewUp
             } else {
                 Status::NonFinite
             };
             return StepOutcome::Failed(status);
         }
-        eval(
+        counted_eval(
             self.f,
             self.p,
             &mut self.stats,
@@ -626,43 +721,22 @@ impl<'a> Stepper<'a> {
             &mut self.f_new,
         );
         if !all_finite(&self.f_new) && !blew_up(&self.x_new) {
-            if !self.overflowed_while_growing(h, t_new, true) {
+            if !self.overflowed_while_growing(h, t_new, Endpoint::FEvaluated) {
                 return StepOutcome::Failed(Status::NonFinite);
             }
-            // `f` overflowed at a finite, growing state (`x' = e^x` at
-            // x ≈ 1e10): keep the point, it is the last one we can compute.
-            self.hermite_dense(h);
-            self.accept(t_new, h);
-            return StepOutcome::BlewUp;
+            return self.accept_overflowed_endpoint(t_new, h);
         }
-        self.hermite_dense(h);
-        self.accept(t_new, h)
+        self.accept(t_new, h, Dense::Hermite)
     }
 
-    /// After a fixed step of size `h` (to `t_new`) produced NaN or infinity:
-    /// was it a finite-time blow-up rather than the field leaving its
-    /// domain or hitting a pole?
-    ///
-    /// It is a blow-up if, for some component `i`, the step *overflowed*
-    /// (`x_new[i]`, `f(x_new)[i]` when `f_evaluated`, or a stage value of
-    /// component `i` is ±∞) while that component was *growing*:
-    /// `|x_new[i]| > |x[i]|` (true when `x_new[i]` is ±∞), or `x_new[i]` is
-    /// NaN (∞ - ∞ in the stage sum) and the last accepted step already
-    /// looked like a blow-up ([`Stepper::is_blowing_up`]), **and** `f`
-    /// still overflows just short of the first point where it failed (see
-    /// [`Stepper::still_overflows_near`]).
-    ///
-    /// A field that returns NaN without overflowing (`sqrt` of a negative
-    /// number, `0/0`), overflows at a shrinking component (`x' = -1/x`
-    /// landing exactly on 0), or has a pole at a finite point that a stage
-    /// lands on exactly (`x' = 1/(2 - x)^3` at 2) is not a blow-up.
-    fn overflowed_while_growing(&mut self, h: f64, t_new: f64, f_evaluated: bool) -> bool {
+    fn overflowed_while_growing(&mut self, h: f64, t_new: f64, endpoint: Endpoint) -> bool {
         let stages: &[Vec<f64>] = match self.method {
             Method::Euler | Method::Dopri5 => &[],
             Method::Heun => &self.k[..1],
             Method::Rk4 => &self.k[..3],
         };
         let uses_stage_point = !stages.is_empty();
+        let f_evaluated = endpoint == Endpoint::FEvaluated;
         let blowing_up = self.is_blowing_up();
         let grew = (0..self.dim()).any(|i| {
             let xn = self.x_new[i];
@@ -673,45 +747,48 @@ impl<'a> Stepper<'a> {
             let growing = xn.abs() > self.x[i].abs() || (xn.is_nan() && blowing_up);
             overflow && growing
         });
-        grew && self.still_overflows_near(h, t_new, f_evaluated)
+        grew && self.still_overflows_near(h, t_new, endpoint)
     }
 
-    /// Tells a blow-up from a pole at a finite point by probing the field
-    /// just short of where the step first failed.
-    ///
-    /// Takes the first point at which the step evaluated `f` to a
-    /// non-finite value (a stage point, or `x_new` when `f_evaluated`) and
-    /// evaluates `f` at `P - PROBE·(P - x)`, a hair back towards the start
-    /// of the step. At a pole or finite singularity (`1/(2 - x)` at 2) `f`
-    /// is finite there; at a blow-up it is ±∞ still, because the state is
-    /// already far beyond where `f` overflows (`e^x` at `x ≈ 1e9`). If the
-    /// failing point itself is not finite (a stage running off to ±∞), or
-    /// no evaluation failed (`x_new` overflowed from finite stages), it is
-    /// a blow-up. Counts one evaluation of `f` when it probes.
-    fn still_overflows_near(&mut self, h: f64, t_new: f64, f_evaluated: bool) -> bool {
-        /// Fraction of the way back towards the start of the step.
-        const PROBE: f64 = 1e-6;
+    fn still_overflows_near(&mut self, h: f64, t_new: f64, endpoint: Endpoint) -> bool {
+        const PROBE_BACKOFF_FRACTION: f64 = 1e-6;
         let n = self.dim();
         let (t, x) = (self.t, &self.x);
         let along = |c: f64, k: &[f64]| -> Vec<f64> {
             x.iter().zip(k).map(|(xi, ki)| xi + c * h * ki).collect()
         };
-        // (time, point, f there) of each stage evaluation, in order.
-        let stages: Vec<(f64, Vec<f64>, &[f64])> = match self.method {
-            Method::Heun => vec![(t + h, along(1.0, &self.fx), &self.k[0])],
+        let stages: Vec<StageEval> = match self.method {
+            Method::Heun => vec![StageEval {
+                t: t + h,
+                x: along(1.0, &self.fx),
+                f: &self.k[0],
+            }],
             Method::Rk4 => vec![
-                (t + 0.5 * h, along(0.5, &self.fx), &self.k[0]),
-                (t + 0.5 * h, along(0.5, &self.k[0]), &self.k[1]),
-                (t + h, along(1.0, &self.k[1]), &self.k[2]),
+                StageEval {
+                    t: t + 0.5 * h,
+                    x: along(0.5, &self.fx),
+                    f: &self.k[0],
+                },
+                StageEval {
+                    t: t + 0.5 * h,
+                    x: along(0.5, &self.k[0]),
+                    f: &self.k[1],
+                },
+                StageEval {
+                    t: t + h,
+                    x: along(1.0, &self.k[1]),
+                    f: &self.k[2],
+                },
             ],
             Method::Euler | Method::Dopri5 => vec![],
         };
         let failed = stages
             .into_iter()
-            .find(|(_, _, k)| !all_finite(k))
-            .map(|(ts, xs, _)| (ts, xs))
+            .find(|s| !all_finite(s.f))
+            .map(|s| (s.t, s.x))
             .or_else(|| {
-                (f_evaluated && !all_finite(&self.f_new)).then(|| (t_new, self.x_new.clone()))
+                (endpoint == Endpoint::FEvaluated && !all_finite(&self.f_new))
+                    .then(|| (t_new, self.x_new.clone()))
             });
         let Some((tp, xp)) = failed else {
             return true;
@@ -722,11 +799,11 @@ impl<'a> Stepper<'a> {
         let probe: Vec<f64> = xp
             .iter()
             .zip(x)
-            .map(|(p, x0)| p - PROBE * (p - x0))
+            .map(|(p, x0)| p - PROBE_BACKOFF_FRACTION * (p - x0))
             .collect();
-        let t_probe = tp - PROBE * (tp - t);
+        let t_probe = tp - PROBE_BACKOFF_FRACTION * (tp - t);
         let mut f_probe = vec![0.0; n];
-        eval(
+        counted_eval(
             self.f,
             self.p,
             &mut self.stats,
@@ -737,7 +814,6 @@ impl<'a> Stepper<'a> {
         f_probe.iter().any(|v| v.is_infinite())
     }
 
-    /// Compute `x_new` from `(t, x, fx)` with one step of the fixed-step method.
     fn fixed_stages(&mut self, h: f64) {
         let Self {
             f,
@@ -765,7 +841,7 @@ impl<'a> Stepper<'a> {
                 for i in 0..n {
                     xs[i] = x[i] + h * k1[i];
                 }
-                eval(f, p, stats, t + h, xs, k2);
+                counted_eval(f, p, stats, t + h, xs, k2);
                 for i in 0..n {
                     x_new[i] = x[i] + 0.5 * h * (k1[i] + k2[i]);
                 }
@@ -774,15 +850,15 @@ impl<'a> Stepper<'a> {
                 for i in 0..n {
                     xs[i] = x[i] + 0.5 * h * k1[i];
                 }
-                eval(f, p, stats, t + 0.5 * h, xs, k2);
+                counted_eval(f, p, stats, t + 0.5 * h, xs, k2);
                 for i in 0..n {
                     xs[i] = x[i] + 0.5 * h * k2[i];
                 }
-                eval(f, p, stats, t + 0.5 * h, xs, k3);
+                counted_eval(f, p, stats, t + 0.5 * h, xs, k3);
                 for i in 0..n {
                     xs[i] = x[i] + h * k3[i];
                 }
-                eval(f, p, stats, t + h, xs, k4);
+                counted_eval(f, p, stats, t + h, xs, k4);
                 for i in 0..n {
                     x_new[i] = x[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
                 }
@@ -791,17 +867,20 @@ impl<'a> Stepper<'a> {
         }
     }
 
-    // -------------------------------------------------------------- adaptive
+    /// A NaN error, or a non-finite stage, means the step left the domain of
+    /// `f`. An infinite error with finite stages is an ordinary rejection
+    /// (a component with zero tolerance moved).
+    fn stages_non_finite(&self, err: f64) -> bool {
+        err.is_nan() || !all_finite(&self.x_new) || !all_finite(&self.f_new)
+    }
 
     fn step_adaptive(&mut self) -> StepOutcome {
         use ctrl::*;
-        // Set when the last rejection was caused by NaN/inf, so that a
-        // collapse of the step size is reported as NonFinite.
-        let mut nonfinite = false;
+        let mut last_rejection_nonfinite = false;
         loop {
-            let mut h = self.h;
+            let mut h = self.h_next;
             if self.too_small(h) {
-                let status = if nonfinite {
+                let status = if last_rejection_nonfinite {
                     Status::NonFinite
                 } else if self.is_blowing_up() {
                     Status::BlewUp
@@ -810,60 +889,54 @@ impl<'a> Stepper<'a> {
                 };
                 return StepOutcome::Failed(status);
             }
-            // If we would land within 1% of t_end, go exactly there instead
-            // (avoids a tiny final step).
-            let last = (self.t + 1.01 * h - self.t_end) * self.dir >= 0.0;
-            if last {
+            let lands_on_t_end = (self.t + END_STRETCH * h - self.t_end) * self.dir.sign() >= 0.0;
+            if lands_on_t_end {
                 h = self.t_end - self.t;
             }
-            let t_new = if last { self.t_end } else { self.t + h };
+            let t_new = if lands_on_t_end {
+                self.t_end
+            } else {
+                self.t + h
+            };
 
-            let err = self.dopri5_stages(h, t_new);
-            // NaN/inf in the stages. (An infinite `err` with finite stages,
-            // e.g. a non-zero error on a component with weight 0 when
-            // atol = 0, is an ordinary rejection handled below.)
-            if err.is_nan() || !all_finite(&self.x_new) || !all_finite(&self.f_new) {
+            self.dopri5_stages(h, t_new);
+            let err = self.scaled_rms_error(h);
+            if self.stages_non_finite(err) {
                 self.stats.rejected += 1;
                 self.last_rejected = true;
-                nonfinite = true;
-                self.h = h * FAC_MIN;
+                last_rejection_nonfinite = true;
+                self.h_next = h * MAX_SHRINK;
                 continue;
             }
-            nonfinite = false;
+            last_rejection_nonfinite = false;
 
-            // PI controller (Hairer's DOPRI5): fac = err^expo1 / err_old^beta.
-            let fac11 = err.powf(EXPO1);
-            let fac = fac11 / self.err_old.powf(BETA);
-            let fac = (fac / SAFETY).clamp(1.0 / FAC_MAX, 1.0 / FAC_MIN);
+            let (fac11, fac) = pi_step_factor(err, self.err_old);
             let mut h_new = h / fac;
 
             if err <= 1.0 {
                 self.err_old = err.max(1e-4);
                 if h_new.abs() > self.h_max {
-                    h_new = self.dir * self.h_max;
+                    h_new = self.dir.sign() * self.h_max;
                 }
                 if self.last_rejected {
-                    // Do not grow right after a rejection.
-                    h_new = self.dir * h_new.abs().min(h.abs());
+                    h_new = self.dir.sign() * h_new.abs().min(h.abs());
                 }
                 self.last_rejected = false;
-                self.dopri5_dense(h);
-                // Keep the proposal of a full step even if this one was shortened to hit t_end.
-                if !last || h_new.abs() > self.h.abs() {
-                    self.h = h_new;
+                if adopts_proposal(lands_on_t_end, h_new, self.h_next) {
+                    self.h_next = h_new;
                 }
-                return self.accept(t_new, h);
+                return self.accept(t_new, h, Dense::Dopri5);
             }
             self.stats.rejected += 1;
             self.last_rejected = true;
-            self.h = h / (1.0 / FAC_MIN).min(fac11 / SAFETY);
+            self.h_next = h / (1.0 / MAX_SHRINK).min(fac11 / SAFETY);
         }
     }
 
-    /// Compute stages k2..k7 (k7 = f at the new point, stored in `f_new`),
-    /// the 5th-order solution `x_new`, and return the scaled error norm.
-    fn dopri5_stages(&mut self, h: f64, t_new: f64) -> f64 {
-        use dp::*;
+    /// The six stages of a Dormand–Prince step of size `h`, the new point in
+    /// `x_new`, and `f` there in `f_new`, which is the next step's `k1`.
+    fn dopri5_stages(&mut self, h: f64, t_new: f64) {
+        use dormand_prince::*;
         let Self {
             f,
             p,
@@ -873,77 +946,63 @@ impl<'a> Stepper<'a> {
             k,
             x_stage: ys,
             x_new,
-            f_new: k7,
+            f_new: fsal_k1,
             stats,
-            rtol,
-            atol,
             ..
         } = self;
-        let (f, p, t, rtol, atol) = (*f, *p, *t, *rtol, *atol);
+        let (f, p, t) = (*f, *p, *t);
         let n = x.len();
         let [k2, k3, k4, k5, k6] = k;
 
         for i in 0..n {
             ys[i] = x[i] + h * A21 * k1[i];
         }
-        eval(f, p, stats, t + C2 * h, ys, k2);
+        counted_eval(f, p, stats, t + C2 * h, ys, k2);
         for i in 0..n {
             ys[i] = x[i] + h * (A31 * k1[i] + A32 * k2[i]);
         }
-        eval(f, p, stats, t + C3 * h, ys, k3);
+        counted_eval(f, p, stats, t + C3 * h, ys, k3);
         for i in 0..n {
             ys[i] = x[i] + h * (A41 * k1[i] + A42 * k2[i] + A43 * k3[i]);
         }
-        eval(f, p, stats, t + C4 * h, ys, k4);
+        counted_eval(f, p, stats, t + C4 * h, ys, k4);
         for i in 0..n {
             ys[i] = x[i] + h * (A51 * k1[i] + A52 * k2[i] + A53 * k3[i] + A54 * k4[i]);
         }
-        eval(f, p, stats, t + C5 * h, ys, k5);
+        counted_eval(f, p, stats, t + C5 * h, ys, k5);
         for i in 0..n {
             ys[i] =
                 x[i] + h * (A61 * k1[i] + A62 * k2[i] + A63 * k3[i] + A64 * k4[i] + A65 * k5[i]);
         }
-        eval(f, p, stats, t_new, ys, k6);
+        counted_eval(f, p, stats, t_new, ys, k6);
         for i in 0..n {
-            x_new[i] =
-                x[i] + h * (A71 * k1[i] + A73 * k3[i] + A74 * k4[i] + A75 * k5[i] + A76 * k6[i]);
+            x_new[i] = x[i] + h * (B1 * k1[i] + B3 * k3[i] + B4 * k4[i] + B5 * k5[i] + B6 * k6[i]);
         }
-        // FSAL: this is also k1 of the next step.
-        eval(f, p, stats, t_new, x_new, k7);
-
-        // Hairer's norm: sqrt(mean((err_i / sk_i)^2)), sk_i = atol + rtol * max(|x_i|, |x_new_i|).
-        let mut sum = 0.0;
-        for i in 0..n {
-            let e =
-                h * (E1 * k1[i] + E3 * k3[i] + E4 * k4[i] + E5 * k5[i] + E6 * k6[i] + E7 * k7[i]);
-            let sk = atol + rtol * x[i].abs().max(x_new[i].abs());
-            sum += scaled(e, sk).powi(2);
-        }
-        if n == 0 {
-            0.0
-        } else {
-            (sum / n as f64).sqrt()
-        }
+        counted_eval(f, p, stats, t_new, x_new, fsal_k1);
     }
 
-    /// Dense-output coefficients for the accepted Dopri5 step of size `h`
-    /// (before `x_new` / `f_new` are swapped in).
-    fn dopri5_dense(&mut self, h: f64) {
-        use dp::*;
+    /// RMS of the embedded error estimate, scaled by the tolerances.
+    fn scaled_rms_error(&self, h: f64) -> f64 {
+        use dormand_prince::*;
         let n = self.dim();
-        let (x, k1, k7) = (&self.x, &self.fx, &self.f_new);
-        let [_, k3, k4, k5, k6] = &self.k;
-        let c = &mut self.cont;
-        for i in 0..n {
-            let ydiff = self.x_new[i] - x[i];
-            let bspl = h * k1[i] - ydiff;
-            c[i] = x[i];
-            c[n + i] = ydiff;
-            c[2 * n + i] = bspl;
-            c[3 * n + i] = ydiff - h * k7[i] - bspl;
-            c[4 * n + i] =
-                h * (D1 * k1[i] + D3 * k3[i] + D4 * k4[i] + D5 * k5[i] + D6 * k6[i] + D7 * k7[i]);
+        if n == 0 {
+            return 0.0;
         }
+        let (k1, k7) = (&self.fx, &self.f_new);
+        let [_, k3, k4, k5, k6] = &self.k;
+        let mut sum = 0.0;
+        for i in 0..n {
+            let e = h
+                * (ERR_1 * k1[i]
+                    + ERR_3 * k3[i]
+                    + ERR_4 * k4[i]
+                    + ERR_5 * k5[i]
+                    + ERR_6 * k6[i]
+                    + ERR_7 * k7[i]);
+            let sk = self.atol + self.rtol * self.x[i].abs().max(self.x_new[i].abs());
+            sum += ratio_or_zero(e, sk).powi(2);
+        }
+        (sum / n as f64).sqrt()
     }
 }
 
@@ -966,22 +1025,23 @@ mod tests {
 
     #[test]
     fn tableau_rows_sum_to_c() {
-        use dp::*;
+        use dormand_prince::*;
         let close = |a: f64, b: f64| assert!((a - b).abs() < 1e-15, "{a} vs {b}");
         close(A21, C2);
         close(A31 + A32, C3);
         close(A41 + A42 + A43, C4);
         close(A51 + A52 + A53 + A54, C5);
         close(A61 + A62 + A63 + A64 + A65, 1.0);
-        close(A71 + A73 + A74 + A75 + A76, 1.0);
-        close(E1 + E3 + E4 + E5 + E6 + E7, 0.0);
-        close(D1 + D3 + D4 + D5 + D6 + D7, 0.0);
+        close(B1 + B3 + B4 + B5 + B6, 1.0);
+        close(ERR_1 + ERR_3 + ERR_4 + ERR_5 + ERR_6 + ERR_7, 0.0);
+        close(
+            DENSE_1 + DENSE_3 + DENSE_4 + DENSE_5 + DENSE_6 + DENSE_7,
+            0.0,
+        );
     }
 
     #[test]
     fn hermite_matches_cubic_exactly() {
-        // x' = 3t^2 has the cubic x = t^3, which Hermite reproduces exactly;
-        // RK4 is exact for it as well.
         let f = FnField::new(1, 0, SystemKind::Ode, |t, _x, _p, out| out[0] = 3.0 * t * t)
             .non_autonomous();
         let mut s = Stepper::new(&f, &[], 0.0, &[0.0], 1.0, &opts(Method::Rk4, 0.5));
@@ -1063,7 +1123,6 @@ mod tests {
 
     #[test]
     fn nan_in_rhs_is_reported() {
-        // sqrt(x) leaves its domain when x crosses zero.
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
             out[0] = -x[0].sqrt() - 1.0
         });
@@ -1099,7 +1158,6 @@ mod tests {
         while s.step() == StepOutcome::Accepted {}
         assert_eq!(s.t(), 2.0);
         assert!((s.x()[0] - 2.0 * (-1.0f64).exp()).abs() < 1e-6);
-        // Turn around.
         s.set_t_end(1.0);
         assert!(s.h_next() < 0.0);
         while s.step() == StepOutcome::Accepted {}
@@ -1107,39 +1165,51 @@ mod tests {
     }
 
     #[test]
-    fn hermite_limiter_only_touches_overshooting_pieces() {
-        // Well resolved: slopes close to the secant are unchanged.
+    fn limiter_leaves_monotone_pieces_alone() {
         assert_eq!(limit_hermite_slopes(1.0, 1.1, 1.05), (1.0, 1.1));
-        // x = t^3 on [0, 1]: (α, β) = (0, 3) is on the boundary, unchanged.
         assert_eq!(limit_hermite_slopes(0.0, 3.0, 1.0), (0.0, 3.0));
-        // Turning point inside the step (opposite signs): unchanged.
+    }
+
+    #[test]
+    fn limiter_leaves_turning_point_alone() {
         assert_eq!(limit_hermite_slopes(-0.5, 4.0, 1.0), (-0.5, 4.0));
-        // Zero secant: unchanged.
+    }
+
+    #[test]
+    fn limiter_leaves_flat_secant_alone() {
         assert_eq!(limit_hermite_slopes(1.0, -1.0, 0.0), (1.0, -1.0));
-        // Blow-up step: the huge end slope is scaled onto |(α, β)| = 3.
+    }
+
+    #[test]
+    fn limiter_scales_overshooting_slopes_onto_the_circle() {
         let (m0, m1) = limit_hermite_slopes(2.0, 1e20, 1e9);
-        assert!((m1 / 1e9 - 3.0).abs() < 1e-12 && m0 > 0.0 && m0 < 2.0);
-        // Negative direction works the same way.
+        assert!((m1 / 1e9 - FRITSCH_CARLSON_RADIUS).abs() < 1e-12 && m0 > 0.0 && m0 < 2.0);
         let (m0, m1) = limit_hermite_slopes(-2.0, -1e20, -1e9);
-        assert!((m1 / -1e9 - 3.0).abs() < 1e-12 && m0 < 0.0);
-        // Absurd ratios overflow inside the test but are still limited.
+        assert!((m1 / -1e9 - FRITSCH_CARLSON_RADIUS).abs() < 1e-12 && m0 < 0.0);
+    }
+
+    #[test]
+    fn limiter_keeps_huge_slopes_finite() {
         let (_, m1) = limit_hermite_slopes(1.0, 1e300, 1e-10);
-        assert!(m1.is_finite() && m1 <= 3.0 * 1e-10 * (1.0 + 1e-12));
+        assert!(m1.is_finite() && m1 <= FRITSCH_CARLSON_RADIUS * 1e-10 * (1.0 + 1e-12));
     }
 
     #[test]
     fn monotonicity_region() {
         assert!(hermite_is_monotone(1.0, 1.0));
-        assert!(hermite_is_monotone(3.0, 3.0)); // corner of the de Boor–Swartz box
+        assert!(hermite_is_monotone(3.0, 3.0));
         assert!(hermite_is_monotone(0.0, 3.0));
         assert!(!hermite_is_monotone(0.0, 3.5));
         assert!(!hermite_is_monotone(4.0, 4.0));
-        assert!(!hermite_is_monotone(0.0, f64::MAX)); // NaN inside: not monotone
+    }
+
+    #[test]
+    fn overflow_to_nan_is_not_monotone() {
+        assert!(!hermite_is_monotone(0.0, f64::MAX));
     }
 
     #[test]
     fn fixed_step_blow_up_interpolant_stays_between_end_points() {
-        // x' = x^2 with Euler: the last step jumps over orders of magnitude.
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0] * x[0]);
         let mut s = Stepper::new(&f, &[], 0.0, &[1.0], 30.0, &opts(Method::Euler, 0.1));
         let mut out = [0.0];
@@ -1172,23 +1242,26 @@ mod tests {
     }
 
     #[test]
-    fn collapse_in_fast_blow_up_is_blew_up() {
-        // x' = e^x from 0 blows up at t = 1 but never gets past x ≈ 32.
+    fn exponential_collapse_is_blew_up() {
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0].exp());
         let mut s = Stepper::new(&f, &[], 0.0, &[0.0], 5.0, &SolverOptions::default());
         assert_eq!(run(&mut s), StepOutcome::Failed(Status::BlewUp));
         assert!(s.is_blowing_up());
         assert!((s.t() - 1.0).abs() < 1e-5, "{}", s.t());
+    }
 
-        // Backwards in time: x' = -x^3 from x(0) = -1 blows up at t = -1/2.
+    #[test]
+    fn backwards_cubic_collapse_is_blew_up() {
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
             out[0] = -x[0].powi(3)
         });
         let mut s = Stepper::new(&f, &[], 0.0, &[-1.0], -5.0, &SolverOptions::default());
         assert_eq!(run(&mut s), StepOutcome::Failed(Status::BlewUp));
         assert!((s.t() + 0.5).abs() < 1e-5, "{}", s.t());
+    }
 
-        // 2D: x' = y^2, y' = x^2 from (1, 1) (x = y, x' = x^2).
+    #[test]
+    fn coupled_quadratic_blow_up_crosses_the_threshold() {
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
             out[0] = x[1] * x[1];
             out[1] = x[0] * x[0];
@@ -1198,9 +1271,7 @@ mod tests {
     }
 
     #[test]
-    fn collapse_at_a_finite_singularity_is_step_too_small() {
-        // x' = 1/(2 - x)^3 from 1: x reaches 2 with infinite slope at
-        // t = 1/4. The solution stays bounded, so this is no blow-up.
+    fn cubic_pole_collapse_is_step_too_small() {
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
             out[0] = 1.0 / (2.0 - x[0]).powi(3)
         });
@@ -1208,11 +1279,21 @@ mod tests {
         assert_eq!(run(&mut s), StepOutcome::Failed(Status::StepTooSmall));
         assert!(!s.is_blowing_up());
         assert!(s.x()[0] < 2.0 && s.x()[0] > 1.99);
+    }
 
-        // x' = -1/x from 1: x = sqrt(1 - 2t) reaches 0 at t = 1/2.
+    #[test]
+    fn inverse_x_collapse_is_step_too_small() {
         let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = -1.0 / x[0]);
         let mut s = Stepper::new(&f, &[], 0.0, &[1.0], 5.0, &SolverOptions::default());
         assert_eq!(run(&mut s), StepOutcome::Failed(Status::StepTooSmall));
+    }
+
+    #[test]
+    fn infinite_error_with_finite_stages_is_an_ordinary_rejection() {
+        let f = decay();
+        let s = Stepper::new(&f, &[], 0.0, &[1.0], 1.0, &SolverOptions::default());
+        assert!(!s.stages_non_finite(f64::INFINITY));
+        assert!(s.stages_non_finite(f64::NAN));
     }
 
     #[test]
@@ -1224,7 +1305,6 @@ mod tests {
 
     #[test]
     fn zero_atol_with_zero_components() {
-        // Pure relative tolerance; the second component is identically 0.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
             out[0] = -x[0];
             out[1] = -x[1];
@@ -1242,7 +1322,7 @@ mod tests {
         assert_eq!(run(&mut s), StepOutcome::AtEnd);
         assert_eq!(s.x()[1], 0.0);
         assert!((s.x()[0] - (-1.0f64).exp()).abs() < 1e-5);
-        assert_eq!(scaled(0.0, 0.0), 0.0);
-        assert_eq!(scaled(1.0, 0.0), f64::INFINITY);
+        assert_eq!(ratio_or_zero(0.0, 0.0), 0.0);
+        assert_eq!(ratio_or_zero(1.0, 0.0), f64::INFINITY);
     }
 }

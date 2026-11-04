@@ -1,20 +1,11 @@
-//! Size limits: the largest accepted inputs compile and evaluate on a small
-//! thread stack, and larger ones give an error instead of crashing.
-
 mod common;
 
 use common::*;
 use dyn_core::VectorField;
 use dyn_expr::{compile, InputFormat, Severity};
 
-/// Stack size for the checks: 512 KiB in release builds (threads usually
-/// get 2 MiB or more), 2 MiB in debug builds, whose stack frames are much
-/// bigger.
 const STACK_KIB: usize = if cfg!(debug_assertions) { 2048 } else { 512 };
 
-/// Run `f` on a thread with [`STACK_KIB`] of stack (a stack overflow aborts
-/// the test process, so the test fails loudly if the limits are too
-/// generous).
 fn on_small_stack(f: impl FnOnce() + Send + 'static) {
     std::thread::Builder::new()
         .stack_size(STACK_KIB << 10)
@@ -34,7 +25,6 @@ fn error_message(src: &str) -> String {
         .expect("an error")
 }
 
-/// Compile, evaluate, differentiate and print the system.
 fn exercise(src: &str) {
     let sys = latex(src);
     let x = vec![0.5; sys.dim()];
@@ -44,8 +34,6 @@ fn exercise(src: &str) {
     assert!(!sys.info.equations_latex[0].is_empty());
 }
 
-/// Inputs just below the limits (49 nested brackets, a sum of 250 terms,
-/// ...).
 fn largest_cases() -> Vec<String> {
     vec![
         format!(

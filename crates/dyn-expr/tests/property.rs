@@ -1,13 +1,3 @@
-//! Randomized tests: generate expressions, print them in both input
-//! formats, and check that
-//! - LaTeX and text compile to the same values,
-//! - the values match a direct Rust evaluation of the generated tree,
-//! - AD Jacobians (state and parameter) match central differences,
-//! - Hamiltonian fields match finite differences of `H`.
-//!
-//! A tiny deterministic PRNG keeps the test reproducible without extra
-//! dependencies.
-
 mod common;
 
 use common::*;
@@ -32,9 +22,6 @@ impl Rng {
     }
 }
 
-/// Generated expression over states `x`, `y` and parameter `a`.
-/// Every node is smooth on the sampled domain (denominators and log
-/// arguments are kept ≥ 1).
 #[derive(Debug, Clone)]
 enum E {
     X,
@@ -44,20 +31,15 @@ enum E {
     Add(Box<E>, Box<E>),
     Sub(Box<E>, Box<E>),
     Mul(Box<E>, Box<E>),
-    /// a / (1 + b^2)
     SafeDiv(Box<E>, Box<E>),
-    /// a^k, k in 2..=4
     PowI(Box<E>, i32),
     Neg(Box<E>),
     Sin(Box<E>),
     Cos(Box<E>),
     Tanh(Box<E>),
     Atan(Box<E>),
-    /// exp(sin a)
     ExpSin(Box<E>),
-    /// ln(1 + a^2)
     LogSq(Box<E>),
-    /// sqrt(1 + a^2)
     SqrtSq(Box<E>),
 }
 
@@ -113,7 +95,6 @@ fn eval(e: &E, x: f64, y: f64, a: f64) -> f64 {
     }
 }
 
-/// Fully bracketed text-mode form.
 fn to_text(e: &E) -> String {
     match e {
         E::X => "x".into(),
@@ -136,8 +117,6 @@ fn to_text(e: &E) -> String {
     }
 }
 
-/// MathLive-style LaTeX, using implicit multiplication, `\frac`,
-/// `\left( \right)`, `e^{…}` and `\sqrt{…}`.
 fn to_latex(e: &E) -> String {
     let g = |s: String| format!("\\left({s}\\right)");
     match e {
@@ -147,7 +126,6 @@ fn to_latex(e: &E) -> String {
         E::Num(v) => format!("{v}"),
         E::Add(p, q) => g(format!("{}+{}", to_latex(p), to_latex(q))),
         E::Sub(p, q) => g(format!("{}-{}", to_latex(p), to_latex(q))),
-        // Juxtaposition of two bracketed groups is a product.
         E::Mul(p, q) => g(format!("{}{}", g(to_latex(p)), g(to_latex(q)))),
         E::SafeDiv(p, q) => format!("\\frac{{{}}}{{1+{}^{{2}}}}", to_latex(p), g(to_latex(q))),
         E::PowI(p, k) => format!("{}^{{{k}}}", g(to_latex(p))),
@@ -162,17 +140,12 @@ fn to_latex(e: &E) -> String {
     }
 }
 
-/// Derivative of `f` at `x0` by central differences with Richardson
-/// extrapolation, plus an error estimate. Plain central differences are not
-/// accurate enough for the wilder generated expressions (e.g. sin(a^12)).
 fn richardson(f: impl Fn(f64) -> Vec<f64>, x0: f64) -> (Vec<f64>, Vec<f64>) {
     let scale = x0.abs().max(1.0);
     let d = |h: f64| -> Vec<f64> {
         let (a, b) = (f(x0 + h), f(x0 - h));
         a.iter().zip(&b).map(|(a, b)| (a - b) / (2.0 * h)).collect()
     };
-    // Try a few base steps and keep, per entry, the estimate with the
-    // smallest error bound.
     let mut best: Option<(Vec<f64>, Vec<f64>)> = None;
     for h in [1e-2, 1e-3, 1e-4].map(|h| h * scale) {
         let (d1, d2, d3) = (d(h), d(h / 2.0), d(h / 4.0));
@@ -214,7 +187,6 @@ fn assert_matches_fd(ad: &[f64], (est, err): (Vec<f64>, Vec<f64>), what: &str) {
     }
 }
 
-/// Exact Jacobian columns and parameter derivatives vs extrapolated FD.
 fn check_ad(sys: &CompiledSystem, x: &[f64], p: &[f64]) {
     let n = sys.dim();
     let j = jac(sys, 0.0, x, p);
@@ -252,7 +224,6 @@ fn random_expressions_ad_matches_finite_differences() {
     for case in 0..300 {
         let f = gen(&mut r, 4);
         let g = gen(&mut r, 4);
-        // Always mention x, y and a so the system has dim 2 and 1 parameter.
         let txt = format!("x' = {} + 0*y*a\ny' = {} + 0*x", to_text(&f), to_text(&g));
         let ltx = format!(
             "\\dot{{x}}={}+0ya\\\\\\dot{{y}}={}+0x",
@@ -283,7 +254,6 @@ fn random_expressions_ad_matches_finite_differences() {
 fn random_hamiltonians_match_finite_differences() {
     let mut r = Rng(0xD1B5_4A32_D192_ED03);
     for case in 0..100 {
-        // H(x, y) with x = q, y = p.
         let h = gen(&mut r, 3);
         let src = format!("H(x, y) = {} + 0*x*y*a", to_text(&h));
         let sys = text(&src);
@@ -296,12 +266,10 @@ fn random_hamiltonians_match_finite_differences() {
                 &[hv(x[0], x[1])],
                 1e-12,
             );
-            // Field = (∂H/∂p, -∂H/∂q).
             let f = sys.eval_alloc(0.0, &x, &p);
             assert_matches_fd(&[f[0]], richardson(|m| vec![hv(x[0], m)], x[1]), "dH/dp");
             assert_matches_fd(&[-f[1]], richardson(|q| vec![hv(q, x[1])], x[0]), "dH/dq");
             check_ad(&sys, &x, &p);
-            // Hamiltonian flows are divergence-free: trace(J) = 0.
             let j = jac(&sys, 0.0, &x, &p);
             assert!(
                 (j[0] + j[3]).abs() < 1e-9 * (1.0 + j[0].abs()),

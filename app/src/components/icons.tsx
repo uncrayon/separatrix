@@ -1,11 +1,3 @@
-// The Separatrix icon set, inline (16px grid, 1.5px stroke, stroke = currentColor).
-//
-// Same paths as the design system's assets/Icons/*.svg: when a path changes,
-// change it in both places. Every icon has class `ds-icon`, which sizes it to
-// var(--icon) (so it grows in projector mode); there are no width/height
-// attributes. Icons are decorative (aria-hidden): the control they sit in
-// carries the visible label or aria-label.
-
 import type { ReactNode, SVGProps } from "react";
 
 export type IconProps = SVGProps<SVGSVGElement>;
@@ -28,8 +20,6 @@ function Svg({ className, children, viewBox = "0 0 16 16", ...rest }: IconProps 
     </svg>
   );
 }
-
-/* ---- Top bar ---- */
 
 export const IconGallery = (p: IconProps) => (
   <Svg {...p}>
@@ -60,8 +50,6 @@ export const IconExport = (p: IconProps) => (
   </Svg>
 );
 
-/* ---- Generic actions ---- */
-
 export const IconPlus = (p: IconProps) => (
   <Svg {...p}>
     <path d="M8 3v10M3 8h10" />
@@ -79,8 +67,6 @@ export const IconChevronDown = (p: IconProps) => (
     <path d="M4.5 6.5 8 10l3.5-3.5" />
   </Svg>
 );
-/** @deprecated Use IconChevronDown. */
-export const IconChevron = IconChevronDown;
 
 export const IconCopy = (p: IconProps) => (
   <Svg {...p}>
@@ -127,8 +113,6 @@ export const IconSettings = (p: IconProps) => (
   </Svg>
 );
 
-/* ---- Canvas tools and view ---- */
-
 export const IconSelect = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 2.5v10l2.7-2.4 1.8 3.9 1.7-.8-1.8-3.8H12L4 2.5Z" />
@@ -161,10 +145,6 @@ export const IconResetView = (p: IconProps) => (
     <path d="M2.5 2.5V5h2.5" />
   </Svg>
 );
-/** @deprecated Use IconResetView. */
-export const IconReset = IconResetView;
-
-/* ---- Layers and views ---- */
 
 export const IconField = (p: IconProps) => (
   <Svg {...p}>
@@ -174,14 +154,12 @@ export const IconField = (p: IconProps) => (
   </Svg>
 );
 
-/** The only dashed icon: nullclines are dashed on the plot. */
 export const IconNullcline = (p: IconProps) => (
   <Svg {...p}>
     <path d="M2 12.5C6 12.5 9 3.5 14 3.5" strokeDasharray="2 3" />
   </Svg>
 );
 
-/** Filled centre = stable, as on the plot. */
 export const IconFixedPoint = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="8" r="5.5" />
@@ -203,8 +181,6 @@ export const IconCube3d = (p: IconProps) => (
   </Svg>
 );
 
-/* ---- Animation ---- */
-
 export const IconPlay = (p: IconProps) => (
   <Svg {...p}>
     <path d="M5 3.2v9.6L12.5 8 5 3.2Z" />
@@ -223,8 +199,6 @@ export const IconStepForward = (p: IconProps) => (
     <path d="M12.5 3.5v9" />
   </Svg>
 );
-
-/* ---- Status: info (circle), warning (triangle), error (octagon) ---- */
 
 export const IconInfo = (p: IconProps) => (
   <Svg {...p}>
@@ -247,12 +221,6 @@ export const IconError = (p: IconProps) => (
   </Svg>
 );
 
-/* ---- Brand ---- */
-
-/**
- * The Separatrix mark (a spiral into a stable focus), on a 20px grid and drawn
- * in `accent`. Sized by CSS like every icon; the shell gives it a larger box.
- */
 export const IconLogo = ({ className, ...rest }: IconProps) => (
   <svg
     className={className ? `ds-icon brand-logo ${className}` : "ds-icon brand-logo"}

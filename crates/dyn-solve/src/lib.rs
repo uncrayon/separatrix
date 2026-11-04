@@ -220,12 +220,10 @@ impl Solution {
     }
 }
 
-/// `true` if every entry is finite.
 pub(crate) fn all_finite(v: &[f64]) -> bool {
     v.iter().all(|a| a.is_finite())
 }
 
-/// `true` if some entry exceeds [`BLOW_UP_THRESHOLD`] in absolute value.
 pub(crate) fn blew_up(v: &[f64]) -> bool {
     v.iter().any(|a| a.abs() > BLOW_UP_THRESHOLD)
 }
@@ -264,7 +262,7 @@ pub fn integrate(
 ///
 /// # Panics
 /// If `x0.len() != f.dim()`.
-#[allow(clippy::too_many_arguments)] // mirrors the contract in docs/contracts.md
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_with_events(
     f: &dyn VectorField,
     p: &[f64],
@@ -355,8 +353,10 @@ mod tests {
             serde_json::to_string(&Status::StepTooSmall).unwrap(),
             "\"stepTooSmall\""
         );
+    }
 
-        // The UI does not send hMax: it must default.
+    #[test]
+    fn missing_h_max_takes_default() {
         let parsed: SolverOptions = serde_json::from_str(
             r#"{"method":"heun","rtol":1e-3,"atol":1e-6,"h":0.1,"maxSteps":10}"#,
         )

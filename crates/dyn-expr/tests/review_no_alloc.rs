@@ -1,9 +1,3 @@
-//! `VectorField` calls on a compiled system must not allocate (contract in
-//! `dyn-core`). A counting global allocator checks that `eval`,
-//! `jacobian` and `param_jacobian` make zero heap allocations after the
-//! first (warm-up) call, for small programs (stack registers), large ones
-//! (thread-local registers) and Hamiltonians (dual and nested-dual runs).
-
 mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -63,7 +57,7 @@ fn check(src: &str) {
             sys.param_jacobian(0.2, &x, &p, k, &mut out);
         }
     };
-    run(); // warm-up: thread-local buffers may grow once
+    run();
     let count = allocations_during(|| {
         for _ in 0..100 {
             run();
@@ -86,11 +80,14 @@ fn evaluation_does_not_allocate() {
     check(
         r"H(q_1,q_2,p_1,p_2)=\frac{p_1^2+p_2^2}{2}+\frac{1}{2}\left(q_1^2+q_2^2\right)+q_1^2q_2-\frac{q_2^3}{3}",
     );
-    // Large enough (> 32 instructions) to use the thread-local buffer.
     let big = r"\dot{u}=\sin u\cos v+\tanh w-\frac{u^3}{1+v^2}+a\ln\left(2+u^2\right)
 \dot{v}=e^{-u^2}\sin\left(\omega t\right)+\arctan\left(vw\right)-bv^5+\sqrt{1+w^2}
 \dot{w}=\cosh\left(\frac{u}{3}\right)-\sinh\left(\frac{v}{5}\right)+c\left|u-w\right|+\max\left(u,v\right)";
     let sys = common::latex(big);
-    assert!(sys.instruction_count() > 32, "{}", sys.instruction_count());
+    assert!(
+        sys.instruction_count() > dyn_expr::SMALL_PROGRAM,
+        "{}",
+        sys.instruction_count()
+    );
     check(big);
 }

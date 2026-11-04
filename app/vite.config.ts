@@ -1,8 +1,10 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import tauriConf from "./src-tauri/tauri.conf.json" with { type: "json" };
 
-/** Vite's default limit, kept for every chunk except MathLive's (see below). */
 const CHUNK_WARN_KB = 500;
+const MATHLIVE_CHUNK_WARN_KB = 900;
+const DEV_PORT = Number(new URL(tauriConf.build.devUrl).port);
 
 /**
  * MathLive ships as one prebuilt, minified ES module (mathlive.min.mjs, about
@@ -27,20 +29,16 @@ function chunkSizeGuard(): Plugin {
   };
 }
 
-// Tauri expects a fixed port and does not want Vite to clear the Rust logs.
 export default defineConfig({
   plugins: [react(), chunkSizeGuard()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
+  server: { port: DEV_PORT, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
   build: {
     target: "es2022",
     sourcemap: true,
-    // Only the mathlive chunk can reach this; chunkSizeGuard checks the rest.
-    chunkSizeWarningLimit: 900,
+    chunkSizeWarningLimit: MATHLIVE_CHUNK_WARN_KB,
     rolldownOptions: {
       output: {
-        // MathLive is still loaded at startup (every equation is typeset with it),
-        // but as a separate file the HTML preloads next to the entry chunk.
         codeSplitting: {
           groups: [{ name: "mathlive", test: /[\\/]node_modules[\\/]mathlive[\\/]/ }],
         },

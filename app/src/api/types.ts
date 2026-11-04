@@ -15,6 +15,8 @@ export interface Diagnostic {
 export interface SymbolInfo {
   name: string;
   latex: string;
+  /** A lower derivative introduced by order reduction (x' for x''). */
+  derived?: boolean;
 }
 
 export interface ParamInfo extends SymbolInfo {

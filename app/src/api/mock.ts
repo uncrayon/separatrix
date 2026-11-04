@@ -1,10 +1,3 @@
-// Browser-only stand-in for the Rust core, used by `npm run dev` outside Tauri.
-//
-// It knows the gallery templates (and the Blank system's starting equations)
-// only: each has a hand-written right-hand side below. Anything else gets a friendly compile diagnostic. The numerics are
-// deliberately simple (fixed-step RK4, Newton from a grid of seeds, marching
-// squares) — good enough for a preview, not a reference.
-
 import type {
   Arrow,
   AxisRef,
@@ -21,9 +14,8 @@ import type {
   TrajectoryOut,
   TrajectoryRequest,
 } from "./types";
-import { TEMPLATES } from "../templates";
+import { BLANK_TEMPLATE, TEMPLATES, templateSource, type Template } from "../templates";
 
-/** Right-hand side: ODE → dx/dt, map → x_{n+1}. */
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
 interface MockSystem {
@@ -40,9 +32,8 @@ const s = (name: string, latex = name): SymbolInfo => ({ name, latex });
 const par = (name: string, latex = name): ParamInfo => ({ name, latex, default: 1 });
 const xy = [s("x"), s("y")];
 const xyz = [s("x"), s("y"), s("z")];
-const theta = [s("theta", "\\theta"), s("theta'", "\\dot{\\theta}")];
+const theta = [s("theta", "\\theta"), { ...s("theta'", "\\dot{\\theta}"), derived: true }];
 
-/** Hand-written systems, keyed by template id. Mirrors what dyn-expr infers. */
 const SYSTEMS: Record<string, MockSystem> = {
   "slope-field-x2-minus-t": {
     kind: "ode",
@@ -144,46 +135,31 @@ const SYSTEMS: Record<string, MockSystem> = {
     ],
     f: (_t, [q, p]) => [p, -Math.sin(q)],
   },
+  blank: {
+    kind: "ode",
+    states: xy,
+    params: [],
+    equationsLatex: ["\\dot{x} = y", "\\dot{y} = -x"],
+    f: (_t, [x, y]) => [y, -x],
+  },
 };
 
 const squash = (src: string) => src.replace(/\s+/g, "");
 
-/**
- * Systems that are not gallery templates but that the UI itself offers:
- * the "Blank system" card starts from the harmonic oscillator (BLANK_TEMPLATE
- * in useStudio.ts). Keyed by the whitespace-free source.
- */
-const EXTRA_SYSTEMS: { source: string; sys: MockSystem }[] = [
-  {
-    source: squash("\\dot{x}=y\n\\dot{y}=-x"),
-    sys: {
-      kind: "ode",
-      states: xy,
-      params: [],
-      equationsLatex: ["\\dot{x} = y", "\\dot{y} = -x"],
-      f: (_t, [x, y]) => [y, -x],
-    },
-  },
-];
+const MOCK_TEMPLATES: Template[] = [...TEMPLATES, BLANK_TEMPLATE];
 
-/** systemId → system. Ids are 1-based template indices, then the extras. */
 const byId = new Map<number, MockSystem>();
-TEMPLATES.forEach((t, i) => {
+MOCK_TEMPLATES.forEach((t, i) => {
   const sys = SYSTEMS[t.id];
   if (sys) byId.set(i + 1, sys);
 });
-EXTRA_SYSTEMS.forEach((e, k) => byId.set(TEMPLATES.length + 1 + k, e.sys));
 
-/** The id and system for a source, if the preview knows it. */
 function lookup(src: string): { id: number; sys: MockSystem } | null {
-  const index = TEMPLATES.findIndex((t) => squash(t.equations.join("\n")) === src);
-  const sys = index >= 0 ? SYSTEMS[TEMPLATES[index].id] : undefined;
-  if (sys) return { id: index + 1, sys };
-  const k = EXTRA_SYSTEMS.findIndex((e) => e.source === src);
-  return k >= 0 ? { id: TEMPLATES.length + 1 + k, sys: EXTRA_SYSTEMS[k].sys } : null;
+  const index = MOCK_TEMPLATES.findIndex((t) => squash(templateSource(t)) === src);
+  const sys = index >= 0 ? SYSTEMS[MOCK_TEMPLATES[index].id] : undefined;
+  return sys ? { id: index + 1, sys } : null;
 }
 
-/** Mock of the `compile_system` command: recognises template sources only. */
 export async function mockCompile(req: CompileRequest): Promise<CompileResponse> {
   const src = squash(req.source);
   const empty: CompileResponse = {
@@ -230,7 +206,6 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
   };
 }
 
-/** Mock of the `compute_portrait` command. */
 export async function mockPortrait(req: PortraitRequest): Promise<PortraitResponse> {
   const start = performance.now();
   const sys = byId.get(req.systemId);
@@ -238,7 +213,6 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   const dim = sys.states.length;
   const p = req.params;
 
-  /** The full state and time for a point of the drawing plane. */
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
     while (x.length < dim) x.push(0);
@@ -301,8 +275,6 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   };
 }
 
-// ---------------------------------------------------------------- trajectories
-
 function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: number): TrajectoryOut {
   const dim = sys.states.length;
   let x = tr.x0.slice(0, dim);
@@ -360,8 +332,6 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
   return { t: ts, x: xs, status: "completed", stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
 }
 
-// ---------------------------------------------------------------- fixed points
-
 function findFixedPoints(
   sys: MockSystem,
   req: PortraitRequest,
@@ -416,7 +386,6 @@ function newton(g: (x: number[]) => number[], start: number[], dim: number): num
   return Math.hypot(...g(x)) < 1e-9 ? x : null;
 }
 
-/** Central-difference Jacobian, row-major. */
 function jacobian(f: (x: number[]) => number[], x: number[], dim: number): number[] {
   const out = new Array<number>(dim * dim).fill(0);
   for (let j = 0; j < dim; j++) {
@@ -432,7 +401,6 @@ function jacobian(f: (x: number[]) => number[], x: number[], dim: number): numbe
   return out;
 }
 
-/** Gaussian elimination with partial pivoting; null if singular. */
 function solveLinear(a: number[], b: number[], n: number): number[] | null {
   const m = a.slice();
   const r = b.slice();
@@ -457,7 +425,6 @@ function solveLinear(a: number[], b: number[], n: number): number[] | null {
   return x;
 }
 
-/** Eigenvalues of a 1×1, 2×2 or 3×3 matrix as [re, im] pairs. */
 function eigenvalues(j: number[], n: number): [number, number][] {
   if (n === 1) return [[j[0], 0]];
   if (n === 2) {
@@ -466,30 +433,40 @@ function eigenvalues(j: number[], n: number): [number, number][] {
     return quadratic(1, -tr, det);
   }
   if (n === 3) {
-    // Characteristic polynomial λ³ − c2 λ² + c1 λ − c0.
-    const c2 = j[0] + j[4] + j[8];
-    const c1 = j[0] * j[4] - j[1] * j[3] + j[0] * j[8] - j[2] * j[6] + j[4] * j[8] - j[5] * j[7];
-    const c0 =
-      j[0] * (j[4] * j[8] - j[5] * j[7]) -
-      j[1] * (j[3] * j[8] - j[5] * j[6]) +
-      j[2] * (j[3] * j[7] - j[4] * j[6]);
+    const [c2, c1, c0] = charPolyCoefficients(j);
     const p = (l: number) => ((l - c2) * l + c1) * l - c0;
-    // One real root by bisection on a bracket that surely contains it.
-    const bound = 1 + Math.max(Math.abs(c2), Math.abs(c1), Math.abs(c0));
-    let lo = -bound;
-    let hi = bound;
-    for (let k = 0; k < 200; k++) {
-      const mid = (lo + hi) / 2;
-      if (Math.sign(p(mid)) === Math.sign(p(lo))) lo = mid;
-      else hi = mid;
-    }
-    const r = (lo + hi) / 2;
-    // Deflate: λ³ − c2 λ² + c1 λ − c0 = (λ − r)(λ² + bλ + c).
-    const b = r - c2;
-    const c = c1 + r * b;
+    const r = realRootByBisection(p, 1 + Math.max(Math.abs(c2), Math.abs(c1), Math.abs(c0)));
+    const [b, c] = deflate(r, c2, c1);
     return [[r, 0], ...quadratic(1, b, c)];
   }
   return [];
+}
+
+/** [c2, c1, c0] with det(λI - J) = λ³ - c2 λ² + c1 λ - c0 for a 3x3 J. */
+function charPolyCoefficients(j: number[]): [number, number, number] {
+  const c2 = j[0] + j[4] + j[8];
+  const c1 = j[0] * j[4] - j[1] * j[3] + j[0] * j[8] - j[2] * j[6] + j[4] * j[8] - j[5] * j[7];
+  const c0 =
+    j[0] * (j[4] * j[8] - j[5] * j[7]) - j[1] * (j[3] * j[8] - j[5] * j[6]) + j[2] * (j[3] * j[7] - j[4] * j[6]);
+  return [c2, c1, c0];
+}
+
+/** A real root of the cubic p in [-bound, bound], where p changes sign. */
+function realRootByBisection(p: (l: number) => number, bound: number): number {
+  let lo = -bound;
+  let hi = bound;
+  for (let k = 0; k < 200; k++) {
+    const mid = (lo + hi) / 2;
+    if (Math.sign(p(mid)) === Math.sign(p(lo))) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/** [b, c] with λ³ - c2 λ² + c1 λ - c0 = (λ - r)(λ² + b λ + c). */
+function deflate(r: number, c2: number, c1: number): [number, number] {
+  const b = r - c2;
+  return [b, c1 + r * b];
 }
 
 function quadratic(a: number, b: number, c: number): [number, number][] {
@@ -508,17 +485,11 @@ function quadratic(a: number, b: number, c: number): [number, number][] {
   ];
 }
 
-// Eigenvectors, following the conventions of dyn-analysis (eigvec.rs): unit
-// length, largest-magnitude component positive; complex pairs as real and
-// imaginary parts with the phase making them the ellipse's semi-axes; `null`
-// for the missing direction of a defective (repeated) eigenvalue.
-
 type C = [number, number];
 const cmul = (a: C, b: C): C => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
 const csub = (a: C, b: C): C => [a[0] - b[0], a[1] - b[1]];
 const cnorm = (v: C[]) => Math.sqrt(v.reduce((acc, z) => acc + z[0] * z[0] + z[1] * z[1], 0));
 
-/** Bilinear cross product: orthogonal (without conjugation) to both rows. */
 function ccross(a: C[], b: C[]): C[] {
   return [
     csub(cmul(a[1], b[2]), cmul(a[2], b[1])),
@@ -527,7 +498,6 @@ function ccross(a: C[], b: C[]): C[] {
   ];
 }
 
-/** Basis of the null space of the n×n complex matrix `m` (n ≤ 3), best effort. */
 function nullSpace(m: C[][], n: number, tol: number): C[][] {
   const e = (k: number): C[] => Array.from({ length: n }, (_, i): C => [i === k ? 1 : 0, 0]);
   const big = (v: C[]) => cnorm(v) > tol;
@@ -543,7 +513,6 @@ function nullSpace(m: C[][], n: number, tol: number): C[][] {
   const crosses = [ccross(m[0], m[1]), ccross(m[0], m[2]), ccross(m[1], m[2])];
   const best = crosses.reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
   if (cnorm(best) > tol * tol) return [best];
-  // Rank one: two vectors orthogonal to the largest row.
   const r = m.reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
   const u = [0, 1, 2].map((k) => ccross(r, e(k))).reduce((a, b) => (cnorm(b) > cnorm(a) ? b : a));
   return [u, ccross(r, u)];
@@ -554,28 +523,47 @@ function dominantIndex(mags: number[]): number {
   return mags.findIndex((v) => v >= (1 - 1e-9) * max);
 }
 
+/**
+ * Rotate the complex phase of w so its real and imaginary parts are the
+ * semi-axes of the ellipse (major first); a circle gets its largest
+ * component made real.
+ */
+function rotateToSemiAxes(w: C[]): C[] {
+  const aa = w.reduce((acc, z) => acc + z[0] * z[0], 0);
+  const bb = w.reduce((acc, z) => acc + z[1] * z[1], 0);
+  const ab = w.reduce((acc, z) => acc + z[0] * z[1], 0);
+  const p = aa - bb;
+  const q = 2 * ab;
+  let theta: number;
+  if (Math.hypot(p, q) <= 1e-8 * (aa + bb)) {
+    const k = dominantIndex(w.map(([a, b]) => Math.hypot(a, b)));
+    theta = -Math.atan2(w[k][1], w[k][0]);
+  } else {
+    theta = 0.5 * Math.atan2(-q, p);
+  }
+  const rot: C = [Math.cos(theta), Math.sin(theta)];
+  return w.map((z) => cmul(z, rot));
+}
+
 function normaliseVector(v: C[], complex: boolean): { re: number[]; im: number[] | null } {
   const len = cnorm(v);
   let w = v.map(([a, b]): C => [a / len, b / len]);
-  if (complex) {
-    const aa = w.reduce((acc, z) => acc + z[0] * z[0], 0);
-    const bb = w.reduce((acc, z) => acc + z[1] * z[1], 0);
-    const ab = w.reduce((acc, z) => acc + z[0] * z[1], 0);
-    const p = aa - bb;
-    const q = 2 * ab;
-    let theta: number;
-    if (Math.hypot(p, q) <= 1e-8 * (aa + bb)) {
-      const k = dominantIndex(w.map(([a, b]) => Math.hypot(a, b)));
-      theta = -Math.atan2(w[k][1], w[k][0]);
-    } else {
-      theta = 0.5 * Math.atan2(-q, p);
-    }
-    const rot: C = [Math.cos(theta), Math.sin(theta)];
-    w = w.map((z) => cmul(z, rot));
-  }
+  if (complex) w = rotateToSemiAxes(w);
   const k = dominantIndex(w.map(([a]) => Math.abs(a)));
   if (w[k][0] < 0) w = w.map(([a, b]): C => [-a, -b]);
   return { re: w.map(([a]) => a), im: complex ? w.map(([, b]) => b) : null };
+}
+
+/**
+ * Bisection plus deflation finds a repeated 3x3 root only to about 1e-5
+ * (a triple root converges like eps^(1/3)), so roots this close (relative)
+ * are one repeated eigenvalue.
+ */
+const REPEATED_ROOT_TOL = 1e-4;
+
+function clusterMean(cluster: [number, number][]): [number, number] {
+  const n = cluster.length;
+  return [cluster.reduce((acc, e) => acc + e[0], 0) / n, cluster.reduce((acc, e) => acc + e[1], 0) / n];
 }
 
 function eigenvectors(
@@ -587,15 +575,11 @@ function eigenvectors(
   const im: (number[] | null)[] = [];
   const scale = Math.max(...eig.map(([a, b]) => Math.hypot(a, b)), ...j.map(Math.abs));
   const tol = 1e-6 * Math.max(scale, 1e-300);
-  // Repeated eigenvalues (the mock's 3×3 roots are only accurate to ~1e-5
-  // when repeated) are replaced by the mean of their cluster.
   const same = (a: [number, number], b: [number, number]) =>
-    Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-4 * Math.max(scale, 1e-300);
+    Math.hypot(a[0] - b[0], a[1] - b[1]) <= REPEATED_ROOT_TOL * Math.max(scale, 1e-300);
   for (let k = 0; k < eig.length; k++) {
-    const cluster = eig.filter((e) => same(e, eig[k]));
     const occurrence = eig.slice(0, k).filter((e) => same(e, eig[k])).length;
-    const lr = cluster.reduce((acc, e) => acc + e[0], 0) / cluster.length;
-    const li = cluster.reduce((acc, e) => acc + e[1], 0) / cluster.length;
+    const [lr, li] = clusterMean(eig.filter((e) => same(e, eig[k])));
     const complex = Math.abs(li) > tol;
     const m: C[][] = Array.from({ length: n }, (_, r) =>
       Array.from({ length: n }, (_, c): C => (r === c ? [j[r * n + c] - lr, complex ? -li : 0] : [j[r * n + c], 0])),
@@ -628,15 +612,12 @@ function classifyMock(
     if (mods.some((m) => Math.abs(m - 1) < eps)) return { classification: "non-hyperbolic", stable: false };
     if (stable) return { classification: "sink", stable };
     if (mods.every((m) => m > 1)) return { classification: "source", stable };
-    // Maps of any dimension: "saddle (n-D)", as dyn-analysis (Strogatz's
-    // trace–determinant classes are for 2D flows only).
     return { classification: "saddle (n-D)", stable };
   }
   const stable = eig.every(([re]) => re < -eps);
   if (dim === 1) {
     const l = eig[0][0];
     if (Math.abs(l) < eps) return { classification: "non-hyperbolic", stable: false };
-    // As dyn-analysis classify.rs: 1D flows are sink / source.
     return { classification: l < 0 ? "sink" : "source", stable };
   }
   if (dim === 2) {
@@ -659,9 +640,6 @@ function classifyMock(
   return { classification: "saddle (n-D)", stable };
 }
 
-// ---------------------------------------------------------------- nullclines
-
-/** Zero set of `g` on a grid by marching squares, stitched into polylines. */
 function contour(
   g: (x: number, y: number) => number,
   xr: [number, number],
@@ -678,7 +656,6 @@ function contour(
     for (let i = 0; i < n; i++) {
       const c = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
       const pts: [number, number][] = [];
-      // Corners in order: (i,j) (i+1,j) (i+1,j+1) (i,j+1).
       const cx = [i, i + 1, i + 1, i];
       const cy = [j, j, j + 1, j + 1];
       for (let e = 0; e < 4; e++) {
@@ -702,7 +679,6 @@ function contour(
   return stitch(segs, Math.min(dx, dy) * 1e-6);
 }
 
-/** Join segments that share endpoints into longer polylines (so dashes flow). */
 function stitch(segs: [[number, number], [number, number]][], tol: number): [number, number][][] {
   const key = ([x, y]: [number, number]) => `${Math.round(x / tol)},${Math.round(y / tol)}`;
   const ends = new Map<string, number[]>();

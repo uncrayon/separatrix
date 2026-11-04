@@ -1,5 +1,3 @@
-//! User-facing messages about the input.
-
 use serde::{Deserialize, Serialize};
 
 /// How serious a [`Diagnostic`] is.

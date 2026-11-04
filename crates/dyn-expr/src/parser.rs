@@ -1,35 +1,8 @@
-//! Recursive-descent parser: tokens → one [`Line`] (`lhs = rhs`) per equation.
-//!
-//! Grammar (both formats; LaTeX-only parts marked):
-//!
-//! ```text
-//! line    := expr '=' expr
-//! expr    := term (('+' | '-') term)*
-//! term    := unary (('*' | '/') unary | implicit-factor)*
-//! unary   := ('-' | '+') unary | power
-//! power   := postfix ('^' exponent)?        right-associative
-//! postfix := primary ("'" | ^{\prime})* ('(t)')?
-//! primary := number | symbol [subscript] | function | '(' expr ')' | '{' expr '}'
-//!          | '|' expr '|' | \frac A B | \sqrt[n] A | \dot A        (LaTeX)
-//! ```
-//!
-//! Implicit multiplication: in LaTeX any factor may follow another (`2xy`);
-//! in text mode only after a number or a closing bracket (`2x`, `(a)(b)`).
-//! A LaTeX function without brackets takes the following product as its
-//! argument (`\sin 2x` = sin(2x)), stopping at the next function
-//! (`\sin x \cos y` = sin(x)·cos(y)) or time derivative
-//! (`\sin\theta\dot{\theta}` = sin(θ)·θ̇).
-//!
-//! The parser refuses input nested more than [`MAX_NESTING`] levels deep,
-//! or whose tree would be taller than [`MAX_HEIGHT`] (a very long sum), with
-//! an error instead of overflowing the stack.
-
 use crate::ast::{Ast, AstKind, BinOp, Func, MAX_HEIGHT};
 use crate::diag::Diagnostic;
 use crate::token::{tokenize, Delim, Span, SymName, Tok, Token};
 use crate::InputFormat;
 
-/// One equation, `lhs = rhs`.
 #[derive(Debug, Clone)]
 pub(crate) struct Line {
     pub lhs: Ast,
@@ -39,21 +12,14 @@ pub(crate) struct Line {
 
 type PResult<T> = Result<T, Diagnostic>;
 
-/// How many nested sub-expressions (brackets, fractions, roots, function
-/// arguments, signs) the parser follows before giving up. A bracket costs
-/// two levels, so this allows about 50 nested brackets, far more than any
-/// hand-typed equation, using about 250 KiB of stack in release builds.
-///
-/// Helpers that are not on the recursive path are marked
-/// `#[inline(never)]` so their locals don't enlarge the recursive frames.
-const MAX_NESTING: u32 = 100;
+const MAX_BRACKET_DEPTH: u32 = 50;
+const LEVELS_PER_BRACKET: u32 = 2;
+const MAX_NESTING: u32 = MAX_BRACKET_DEPTH * LEVELS_PER_BRACKET;
 
 fn err<T>(msg: impl Into<String>, span: Span) -> PResult<T> {
     Err(Diagnostic::error(msg, Some(span)))
 }
 
-/// Tokenize and parse every line. Lines with errors are reported in
-/// `diags` and left out of the result.
 pub(crate) fn parse_lines(
     src: &str,
     format: InputFormat,
@@ -77,7 +43,7 @@ pub(crate) fn parse_lines(
             toks: group.to_vec(),
             pos: 0,
             text: format == InputFormat::Text,
-            abs_depth: 0,
+            bar_closes_abs: false,
             depth: 0,
         };
         match p.parse_line() {
@@ -93,18 +59,14 @@ struct Parser<'s> {
     toks: Vec<Token>,
     pos: usize,
     text: bool,
-    /// > 0 while inside `|…|`, where a bare `|` closes instead of opening.
-    abs_depth: u32,
-    /// Current recursion depth, see [`MAX_NESTING`].
+    bar_closes_abs: bool,
     depth: u32,
 }
 
-/// The token is the symbol `n`.
 fn is_n_token(t: &Token) -> bool {
     matches!(&t.tok, Tok::Ident(s) if s.name == "n")
 }
 
-/// The tokens spell `n+1` (or `1+n`).
 fn is_next_index(parts: &[Token]) -> bool {
     let is_one = |t: &Token| matches!(t.tok, Tok::Num(v) if v == 1.0);
     parts.len() == 3
@@ -122,8 +84,6 @@ fn example(text: bool) -> &'static str {
 }
 
 impl<'s> Parser<'s> {
-    // ----- token helpers -------------------------------------------------
-
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos).map(|t| &t.tok)
     }
@@ -150,9 +110,6 @@ impl<'s> Parser<'s> {
         &self.src[span.0..span.1]
     }
 
-    // ----- error helpers -------------------------------------------------
-
-    /// Error for the token at the current position, which nobody expected.
     #[inline(never)]
     fn unexpected(&self) -> Diagnostic {
         let Some(t) = self.toks.get(self.pos) else {
@@ -178,7 +135,6 @@ impl<'s> Parser<'s> {
         Diagnostic::error(msg, Some(t.span))
     }
 
-    /// `1,5` with no spaces around the comma.
     fn is_decimal_comma(&self) -> bool {
         let (Some(prev), Some(next)) = (
             self.pos.checked_sub(1).and_then(|i| self.toks.get(i)),
@@ -193,7 +149,6 @@ impl<'s> Parser<'s> {
             && comma.span.1 == next.span.0
     }
 
-    /// The line ended while something was still expected.
     #[inline(never)]
     fn incomplete(&self) -> Diagnostic {
         let end = self.line_end();
@@ -211,11 +166,6 @@ impl<'s> Parser<'s> {
         }
     }
 
-    // ----- size limits ---------------------------------------------------
-
-    /// Run `f` one nesting level deeper, failing cleanly past
-    /// [`MAX_NESTING`] instead of overflowing the stack. The result's height
-    /// is checked too.
     fn nested(&mut self, f: impl FnOnce(&mut Self) -> PResult<Ast>) -> PResult<Ast> {
         if self.depth >= MAX_NESTING {
             let span = self
@@ -223,8 +173,10 @@ impl<'s> Parser<'s> {
                 .get(self.pos)
                 .map_or((self.line_end(), self.line_end()), |t| t.span);
             return err(
-                "This expression is nested too deeply (brackets, fractions or functions inside \
-                 each other about 50 levels deep). Simplify it",
+                format!(
+                    "This expression is nested too deeply (brackets, fractions or functions \
+                     inside each other about {MAX_BRACKET_DEPTH} levels deep). Simplify it"
+                ),
                 span,
             );
         }
@@ -234,8 +186,6 @@ impl<'s> Parser<'s> {
         self.check_height(r?)
     }
 
-    /// Fail if `a` is taller than [`MAX_HEIGHT`] (for example a sum of
-    /// hundreds of terms), since later passes recurse over the tree.
     fn check_height(&self, a: Ast) -> PResult<Ast> {
         if a.height > MAX_HEIGHT {
             return err(
@@ -246,8 +196,6 @@ impl<'s> Parser<'s> {
         }
         Ok(a)
     }
-
-    // ----- grammar -------------------------------------------------------
 
     fn parse_line(&mut self) -> PResult<Line> {
         let span = (self.toks[0].span.0, self.line_end());
@@ -329,13 +277,11 @@ impl<'s> Parser<'s> {
             | Tok::Dot(_)
             | Tok::Placeholder
             | Tok::AbsOpen => true,
-            Tok::Pipe => self.abs_depth == 0,
+            Tok::Pipe => !self.bar_closes_abs,
             _ => false,
         }
     }
 
-    /// Does an implicit multiplication follow? In text mode this is only
-    /// allowed after a number or a closing bracket.
     #[inline(never)]
     fn implicit_next(&self) -> PResult<bool> {
         let Some(next) = self.peek() else {
@@ -401,8 +347,6 @@ impl<'s> Parser<'s> {
         Ok(Ast::bin(BinOp::Pow, base, exp))
     }
 
-    /// If the tokens after `^` are only primes (`^{\prime\prime}`), return
-    /// the derivative order and how many tokens (including `^`) to skip.
     fn caret_primes(&self) -> Option<(u32, usize)> {
         match self.peek_at(1)? {
             Tok::Prime(k) => Some((*k, 2)),
@@ -424,8 +368,10 @@ impl<'s> Parser<'s> {
 
     fn add_primes(&self, e: Ast, k: u32, end: usize) -> PResult<Ast> {
         let span = (e.span.0, end);
+        if let Some(s) = e.plain_symbol() {
+            return Ok(Ast::new(AstKind::Deriv(s, k), span));
+        }
         match e.kind {
-            AstKind::Sym(s) => Ok(Ast::new(AstKind::Deriv(s, k), span)),
             AstKind::Deriv(s, j) => Ok(Ast::new(AstKind::Deriv(s, j + k), span)),
             _ => err(
                 "A prime (') can only follow a variable name, as in x'",
@@ -434,7 +380,6 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// Exactly `(t)` follows.
     fn paren_t_follows(&self) -> bool {
         matches!(self.peek(), Some(Tok::Open(Delim::Paren)))
             && matches!(self.peek_at(1), Some(Tok::Ident(s)) if s.name == "t")
@@ -460,15 +405,13 @@ impl<'s> Parser<'s> {
                 _ => break,
             }
         }
-        // x'(t), \dot{x}(t), and (LaTeX) x(t): the "(t)" is notation.
         if self.paren_t_follows() {
-            match e.kind {
-                AstKind::Deriv(..) => {
+            match (&e.kind, e.plain_symbol()) {
+                (AstKind::Deriv(..), _) => {
                     self.pos += 3;
                     e.span.1 = self.prev_end();
                 }
-                AstKind::Sym(ref s) if !self.text => {
-                    let s = s.clone();
+                (_, Some(s)) if !self.text => {
                     let t_tok = self.toks[self.pos + 1].clone();
                     self.pos += 3;
                     let arg = match t_tok.tok {
@@ -529,14 +472,12 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// After a name: subscripts, then `H(q, p)` / text-mode `f(x)`.
     #[inline(never)]
     fn parse_symbol(&mut self, s: SymName, span: Span) -> PResult<Ast> {
         let e = self.parse_subscript(s, span)?;
-        if let AstKind::Sym(s) = &e.kind {
+        if let Some(s) = e.plain_symbol() {
             if (self.text || s.name == "H") && matches!(self.peek(), Some(Tok::Open(Delim::Paren)))
             {
-                let s = s.clone();
                 let open = self.bump();
                 let args = self.parse_args(Delim::Paren, open.span, true)?;
                 return Ok(Ast::new(AstKind::Apply(s, args), (span.0, self.prev_end())));
@@ -545,9 +486,6 @@ impl<'s> Parser<'s> {
         Ok(e)
     }
 
-    /// `x_1`, `x_{12}`, `k_{ab}`, `x_n`, `x_{n+1}`, and for maps of
-    /// subscripted states `x_{1,n}` (read as `x_1` at step n) and
-    /// `x_{1,n+1}`.
     #[inline(never)]
     fn parse_subscript(&mut self, s: SymName, span: Span) -> PResult<Ast> {
         if !matches!(self.peek(), Some(Tok::Underscore)) {
@@ -577,37 +515,16 @@ impl<'s> Parser<'s> {
         if is_next_index(&parts) {
             return Ok(Ast::new(AstKind::Next(s), full));
         }
+        if let [index] = parts.as_slice() {
+            if is_n_token(index) {
+                return Ok(Ast::new(AstKind::Current(s), full));
+            }
+        }
         if s.sub_latex.is_some() {
             return err("Only one subscript per name is allowed", full);
         }
-        // x_{1,n} / x_{1,n+1}: an indexed state of a map.
         if let Some(comma) = parts.iter().position(|t| matches!(t.tok, Tok::Comma)) {
-            let (head, index) = (&parts[..comma], &parts[comma + 1..]);
-            let is_n = index.len() == 1 && is_n_token(&index[0]);
-            if head.is_empty() || !(is_n || is_next_index(index)) {
-                return err(
-                    "A subscript with a comma is for maps of indexed variables: x_{1,n} or \
-                     x_{1,n+1}. Otherwise use a name or number, as in x_1 or k_{12}",
-                    full,
-                );
-            }
-            let (name, latex) = self.subscript_name(head, full)?;
-            if is_n {
-                // Same convention as x_n: the name ends in "_n", which the
-                // semantic pass reads as the current iterate of x_1.
-                let cur = SymName {
-                    name: format!("{}_{name}_n", s.name),
-                    base_latex: s.base_latex,
-                    sub_latex: Some(format!("{latex},n")),
-                };
-                return Ok(Ast::new(AstKind::Sym(cur), full));
-            }
-            let state = SymName {
-                name: format!("{}_{name}", s.name),
-                base_latex: s.base_latex,
-                sub_latex: Some(latex),
-            };
-            return Ok(Ast::new(AstKind::Next(state), full));
+            return self.indexed_iterate(s, &parts[..comma], &parts[comma + 1..], full);
         }
         let (name, latex) = self.subscript_name(&parts, full)?;
         let sym = SymName {
@@ -618,8 +535,36 @@ impl<'s> Parser<'s> {
         Ok(Ast::new(AstKind::Sym(sym), full))
     }
 
-    /// Name and LaTeX of a subscript made of names and numbers
-    /// (`12` → `"12"`, `\mathrm{on}` → `"on"`).
+    /// `x_{1,n}` (the current iterate of `x_1`) or `x_{1,n+1}` (its next).
+    fn indexed_iterate(
+        &self,
+        s: SymName,
+        head: &[Token],
+        index: &[Token],
+        full: Span,
+    ) -> PResult<Ast> {
+        let is_n = index.len() == 1 && is_n_token(&index[0]);
+        if head.is_empty() || !(is_n || is_next_index(index)) {
+            return err(
+                "A subscript with a comma is for maps of indexed variables: x_{1,n} or \
+                 x_{1,n+1}. Otherwise use a name or number, as in x_1 or k_{12}",
+                full,
+            );
+        }
+        let (name, latex) = self.subscript_name(head, full)?;
+        let state = SymName {
+            name: format!("{}_{name}", s.name),
+            base_latex: s.base_latex,
+            sub_latex: Some(latex),
+        };
+        let kind = if is_n {
+            AstKind::Current(state)
+        } else {
+            AstKind::Next(state)
+        };
+        Ok(Ast::new(kind, full))
+    }
+
     fn subscript_name(&self, parts: &[Token], full: Span) -> PResult<(String, String)> {
         let mut name = String::new();
         let mut latex = String::new();
@@ -650,7 +595,6 @@ impl<'s> Parser<'s> {
         Ok((name, latex))
     }
 
-    /// Bracketed list after an opening delimiter (already consumed).
     fn parse_args(&mut self, d: Delim, open: Span, allow_comma: bool) -> PResult<Vec<Ast>> {
         if matches!(self.peek(), Some(Tok::Close(c)) if *c == d) {
             let close = self.toks[self.pos].span;
@@ -663,14 +607,14 @@ impl<'s> Parser<'s> {
                 (open.0, close.1),
             );
         }
-        let saved = self.abs_depth;
-        self.abs_depth = 0;
+        let saved = self.bar_closes_abs;
+        self.bar_closes_abs = false;
         let mut args = vec![self.parse_expr()?];
         while allow_comma && matches!(self.peek(), Some(Tok::Comma)) {
             self.bump();
             args.push(self.parse_expr()?);
         }
-        self.abs_depth = saved;
+        self.bar_closes_abs = saved;
         self.expect_close(d, open)?;
         Ok(args)
     }
@@ -698,15 +642,14 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// `|x|` or `\left| x \right|`.
     #[inline(never)]
     fn parse_abs(&mut self) -> PResult<Ast> {
         let open = self.bump();
         let explicit = matches!(open.tok, Tok::AbsOpen);
-        let saved = self.abs_depth;
-        self.abs_depth = if explicit { 0 } else { 1 };
+        let saved = self.bar_closes_abs;
+        self.bar_closes_abs = !explicit;
         let inner = self.parse_expr()?;
-        self.abs_depth = saved;
+        self.bar_closes_abs = saved;
         let closed = match self.peek() {
             Some(Tok::Pipe) if !explicit => true,
             Some(Tok::AbsClose) if explicit => true,
@@ -721,8 +664,6 @@ impl<'s> Parser<'s> {
         Ok(Ast::new(AstKind::Call(Func::Abs, vec![inner]), span))
     }
 
-    /// LaTeX argument of `\frac`, `\sqrt`, `^`: a braced group or a single
-    /// token (`\frac12` = 1/2, `x^2`).
     fn parse_latex_arg(&mut self, allow_minus: bool, ctx: &str) -> PResult<Ast> {
         self.nested(|p| p.parse_latex_arg_inner(allow_minus, ctx))
     }
@@ -785,7 +726,6 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// `\sqrt{x}`, `\sqrt[3]{x}`.
     #[inline(never)]
     fn parse_sqrt(&mut self) -> PResult<Ast> {
         let t = self.bump();
@@ -824,7 +764,6 @@ impl<'s> Parser<'s> {
         Ok(Ast::new(kind, span))
     }
 
-    /// `\dot{x}`, `\ddot\theta`, `\dot{x}_1`, `\dot{x_1}`.
     #[inline(never)]
     fn parse_dot(&mut self, k: u32) -> PResult<Ast> {
         let t = self.bump();
@@ -839,9 +778,9 @@ impl<'s> Parser<'s> {
                 let id = self.bump();
                 let inner = self.parse_subscript(s, id.span)?;
                 self.expect_close(Delim::Brace, open.span)?;
-                match inner.kind {
-                    AstKind::Sym(s) => s,
-                    _ => return Err(need()),
+                match inner.plain_symbol() {
+                    Some(s) => s,
+                    None => return Err(need()),
                 }
             }
             Some(Tok::Ident(s)) => {
@@ -852,13 +791,12 @@ impl<'s> Parser<'s> {
         };
         let after = self.parse_subscript(sym, t.span)?;
         let span = (t.span.0, self.prev_end());
-        match after.kind {
-            AstKind::Sym(s) => Ok(Ast::new(AstKind::Deriv(s, k), span)),
-            _ => err("A derivative can't have the subscript n+1", span),
+        match after.plain_symbol() {
+            Some(s) => Ok(Ast::new(AstKind::Deriv(s, k), span)),
+            None => err("A derivative can't have the subscript n+1", span),
         }
     }
 
-    /// After a function token: optional `^p`, then the argument(s).
     #[inline(never)]
     fn parse_function(&mut self, f: Func, fspan: Span) -> PResult<Ast> {
         let fname = if self.text {
@@ -926,9 +864,6 @@ impl<'s> Parser<'s> {
         Ok(call)
     }
 
-    /// Argument of a LaTeX function written without brackets: a product of
-    /// factors up to the next function, time derivative (`\dot{x}`, `x'`),
-    /// `+`, `-`, `*`, `/` or `=`.
     fn parse_func_chain(&mut self) -> PResult<Ast> {
         self.nested(Self::parse_func_chain_inner)
     }
@@ -951,25 +886,25 @@ impl<'s> Parser<'s> {
         Ok(e)
     }
 
-    /// A time derivative starts here: `\dot{x}`, `x'` or `x^{\prime}`
-    /// (possibly subscripted, `x_1'`). Physics texts write chain-rule
-    /// results such as `\cos\theta\dot{\theta}` meaning cos(θ)·θ̇, so a
-    /// bracket-less function argument stops before one.
+    /// The offset just past an optional `_x`, `_1` or `_{...}` starting at `i`.
+    fn skip_subscript(&self, mut i: usize) -> usize {
+        if !matches!(self.peek_at(i), Some(Tok::Underscore)) {
+            return i;
+        }
+        i += 1;
+        if matches!(self.peek_at(i), Some(Tok::Open(Delim::Brace))) {
+            while !matches!(self.peek_at(i), Some(Tok::Close(Delim::Brace)) | None) {
+                i += 1;
+            }
+        }
+        i + 1
+    }
+
     fn derivative_follows(&self) -> bool {
         match self.peek() {
             Some(Tok::Dot(_)) => true,
             Some(Tok::Ident(_)) => {
-                // Skip a subscript: `_x`, `_1` or `_{...}`.
-                let mut i = 1;
-                if matches!(self.peek_at(i), Some(Tok::Underscore)) {
-                    i += 1;
-                    if matches!(self.peek_at(i), Some(Tok::Open(Delim::Brace))) {
-                        while !matches!(self.peek_at(i), Some(Tok::Close(Delim::Brace)) | None) {
-                            i += 1;
-                        }
-                    }
-                    i += 1;
-                }
+                let i = self.skip_subscript(1);
                 match self.peek_at(i) {
                     Some(Tok::Prime(_)) => true,
                     Some(Tok::Caret) => matches!(
@@ -989,11 +924,11 @@ impl<'s> Parser<'s> {
 mod tests {
     use super::*;
 
-    /// Compact s-expression form of an AST, for assertions.
     pub(crate) fn sexpr(a: &Ast) -> String {
         match &a.kind {
             AstKind::Num(v) => format!("{v}"),
             AstKind::Sym(s) => s.name.clone(),
+            AstKind::Current(s) => format!("{}[n]", s.name),
             AstKind::Deriv(s, k) => format!("{}{}", s.name, "'".repeat(*k as usize)),
             AstKind::Next(s) => format!("{}[n+1]", s.name),
             AstKind::Neg(x) => format!("(- {})", sexpr(x)),
@@ -1046,7 +981,7 @@ mod tests {
     fn implicit_multiplication_latex() {
         assert_eq!(rhs("2xy"), "(* (* 2 x) y)");
         assert_eq!(rhs("\\sigma\\left(y-x\\right)"), "(* sigma (- y x))");
-        assert_eq!(rhs("rx_n\\left(1-x_n\\right)"), "(* (* r x_n) (- 1 x_n))");
+        assert_eq!(rhs("rx_n\\left(1-x_n\\right)"), "(* (* r x[n]) (- 1 x[n]))");
     }
 
     #[test]

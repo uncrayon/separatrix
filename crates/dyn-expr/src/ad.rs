@@ -106,7 +106,7 @@ fn sign_f64(v: f64) -> f64 {
     } else if v < 0.0 {
         -1.0
     } else {
-        v // 0 or NaN
+        v
     }
 }
 
@@ -244,9 +244,6 @@ impl<T: Scalar> Dual<T> {
         }
     }
 
-    /// Value `f(re)` with derivative `f'(re)·eps`. A zero `eps` gives a
-    /// zero derivative even where `f'` is infinite (see
-    /// [`Scalar::mul_seed`]).
     #[inline]
     fn chain(self, value: T, deriv: T) -> Self {
         Dual {
@@ -409,23 +406,28 @@ impl<T: Scalar> Scalar for Dual<T> {
     fn pow(self, e: Self) -> Self {
         let (a, b) = (self.re, e.re);
         let v = a.pow(b);
-        // d(a^b) = b a^(b-1) da + a^b ln(a) db. Each term is skipped when
-        // its seed is zero, so e.g. (-2)^b with constant b stays finite.
-        let mut d = (b * a.pow(b - T::cst(1.0))).mul_seed(self.eps);
-        // At a = 0 with b > 0, a^b = 0 for every b near this one, so the
-        // b-derivative is 0 (the limit of a^b ln a), not 0 · (-∞) = NaN.
-        if !(a.re() == 0.0 && b.re() > 0.0) {
-            d = d + (v * a.ln()).mul_seed(e.eps);
+        let base_term = (b * a.pow(b - T::cst(1.0))).mul_seed(self.eps);
+        Dual {
+            re: v,
+            eps: base_term + exponent_term(a, b, v, e.eps),
         }
-        Dual { re: v, eps: d }
     }
     #[inline]
     fn mul_seed(self, seed: Self) -> Self {
-        // (a + a'ε)(b + b'ε) = ab + (a'b + ab')ε, each product zero-safe.
         Dual {
             re: self.re.mul_seed(seed.re),
             eps: self.eps.mul_seed(seed.re) + self.re.mul_seed(seed.eps),
         }
+    }
+}
+
+/// The `d/db` part of `d(a^b) = v ln a · db`. At `a = 0` with `b > 0` it
+/// is the limit of `a^b ln a`, which is zero, not `0 · -∞`.
+fn exponent_term<T: Scalar>(a: T, b: T, v: T, seed: T) -> T {
+    if a.re() == 0.0 && b.re() > 0.0 {
+        T::cst(0.0)
+    } else {
+        (v * a.ln()).mul_seed(seed)
     }
 }
 
@@ -440,8 +442,6 @@ mod tests {
         (a - b).abs() <= 1e-12 * (1.0 + b.abs())
     }
 
-    /// Check f'(x) by AD against central differences for a list of unary
-    /// operations.
     #[test]
     fn unary_derivatives_match_finite_differences() {
         type F = fn(D) -> D;
@@ -477,17 +477,14 @@ mod tests {
         assert!(close(x.powi(3).eps, 3.0 * 1.69));
         assert!(close(x.powi(0).eps, 0.0));
         assert!(close(D::variable(2.0).powc(0.5).eps, 0.5 / 2f64.sqrt()));
-        // x^y with both seeded: d/dx + d/dy at (2, 3) = 3·4 + 8 ln 2.
         let v = D::new(2.0, 1.0).pow(D::new(3.0, 1.0));
         assert!(close(v.eps, 12.0 + 8.0 * 2f64.ln()));
-        // Negative base, constant exponent: no NaN from ln.
         let w = D::variable(-2.0).pow(D::constant(2.0));
         assert!(close(w.eps, -4.0), "{w:?}");
     }
 
     #[test]
     fn second_derivative_with_nested_duals() {
-        // f(x) = x^3 sin x; f'' = 6x sin x + 6x^2 cos x - x^3 sin x.
         let x0 = 0.9;
         let x = D2::new(D::new(x0, 1.0), D::new(1.0, 0.0));
         let f = x.powi(3) * x.sin();
@@ -496,9 +493,6 @@ mod tests {
         assert!(close(f.eps.re, f.re.eps));
     }
 
-    /// Where a function's own derivative is infinite (sqrt, cbrt and
-    /// fractional powers at 0, arcsin at ±1), a zero seed still gives a
-    /// zero derivative instead of NaN; a non-zero seed gives ±∞.
     #[test]
     fn zero_seed_beats_infinite_derivative() {
         let still = D::constant(0.0);
@@ -509,14 +503,11 @@ mod tests {
         assert_eq!(D::constant(-1.0).acos().eps, 0.0);
         assert_eq!(still.ln().eps, 0.0);
         assert_eq!(D::variable(0.0).sqrt().eps, f64::INFINITY);
-        // Second order: the inner duals are all zero too.
         let still2 = D2::constant(D::constant(0.0));
         let s = still2.sqrt();
         assert_eq!((s.eps.re, s.eps.eps), (0.0, 0.0));
     }
 
-    /// sqrt(x² + y²) at the origin, differentiated through x·(1 − r): the
-    /// inner sum has zero derivative, so r contributes nothing.
     #[test]
     fn radius_at_origin_has_finite_product_derivative() {
         let x = D::variable(0.0);
@@ -526,14 +517,12 @@ mod tests {
         assert_eq!(f.eps, 1.0);
     }
 
-    /// d/db a^b at a = 0 (b > 0) is the limit of a^b ln a, which is 0.
     #[test]
     fn power_exponent_derivative_at_zero_base() {
         let v = D::constant(0.0).pow(D::variable(2.0));
         assert_eq!((v.re, v.eps), (0.0, 0.0));
         let v = D::constant(0.0).pow(D::variable(0.5));
         assert_eq!(v.eps, 0.0);
-        // Base derivative at 0 is still exact for b ≥ 1.
         let v = D::variable(0.0).pow(D::constant(2.0));
         assert_eq!(v.eps, 0.0);
         let v = D::variable(0.0).pow(D::constant(1.0));
@@ -548,7 +537,6 @@ mod tests {
         assert!(f64::INFINITY.mul_seed(1.0).is_infinite());
         let a = D::new(f64::INFINITY, 2.0);
         let b = D::new(0.0, 3.0);
-        // (∞ + 2ε)(0 + 3ε) = 0 + (2·0 + ∞·3)ε
         let p = a.mul_seed(b);
         assert_eq!(p.re, 0.0);
         assert!(p.eps.is_infinite());

@@ -1,13 +1,9 @@
-//! End-to-end tests: source text → compiled system → values and Jacobians.
-
 mod common;
 
 use common::*;
 use dyn_core::{SystemKind, VectorField};
 use dyn_expr::{compile, InputFormat};
 
-/// Lorenz exactly as MathLive emits it (one `\\`-separated block), plus
-/// parameter values on separate lines.
 const LORENZ: &str = "\\dot{x}=\\sigma\\left(y-x\\right)\\\\\\dot{y}=x\\left(\\rho-z\\right)-y\\\\\\dot{z}=xy-\\beta z\n\\sigma=10\n\\rho=28\n\\beta=\\frac{8}{3}";
 
 #[test]
@@ -41,7 +37,6 @@ fn lorenz_latex_values_and_jacobian() {
     assert_close(&jac(&sys, 0.0, &x, &defaults), &exact, 1e-15);
     check_derivatives(&sys, 0.0, &[-3.2, 4.1, 17.0], &defaults, 1e-7);
 
-    // ∂f/∂ρ = (0, x, 0)
     let mut dp = [0.0; 3];
     sys.param_jacobian(0.0, &x, &defaults, 1, &mut dp);
     assert_eq!(dp, [0.0, 1.0, 0.0]);
@@ -54,7 +49,6 @@ fn lorenz_latex_values_and_jacobian() {
             "\\dot{z} = x y - \\beta z",
         ]
     );
-    // x, y, z, σ, ρ, β, y-x, σ(y-x), ρ-z, x(ρ-z), -y, xy, βz, xy-βz
     assert!(sys.instruction_count() <= 14, "{}", sys.instruction_count());
 }
 
@@ -118,7 +112,6 @@ fn pendulum_second_order() {
 
 #[test]
 fn damped_oscillator_implicit_form() {
-    // All of these are x'' = -c x' - k x.
     let forms = [
         ("x'' + c*x' + k*x = 0", InputFormat::Text),
         ("x'' = -c*x' - k*x", InputFormat::Text),
@@ -129,7 +122,6 @@ fn damped_oscillator_implicit_form() {
             InputFormat::Latex,
         ),
     ];
-    // (the last one has Leibniz notation inside a sum)
     let x = [0.5, -2.0];
     let p = [0.3, 4.0];
     let expect = [-2.0, -0.3 * -2.0 - 4.0 * 0.5];
@@ -183,7 +175,6 @@ fn logistic_map() {
         ["x_{n+1} = r x_{n} \\left(1 - x_{n}\\right)"]
     );
 
-    // Bare x means x_n.
     let bare = text("x_{n+1} = r*x*(1 - x)");
     assert_eq!(
         bare.eval_alloc(0.0, &[0.2], &[3.7]),
@@ -256,7 +247,6 @@ fn hamiltonian_pendulum() {
 
 #[test]
 fn hamiltonian_two_degrees_of_freedom_with_parameters() {
-    // Hénon–Heiles with a coupling parameter.
     let sys = text(
         "H(q_1, q_2, p_1, p_2) = (p_1^2 + p_2^2)/2 + (q_1^2 + q_2^2)/2 + lambda*(q_1^2*q_2 - q_2^3/3)",
     );
@@ -273,7 +263,6 @@ fn hamiltonian_two_degrees_of_freedom_with_parameters() {
     let want = [0.25, 0.4, -(q1 + 2.0 * q1 * q2), -(q2 + q1 * q1 - q2 * q2)];
     assert_close(&f, &want, 1e-15);
     check_derivatives(&sys, 0.0, &x, &[0.7], 1e-7);
-    // Exact symplectic structure: J = [[0, I], [-Hqq, 0]] here.
     let j = jac(&sys, 0.0, &x, &p);
     assert_close(&j[0..4], &[0.0, 0.0, 1.0, 0.0], 0.0);
     assert_close(&j[8..12], &[-(1.0 + 2.0 * q2), -2.0 * q1, 0.0, 0.0], 1e-15);

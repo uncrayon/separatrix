@@ -1,34 +1,18 @@
-// Editable equation input: a thin React wrapper around MathLive's <math-field>,
-// plus the converters behind the equation editor's plain-text mode.
-//
-// The element is created imperatively (not through JSX) so React never fights
-// MathLive over its DOM. The `value` prop is pushed into the field only when it
-// differs from what the field already shows, so typing never jumps the caret.
-// The wrapper carries the design system's `ds-equation-editor-field` box (a
-// flex row); the <math-field> inside it is a block that fills the box. On the
-// element itself the DS class made MathLive's inner container a flex item that
-// shrank to the maths, so a click on the empty part of the line hit the bare
-// host and never started editing.
-
 import { useEffect, useRef } from "react";
 import { MathfieldElement } from "mathlive";
 
 interface MathFieldProps {
   value: string;
   onChange: (latex: string) => void;
-  /** Called on Enter: the parent usually adds a new equation line. */
   onEnter?: () => void;
-  /** Called when the field gains or loses focus (the line shows its editing state). */
   onFocusChange?: (focused: boolean) => void;
   placeholder?: string;
   ariaLabel?: string;
-  /** Id(s) of the diagnostics that describe this field. */
   ariaDescribedBy?: string;
   autoFocus?: boolean;
   invalid?: boolean;
 }
 
-/** One MathLive input line. */
 export function MathField({
   value,
   onChange,
@@ -42,7 +26,6 @@ export function MathField({
 }: MathFieldProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<MathfieldElement | null>(null);
-  // Keep the latest callbacks without re-creating the element.
   const onChangeRef = useRef(onChange);
   const onEnterRef = useRef(onEnter);
   const onFocusRef = useRef(onFocusChange);
@@ -53,11 +36,9 @@ export function MathField({
   useEffect(() => {
     const mf = new MathfieldElement();
     mf.className = "math";
-    // The virtual keyboard opens from the field's own toggle (and on touch).
     mf.mathVirtualKeyboardPolicy = "manual";
     mf.smartFence = true;
     mf.popoverPolicy = "off";
-    if (placeholder) mf.placeholder = placeholder;
     mf.value = value;
     mf.addEventListener("input", () => onChangeRef.current(mf.value));
     mf.addEventListener("keydown", (ev) => {
@@ -70,8 +51,6 @@ export function MathField({
     mf.addEventListener("focusout", () => onFocusRef.current?.(false));
     const host = hostRef.current;
     host?.appendChild(mf);
-    // A click on the box's padding, outside the field, edits the line too, with
-    // the caret at the end.
     const onHostDown = (ev: PointerEvent) => {
       if (ev.target !== host || ev.button !== 0) return;
       ev.preventDefault();
@@ -86,7 +65,6 @@ export function MathField({
       mf.remove();
       fieldRef.current = null;
     };
-    // The element is created once; later prop changes are synced below.
   }, []);
 
   useEffect(() => {
@@ -94,14 +72,14 @@ export function MathField({
     if (mf && mf.value !== value) mf.value = value;
   }, [value]);
 
-  // Accessible name and state follow the line (numbers shift when a line is removed).
   useEffect(() => {
     const mf = fieldRef.current;
     if (!mf) return;
     setAttr(mf, "aria-label", ariaLabel);
     setAttr(mf, "aria-describedby", ariaDescribedBy);
     setAttr(mf, "aria-invalid", invalid ? "true" : undefined);
-  }, [ariaLabel, ariaDescribedBy, invalid]);
+    mf.placeholder = placeholder ?? "";
+  }, [ariaLabel, ariaDescribedBy, invalid, placeholder]);
 
   return <div ref={hostRef} className="ds-equation-editor-field mathfield-host" />;
 }
@@ -111,13 +89,6 @@ function setAttr(el: Element, name: string, value: string | undefined) {
   else el.removeAttribute(name);
 }
 
-// ------------------------------------------------------------------ text mode
-//
-// The editor's Text mode shows each line in the core's plain-text syntax
-// (`x' = x*(3 - x - 2y)`) and turns what the user types back into LaTeX, so the
-// system is always stored and compiled as LaTeX. Switching modes converts the
-// lines; it never discards them.
-
 const GREEK_WORDS = new Set([
   "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta",
   "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma",
@@ -125,7 +96,6 @@ const GREEK_WORDS = new Set([
   "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega",
 ]);
 
-/** Functions LaTeX has a command for (`\sin`); others become `\operatorname{…}`. */
 const LATEX_FUNCS = new Set([
   "sin", "cos", "tan", "sec", "csc", "cot", "sinh", "cosh", "tanh", "coth",
   "arcsin", "arccos", "arctan", "exp", "ln", "log", "min", "max",
@@ -133,17 +103,18 @@ const LATEX_FUNCS = new Set([
 const TEXT_ONLY_FUNCS = new Set(["sqrt", "abs", "sign", "sgn", "asin", "acos", "atan", "floor", "ceil"]);
 const isFunc = (w: string) => LATEX_FUNCS.has(w) || TEXT_ONLY_FUNCS.has(w);
 
-/** What a text token starts and ends with, for deciding where `*` is needed. */
 type Kind = "num" | "name" | "func" | "open" | "close" | "op" | "eq" | "comma";
 interface TextTok {
-  t: string;
-  s: Kind;
-  e: Kind;
+  text: string;
+  startKind: Kind;
+  endKind: Kind;
 }
 
-const tok = (t: string, k: Kind, e: Kind = k): TextTok => ({ t, s: k, e });
+const tok = (text: string, k: Kind, endKind: Kind = k): TextTok => ({ text, startKind: k, endKind });
 
-/** LaTeX as stored (`\dot{x}=x\left(3-x-2y\right)`) → plain text (`x' = x*(3 - x - 2y)`). */
+const LEFT_PAREN = "\\left(";
+const RIGHT = "\\right";
+
 export function latexToText(latex: string): string {
   return joinText(latexToks(latex));
 }
@@ -155,7 +126,6 @@ function latexToks(src: string): TextTok[] {
   const skipSpaces = () => {
     while (i < src.length && /\s/.test(src[i])) i++;
   };
-  /** The next argument: a `{…}` group's contents, a command, or one character. */
   const readArg = (): string => {
     skipSpaces();
     if (src[i] === "{") {
@@ -176,7 +146,6 @@ function latexToks(src: string): TextTok[] {
     return src[i++] ?? "";
   };
   const asText = (latex: string) => joinText(latexToks(latex));
-  /** Wrap a sub-expression in brackets unless it is a single token. */
   const wrapped = (latex: string): TextTok => {
     const toks = latexToks(latex);
     if (toks.length === 1) return toks[0];
@@ -185,11 +154,10 @@ function latexToks(src: string): TextTok[] {
   const appendToLast = (suffix: string, e?: Kind) => {
     const last = out[out.length - 1];
     if (!last) return;
-    last.t += suffix;
-    if (e) last.e = e;
+    last.text += suffix;
+    if (e) last.endKind = e;
   };
 
-  /** Convert one item at `i`; returns false at the end of input. */
   const step = (): boolean => {
     skipSpaces();
     if (i >= src.length) return false;
@@ -272,7 +240,7 @@ function latexToks(src: string): TextTok[] {
       case "tfrac": {
         const a = wrapped(readArg());
         const b = wrapped(readArg());
-        out.push({ t: `${a.t}/${b.t}`, s: a.s, e: b.e });
+        out.push({ text: `${a.text}/${b.text}`, startKind: a.startKind, endKind: b.endKind });
         return;
       }
       case "sqrt": {
@@ -332,38 +300,33 @@ function latexToks(src: string): TextTok[] {
     else out.push(tok(name, "name"));
   };
 
-  /** A function: text mode needs brackets, `\sin\theta` → `sin(theta)`. */
   const funcCall = (name: string) => {
     skipSpaces();
-    if (src[i] === "(" || src.startsWith("\\left(", i)) {
+    if (src[i] === "(" || src.startsWith(LEFT_PAREN, i)) {
       out.push(tok(name, "func"));
       return;
     }
-    // `\sin^2 x` = sin(x)^2.
     let power = "";
     if (src[i] === "^") {
       i++;
       const sup = asText(readArg());
       power = /^[A-Za-z0-9.]+$/.test(sup) ? `^${sup}` : `^(${sup})`;
       skipSpaces();
-      if (src[i] === "(" || src.startsWith("\\left(", i)) {
-        // `\sin^2(x)` or `\sin^2\left(x\right)`: take the bracket's contents.
-        const open = src[i] === "(" ? 1 : 6;
+      if (src[i] === "(" || src.startsWith(LEFT_PAREN, i)) {
+        const open = src[i] === "(" ? 1 : LEFT_PAREN.length;
         let depth = 0;
         let k = i;
         for (; k < src.length; k++) {
           if (src[k] === "(") depth++;
           else if (src[k] === ")" && --depth === 0) break;
         }
-        const close = src.slice(0, k).endsWith("\\right") ? 6 : 0;
+        const close = src.slice(0, k).endsWith(RIGHT) ? RIGHT.length : 0;
         const inner = src.slice(i + open, k - close);
         i = Math.min(src.length, k + 1);
         out.push(tok(`${name}(${asText(inner)})${power}`, "func", "close"));
         return;
       }
     }
-    // Without brackets the argument is the following product (`\sin 2x` = sin(2x)),
-    // up to the next operator, function or time derivative (as the core reads it).
     const n = out.length;
     if (i < src.length) step();
     for (skipSpaces(); i < src.length && !endsFuncArg(); skipSpaces()) step();
@@ -388,43 +351,42 @@ function latexToks(src: string): TextTok[] {
   return out;
 }
 
-/** Join text tokens with the spacing and explicit `*` the text syntax wants. */
 function joinText(toks: TextTok[]): string {
   let s = "";
   let seenEq = false;
   for (let k = 0; k < toks.length; k++) {
     const a = toks[k - 1];
     const b = toks[k];
-    if (a) {
-      // Text mode multiplies implicitly only after a number or a closing bracket.
-      const needStar =
-        (a.e === "name" && (b.s === "name" || b.s === "num" || b.s === "func" || (b.s === "open" && seenEq))) ||
-        (a.e === "num" && b.s === "num");
-      if (needStar) s += "*";
-    }
-    if (b.s === "eq") {
+    if (a && needsExplicitStar(a, b, seenEq)) s += "*";
+    if (b.startKind === "eq") {
       seenEq = true;
       s += " = ";
-    } else if (b.s === "comma") {
+    } else if (b.startKind === "comma") {
       s += ", ";
-    } else if (b.t === "+" || b.t === "-") {
-      const unary = !a || a.e === "op" || a.e === "eq" || a.e === "open" || a.e === "comma";
-      s += unary ? b.t : ` ${b.t} `;
+    } else if (b.text === "+" || b.text === "-") {
+      const unary =
+        !a || a.endKind === "op" || a.endKind === "eq" || a.endKind === "open" || a.endKind === "comma";
+      s += unary ? b.text : ` ${b.text} `;
     } else {
-      s += b.t;
+      s += b.text;
     }
   }
   return s.trim();
 }
 
-/** Plain text (`x' = sigma*(y - x)`) → LaTeX (`\dot{x}=\sigma(y-x)`). */
+function needsExplicitStar(a: TextTok, b: TextTok, seenEq: boolean): boolean {
+  return (
+    (a.endKind === "name" &&
+      (b.startKind === "name" || b.startKind === "num" || b.startKind === "func" || (b.startKind === "open" && seenEq))) ||
+    (a.endKind === "num" && b.startKind === "num")
+  );
+}
+
 export function textToLatex(text: string): string {
   let out = "";
   let i = 0;
   const src = text.replace(/−/g, "-").replace(/[·×]/g, "*");
-  /** What the last emitted piece ends with, for implicit multiplication. */
   let last: "num" | "name" | "close" | "other" = "other";
-  /** Start index in `out` of the last name, so primes can wrap it in \dot. */
   let lastNameAt = -1;
 
   const balancedGroup = (from: number): [string, number] => {
@@ -478,7 +440,6 @@ export function textToLatex(text: string): string {
       }
       lastNameAt = out.length;
       out += w === "pi" ? "\\pi" : word(w);
-      // Subscript: x_1, x_n, x_{n+1}, x_(n+1)
       if (src[i] === "_") {
         i++;
         if (src[i] === "{" || src[i] === "(") {
@@ -531,7 +492,6 @@ export function textToLatex(text: string): string {
     if (c === "*") {
       i++;
       while (src[i] === " ") i++;
-      // Drop the star where LaTeX multiplies implicitly (x*y → xy, 2*x → 2x).
       const next = src[i] ?? "";
       const implicit = /[A-Za-z(]/.test(next) && !(last === "other");
       // After a command (`\sigma`) a following letter needs a space: `\sigma x`, not `\sigmax`.

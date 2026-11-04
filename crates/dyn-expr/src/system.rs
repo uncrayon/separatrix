@@ -1,30 +1,44 @@
-//! [`CompiledSystem`]: the compiled program behind the [`VectorField`] trait.
-
 use dyn_core::{SystemKind, VectorField};
 
 use crate::ad::Dual;
 use crate::program::{Program, Scratch};
-use crate::sema::Analysis;
+use crate::sema::{Analysis, Form};
 use crate::SystemInfo;
 
 type D1 = Dual<f64>;
 type D2 = Dual<Dual<f64>>;
 
-/// Direction of differentiation.
+/// The one input whose derivative a dual-number run carries.
 #[derive(Debug, Clone, Copy)]
 enum Seed {
     State(usize),
     Param(usize),
 }
 
-/// How the program's outputs relate to the vector field.
+impl Seed {
+    fn on_state(self, i: usize) -> f64 {
+        if matches!(self, Seed::State(j) if j == i) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn on_param(self, k: usize) -> f64 {
+        if matches!(self, Seed::Param(j) if j == k) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+}
+
+/// How the program's outputs become the field.
 #[derive(Debug, Clone, Copy)]
-enum Form {
-    /// One output per state: the field itself.
+enum Layout {
+    /// One output per state.
     Direct,
-    /// One output, `H(q_1..q_k, p_1..p_k)`. The field is
-    /// `q_i' = ∂H/∂p_i`, `p_i' = -∂H/∂q_i`, computed by automatic
-    /// differentiation (second derivatives for the Jacobian).
+    /// One output, `H`; the field is its symplectic gradient.
     Hamiltonian { dof: usize },
 }
 
@@ -51,20 +65,19 @@ pub struct CompiledSystem {
     /// What was understood: kind, states, parameters, display equations.
     pub info: SystemInfo,
     program: Program,
-    form: Form,
+    layout: Layout,
 }
 
 impl CompiledSystem {
     pub(crate) fn new(a: Analysis) -> CompiledSystem {
-        let program = Program::compile(&a.roots);
-        let form = match a.hamiltonian_dof {
-            Some(dof) => Form::Hamiltonian { dof },
-            None => Form::Direct,
+        let (program, layout) = match a.form {
+            Form::Direct(roots) => (Program::compile(&roots), Layout::Direct),
+            Form::Hamiltonian { h, dof } => (Program::compile(&[h]), Layout::Hamiltonian { dof }),
         };
         CompiledSystem {
             info: a.info,
             program,
-            form,
+            layout,
         }
     }
 
@@ -84,12 +97,12 @@ impl CompiledSystem {
     /// Value of the Hamiltonian `H(q, p)` (the energy) for Hamiltonian
     /// systems; `None` otherwise.
     pub fn hamiltonian_value(&self, t: f64, x: &[f64], p: &[f64]) -> Option<f64> {
-        match self.form {
-            Form::Hamiltonian { .. } => Some(f64::with_regs(self.program.len(), |regs| {
+        match self.layout {
+            Layout::Hamiltonian { .. } => Some(f64::with_regs(self.program.len(), |regs| {
                 self.program.run(regs, t, |k| x[k], |k| p[k]);
                 regs[self.program.outputs[0] as usize]
             })),
-            Form::Direct => None,
+            Layout::Direct => None,
         }
     }
 
@@ -99,30 +112,25 @@ impl CompiledSystem {
         self.program.len()
     }
 
-    /// Run the program over dual numbers where state `j` (if `Some`) or
-    /// parameter `k` (if `Some`) is seeded; call `read` with the registers.
     fn run_dual1<R>(
         &self,
         t: f64,
         x: &[f64],
         p: &[f64],
-        seed_x: Option<usize>,
-        seed_p: Option<usize>,
+        seed: Seed,
         read: impl FnOnce(&[D1]) -> R,
     ) -> R {
         D1::with_regs(self.program.len(), |regs| {
             self.program.run(
                 regs,
                 D1::constant(t),
-                |i| D1::new(x[i], if Some(i) == seed_x { 1.0 } else { 0.0 }),
-                |i| D1::new(p[i], if Some(i) == seed_p { 1.0 } else { 0.0 }),
+                |i| D1::new(x[i], seed.on_state(i)),
+                |i| D1::new(p[i], seed.on_param(i)),
             );
             read(regs)
         })
     }
 
-    /// Hamiltonian helper: the second derivative `∂²H / ∂x_a ∂(inner)`,
-    /// where `inner` is a state or a parameter. `regs` is scratch space.
     fn second_derivative(
         &self,
         (t, x, p): (f64, &[f64], &[f64]),
@@ -130,27 +138,21 @@ impl CompiledSystem {
         inner: Seed,
         regs: &mut [D2],
     ) -> f64 {
-        let (inner_x, inner_p) = match inner {
-            Seed::State(b) => (Some(b), None),
-            Seed::Param(k) => (None, Some(k)),
-        };
-        let one = |b: bool| if b { 1.0 } else { 0.0 };
+        let outer = Seed::State(a);
         self.program.run(
             regs,
             D2::constant(D1::constant(t)),
             |i| {
                 D2::new(
-                    D1::new(x[i], one(Some(i) == inner_x)),
-                    D1::new(one(i == a), 0.0),
+                    D1::new(x[i], inner.on_state(i)),
+                    D1::new(outer.on_state(i), 0.0),
                 )
             },
-            |i| D2::constant(D1::new(p[i], one(Some(i) == inner_p))),
+            |i| D2::constant(D1::new(p[i], inner.on_param(i))),
         );
         regs[self.program.outputs[0] as usize].eps.eps
     }
 
-    /// Reorder rows of the Hessian-like block `m` (rows: ∂/∂q.., ∂/∂p..)
-    /// into the field's rows: `q_i' ← +∂/∂p_i`, `p_i' ← −∂/∂q_i`.
     fn symplectic_rows(dof: usize, cols: usize, m: &mut [f64]) {
         for i in 0..dof {
             for c in 0..cols {
@@ -177,42 +179,37 @@ impl VectorField for CompiledSystem {
     }
 
     fn eval(&self, t: f64, x: &[f64], p: &[f64], out: &mut [f64]) {
-        match self.form {
-            Form::Direct => f64::with_regs(self.program.len(), |regs| {
+        match self.layout {
+            Layout::Direct => f64::with_regs(self.program.len(), |regs| {
                 self.program.run(regs, t, |k| x[k], |k| p[k]);
                 for (o, &r) in out.iter_mut().zip(&self.program.outputs) {
                     *o = regs[r as usize];
                 }
             }),
-            Form::Hamiltonian { dof } => {
-                for j in 0..2 * dof {
-                    let g = self.run_dual1(t, x, p, Some(j), None, |regs| {
+            Layout::Hamiltonian { dof } => {
+                for (j, o) in out.iter_mut().enumerate().take(2 * dof) {
+                    *o = self.run_dual1(t, x, p, Seed::State(j), |regs| {
                         regs[self.program.outputs[0] as usize].eps
                     });
-                    if j < dof {
-                        out[dof + j] = -g; // p_j' = -∂H/∂q_j
-                    } else {
-                        out[j - dof] = g; // q_j' = ∂H/∂p_j
-                    }
                 }
+                Self::symplectic_rows(dof, 1, out);
             }
         }
     }
 
     fn jacobian(&self, t: f64, x: &[f64], p: &[f64], out: &mut [f64]) {
         let n = self.dim();
-        match self.form {
-            Form::Direct => {
+        match self.layout {
+            Layout::Direct => {
                 for j in 0..n {
-                    self.run_dual1(t, x, p, Some(j), None, |regs| {
+                    self.run_dual1(t, x, p, Seed::State(j), |regs| {
                         for (i, &r) in self.program.outputs.iter().enumerate() {
                             out[i * n + j] = regs[r as usize].eps;
                         }
                     });
                 }
             }
-            Form::Hamiltonian { dof } => {
-                // Hessian of H (symmetric: compute the upper triangle).
+            Layout::Hamiltonian { dof } => {
                 D2::with_regs(self.program.len(), |regs| {
                     for a in 0..n {
                         for b in a..n {
@@ -228,13 +225,13 @@ impl VectorField for CompiledSystem {
     }
 
     fn param_jacobian(&self, t: f64, x: &[f64], p: &[f64], k: usize, out: &mut [f64]) {
-        match self.form {
-            Form::Direct => self.run_dual1(t, x, p, None, Some(k), |regs| {
+        match self.layout {
+            Layout::Direct => self.run_dual1(t, x, p, Seed::Param(k), |regs| {
                 for (o, &r) in out.iter_mut().zip(&self.program.outputs) {
                     *o = regs[r as usize].eps;
                 }
             }),
-            Form::Hamiltonian { dof } => {
+            Layout::Hamiltonian { dof } => {
                 D2::with_regs(self.program.len(), |regs| {
                     for (a, o) in out.iter_mut().enumerate().take(2 * dof) {
                         *o = self.second_derivative((t, x, p), a, Seed::Param(k), regs);

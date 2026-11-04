@@ -1,10 +1,3 @@
-// End-to-end checks for the fixes made after the UI review, driven with
-// Playwright against the Vite dev server (browser preview: the JS mock).
-//
-// Run from app/ with a dev server up (same as ui.review.e2e.cjs):
-//   npx vite --port 5198 &
-//   UI_URL=http://localhost:5198/ NODE_PATH=$(npm root -g) node --test src/review/fixes.e2e.cjs
-
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { chromium } = require("playwright");
@@ -25,12 +18,8 @@ async function pick(page, title) {
   await page.waitForTimeout(600);
 }
 
-// What the inspector shows as selected, read as the user gets it: the accessible
-// name of the pressed row in the Trajectories list ("Trajectory 2, start (0.50, 1.75)")
-// or in the Fixed points list ("Saddle at (1.000, 1.000)"). "" when nothing there is pressed.
 const selectedRow = (page, list) =>
   page.evaluate((list) => {
-    // The row's select button, not its show/hide toggle (also aria-pressed).
     const b = document.querySelector(
       `.panel-right ul[aria-label="${list}"] :is(.ds-traj-select, .ds-fp-row)[aria-pressed="true"]`,
     );
@@ -38,7 +27,6 @@ const selectedRow = (page, list) =>
   }, list);
 const selectedTrajectory = (page) => selectedRow(page, "Trajectories");
 const selectedFixedPoint = (page) => selectedRow(page, "Fixed points");
-/** A fixed-point row's name: its classification, then where it is. */
 const FIXED_POINT_NAME =
   /^(Saddle|Center|Stable|Unstable|Half-stable|Non-hyperbolic|Non-isolated|Sink|Source)\b.* at (\(|\S+\* = )/;
 const icCount = (page) => page.locator(".ic-row").count();
@@ -46,7 +34,7 @@ const icCount = (page) => page.locator(".ic-row").count();
 test("picking a template from the keyboard leaves focus on the plot, not the page body", async () => {
   const { browser, page } = await open();
   try {
-    await page.keyboard.press("Tab"); // first card
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".gallery", { state: "detached" });
     const focused = await page.evaluate(() => document.activeElement.className);
@@ -63,7 +51,6 @@ test("closing the gallery with Escape gives focus back to the Templates button",
     await page.getByRole("button", { name: "Templates" }).focus();
     await page.keyboard.press("Enter");
     await page.waitForSelector(".gallery");
-    // The app behind the dialog is inert while it is open.
     assert.equal(await page.evaluate(() => document.querySelector(".app").inert), true);
     await page.keyboard.press("Escape");
     await page.waitForSelector(".gallery", { state: "detached" });
@@ -78,16 +65,14 @@ test("the axis menu works with the arrow keys", async () => {
   const { browser, page } = await open();
   try {
     await pick(page, "Rabbits vs sheep");
-    // The toolbar's axis picker: one menu button for both axes ("Axes: x horizontal, y vertical").
     const button = page.getByRole("button", { name: /^Axes:/ });
     await button.focus();
     await page.keyboard.press("ArrowDown");
     await page.waitForSelector("[role=menu]");
     const checked = await page.evaluate(() => document.activeElement.getAttribute("aria-checked"));
     assert.equal(checked, "true", "opening the menu focuses the current choice");
-    // The first group is the horizontal axis: x, y, t.
-    await page.keyboard.press("ArrowDown"); // x -> y
-    await page.keyboard.press("ArrowDown"); // y -> t
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
     await page.waitForSelector("[role=menu]", { state: "detached" });
     const back = await page.evaluate(() => document.activeElement.getAttribute("aria-label"));
@@ -95,7 +80,6 @@ test("the axis menu works with the arrow keys", async () => {
     const xLabel = await page.textContent(".plot-wrap .axis-label-x");
     assert.match(xLabel, /t/);
     assert.doesNotMatch(xLabel, /x/);
-    // Escape closes without choosing.
     await page.keyboard.press("ArrowDown");
     await page.waitForSelector("[role=menu]");
     await page.keyboard.press("Escape");
@@ -136,7 +120,7 @@ test("browser preview: the Blank system card compiles", async () => {
     await page.locator(".gallery .card.blank").click();
     await page.waitForSelector(".gallery", { state: "detached" });
     await page.waitForTimeout(600);
-    assert.equal(await page.locator(".diag.error").count(), 0);
+    assert.equal(await page.locator(".ds-diagnostic--error").count(), 0);
     assert.match(await page.textContent(".statusbar"), /fixed point/);
   } finally {
     await browser.close();
@@ -192,7 +176,6 @@ test("an equation line starts editing wherever it is clicked, not only on the ty
     await page.waitForSelector(".gallery", { state: "detached" });
     await page.waitForTimeout(600);
     const box = await page.locator(".panel-left .ds-equation-editor-field").first().boundingBox();
-    // Well right of "ẋ = y": the empty part of the line.
     await page.mouse.click(box.x + box.width * 0.8, box.y + box.height / 2);
     await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => document.activeElement.tagName), "MATH-FIELD");

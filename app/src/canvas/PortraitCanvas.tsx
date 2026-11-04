@@ -1,20 +1,3 @@
-// The centre of the app: the phase portrait canvas and its overlays
-// (typeset axis names, fixed-point tooltip, slice card, hints) and the legend.
-//
-// What the pointer does depends on the canvas tool (CanvasToolbar):
-// - Select (default): click = add an initial condition, drag a start point =
-//   move it (live re-solve), click a fixed point or a curve = select it, drag
-//   empty space = pan;
-// - Pan: drag anywhere = pan;
-// - Add trajectory: click anywhere (also on a curve or a fixed point) = add a
-//   start point there, keep dragging to adjust it.
-// In every tool: wheel = zoom around the cursor, double-click = reset the view.
-//
-// Keyboard (the canvas is focusable): arrow keys move a cursor ring (Shift =
-// bigger steps), Enter/Space adds a trajectory there or selects the mark under
-// it, F / Shift+F step through fixed points, + / − zoom around the cursor,
-// 0 resets the view, Delete removes the selected trajectory, Escape deselects.
-
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, SymbolInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
@@ -38,13 +21,12 @@ import {
   type Scene,
 } from "./draw";
 import { readPlotTheme, type PlotTheme } from "./theme";
-import { makeViewport, sx, sy, toPlot, unitsPerPx, wantsEqualScales, zoomRange } from "./viewport";
+import { plotViewport, sx, sy, toPlot, unitsPerPx, zoomRange } from "./viewport";
 
 interface Props {
   state: StudioState;
   actions: StudioActions;
   theme: "dark" | "light";
-  /** The floating CanvasToolbar, rendered inside the plot well (CanvasToolbar README). */
   toolbar?: ReactNode;
 }
 
@@ -56,28 +38,19 @@ type Drag =
       startY: number;
       xRange: [number, number];
       yRange: [number, number];
-      /** Plot units per px when the drag started (the view on screen). */
       upp: [number, number];
       moved: boolean;
-      /** Select tool: a click (no move) adds a start point. */
       clickAdds: boolean;
     };
 
-/** Hit radius for start points and fixed points, × g (PhasePlane README). */
 const HIT_RADIUS = 10;
-/** Below this plot width (CSS px) the slice card starts folded. */
 const SLICE_CARD_MIN_PLOT_W = 640;
-/** Keyboard cursor step, as a fraction of the visible range (Shift: ×5). */
 const KEY_STEP = 1 / 40;
 
-/** The LaTeX of `d/dt` applied to a state: x → \dot{x}, \dot{θ} → \ddot{θ}. */
 export function dotted(latex: string): string {
   const m = /^\\dot\{(.*)\}$/.exec(latex);
   return m ? `\\ddot{${m[1]}}` : `\\dot{${latex}}`;
 }
-
-/** Axis label: the user's name, with `_n` for map values plotted against n. */
-const axisLabel = axisLabelLatex;
 
 const sameBox = (a: Box | null, b: Box | null) =>
   a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) < 0.5));
@@ -93,50 +66,32 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const drag = useRef<Drag | null>(null);
   const recentAdds = useRef<{ id: number; at: number }[]>([]);
   const themeCache = useRef<{ key: string; th: PlotTheme } | null>(null);
-  /** Bumped when the theme attribute changes or web fonts finish loading: redraw with fresh tokens. */
   const [themeVersion, setThemeVersion] = useState(0);
-  /** The floating toolbar's box, relative to the plot well (null when absent). */
   const [toolbarBox, setToolbarBox] = useState<Box | null>(null);
-  /** The slice card moves below the toolbar when both would share the top row. */
   const [sliceBelow, setSliceBelow] = useState(false);
-  /** Size of the typeset x-axis name, measured after layout, to keep it clear of the toolbar. */
   const [xNameSize, setXNameSize] = useState<[number, number]>([12, 20]);
-  /** Boxes of the typeset axis names, measured after layout, for the renderer. */
   const nameBoxes = useRef<Box[]>([]);
-  /** Keyboard cursor in plot coordinates; null when not using the keyboard. */
   const [kbd, setKbd] = useState<[number, number] | null>(null);
-  /** Last keyboard action, read out by screen readers. */
   const [announce, setAnnounce] = useState("");
-  /**
-   * The slice card can be folded into one line so it never hides the plot.
-   * Until the user chooses (null), it starts folded on narrow plots, where the
-   * open card would cover a large part of the picture.
-   */
   const [sliceChoice, setSliceOpen] = useState<boolean | null>(null);
   const sliceOpen = sliceChoice ?? size.w >= SLICE_CARD_MIN_PLOT_W;
   const tool = useCanvasTool();
   const showEigen = useShowEigenvectors();
 
   const { compiled, view } = state;
-  /** Glyph scale g: hit radii grow with the glyphs in projector mode. */
-  const g = theme === "light" ? 1.3 : 1;
-  // Phase planes of flows use equal scales on both axes (PhasePlane README).
-  const vp = makeViewport(
-    size.w,
-    size.h,
-    view.xRange,
-    view.yRange,
-    g,
-    wantsEqualScales(view.xAxis, view.yAxis, compiled?.kind),
-  );
+  const plotTheme = (): PlotTheme => {
+    const probe = probeRef.current;
+    const key = `${document.documentElement.dataset.theme ?? theme}:${themeVersion}:${probe ? "probe" : "root"}`;
+    if (themeCache.current?.key !== key) themeCache.current = { key, th: readPlotTheme(probe) };
+    return themeCache.current.th;
+  };
+  const glyphScale = plotTheme().glyphScale;
+  const vp = useMemo(() => plotViewport(size.w, size.h, view, compiled?.kind), [size.w, size.h, view, compiled?.kind]);
 
-  // The plot's aspect goes to the state, so the field is computed for exactly
-  // what is on screen.
   useEffect(() => {
     actions.setPlotAspect(size.w > 0 && size.h > 0 ? size.w / size.h : null);
   }, [actions, size.w, size.h]);
 
-  // ---- size (CSS px), kept in sync with the layout
   useLayoutEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -146,7 +101,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     return () => ro.disconnect();
   }, []);
 
-  // ---- redraw on theme change (any writer of html[data-theme]) and when fonts load
   useEffect(() => {
     const bump = () => setThemeVersion((v) => v + 1);
     const mo = new MutationObserver(bump);
@@ -159,8 +113,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     };
   }, []);
 
-  // ---- where the chrome over the plot sits (every commit; cheap, and the
-  // toolbar changes with the same state that renders this component)
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -188,7 +140,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     }
   });
 
-  // ---- what to draw
   const scene = useMemo<Omit<Scene, "avoid"> | null>(() => {
     if (!compiled || !compiled.ok) return null;
     const p = state.portrait;
@@ -236,37 +187,28 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     showEigen,
   ]);
 
-  // ---- keep the default view clear of the toolbar (CanvasToolbar README: "keep
-  // the plot's default view padded so fixed points and starts are not under
-  // it"). Only while the view is the home view, as loaded or reset: once the
-  // user pans or zooms, the view is theirs.
   useEffect(() => {
     if (!scene || !toolbarBox || size.w === 0 || view !== state.homeView) return;
     const [l, , r, b] = toolbarBox;
-    const pad = 12 * g;
+    const pad = 12 * glyphScale;
     const marks: [number, number][] = [
       ...scene.ics.filter((ic) => ic.x0.length === scene.dim).map((ic) => icPx(vp, scene, ic)),
       ...scene.fixedPoints.map((fp) => fixedPointPx(vp, scene, fp)),
     ];
     const target = b + pad;
     const H = vp.height;
-    if (target >= H * 0.6) return; // a tiny plot: nothing sensible to do
+    if (target >= H * 0.6) return;
     const [y0, y1] = vp.yRange;
     let top = y1;
     for (const [px, py] of marks) {
       if (px < l - pad || px > r + pad || py >= target || py < vp.top) continue;
-      // The y value of this mark, and the top that puts it `target` px down.
       const y = y1 - ((py - vp.top) / H) * (y1 - y0);
       const f = (target - vp.top) / H;
       top = Math.max(top, (y - f * y0) / (1 - f));
     }
     if (top > y1 + 1e-9 * Math.abs(y1 - y0)) actions.setView({ ...view, xRange: vp.xRange, yRange: [y0, top] });
-    // vp and scene follow from these.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, toolbarBox, size.w, size.h, view, state.homeView]);
+  }, [scene, toolbarBox, size.w, vp, glyphScale, view, state.homeView, actions]);
 
-  // ---- draw (after layout effects, so the theme attribute is already applied
-  // and the chrome over the plot has been measured)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || size.w === 0) return;
@@ -279,61 +221,43 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const key = `${document.documentElement.dataset.theme ?? theme}:${themeVersion}`;
-    if (themeCache.current?.key !== key) themeCache.current = { key, th: readPlotTheme(probeRef.current) };
+    const th = plotTheme();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const avoid = {
       labels: [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes.current],
       field: nameBoxes.current.map(([l, t, r, b]): Box => [l - 3, t - 3, r + 3, b + 3]),
     };
-    drawScene(ctx, size.w, size.h, vp, scene && { ...scene, avoid }, themeCache.current.th);
+    drawScene(ctx, size.w, size.h, vp, scene && { ...scene, avoid }, th);
   });
 
-  // ---- hit testing
   const localPoint = (e: { clientX: number; clientY: number }): [number, number] => {
     const r = canvasRef.current!.getBoundingClientRect();
     return [e.clientX - r.left, e.clientY - r.top];
   };
 
-  /**
-   * The start dot or fixed point under (px, py): the NEAREST mark within the
-   * hit radius wins, so a fixed point stays clickable when a start dot sits a
-   * few px away (Van der Pol's origin and its (0.1, 0) start point). On an
-   * exact tie the start dot wins, so a dot placed on a fixed point can still
-   * be dragged off it.
-   */
+  /** The mark under the pointer. Start dots win ties over fixed points, and newer dots over older ones. */
   const hitTest = (px: number, py: number): { ic: number | null; fp: number | null } => {
     const none = { ic: null, fp: null };
     if (!scene) return none;
-    let best: { ic: number | null; fp: number | null } = none;
-    let bestD = (HIT_RADIUS * g) ** 2;
-    for (let i = 0; i < scene.fixedPoints.length; i++) {
-      const [x, y] = fixedPointPx(vp, scene, scene.fixedPoints[i]);
-      const d = (x - px) ** 2 + (y - py) ** 2;
-      if (d <= bestD) {
-        bestD = d;
-        best = { ic: null, fp: i };
-      }
+    type Hit = { d: number; rank: number; hit: { ic: number | null; fp: number | null } };
+    const dist = ([x, y]: [number, number]) => (x - px) ** 2 + (y - py) ** 2;
+    const candidates: Hit[] = [
+      ...scene.fixedPoints.map((fp, i) => ({ d: dist(fixedPointPx(vp, scene, fp)), rank: 0, hit: { ic: null, fp: i } })),
+      ...scene.ics.flatMap((ic, i) =>
+        ic.x0.length === scene.dim ? [{ d: dist(icPx(vp, scene, ic)), rank: 1 + i, hit: { ic: ic.id, fp: null } }] : [],
+      ),
+    ];
+    let best: Hit | null = null;
+    for (const c of candidates) {
+      if (c.d > (HIT_RADIUS * glyphScale) ** 2) continue;
+      if (!best || c.d < best.d || (c.d === best.d && c.rank > best.rank)) best = c;
     }
-    // Start dots after fixed points, oldest to newest, with `<=`: ties go to
-    // the dot, and between dots to the newest (the one drawn on top).
-    for (let i = 0; i < scene.ics.length; i++) {
-      const ic = scene.ics[i];
-      if (ic.x0.length !== scene.dim) continue;
-      const [x, y] = icPx(vp, scene, ic);
-      const d = (x - px) ** 2 + (y - py) ** 2;
-      if (d <= bestD) {
-        bestD = d;
-        best = { ic: ic.id, fp: null };
-      }
-    }
-    return best;
+    return best ? best.hit : none;
   };
 
-  /** The initial condition whose trajectory passes within a few px, if any. */
   const hitTrajectory = (px: number, py: number): number | null => {
     if (!scene) return null;
-    const tol = 5 * g;
+    const tol = 5 * glyphScale;
     let best: number | null = null;
     let bestD = tol * tol;
     for (const tr of scene.trajectories) {
@@ -349,7 +273,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     return best;
   };
 
-  // ---- wheel zoom (needs a non-passive listener to prevent page scroll)
+  // Wheel zoom needs a non-passive listener to prevent page scroll.
   const latestRef = useRef({ view, vp, actions });
   latestRef.current = { view, vp, actions };
   useEffect(() => {
@@ -368,8 +292,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, []);
 
-  // ---- keyboard
-  // The ranges on screen (vp), which a phase plane widens to equal scales.
   const centre = (): [number, number] => [
     (vp.xRange[0] + vp.xRange[1]) / 2,
     (vp.yRange[0] + vp.yRange[1]) / 2,
@@ -483,7 +405,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       return;
     }
     if (tool === "add") {
-      // Place the start point now; keep dragging to adjust it.
       const id = addAt(px, py);
       drag.current = { mode: "ic", id };
       setDragging("ic");
@@ -567,7 +488,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
               ? "pointer"
               : "crosshair";
 
-  // ---- overlays
   const states = compiled?.states ?? [];
   const kind = compiled?.kind;
   const dim = states.length;
@@ -590,9 +510,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     view.yAxis.kind !== "time";
   const hasSlice = hiddenStates.length > 0 || !!showTimeSlice;
 
-  // Axis names: x at the right end above the x-axis, y at the top right of the
-  // y-axis (both pinned to an edge when the axis is out of view). Either name
-  // drops below the toolbar rather than hide under it.
   const axes = axisLines(vp);
   const right = vp.left + vp.width;
   const xNameAbove = axes.Y - vp.top > 40;
@@ -634,7 +551,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           onDoubleClick={onDoubleClick}
           onKeyDown={onKeyDown}
           onFocus={(e) => {
-            // Show the keyboard cursor only for keyboard focus, not for clicks.
             if (e.currentTarget.matches(":focus-visible")) setKbd((k) => (k && inView(k) ? k : centre()));
           }}
           onBlur={() => setKbd(null)}
@@ -645,14 +561,13 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           aria-describedby="plot-keys"
         />
         {toolbar}
-        {/* Probe for the tick-label font: the numeric-sm type style, as computed. */}
         <span ref={probeRef} className="numeric-sm plot-probe" aria-hidden="true" />
-        <span id="plot-keys" className="sr-only">
+        <span id="plot-keys" className="ds-sr">
           Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F
           and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the
           selected trajectory.
         </span>
-        <span className="sr-only" aria-live="polite" aria-atomic="true">
+        <span className="ds-sr" aria-live="polite" aria-atomic="true">
           {announce}
         </span>
         {kbd && inView(kbd) && (
@@ -670,14 +585,14 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
               style={{ right: size.w - right + 8, top: xNameTop }}
               aria-hidden="true"
             >
-              <Tex latex={axisLabel(view.xAxis, view.yAxis, states, kind)} />
+              <Tex latex={axisLabelLatex(view.xAxis, view.yAxis, states, kind)} />
             </div>
             <div
               className={"axis-label axis-label-y math" + (yNameRight ? "" : " is-left")}
               style={yNameRight ? { left: yNameX, top: yNameTop } : { right: size.w - yNameX, top: yNameTop }}
               aria-hidden="true"
             >
-              <Tex latex={axisLabel(view.yAxis, view.xAxis, states, kind)} />
+              <Tex latex={axisLabelLatex(view.yAxis, view.xAxis, states, kind)} />
             </div>
           </>
         )}
@@ -764,7 +679,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
             pos={fixedPointPx(vp, scene, hoveredFp)}
             width={size.w}
             height={size.h}
-            g={g}
+            glyphScale={glyphScale}
           />
         )}
 
@@ -838,7 +753,6 @@ function SliceRow(props: {
   );
 }
 
-/** A fixed-point glyph as a 16px icon (design system: FixedPoint, `.ds-fp-icon`). */
 export function FixedPointIcon({ kind }: { kind: FixedPointGlyphKind }) {
   return (
     <svg className="ds-fp-icon" viewBox="-8 -8 16 16" aria-hidden="true">
@@ -854,10 +768,6 @@ export function FixedPointIcon({ kind }: { kind: FixedPointGlyphKind }) {
 
 const GLYPH_ORDER: FixedPointGlyphKind[] = ["stable", "unstable", "half"];
 
-/**
- * The legend under the plot (design system: PhasePlane `.ds-phase-legend`):
- * HTML, one key per kind of mark on the plot, each sample on a plot-bg chip.
- */
 function Legend({
   scene,
   states,
@@ -870,7 +780,6 @@ function Legend({
   tool: "select" | "pan" | "add";
 }) {
   const nulls = scene ? scene.nullclines.filter((n) => n.polylines.length > 0) : [];
-  // Fixed points by glyph, named by the classifications on the plot.
   const glyphs = new Map<FixedPointGlyphKind, Set<string>>();
   for (const fp of scene?.fixedPoints ?? []) {
     const k = fixedPointGlyph(fp.classification, fp.stable);
@@ -878,7 +787,6 @@ function Legend({
     glyphs.get(k)!.add(classificationTitle(fp.classification, states.length));
   }
   const glyphName = (k: FixedPointGlyphKind, names: Set<string>) => {
-    // Saddles last: "Unstable node or saddle", as the PhasePlane legend writes it.
     const list = [...names].sort((p, q) => Number(/saddle/i.test(p)) - Number(/saddle/i.test(q)));
     if (list.length === 1) return list[0];
     if (list.length === 2) return `${list[0]} or ${list[1].charAt(0).toLowerCase()}${list[1].slice(1)}`;
@@ -906,9 +814,6 @@ function Legend({
       <path className="ds-phase-mark ds-phase-mark--head" d="M15.5 8L8.5 4.85V11.15Z" />
     </svg>
   );
-  // Two kinds of key (PhasePlane README): what the user drags or reads off,
-  // and the background marks. Listed alternately, so in a two-column legend
-  // each kind lines up in its own column.
   const data: { key: string; sample: ReactNode; faint?: boolean; text: ReactNode }[] = [
     ...(hasForward && !isMap ? [{ key: "fwd", sample: forwardSample, text: "Trajectory, forward in time" }] : []),
     ...(hasForward && isMap
@@ -948,7 +853,6 @@ function Legend({
       text: glyphName(k, glyphs.get(k)!),
     })),
   ];
-  // Eigenvector directions, one key per kind of head on the plot.
   const flows = new Set<number>();
   if (scene?.eigenvectors) {
     for (const fp of scene.fixedPoints) for (const e of eigenDirections(scene, fp)) flows.add(e.flow);
@@ -1005,11 +909,7 @@ function Legend({
     })),
     ...eigenKeys,
   ];
-  const keys: typeof data = [];
-  for (let i = 0; i < Math.max(data.length, background.length); i++) {
-    if (data[i]) keys.push(data[i]);
-    if (background[i]) keys.push(background[i]);
-  }
+  const keys: typeof data = interleave(data, background);
 
   return (
     <div className="legend-bar">
@@ -1028,7 +928,21 @@ function Legend({
   );
 }
 
-/** The tooltip line for one eigenvalue or pair ("λ₂,₃ = 0.094 ± 10.2i" as TeX), numbered as the Inspector row. */
+/** a[0], b[0], a[1], b[1], …, then the rest of the longer list. */
+function interleave<T>(a: readonly T[], b: readonly T[]): T[] {
+  const out: T[] = [];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (i < a.length) out.push(a[i]);
+    if (i < b.length) out.push(b[i]);
+  }
+  return out;
+}
+
+/** v, or exactly 0 when it is rounding noise next to the plot span. */
+function snapNearZero(v: number, span: number): number {
+  return Math.abs(v) < 1e-9 * span ? 0 : v;
+}
+
 function eigenvalueTex(ev: NumberedEigenvalue, sym: string): string {
   const label = ev.numbers.length ? `${sym}_{${ev.numbers.join(",")}}` : sym;
   const im = `${fmtTex(ev.im, 3)}i`;
@@ -1044,18 +958,17 @@ function FixedPointTooltip(props: {
   pos: [number, number];
   width: number;
   height: number;
-  g: number;
+  glyphScale: number;
 }) {
-  const { fp, states, kind, pos, g } = props;
+  const { fp, states, kind, pos, glyphScale } = props;
   const names = states.map((s) => s.latex).join(", ");
   const values = fp.x.map((v) => fmtTex(v, 3)).join(", ");
   const point = states.length === 1 ? `${names}^* = ${values}` : `(${names}) = (${values})`;
   const sym = kind === "map" ? "\\mu" : "\\lambda";
   const glyph = fixedPointGlyph(fp.classification, fp.stable);
   const title = classificationTitle(fp.classification, states.length);
-  // The word "stable" or "unstable" when the name does not already say it.
   const word = glyph !== "half" && !/stable/i.test(title) ? (fp.stable ? "stable" : "unstable") : null;
-  const off = 12 * g;
+  const off = 12 * glyphScale;
   const flipX = pos[0] > props.width - 260;
   const flipY = pos[1] > props.height - 140;
   return (
@@ -1090,7 +1003,6 @@ function FixedPointTooltip(props: {
   );
 }
 
-/** The canvas's accessible name: the view, the trajectories and the fixed points. */
 function describePlot(
   scene: Omit<Scene, "avoid">,
   states: SymbolInfo[],
@@ -1103,10 +1015,8 @@ function describePlot(
   const name = (a: AxisRef) => latexToPlain(axisLatex(a, states, kind));
   const num = (v: number) => fmtPlain(v).replace("-", "−");
   const r = ([a, b]: [number, number]) => `${num(a)} to ${num(b)}`;
-  // Fixed-point coordinates that are zero up to Newton's rounding (−6.58e-14 at
-  // the origin) read as 0, as the Inspector rows show them.
   const span = Math.max(Math.abs(xRange[1] - xRange[0]), Math.abs(yRange[1] - yRange[0]));
-  const coord = (v: number) => num(Math.abs(v) < 1e-9 * span ? 0 : v);
+  const coord = (v: number) => num(snapNearZero(v, span));
   const parts = [
     `${kind === "map" ? "Orbit plot" : "Phase plane"}: ${name(xAxis)} from ${r(xRange)} across, ${name(yAxis)} from ${r(yRange)} up.`,
   ];
@@ -1148,12 +1058,10 @@ function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by
   return x * x + y * y;
 }
 
-/** Clamp `v` into a range given in either order. */
 function clampTo(v: number, [a, b]: [number, number]): number {
   return Math.min(Math.max(a, b), Math.max(Math.min(a, b), v));
 }
 
-/** A coordinate for screen-reader announcements (3 significant digits). */
 function fmtPlain(v: number): string {
   return Number(v.toPrecision(3)).toString();
 }

@@ -1,11 +1,5 @@
-// Number and notation helpers shared by the panels and the canvas.
-
 import type { AxisRef, Classification, SymbolInfo, SystemKind } from "../api/types";
 
-/**
- * Format a number for display with `digits` significant digits, dropping
- * trailing zeros ("2.50" → "2.5") and avoiding "-0".
- */
 export function fmt(v: number, digits = 3): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
   if (Math.abs(v) < 1e-12) return "0";
@@ -14,7 +8,6 @@ export function fmt(v: number, digits = 3): string {
     const [m, e] = v.toExponential(digits - 1).split("e");
     return `${trimZeros(m)}e${e.replace("+", "")}`;
   }
-  // Fixed notation with `digits` significant digits, at least 0 decimals.
   const decimals = Math.max(0, digits - 1 - Math.floor(Math.log10(abs)));
   return trimZeros(v.toFixed(Math.min(decimals, 10)));
 }
@@ -23,7 +16,6 @@ function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
-/** Like {@link fmt} but as LaTeX (scientific notation as `\times 10^{k}`). */
 export function fmtTex(v: number, digits = 3): string {
   const s = fmt(v, digits);
   const m = /^(-?[\d.]+)e(-?\d+)$/.exec(s);
@@ -33,7 +25,6 @@ export function fmtTex(v: number, digits = 3): string {
   return s;
 }
 
-/** A complex eigenvalue as LaTeX, e.g. `-0.5 + 1.32i`. */
 export function complexTex([re, im]: [number, number], digits = 3): string {
   if (Math.abs(im) < 1e-12) return fmtTex(re, digits);
   const sign = im < 0 ? "-" : "+";
@@ -85,11 +76,6 @@ const GREEK: Record<string, string> = {
   Omega: "Ω",
 };
 
-/**
- * Turn short LaTeX (names, dotted names, simple expressions) into readable
- * plain Unicode. Used where typesetting is not possible: diagnostics text,
- * accessible names and canvas tick labels. `\dot{\theta}` → "θ̇".
- */
 export function latexToPlain(s: string): string {
   let out = s;
   out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̈`);
@@ -104,21 +90,15 @@ export function latexToPlain(s: string): string {
   return out;
 }
 
-/**
- * A core diagnostic as the panel shows it: plain maths, and a quoted token in curly quotes
- * ("Missing right-hand side after ‘=’", as in the brand book). Apostrophes ("can't", "x'") stay.
- */
 export function diagnosticText(message: string): string {
   return latexToPlain(message).replace(/'([^'\s]{1,12})'/g, "‘$1’");
 }
 
-/** The LaTeX used to label an axis: the user's state name, or t / n. */
 export function axisLatex(axis: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "time") return kind === "map" ? "n" : "t";
   return states[axis.index]?.latex ?? "?";
 }
 
-/** An axis name as the plot labels it: {@link axisLatex}, with `_n` for a map value plotted against n. */
 export function axisLabelLatex(
   axis: AxisRef,
   other: AxisRef,
@@ -129,21 +109,14 @@ export function axisLabelLatex(
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
 }
 
-/** Same as {@link axisLatex}, for a map state on the value axis: `x_n`. */
 export function stateLatexForKind(s: SymbolInfo, kind: SystemKind | undefined): string {
   return kind === "map" ? `${s.latex}_n` : s.latex;
 }
 
-/** Stable comparison of two axis references. */
 export function sameAxis(a: AxisRef, b: AxisRef): boolean {
   return a.kind === b.kind && (a.kind === "time" || a.index === (b as { index: number }).index);
 }
 
-/**
- * Classification in Strogatz's words, capitalised for headings (US spelling,
- * as the brand book asks: "Center", "Saddle"). In 1D Strogatz just says
- * "stable" or "unstable" (Ch. 2), and "half-stable" when f′(x*) = 0.
- */
 export function classificationTitle(c: Classification, dim = 2): string {
   if (dim === 1) {
     if (c === "non-hyperbolic" || c === "non-isolated") return "Half-stable";
@@ -170,7 +143,6 @@ export function classificationTitle(c: Classification, dim = 2): string {
   return words[c];
 }
 
-/** One sentence explaining what the classification means for nearby trajectories. */
 export function classificationExplain(c: Classification, kind: SystemKind | undefined, dim = 2): string {
   if (dim === 1) {
     const stable = c === "sink" || c.startsWith("stable");
@@ -232,27 +204,16 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
   }
 }
 
-/** Clamp `v` to `[lo, hi]`. */
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-/**
- * The first-order system for display.
- *
- * When a second-order equation was rewritten, the core names the new state
- * `\dot{θ}` and returns `\dot{θ} = \dot{θ}` for the first row, which reads as
- * a tautology. In that case every left-hand side is written as d/dt of its
- * state instead (Strogatz's x' = y, y' = … with y = θ̇):
- *   dθ/dt = θ̇,   dθ̇/dt = −sin θ.
- * Systems without derived states (and maps) are returned unchanged.
- */
 export function firstOrderDisplay(
   equationsLatex: string[],
   states: SymbolInfo[],
   kind: SystemKind | undefined,
 ): string[] {
-  const derived = states.some((s) => /^\\dot\{/.test(s.latex));
+  const derived = states.some((s) => s.derived ?? /^\\dot\{/.test(s.latex));
   if (kind === "map" || !derived || equationsLatex.length !== states.length) return equationsLatex;
   return equationsLatex.map((eq, i) => {
     const k = eq.indexOf("=");
