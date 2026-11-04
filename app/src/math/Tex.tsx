@@ -4,6 +4,7 @@
 
 import { memo } from "react";
 import { convertLatexToMarkup } from "mathlive";
+import { GREEK_NAMES } from "./format";
 
 /** HTML that is safe to inject: MathLive's markup, or escaped source text. */
 export type SanitizedMarkup = string & { readonly __brand: "SanitizedMarkup" };
@@ -35,12 +36,6 @@ export function texToSpeech(latex: string): string {
   }
   return text;
 }
-
-const GREEK = new Set([
-  "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta", "iota",
-  "kappa", "lambda", "mu", "nu", "xi", "pi", "rho", "sigma", "tau", "upsilon", "phi", "varphi", "chi",
-  "psi", "omega", "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Phi", "Psi", "Omega",
-]);
 
 /** How deeply nested braces (\\frac{\\dot{x}}{…}) are spoken. */
 const MAX_GROUP_DEPTH = 4;
@@ -91,7 +86,7 @@ function speak(src: string): string {
     .replace(/\\pm\b/g, ` ${SPOKEN.plusOrMinus} `)
     .replace(/\\partial\b/g, ` ${SPOKEN.partial} `)
     .replace(/\\infty\b/g, ` ${SPOKEN.infinity} `)
-    .replace(/\\([A-Za-z]+)/g, (m, name: string) => (GREEK.has(name) ? ` ${name} ` : m))
+    .replace(/\\([A-Za-z]+)/g, (m, name: string) => (GREEK_NAMES.has(name) ? ` ${name} ` : m))
     .replace(/\\[,;:! ]/g, " ")
     .replace(/[{}]/g, " ")
     .replace(/=/g, ` ${SPOKEN.equals} `)
@@ -109,7 +104,7 @@ function speak(src: string): string {
 
 /** "2xy" is spoken "2 x y": split letter runs and digit-letter joins, except known words. */
 function spellImplicitProduct(word: string): string {
-  if (!/^[0-9.]*[A-Za-z]+$/.test(word) || WORDS.has(word) || GREEK.has(word)) return word;
+  if (!/^[0-9.]*[A-Za-z]+$/.test(word) || WORDS.has(word) || GREEK_NAMES.has(word)) return word;
   return word.split(/(?<=[0-9.])(?=[A-Za-z])|(?<=[A-Za-z])(?=[A-Za-z])/).join(" ");
 }
 

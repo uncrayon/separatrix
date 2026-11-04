@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { MathfieldElement } from "mathlive";
+import { GREEK_NAMES } from "./format";
 
 interface MathFieldProps {
   value: string;
@@ -89,19 +90,25 @@ function setAttr(el: Element, name: string, value: string | undefined) {
   else el.removeAttribute(name);
 }
 
-const GREEK_WORDS = new Set([
-  "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta",
-  "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma",
-  "varsigma", "tau", "upsilon", "phi", "varphi", "chi", "psi", "omega", "Gamma", "Delta",
-  "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega",
-]);
-
 const LATEX_FUNCS = new Set([
   "sin", "cos", "tan", "sec", "csc", "cot", "sinh", "cosh", "tanh", "coth",
   "arcsin", "arccos", "arctan", "exp", "ln", "log", "min", "max",
 ]);
-const TEXT_ONLY_FUNCS = new Set(["sqrt", "abs", "sign", "sgn", "asin", "acos", "atan", "floor", "ceil"]);
+const TEXT_ONLY_FUNCS = new Set(["sqrt", "cbrt", "abs", "sign", "sgn", "asin", "acos", "atan", "floor", "ceil"]);
 const isFunc = (w: string) => LATEX_FUNCS.has(w) || TEXT_ONLY_FUNCS.has(w);
+
+const PRIME_COUNTS: Record<string, number> = { "'": 1, "\\prime": 1, "\\doubleprime": 2, "\\tripleprime": 3 };
+
+/** How many primes a superscript made only of primes stands for (MathLive writes x'' as `x^{\doubleprime}`), else 0. */
+function primeCount(sup: string): number {
+  let n = 0;
+  for (const part of sup.match(/\\[A-Za-z]+|\S/g) ?? []) {
+    const k = PRIME_COUNTS[part];
+    if (!k) return 0;
+    n += k;
+  }
+  return n;
+}
 
 type Kind = "num" | "name" | "func" | "open" | "close" | "op" | "eq" | "comma";
 interface TextTok {
@@ -180,8 +187,14 @@ function latexToks(src: string): TextTok[] {
       appendToLast(/^[A-Za-z0-9]+$/.test(sub) && sub.length === 1 ? `_${sub}` : `_{${sub.replace(/\s+/g, "")}}`);
     } else if (c === "^") {
       i++;
-      const sup = asText(readArg());
-      appendToLast(/^[A-Za-z0-9.]+$/.test(sup) ? `^${sup}` : `^(${sup})`);
+      const arg = readArg();
+      const primes = primeCount(arg);
+      if (primes > 0) {
+        appendToLast("'".repeat(primes));
+      } else {
+        const sup = asText(arg);
+        appendToLast(/^[A-Za-z0-9.]+$/.test(sup) ? `^${sup}` : `^(${sup})`);
+      }
     } else if (c === "'") {
       i++;
       appendToLast("'");
@@ -252,10 +265,14 @@ function latexToks(src: string): TextTok[] {
           i = end < 0 ? src.length : end + 1;
         }
         const arg = asText(readArg());
+        const n = index === null ? "2" : asText(index);
+        // A cube root is real for x < 0, unlike x^(1/3), so it keeps its own function.
         out.push(
-          index
-            ? tok(`(${arg})^(1/${asText(index)})`, "open", "close")
-            : tok(`sqrt(${arg})`, "func", "close"),
+          n === "2"
+            ? tok(`sqrt(${arg})`, "func", "close")
+            : n === "3"
+              ? tok(`cbrt(${arg})`, "func", "close")
+              : tok(`(${arg})^(1/${n})`, "open", "close"),
         );
         return;
       }
@@ -398,7 +415,7 @@ export function textToLatex(text: string): string {
     return [src.slice(from + 1), src.length];
   };
   const word = (w: string): string => {
-    if (GREEK_WORDS.has(w)) return `\\${w}`;
+    if (GREEK_NAMES.has(w)) return `\\${w}`;
     if (w.length === 1) return w;
     const m = /^([A-Za-z])([0-9]+)$/.exec(w);
     if (m) return `${m[1]}_{${m[2]}}`;
@@ -427,11 +444,11 @@ export function textToLatex(text: string): string {
       i += w.length;
       if (isFunc(w)) {
         const cmd = LATEX_FUNCS.has(w) ? `\\${w}` : null;
-        if (src[i] === "(" && (w === "sqrt" || w === "abs")) {
+        if (src[i] === "(" && (w === "sqrt" || w === "cbrt" || w === "abs")) {
           const [inner, next] = balancedGroup(i);
           i = next;
           const arg = textToLatex(inner);
-          out += w === "sqrt" ? `\\sqrt{${arg}}` : `\\left|${arg}\\right|`;
+          out += w === "sqrt" ? `\\sqrt{${arg}}` : w === "cbrt" ? `\\sqrt[3]{${arg}}` : `\\left|${arg}\\right|`;
           last = "close";
         } else {
           out += cmd ?? `\\operatorname{${w}}`;
@@ -494,9 +511,12 @@ export function textToLatex(text: string): string {
       i++;
       while (src[i] === " ") i++;
       const next = src[i] ?? "";
-      const implicit = /[A-Za-z(]/.test(next) && !(last === "other");
-      // After a command (`\sigma`) a following letter needs a space: `\sigma x`, not `\sigmax`.
-      out += implicit ? (/\\[A-Za-z]+$/.test(out) ? " " : "") : "\\cdot ";
+      // Juxtaposed, `x*(t)` would read as x at time t, not as x times t.
+      const timeArgument = /^\(\s*t\s*\)/.test(src.slice(i));
+      const implicit = /[A-Za-z(]/.test(next) && last !== "other" && !timeArgument;
+      // A space keeps letters apart: `\sigma x`, not `\sigmax`, and `a b s` (a·b·s), not `abs`,
+      // which LaTeX reads as a misspelt \abs.
+      out += implicit ? (/[A-Za-z]$/.test(out) ? " " : "") : "\\cdot ";
       last = "other";
       continue;
     }

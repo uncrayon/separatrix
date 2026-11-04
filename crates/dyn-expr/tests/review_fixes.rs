@@ -83,6 +83,35 @@ fn leibniz_notation_anywhere() {
 }
 
 #[test]
+fn a_greek_delta_over_dt_is_a_quotient_not_a_derivative() {
+    for (src, f, params, value) in [
+        (
+            r"\dot{x}=\frac{\delta}{dt}",
+            InputFormat::Latex,
+            ["delta", "d"],
+            2.0 / 15.0,
+        ),
+        (
+            "x' = delta/(d*t)",
+            InputFormat::Text,
+            ["delta", "d"],
+            2.0 / 15.0,
+        ),
+        ("x' = delta_1/dt", InputFormat::Text, ["delta_1", "dt"], 0.4),
+    ] {
+        let sys = ok(src, f);
+        assert_eq!(
+            names(&sys),
+            (vec!["x".to_string()], params.map(String::from).to_vec()),
+            "{src}"
+        );
+        assert_close(&sys.eval_alloc(3.0, &[1.0], &[2.0, 5.0]), &[value], 1e-15);
+    }
+    let sys = text("dx_1/dt = -x_1");
+    assert_eq!(names(&sys).0, vec!["x_1".to_string()]);
+}
+
+#[test]
 fn derivative_with_respect_to_another_variable_is_explained() {
     let m = error_message(r"\frac{dy}{dx}=x-y", InputFormat::Latex);
     assert!(m.contains("time t, not x"), "{m}");

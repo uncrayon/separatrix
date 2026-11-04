@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { AxisRef, Classification, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
+import type { AxisRef, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
 import { Tex } from "../math/Tex";
-import { classificationExplain, fmt, latexToPlain, sameAxis } from "../math/format";
+import { classificationExplain, classificationTitle, fmt, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   DEFAULT_FIXED_STEP,
@@ -454,32 +454,6 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-const CLASS_LABEL: Record<Classification, string> = {
-  saddle: "Saddle",
-  "stable node": "Stable node",
-  "unstable node": "Unstable node",
-  "stable spiral": "Stable spiral",
-  "unstable spiral": "Unstable spiral",
-  center: "Center",
-  "stable star": "Stable star",
-  "unstable star": "Unstable star",
-  "stable degenerate node": "Stable degenerate node",
-  "unstable degenerate node": "Unstable degenerate node",
-  "non-isolated": "Non-isolated",
-  sink: "Sink",
-  source: "Source",
-  "saddle (n-D)": "Saddle",
-  "non-hyperbolic": "Non-hyperbolic",
-};
-
-function classLabel(c: Classification, dim: number): string {
-  if (dim === 1) {
-    if (c === "sink" || c.startsWith("stable")) return "Stable";
-    if (c === "source" || c.startsWith("unstable")) return "Unstable";
-  }
-  return CLASS_LABEL[c];
-}
-
 const NBSP = "\u00a0";
 
 function eigenText(fp: FixedPointOut, sym: string): string {
@@ -590,7 +564,11 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
 
   let empty: string | null = null;
   if (!state.layers.fixedPoints) empty = "Turn on Fixed points in Layers to find them.";
-  else if (sys.kind === "ode" && !sys.autonomous) empty = "Not searched: the field changes with t, so fixed points would move.";
+  else if (!sys.autonomous)
+    empty =
+      sys.kind === "map"
+        ? "Not searched: the map changes with n, so fixed points would move."
+        : "Not searched: the field changes with t, so fixed points would move.";
   else if (fps.length === 0) empty = "No fixed points in view.";
 
   return (
@@ -609,7 +587,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
           <ul className="ds-fp-list" aria-label="Fixed points">
             {fps.map((fp, i) => {
               const isSel = selected === i;
-              const label = classLabel(fp.classification, dim);
+              const label = classificationTitle(fp.classification, dim);
               const coords = coordsText(fp);
               return (
                 <li key={i} className={cx("ds-fp-item", isSel && "is-selected")} data-fp-index={i}>

@@ -331,8 +331,7 @@ function InferenceChips({ state, currentParam }: { state: StudioState; currentPa
   const quals = [`${sys.states.length}D`];
   if (sys.kind !== "map" && !sys.hamiltonian) quals.push(sys.autonomous ? "autonomous" : "non-autonomous");
   const isMap = sys.kind === "map";
-  const firstOrder =
-    sys.hamiltonian || sys.equationsLatex.length !== state.equations.filter((e) => e.latex.trim()).length;
+  const firstOrder = sys.hamiltonian || sys.states.some((s) => s.derived);
 
   const goToSlider = (name: string) => {
     const el = document.getElementById(sliderId(name));

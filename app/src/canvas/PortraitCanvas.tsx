@@ -261,12 +261,16 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const hitTrajectory = (px: number, py: number): number | null => {
     if (!scene) return null;
     const tol = 5 * glyphScale;
+    // A map's orbit off a time axis is drawn as dots only, so only the dots can be hit.
+    const dotsOnly = scene.kind === "map" && scene.xAxis.kind !== "time" && scene.yAxis.kind !== "time";
     let best: number | null = null;
     let bestD = tol * tol;
     for (const tr of scene.trajectories) {
       const pts = trajectoryPx(vp, scene, tr.out);
-      for (let k = 2; k < pts.length; k += 2) {
-        const d = segDist2(px, py, pts[k - 2], pts[k - 1], pts[k], pts[k + 1]);
+      for (let k = dotsOnly ? 0 : 2; k < pts.length; k += 2) {
+        const d = dotsOnly
+          ? (px - pts[k]) ** 2 + (py - pts[k + 1]) ** 2
+          : segDist2(px, py, pts[k - 2], pts[k - 1], pts[k], pts[k + 1]);
         if (d < bestD) {
           bestD = d;
           best = tr.meta.icId;

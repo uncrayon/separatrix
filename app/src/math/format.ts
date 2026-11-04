@@ -76,6 +76,9 @@ const GREEK: Record<string, string> = {
   Omega: "Ω",
 };
 
+/** The Greek letters the parser accepts, by command name (`varrho`, `Upsilon`, …). */
+export const GREEK_NAMES: ReadonlySet<string> = new Set(Object.keys(GREEK));
+
 export function latexToPlain(s: string): string {
   let out = s;
   out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̈`);
@@ -119,9 +122,9 @@ export function sameAxis(a: AxisRef, b: AxisRef): boolean {
 
 export function classificationTitle(c: Classification, dim = 2): string {
   if (dim === 1) {
-    if (c === "non-hyperbolic" || c === "non-isolated") return "Half-stable";
-    const stable = c === "sink" || c.startsWith("stable");
-    return stable ? "Stable" : "Unstable";
+    // f′(x*) = 0 decides nothing: x′ = x² is half-stable at 0, x′ = −x³ stable, x′ = x³ unstable.
+    if (c === "sink" || c.startsWith("stable")) return "Stable";
+    if (c === "source" || c.startsWith("unstable")) return "Unstable";
   }
   const words: Record<Classification, string> = {
     saddle: "Saddle",

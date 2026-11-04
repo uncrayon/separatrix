@@ -159,10 +159,22 @@ fn d_power(a: &Ast) -> Option<u32> {
     }
 }
 
+/// The variable of a differential written as one word, as text mode reads
+/// `dx` and `dx_1`. A Greek letter that starts with d (`\delta`, the word
+/// `delta`) is that letter, not `d` times `elta`.
+fn one_word_differential(name: &str) -> Option<SymName> {
+    let rest = name.strip_prefix('d')?;
+    let base = name.split('_').next().unwrap_or(name);
+    (rest.starts_with(|c: char| c.is_ascii_alphabetic()) && !is_greek(base))
+        .then(|| sym_from_word(rest))
+}
+
 /// Text mode writes `dt` as one word: the variable it differentiates by.
 fn text_d_word(s: &SymName) -> Option<SymName> {
-    (s.name.len() > 1 && s.name.starts_with('d') && s.sub_latex.is_none())
-        .then(|| sym_from_word(&s.name[1..]))
+    s.sub_latex
+        .is_none()
+        .then(|| one_word_differential(&s.name))
+        .flatten()
 }
 
 fn d_var_power(a: &Ast) -> Option<(u32, SymName)> {
@@ -190,11 +202,8 @@ fn leibniz_wrt(a: &Ast) -> Option<(SymName, u32, SymName)> {
                 AstKind::Bin(BinOp::Mul, d, x) if d_power(d) == Some(k) => {
                     Some((x.plain_symbol()?, k, var))
                 }
-                _ => {
-                    let s = num.plain_symbol()?;
-                    (k == 1 && s.name.len() > 1 && s.name.starts_with('d'))
-                        .then(|| (sym_from_word(&s.name[1..]), 1, var))
-                }
+                _ if k == 1 => Some((one_word_differential(&num.plain_symbol()?.name)?, 1, var)),
+                _ => None,
             }
         }
         AstKind::Bin(BinOp::Mul, op, x) => {
