@@ -303,6 +303,41 @@ fn leibniz_notation() {
 }
 
 #[test]
+fn leibniz_notation_for_a_variable_with_subscript_n() {
+    for sys in [
+        latex("\\frac{dx_n}{dt}=-x_n"),
+        latex("\\frac{\\mathrm{d}x_{n}}{\\mathrm{d}t}=-x_n"),
+        latex("\\frac{d}{dt}x_n=-x_n"),
+        text("dx_n/dt = -x_n"),
+    ] {
+        assert_eq!(names(&sys).0, ["x_n"]);
+        assert_eq!(sys.eval_alloc(0.0, &[2.0], &[]), [-2.0]);
+    }
+    let sys = latex("\\frac{d^2x_n}{dt^2}=-x_n");
+    assert_eq!(names(&sys).0, ["x_n", "x_n'"]);
+}
+
+#[test]
+fn odd_roots_are_real_and_display_as_roots() {
+    let sys = latex("\\dot{x}=\\sqrt[5]{-16x}");
+    assert_close(&sys.eval_alloc(0.0, &[2.0], &[]), &[-2.0], 1e-14);
+    let want = -16.0 / 5.0 * 32f64.powf(-0.8);
+    assert_close(&jac(&sys, 0.0, &[2.0], &[]), &[want], 1e-12);
+    assert_eq!(sys.info.equations_latex[0], "\\dot{x} = \\sqrt[5]{-16 x}");
+    let sys = latex("\\dot{x}=\\sqrt[7]{x}");
+    assert_close(&sys.eval_alloc(0.0, &[-128.0], &[]), &[-2.0], 1e-14);
+}
+
+#[test]
+fn nested_odd_roots_compile() {
+    // Each root used to copy its argument, so 30 levels meant 2^30 nodes.
+    let src = format!(r"\dot{{x}}={}x{}", r"\sqrt[5]{".repeat(30), "}".repeat(30));
+    let sys = latex(&src);
+    assert_eq!(sys.instruction_count(), 31);
+    assert_close(&sys.eval_alloc(0.0, &[-1.0], &[]), &[-1.0], 1e-14);
+}
+
+#[test]
 fn mathlive_quirks() {
     let cases: &[(&str, f64)] = &[
         ("x^{\\prime}=\\exponentialE^{x}", 2f64.exp()),

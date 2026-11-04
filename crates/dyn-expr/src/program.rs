@@ -142,6 +142,7 @@ pub(crate) fn call1<T: Scalar>(f: Func, a: T) -> T {
         Func::Asin => a.asin(),
         Func::Acos => a.acos(),
         Func::Atan => a.atan(),
+        Func::OddRoot(n) => a.sign() * a.abs().powc(1.0 / n as f64),
         Func::Min | Func::Max => unreachable!("binary function in Call1"),
     }
 }

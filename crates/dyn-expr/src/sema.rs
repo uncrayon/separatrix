@@ -173,30 +173,28 @@ fn d_var_power(a: &Ast) -> Option<(u32, SymName)> {
             _ => None,
         },
         AstKind::Bin(BinOp::Mul, d, v) if d_power(d) == Some(1) => match &v.kind {
-            AstKind::Sym(s) => Some((1, s.clone())),
-            AstKind::Bin(BinOp::Pow, b, e) => match &b.kind {
-                AstKind::Sym(s) => Some((whole_number(e)?, s.clone())),
-                _ => None,
-            },
-            _ => None,
+            AstKind::Bin(BinOp::Pow, b, e) => Some((whole_number(e)?, b.plain_symbol()?)),
+            _ => Some((1, v.plain_symbol()?)),
         },
         _ => None,
     }
 }
 
+/// `d^k x / d var^k` (or `d^k/d var^k x`) as `(x, k, var)`. The variables are
+/// read as plain names, so `x_n` is the variable `x_n`, as in `x_n'`.
 fn leibniz_wrt(a: &Ast) -> Option<(SymName, u32, SymName)> {
     match &a.kind {
         AstKind::Bin(BinOp::Div, num, den) => {
             let (k, var) = d_var_power(den)?;
             match &num.kind {
-                AstKind::Bin(BinOp::Mul, d, x) => match &x.kind {
-                    AstKind::Sym(s) if d_power(d) == Some(k) => Some((s.clone(), k, var)),
-                    _ => None,
-                },
-                AstKind::Sym(s) if k == 1 && s.name.len() > 1 && s.name.starts_with('d') => {
-                    Some((sym_from_word(&s.name[1..]), 1, var))
+                AstKind::Bin(BinOp::Mul, d, x) if d_power(d) == Some(k) => {
+                    Some((x.plain_symbol()?, k, var))
                 }
-                _ => None,
+                _ => {
+                    let s = num.plain_symbol()?;
+                    (k == 1 && s.name.len() > 1 && s.name.starts_with('d'))
+                        .then(|| (sym_from_word(&s.name[1..]), 1, var))
+                }
             }
         }
         AstKind::Bin(BinOp::Mul, op, x) => {
@@ -204,10 +202,10 @@ fn leibniz_wrt(a: &Ast) -> Option<(SymName, u32, SymName)> {
                 return None;
             };
             let (k, var) = d_var_power(den)?;
-            match &x.kind {
-                AstKind::Sym(s) if d_power(d) == Some(k) => Some((s.clone(), k, var)),
-                _ => None,
+            if d_power(d) != Some(k) {
+                return None;
             }
+            Some((x.plain_symbol()?, k, var))
         }
         _ => None,
     }

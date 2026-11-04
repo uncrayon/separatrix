@@ -19,6 +19,10 @@ pub(crate) enum Func {
     Atan,
     Min,
     Max,
+    /// The real `n`-th root for an odd `n >= 5`, `sign(x)·|x|^(1/n)`
+    /// (`\sqrt[5]{x}`); `powf` gives NaN for `x < 0`. One node, so nested
+    /// roots stay linear in size.
+    OddRoot(u64),
 }
 
 pub(crate) const FUNCTION_WORDS: &[&str] = &[
@@ -83,6 +87,7 @@ impl Func {
             Atan => "arctan",
             Min => "min",
             Max => "max",
+            OddRoot(_) => "root",
         }
     }
 
@@ -91,6 +96,7 @@ impl Func {
             Func::Sign => "\\operatorname{sign}".to_string(),
             Func::Cbrt => "\\operatorname{cbrt}".to_string(),
             Func::Abs => "\\operatorname{abs}".to_string(),
+            Func::OddRoot(n) => format!("\\sqrt[{n}]"),
             f => format!("\\{}", f.text_name()),
         }
     }

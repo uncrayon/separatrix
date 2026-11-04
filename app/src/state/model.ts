@@ -164,6 +164,8 @@ export interface PortraitMeta {
   systemId: number;
   trajectories: TrajectoryMeta[];
   view: View;
+  /** Fixed points were asked for, so an empty list means there are none (not that the layer is hidden). */
+  fixedPoints: boolean;
 }
 
 export interface PortraitState {
@@ -434,7 +436,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       },
       samples: s.solver.samples > 0 ? s.solver.samples : autoSamples(maxSpan),
     },
-    meta: { systemId: sys.systemId, trajectories: metas, view: s.view },
+    meta: { systemId: sys.systemId, trajectories: metas, view: s.view, fixedPoints: s.layers.fixedPoints },
   };
 }
 

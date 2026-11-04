@@ -136,9 +136,11 @@ export function useStudio() {
       new PortraitScheduler<PortraitMeta>(
         () => buildPortraitJob(latest.current),
         (res, meta, roundTripMs) => {
-          const prev = latest.current.portrait?.res.fixedPoints ?? [];
+          const last = latest.current.portrait;
+          const prev = last?.meta.fixedPoints ? last.res.fixedPoints : [];
           setPortrait({ res, meta, roundTripMs });
-          setSelection((sel) => trackSelection(sel, res.fixedPoints, meta.view, prev));
+          // With the layer hidden nothing was searched, so the selection is kept for when it is shown again.
+          if (meta.fixedPoints) setSelection((sel) => trackSelection(sel, res.fixedPoints, meta.view, prev));
           setComputeError(null);
         },
         (err) => setComputeError(err instanceof Error ? err.message : String(err)),

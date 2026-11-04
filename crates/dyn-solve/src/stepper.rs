@@ -106,6 +106,17 @@ fn ratio_or_zero(v: f64, w: f64) -> f64 {
     }
 }
 
+/// Where a fixed-step method evaluates `f` inside a step, in order: stage `j`
+/// computes `k[j]` at `t + c·h`, `x + c·h·slope`, where `slope` is `fx`
+/// (`None`) or an earlier stage's `k[i]` (`Some(i)`).
+fn fixed_stage_points(method: Method) -> &'static [(f64, Option<usize>)] {
+    match method {
+        Method::Heun => &[(1.0, None)],
+        Method::Rk4 => &[(0.5, None), (0.5, Some(0)), (1.0, Some(1))],
+        Method::Euler | Method::Dopri5 => &[],
+    }
+}
+
 /// Did component `x0 → x1` move away from 0 while `|f|` grew (`f0 → f1`)?
 fn moves_outward_with_growing_slope(x0: f64, x1: f64, f0: f64, f1: f64) -> bool {
     x0 * x1 > 0.0 && x1.abs() > x0.abs() && f1 > f0 && f0 > 0.0
@@ -730,11 +741,7 @@ impl<'a> Stepper<'a> {
     }
 
     fn overflowed_while_growing(&mut self, h: f64, t_new: f64, endpoint: Endpoint) -> bool {
-        let stages: &[Vec<f64>] = match self.method {
-            Method::Euler | Method::Dopri5 => &[],
-            Method::Heun => &self.k[..1],
-            Method::Rk4 => &self.k[..3],
-        };
+        let stages = &self.k[..fixed_stage_points(self.method).len()];
         let uses_stage_point = !stages.is_empty();
         let f_evaluated = endpoint == Endpoint::FEvaluated;
         let blowing_up = self.is_blowing_up();
@@ -757,31 +764,15 @@ impl<'a> Stepper<'a> {
         let along = |c: f64, k: &[f64]| -> Vec<f64> {
             x.iter().zip(k).map(|(xi, ki)| xi + c * h * ki).collect()
         };
-        let stages: Vec<StageEval> = match self.method {
-            Method::Heun => vec![StageEval {
-                t: t + h,
-                x: along(1.0, &self.fx),
-                f: &self.k[0],
-            }],
-            Method::Rk4 => vec![
-                StageEval {
-                    t: t + 0.5 * h,
-                    x: along(0.5, &self.fx),
-                    f: &self.k[0],
-                },
-                StageEval {
-                    t: t + 0.5 * h,
-                    x: along(0.5, &self.k[0]),
-                    f: &self.k[1],
-                },
-                StageEval {
-                    t: t + h,
-                    x: along(1.0, &self.k[1]),
-                    f: &self.k[2],
-                },
-            ],
-            Method::Euler | Method::Dopri5 => vec![],
-        };
+        let stages: Vec<StageEval> = fixed_stage_points(self.method)
+            .iter()
+            .enumerate()
+            .map(|(j, &(c, from))| StageEval {
+                t: t + c * h,
+                x: along(c, from.map_or(&self.fx, |i| &self.k[i])),
+                f: &self.k[j],
+            })
+            .collect();
         let failed = stages
             .into_iter()
             .find(|s| !all_finite(s.f))
@@ -830,6 +821,16 @@ impl<'a> Stepper<'a> {
         } = self;
         let (f, p, t) = (*f, *p, *t);
         let n = x.len();
+        for (j, &(c, from)) in fixed_stage_points(*method).iter().enumerate() {
+            let slope: &[f64] = match from {
+                None => &k1[..],
+                Some(i) => &k[i][..],
+            };
+            for i in 0..n {
+                xs[i] = x[i] + c * h * slope[i];
+            }
+            counted_eval(f, p, stats, t + c * h, xs, &mut k[j]);
+        }
         let [k2, k3, k4, ..] = k;
         match method {
             Method::Euler => {
@@ -839,26 +840,10 @@ impl<'a> Stepper<'a> {
             }
             Method::Heun => {
                 for i in 0..n {
-                    xs[i] = x[i] + h * k1[i];
-                }
-                counted_eval(f, p, stats, t + h, xs, k2);
-                for i in 0..n {
                     x_new[i] = x[i] + 0.5 * h * (k1[i] + k2[i]);
                 }
             }
             Method::Rk4 => {
-                for i in 0..n {
-                    xs[i] = x[i] + 0.5 * h * k1[i];
-                }
-                counted_eval(f, p, stats, t + 0.5 * h, xs, k2);
-                for i in 0..n {
-                    xs[i] = x[i] + 0.5 * h * k2[i];
-                }
-                counted_eval(f, p, stats, t + 0.5 * h, xs, k3);
-                for i in 0..n {
-                    xs[i] = x[i] + h * k3[i];
-                }
-                counted_eval(f, p, stats, t + h, xs, k4);
                 for i in 0..n {
                     x_new[i] = x[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
                 }

@@ -165,6 +165,7 @@ fn call(f: Func, args: &[Node], names: &Names) -> Out {
     match f {
         Func::Sqrt => Out::new(format!("\\sqrt{{{}}}", a.s), Prec::Atom),
         Func::Cbrt => Out::new(format!("\\sqrt[3]{{{}}}", a.s), Prec::Atom),
+        Func::OddRoot(n) => Out::new(format!("\\sqrt[{n}]{{{}}}", a.s), Prec::Atom),
         Func::Abs => Out::new(format!("\\left|{}\\right|", a.s), Prec::Atom),
         Func::Exp => Out::new(format!("e^{{{}}}", a.s), Prec::Power),
         Func::Min | Func::Max => {

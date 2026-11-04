@@ -3,7 +3,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEFAULT_LAYERS,
+  DEFAULT_SOLVER,
   FIXED_POINT_MATCH_FRACTION,
+  buildPortraitJob,
   fixedPointMatchTolerance,
   nearestFixedPoint,
   selectFixedPoint,
@@ -91,4 +94,36 @@ test("a point that merges into a neighbour does not hand the selection to it", (
   // While it still exists it is followed, even with the origin closer than the view tolerance.
   const moved = [fp(0, 0, 0), fp(-0.7, -0.7, 0.2), fp(0.7, 0.7, 0.2)];
   assert.deepEqual(trackSelection(sel, moved, lv, prev).x, [-0.7, -0.7, 0.2]);
+});
+
+test("a portrait records whether it searched for fixed points, so hiding the layer keeps the selection", () => {
+  const snapshot = (fixedPoints) => ({
+    compiled: {
+      ok: true,
+      systemId: 1,
+      kind: "ode",
+      hamiltonian: false,
+      autonomous: true,
+      states: [
+        { name: "x", latex: "x", derived: false },
+        { name: "y", latex: "y", derived: false },
+      ],
+      params: [],
+      equationsLatex: [],
+      diagnostics: [],
+    },
+    params: [],
+    view,
+    baseState: [0, 0],
+    fieldTime: 0,
+    ics: [],
+    layers: { ...DEFAULT_LAYERS, fixedPoints },
+    solver: DEFAULT_SOLVER,
+    plotAspect: null,
+  });
+  for (const on of [true, false]) {
+    const job = buildPortraitJob(snapshot(on));
+    assert.equal(job.body.fixedPoints, on);
+    assert.equal(job.meta.fixedPoints, on);
+  }
 });

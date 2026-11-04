@@ -185,6 +185,8 @@ function drawGrid(
     const b = Math.max(lo, hi);
     const first = Math.ceil(a / s);
     const count = Math.floor(b / s + 1e-9) - first;
+    // A span that overflowed to ∞ has no ticks (niceTicks falls back to step 1), and no grid.
+    if (!Number.isFinite(count)) return out;
     for (let k = 0; k <= count; k++) out.push((first + k) * s);
     return out;
   };

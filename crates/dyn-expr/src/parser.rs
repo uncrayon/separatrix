@@ -752,22 +752,17 @@ impl<'s> Parser<'s> {
             AstKind::Call(Func::Sqrt, vec![arg])
         } else if index == 3.0 {
             AstKind::Call(Func::Cbrt, vec![arg])
+        } else if index % 2.0 == 1.0 {
+            // Odd indices are below 2^53, so the conversion is exact.
+            AstKind::Call(Func::OddRoot(index as u64), vec![arg])
         } else {
             let one = Ast::new(AstKind::Num(1.0), span);
             let n = Ast::new(AstKind::Num(index), span);
-            let inv_n = Ast::bin(BinOp::Div, one, n);
-            if index % 2.0 == 1.0 {
-                // The real odd root, sign(x)·|x|^(1/n): powf gives NaN for x < 0.
-                let sign = Ast::new(AstKind::Call(Func::Sign, vec![arg.clone()]), span);
-                let abs = Ast::new(AstKind::Call(Func::Abs, vec![arg]), span);
-                AstKind::Bin(
-                    BinOp::Mul,
-                    Box::new(sign),
-                    Box::new(Ast::bin(BinOp::Pow, abs, inv_n)),
-                )
-            } else {
-                AstKind::Bin(BinOp::Pow, Box::new(arg), Box::new(inv_n))
-            }
+            AstKind::Bin(
+                BinOp::Pow,
+                Box::new(arg),
+                Box::new(Ast::bin(BinOp::Div, one, n)),
+            )
         };
         Ok(Ast::new(kind, span))
     }
@@ -952,13 +947,23 @@ mod tests {
             }
             AstKind::Call(f, args) => {
                 let inner: Vec<String> = args.iter().map(sexpr).collect();
-                format!("({} {})", f.text_name(), inner.join(" "))
+                let name = match f {
+                    Func::OddRoot(n) => format!("root{n}"),
+                    f => f.text_name().to_string(),
+                };
+                format!("({name} {})", inner.join(" "))
             }
             AstKind::Apply(s, args) => {
                 let inner: Vec<String> = args.iter().map(sexpr).collect();
                 format!("(apply {} {})", s.name, inner.join(" "))
             }
         }
+    }
+
+    fn node_count(a: &Ast) -> usize {
+        let mut n = 0;
+        a.walk(&mut |_| n += 1);
+        n
     }
 
     fn parse_one(src: &str, f: InputFormat) -> (String, String) {
@@ -1011,7 +1016,17 @@ mod tests {
         assert_eq!(rhs("\\sqrt{x}"), "(sqrt x)");
         assert_eq!(rhs("\\sqrt[3]{x}"), "(cbrt x)");
         assert_eq!(rhs("\\sqrt[4]{x}"), "(^ x (/ 1 4))");
-        assert_eq!(rhs("\\sqrt[5]{x}"), "(* (sign x) (^ (abs x) (/ 1 5)))");
+        assert_eq!(rhs("\\sqrt[5]{x}"), "(root5 x)");
+    }
+
+    #[test]
+    fn nested_odd_roots_stay_linear_in_size() {
+        let k = 30;
+        let src = format!("y={}x{}", r"\sqrt[5]{".repeat(k), "}".repeat(k));
+        let mut d = Vec::new();
+        let lines = parse_lines(&src, InputFormat::Latex, &mut d);
+        assert!(d.is_empty(), "{d:?}");
+        assert_eq!(node_count(&lines[0].rhs), k + 1);
     }
 
     #[test]
