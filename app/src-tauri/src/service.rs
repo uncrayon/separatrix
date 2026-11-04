@@ -1,10 +1,3 @@
-//! What the Tauri commands actually do, without any Tauri types.
-//!
-//! Everything here is plain Rust so it can be unit-tested without a window:
-//! [`SystemStore`] keeps compiled systems between calls, [`compile_system`]
-//! answers `compile_system` and [`compute_portrait`] answers
-//! `compute_portrait`. `lib.rs` only wires these to the webview.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -15,31 +8,19 @@ use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
 
 use crate::ipc::{
-    Arrow, AxisRef, CompileRequest, CompileResponse, Diagnostic, FixedPointOut, NullclineOut,
-    ParamInfo, PortraitRequest, PortraitResponse, SymbolInfo, TrajectoryOut, TrajectoryRequest,
+    Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
+    ConvertedLineOut, Diagnostic, FixedPointOut, NullclineOut, ParamInfo, PortraitRequest,
+    PortraitResponse, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
 };
 
-/// How many compiled systems are kept. The UI only ever uses the newest one,
-/// but a portrait request for the previous one may still be in flight while
-/// the user types, so a few older ones are kept too.
-pub const MAX_STORED_SYSTEMS: usize = 32;
+pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
 
-/// Marching-squares lattice size for nullclines (cells per side).
-pub const NULLCLINE_GRID: usize = 160;
+pub const NULLCLINE_CELLS_PER_SIDE: usize = 160;
 
-/// Upper limits that protect the app from absurd requests (a typo such as
-/// a field grid of 100000 would otherwise freeze the computation).
 pub const MAX_FIELD_GRID: usize = 200;
-/// Largest number of dense samples per trajectory.
 pub const MAX_SAMPLES: usize = 200_000;
-/// Largest number of map iterates per trajectory.
 pub const MAX_ITERATES: usize = 1_000_000;
 
-/// Compiled systems, by the id handed to the UI.
-///
-/// Ids start at 1 and only ever increase. Systems are shared as
-/// `Arc<CompiledSystem>` so a long computation can keep using one after it
-/// has been evicted.
 #[derive(Default)]
 pub struct SystemStore {
     inner: Mutex<StoreInner>,
@@ -52,59 +33,52 @@ struct StoreInner {
 }
 
 impl SystemStore {
-    /// An empty store.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Stores `system` and returns its new id. Drops the oldest systems
-    /// beyond [`MAX_STORED_SYSTEMS`].
-    pub fn insert(&self, system: CompiledSystem) -> u32 {
-        let mut inner = self.lock();
+    pub fn insert_evicting_oldest(&self, system: CompiledSystem) -> u32 {
+        let mut inner = self.lock_ignoring_poison();
         inner.last_id += 1;
         let id = inner.last_id;
         inner.systems.insert(id, Arc::new(system));
-        let oldest_kept = id.saturating_sub(MAX_STORED_SYSTEMS as u32 - 1);
+        let oldest_kept = id.saturating_sub(RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS as u32 - 1);
         inner.systems.retain(|&k, _| k >= oldest_kept);
         id
     }
 
-    /// The system with this id, if it is still stored.
     pub fn get(&self, id: u32) -> Option<Arc<CompiledSystem>> {
-        self.lock().systems.get(&id).cloned()
+        self.lock_ignoring_poison().systems.get(&id).cloned()
     }
 
-    /// Number of systems currently stored.
     pub fn len(&self) -> usize {
-        self.lock().systems.len()
+        self.lock_ignoring_poison().systems.len()
     }
 
-    /// `true` if no system is stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, StoreInner> {
-        // A panic while holding the lock cannot leave the map half-updated
-        // in a harmful way, so a poisoned lock is simply reused.
+    fn lock_ignoring_poison(&self) -> std::sync::MutexGuard<'_, StoreInner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
-// ------------------------------------------------------------------ compile
-
-/// Compiles the user's equations and, on success, stores the system.
 pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileResponse {
     let out = dyn_expr::compile(&req.source, req.format);
     let diagnostics = out
         .diagnostics
         .into_iter()
-        .map(|d| Diagnostic { severity: d.severity, message: d.message, span: d.span })
+        .map(|d| Diagnostic {
+            severity: d.severity,
+            message: d.message,
+            span: d.span,
+        })
         .collect();
     match out.system {
         Some(system) => {
             let info = system.info.clone();
-            let id = store.insert(system);
+            let id = store.insert_evicting_oldest(system);
             CompileResponse {
                 ok: true,
                 system_id: Some(id),
@@ -114,12 +88,20 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
                 states: info
                     .states
                     .into_iter()
-                    .map(|s| SymbolInfo { name: s.name, latex: s.latex })
+                    .map(|s| StateInfo {
+                        name: s.name,
+                        latex: s.latex,
+                        derived: s.derived,
+                    })
                     .collect(),
                 params: info
                     .params
                     .into_iter()
-                    .map(|p| ParamInfo { name: p.name, latex: p.latex, default: p.default })
+                    .map(|p| ParamInfo {
+                        name: p.name,
+                        latex: p.latex,
+                        default: p.default,
+                    })
                     .collect(),
                 equations_latex: info.equations_latex,
                 diagnostics,
@@ -139,21 +121,22 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
     }
 }
 
-// ----------------------------------------------------------------- portrait
+/// Rewrites the UI's lines in the other input format (see
+/// [`dyn_expr::convert`]): lines that can't be converted exactly come back
+/// as typed, with a note.
+pub fn convert_source(req: &ConvertRequest) -> ConvertResponse {
+    let lines = dyn_expr::convert(&req.lines, req.from, req.to)
+        .into_iter()
+        .map(|l| ConvertedLineOut {
+            source: l.source,
+            converted: l.converted,
+            error: l.error,
+            note: l.note,
+        })
+        .collect();
+    ConvertResponse { lines }
+}
 
-/// Computes everything the canvas draws for one view.
-///
-/// - **Direction field**: `fieldGrid × fieldGrid` arrows (flows only).
-/// - **Nullclines**: only when requested, flows only.
-/// - **Fixed points**: only when requested, for autonomous flows and maps.
-///   Axis variables are searched over the visible range; hidden variables
-///   over `baseState ± span` (see [`fixed_point_search_box`]).
-/// - **Trajectories**: maps are iterated `t1` times from `x0` (the time axis
-///   is `n`); flows are integrated from `t0` to `t1` (backwards if
-///   `t1 < t0`) with `samples` evenly spaced output points.
-///
-/// Returns an error message (shown to the user) when the request does not
-/// fit the system, e.g. the wrong number of parameters.
 pub fn compute_portrait(
     system: &CompiledSystem,
     req: &PortraitRequest,
@@ -179,16 +162,24 @@ pub fn compute_portrait(
     let arrows = if req.field_grid > 0 && !is_map {
         dyn_analysis::slope_field(f, p, &plane, req.field_grid.min(MAX_FIELD_GRID))
             .into_iter()
-            .map(|a| Arrow { x: a.x, y: a.y, u: a.u, v: a.v })
+            .map(|a| Arrow {
+                x: a.x,
+                y: a.y,
+                u: a.u,
+                v: a.v,
+            })
             .collect()
     } else {
         Vec::new()
     };
 
     let nullclines = if req.nullclines && !is_map {
-        dyn_analysis::nullclines(f, p, &plane, NULLCLINE_GRID)
+        dyn_analysis::nullclines(f, p, &plane, NULLCLINE_CELLS_PER_SIDE)
             .into_iter()
-            .map(|n| NullclineOut { state: n.state, polylines: n.polylines })
+            .map(|n| NullclineOut {
+                state: n.state,
+                polylines: n.polylines,
+            })
             .collect()
     } else {
         Vec::new()
@@ -196,15 +187,20 @@ pub fn compute_portrait(
 
     let fixed_points = if req.fixed_points && f.is_autonomous() {
         let search = fixed_point_search_box(req, dim);
-        dyn_analysis::fixed_points(f, p, &search, seeds_per_axis(dim))
+        dyn_analysis::fixed_points_with_budget(f, p, &search, seeds_per_axis(dim), MAX_TOTAL_SEEDS)
             .into_iter()
             .filter(|fp| {
                 fp.x.iter().all(|v| v.is_finite())
-                    && fp.eigenvalues.iter().all(|(re, im)| re.is_finite() && im.is_finite())
+                    && fp
+                        .eigenvalues
+                        .iter()
+                        .all(|(re, im)| re.is_finite() && im.is_finite())
             })
             .map(|fp| FixedPointOut {
                 x: fp.x,
                 eigenvalues: fp.eigenvalues,
+                eigenvectors: fp.eigenvectors,
+                eigenvectors_im: fp.eigenvectors_im,
                 classification: fp.classification,
                 stable: fp.stable,
             })
@@ -229,7 +225,6 @@ pub fn compute_portrait(
     })
 }
 
-/// Checks that the request fits the system, with messages a student can act on.
 fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
     let dim = f.dim();
     if req.params.len() != f.n_params() {
@@ -251,7 +246,9 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
     }
     for (name, (lo, hi)) in [("horizontal", req.x_range), ("vertical", req.y_range)] {
         if !(lo.is_finite() && hi.is_finite() && lo < hi) {
-            return Err(format!("The {name} range [{lo}, {hi}] is not a valid interval."));
+            return Err(format!(
+                "The {name} range [{lo}, {hi}] is not a valid interval."
+            ));
         }
     }
     for (k, tr) in req.trajectories.iter().enumerate() {
@@ -273,22 +270,26 @@ fn to_axis(a: AxisRef) -> Axis {
     }
 }
 
-/// Where to look for fixed points, one `(min, max)` per state.
-///
-/// A variable on an axis is searched over its visible range. A hidden
-/// variable (e.g. `y` in the x–z view of the Lorenz system) is searched
-/// over `baseState[i] ± span`, where `span` is half the larger visible
-/// range of the state axes (10 if no state is on an axis). Fixed points
-/// usually live at a similar scale to the visible ones, so this finds e.g.
-/// both Lorenz C± points even though `y` is not shown.
-pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f64)> {
-    let visible = [(req.x_axis, req.x_range), (req.y_axis, req.y_range)];
-    let span = visible
+/// Half-width searched around a hidden state when no state is on an axis.
+const HIDDEN_STATE_FALLBACK_HALF_SPAN: f64 = 10.0;
+
+/// Half the larger range of the state axes in view (0 if none is a state).
+fn widest_visible_state_half_span(req: &PortraitRequest) -> f64 {
+    [(req.x_axis, req.x_range), (req.y_axis, req.y_range)]
         .iter()
         .filter(|(a, _)| matches!(a, AxisRef::State { .. }))
         .map(|(_, (lo, hi))| (hi - lo).abs() / 2.0)
-        .fold(0.0_f64, f64::max);
-    let span = if span > 0.0 { span } else { 10.0 };
+        .fold(0.0_f64, f64::max)
+}
+
+pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f64)> {
+    let visible = [(req.x_axis, req.x_range), (req.y_axis, req.y_range)];
+    let span = widest_visible_state_half_span(req);
+    let span = if span > 0.0 {
+        span
+    } else {
+        HIDDEN_STATE_FALLBACK_HALF_SPAN
+    };
     (0..dim)
         .map(|i| {
             let on_axis = visible
@@ -296,26 +297,57 @@ pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f6
                 .find(|(a, _)| *a == AxisRef::State { index: i })
                 .map(|(_, r)| *r);
             on_axis.unwrap_or_else(|| {
-                let c = req.base_state.get(i).copied().filter(|v| v.is_finite()).unwrap_or(0.0);
+                let c = req
+                    .base_state
+                    .get(i)
+                    .copied()
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(0.0);
                 (c - span, c + span)
             })
         })
         .collect()
 }
 
-/// Newton starting points per axis: a dense grid in 1D and 2D, coarser in
-/// higher dimensions so the total stays around a thousand seeds.
+/// Newton seeds in total, in every dimension: a hard cap on the work of the
+/// fixed-point search. When the grid of [`seeds_per_axis`] points per axis
+/// would be larger (2^10 = 1024 in 10D), `dyn_analysis` uses the first
+/// `MAX_TOTAL_SEEDS` points of a Halton sequence instead.
+pub const MAX_TOTAL_SEEDS: usize = 1000;
+
+/// Grid points per axis: hand-tuned in 1D to 3D, otherwise the largest `k`
+/// with `k^dim <= MAX_TOTAL_SEEDS` (at least 2; a grid that still does not
+/// fit is replaced by a Halton sample of `MAX_TOTAL_SEEDS` points).
 fn seeds_per_axis(dim: usize) -> usize {
     match dim {
         0 => 0,
         1 => 40,
         2 => 14,
         3 => 9,
-        d => ((1000.0_f64).powf(1.0 / d as f64).floor() as usize).max(2),
+        d => {
+            let fits = |k: usize| {
+                (0..d)
+                    .try_fold(1usize, |t, _| {
+                        t.checked_mul(k).filter(|&t| t <= MAX_TOTAL_SEEDS)
+                    })
+                    .is_some()
+            };
+            (2..).take_while(|&k| fits(k)).last().unwrap_or(2)
+        }
     }
 }
 
-/// One trajectory: map iteration or ODE integration.
+fn to_solver(s: &SolverOptions) -> dyn_solve::SolverOptions {
+    dyn_solve::SolverOptions {
+        method: s.method,
+        rtol: s.rtol,
+        atol: s.atol,
+        h: s.h,
+        h_max: s.h_max.unwrap_or(0.0),
+        max_steps: s.max_steps,
+    }
+}
+
 fn trajectory(
     f: &dyn VectorField,
     p: &[f64],
@@ -323,25 +355,26 @@ fn trajectory(
     req: &PortraitRequest,
 ) -> TrajectoryOut {
     let sol = if f.kind() == SystemKind::Map {
-        let n = if tr.t1.is_finite() { tr.t1.round().clamp(0.0, MAX_ITERATES as f64) } else { 0.0 };
+        let n = if tr.t1.is_finite() {
+            tr.t1.round().clamp(0.0, MAX_ITERATES as f64)
+        } else {
+            0.0
+        };
         dyn_solve::iterate_map(f, p, &tr.x0, n as usize, 0)
     } else {
-        let s = req.solver;
-        let opts = dyn_solve::SolverOptions {
-            method: s.method,
-            rtol: s.rtol,
-            atol: s.atol,
-            h: s.h,
-            h_max: s.h_max,
-            max_steps: s.max_steps,
-        };
+        let opts = to_solver(&req.solver);
         let sampling = match req.samples {
             0 | 1 => Sampling::Steps,
             n => Sampling::Uniform(n.min(MAX_SAMPLES)),
         };
         dyn_solve::integrate(f, p, tr.t0, &tr.x0, tr.t1, &opts, sampling)
     };
-    TrajectoryOut { t: sol.t, x: sol.x, status: sol.status, stats: sol.stats }
+    TrajectoryOut {
+        t: sol.t,
+        x: sol.x,
+        status: sol.status,
+        stats: sol.stats,
+    }
 }
 
 #[cfg(test)]
@@ -351,8 +384,9 @@ mod tests {
     use serde::Deserialize;
 
     const TEMPLATES_JSON: &str = include_str!("../../src/templates/templates.json");
+    const TEMPLATE_TEXT_JSON: &str =
+        include_str!("../../src/templates/templates.text.generated.json");
 
-    /// The fields of `templates.json` these tests need (extra fields ignored).
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Template {
@@ -381,11 +415,13 @@ mod tests {
     }
 
     fn template(id: &str) -> Template {
-        templates().into_iter().find(|t| t.id == id).expect("template exists")
+        templates()
+            .into_iter()
+            .find(|t| t.id == id)
+            .expect("template exists")
     }
 
-    /// Same rule as `resolveAxis` in `app/src/state/model.ts`.
-    fn resolve_axis(name: &str, states: &[SymbolInfo]) -> AxisRef {
+    fn resolve_axis(name: &str, states: &[StateInfo]) -> AxisRef {
         if name == "t" || name == "n" {
             return AxisRef::Time;
         }
@@ -398,15 +434,26 @@ mod tests {
 
     fn compile_ok(store: &SystemStore, t: &Template) -> CompileResponse {
         let source = t.equations.join("\n");
-        let res = compile_system(store, &CompileRequest { source, format: t.format });
-        let errors: Vec<_> =
-            res.diagnostics.iter().filter(|d| d.severity == Severity::Error).collect();
-        assert!(res.ok && errors.is_empty(), "template {} failed: {errors:?}", t.id);
+        let res = compile_system(
+            store,
+            &CompileRequest {
+                source,
+                format: t.format,
+            },
+        );
+        let errors: Vec<_> = res
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            res.ok && errors.is_empty(),
+            "template {} failed: {errors:?}",
+            t.id
+        );
         res
     }
 
-    /// Builds the request the UI sends right after opening a template
-    /// (mirrors `trajectorySpans` and `buildPortraitJob` in `model.ts`).
     fn template_request(t: &Template, res: &CompileResponse) -> PortraitRequest {
         let dim = res.states.len();
         let is_map = res.kind == Some(SystemKind::Map);
@@ -424,24 +471,49 @@ mod tests {
         };
         let mut trajectories = Vec::new();
         for ic in &t.initial_conditions {
-            let x0: Vec<f64> = (0..dim).map(|i| ic.get(i).copied().unwrap_or(0.0)).collect();
+            let x0: Vec<f64> = (0..dim)
+                .map(|i| ic.get(i).copied().unwrap_or(0.0))
+                .collect();
             if is_map {
-                trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: t.t_end.round().max(1.0) });
+                trajectories.push(TrajectoryRequest {
+                    x0,
+                    t0: 0.0,
+                    t1: t.t_end.round().max(1.0),
+                });
             } else if let Some((lo, hi)) = window {
                 if hi > 0.0 {
-                    trajectories.push(TrajectoryRequest { x0: x0.clone(), t0: 0.0, t1: hi });
+                    trajectories.push(TrajectoryRequest {
+                        x0: x0.clone(),
+                        t0: 0.0,
+                        t1: hi,
+                    });
                 }
                 if lo < 0.0 {
-                    trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: lo });
+                    trajectories.push(TrajectoryRequest {
+                        x0,
+                        t0: 0.0,
+                        t1: lo,
+                    });
                 }
             } else {
-                trajectories.push(TrajectoryRequest { x0: x0.clone(), t0: 0.0, t1: t.t_end });
+                trajectories.push(TrajectoryRequest {
+                    x0: x0.clone(),
+                    t0: 0.0,
+                    t1: t.t_end,
+                });
                 if t.backward != Some(false) {
-                    trajectories.push(TrajectoryRequest { x0, t0: 0.0, t1: -t.t_end });
+                    trajectories.push(TrajectoryRequest {
+                        x0,
+                        t0: 0.0,
+                        t1: -t.t_end,
+                    });
                 }
             }
         }
-        let max_span = trajectories.iter().map(|r| (r.t1 - r.t0).abs()).fold(0.0, f64::max);
+        let max_span = trajectories
+            .iter()
+            .map(|r| (r.t1 - r.t0).abs())
+            .fold(0.0, f64::max);
         PortraitRequest {
             request_id: 7,
             system_id: res.system_id.unwrap(),
@@ -461,7 +533,7 @@ mod tests {
                 rtol: 1e-6,
                 atol: 1e-9,
                 h: 0.0,
-                h_max: 0.0,
+                h_max: None,
                 max_steps: 200_000,
             },
             samples: (max_span * 120.0).clamp(400.0, 8000.0).round() as usize,
@@ -480,21 +552,37 @@ mod tests {
             assert!(n.state < dim, "{id}: nullcline state {}", n.state);
             for line in &n.polylines {
                 assert!(line.len() >= 2, "{id}: degenerate polyline");
-                assert!(line.iter().all(|(x, y)| x.is_finite() && y.is_finite()), "{id}");
+                assert!(
+                    line.iter().all(|(x, y)| x.is_finite() && y.is_finite()),
+                    "{id}"
+                );
             }
         }
         for fp in &res.fixed_points {
             assert_eq!(fp.x.len(), dim, "{id}");
             assert_eq!(fp.eigenvalues.len(), dim, "{id}");
+            assert_eq!(fp.eigenvectors.len(), dim, "{id}");
+            assert_eq!(fp.eigenvectors_im.len(), dim, "{id}");
             assert!(all_finite(&fp.x), "{id}: {fp:?}");
+            for v in fp.eigenvectors.iter().chain(&fp.eigenvectors_im).flatten() {
+                assert_eq!(v.len(), dim, "{id}");
+                assert!(all_finite(v), "{id}: {fp:?}");
+            }
         }
         for tr in &res.trajectories {
             assert!(!tr.t.is_empty(), "{id}: empty trajectory");
             assert_eq!(tr.x.len(), tr.t.len() * dim, "{id}: x is not t.len() * dim");
-            assert!(all_finite(&tr.t) && all_finite(&tr.x), "{id}: non-finite trajectory");
+            assert!(
+                all_finite(&tr.t) && all_finite(&tr.x),
+                "{id}: non-finite trajectory"
+            );
         }
-        // The JSON must not contain `null` where the UI expects numbers.
-        let json = serde_json::to_string(res).unwrap();
+        let mut numbers_only = res.clone();
+        for fp in &mut numbers_only.fixed_points {
+            fp.eigenvectors.clear();
+            fp.eigenvectors_im.clear();
+        }
+        let json = serde_json::to_string(&numbers_only).unwrap();
         for bad in [":null", "[null", ",null"] {
             assert!(!json.contains(bad), "{id}: JSON has null");
         }
@@ -536,7 +624,6 @@ mod tests {
             if is_map {
                 assert!(out.arrows.is_empty() && out.nullclines.is_empty());
                 for tr in &out.trajectories {
-                    // Iterates 0..=N, unless the orbit escaped.
                     if tr.status == Status::Completed {
                         assert_eq!(tr.t.len() as f64, t.t_end + 1.0, "{}", t.id);
                     }
@@ -576,8 +663,6 @@ mod tests {
 
     #[test]
     fn rabbits_vs_sheep_has_the_four_strogatz_fixed_points() {
-        // Strogatz §6.4: (0,0) unstable node, (0,2) and (3,0) stable nodes,
-        // (1,1) saddle.
         let (_, out) = template_portrait("rabbits-vs-sheep");
         assert_eq!(out.fixed_points.len(), 4, "{:?}", out.fixed_points);
         let expect = [
@@ -591,7 +676,6 @@ mod tests {
             assert_eq!(fp.classification, class, "at {x:?}");
             assert_eq!(fp.stable, stable, "at {x:?}");
         }
-        // Two nullclines (one per equation), each with curves.
         assert_eq!(out.nullclines.len(), 2);
         assert!(out.nullclines.iter().all(|n| !n.polylines.is_empty()));
     }
@@ -601,16 +685,26 @@ mod tests {
         let (res, out) = template_portrait("pendulum");
         assert_eq!(res.states.len(), 2);
         let pi = std::f64::consts::PI;
-        assert_eq!(find_fp(&out, &[0.0, 0.0]).classification, Classification::Centre);
-        assert_eq!(find_fp(&out, &[pi, 0.0]).classification, Classification::Saddle);
-        assert_eq!(find_fp(&out, &[-pi, 0.0]).classification, Classification::Saddle);
-        assert_eq!(find_fp(&out, &[2.0 * pi, 0.0]).classification, Classification::Centre);
+        assert_eq!(
+            find_fp(&out, &[0.0, 0.0]).classification,
+            Classification::Centre
+        );
+        assert_eq!(
+            find_fp(&out, &[pi, 0.0]).classification,
+            Classification::Saddle
+        );
+        assert_eq!(
+            find_fp(&out, &[-pi, 0.0]).classification,
+            Classification::Saddle
+        );
+        assert_eq!(
+            find_fp(&out, &[2.0 * pi, 0.0]).classification,
+            Classification::Centre
+        );
     }
 
     #[test]
     fn lorenz_finds_fixed_points_off_the_visible_plane() {
-        // The x–z view hides y; C± = (±√(b(r-1)), ±√(b(r-1)), r-1) must
-        // still be found through the hidden-variable search range.
         let (_, out) = template_portrait("lorenz");
         let c = (8.0 / 3.0 * 27.0_f64).sqrt();
         for x in [[0.0, 0.0, 0.0], [c, c, 27.0], [-c, -c, 27.0]] {
@@ -619,8 +713,10 @@ mod tests {
             assert!(!fp.stable);
         }
         assert_eq!(out.fixed_points.len(), 3);
-        // The attractor stays bounded.
-        assert!(out.trajectories.iter().all(|t| t.status == Status::Completed));
+        assert!(out
+            .trajectories
+            .iter()
+            .all(|t| t.status == Status::Completed));
     }
 
     #[test]
@@ -632,7 +728,6 @@ mod tests {
         assert_eq!(tr.t[60], 60.0);
         assert_eq!(tr.x[0], 0.2);
         assert!((tr.x[1] - 3.7 * 0.2 * 0.8).abs() < 1e-15);
-        // Fixed points 0 and 1 - 1/r, both unstable at r = 3.7.
         assert_eq!(out.fixed_points.len(), 2, "{:?}", out.fixed_points);
         find_fp(&out, &[0.0]);
         let fp = find_fp(&out, &[1.0 - 1.0 / 3.7]);
@@ -645,7 +740,6 @@ mod tests {
         assert!(!res.autonomous);
         assert!(out.fixed_points.is_empty());
         assert!(out.arrows.iter().all(|a| a.u == 1.0));
-        // Some solutions of x' = x² - t blow up in finite time.
         assert!(out.trajectories.iter().any(|t| t.status == Status::BlewUp));
     }
 
@@ -655,7 +749,9 @@ mod tests {
             system_id,
             params: vec![],
             x_axis: AxisRef::State { index: 0 },
-            y_axis: AxisRef::State { index: 1.min(dim - 1) },
+            y_axis: AxisRef::State {
+                index: 1.min(dim - 1),
+            },
             x_range: (-1.0, 1.0),
             y_range: (-1.0, 1.0),
             base_state: vec![0.0; dim],
@@ -669,7 +765,7 @@ mod tests {
                 rtol: 1e-6,
                 atol: 1e-9,
                 h: 0.01,
-                h_max: 0.0,
+                h_max: None,
                 max_steps: 1000,
             },
             samples: 11,
@@ -677,8 +773,13 @@ mod tests {
     }
 
     fn compile_src(store: &SystemStore, src: &str) -> u32 {
-        let res =
-            compile_system(store, &CompileRequest { source: src.into(), format: InputFormat::Latex });
+        let res = compile_system(
+            store,
+            &CompileRequest {
+                source: src.into(),
+                format: InputFormat::Latex,
+            },
+        );
         assert!(res.ok, "{:?}", res.diagnostics);
         res.system_id.unwrap()
     }
@@ -710,8 +811,16 @@ mod tests {
         let mut req = simple_request(id, 1);
         req.x_axis = AxisRef::Time;
         req.trajectories = vec![
-            TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: 1.0 },
-            TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: -1.0 },
+            TrajectoryRequest {
+                x0: vec![1.0],
+                t0: 0.0,
+                t1: 1.0,
+            },
+            TrajectoryRequest {
+                x0: vec![1.0],
+                t0: 0.0,
+                t1: -1.0,
+            },
         ];
         let out = compute_portrait(&sys, &req).unwrap();
         let (fwd, bwd) = (&out.trajectories[0], &out.trajectories[1]);
@@ -720,7 +829,6 @@ mod tests {
         assert!((fwd.t[5] - 0.5).abs() < 1e-12 && (bwd.t[5] + 0.5).abs() < 1e-12);
         assert!((fwd.x[10] - (-1.0_f64).exp()).abs() < 1e-8);
         assert!((bwd.x[10] - 1.0_f64.exp()).abs() < 1e-7);
-        // With samples = 0 the raw steps come back: RK4 with h = 0.01.
         req.samples = 0;
         let out = compute_portrait(&sys, &req).unwrap();
         assert_eq!(out.trajectories[0].t.len(), 101);
@@ -735,8 +843,10 @@ mod tests {
         req.y_range = (-2.0, 54.0);
         req.base_state = vec![0.0, 5.0, 0.0];
         let b = fixed_point_search_box(&req, 3);
-        assert_eq!(b, vec![(-25.0, 25.0), (5.0 - 28.0, 5.0 + 28.0), (-2.0, 54.0)]);
-        // A time axis does not set the scale for hidden variables.
+        assert_eq!(
+            b,
+            vec![(-25.0, 25.0), (5.0 - 28.0, 5.0 + 28.0), (-2.0, 54.0)]
+        );
         req.x_axis = AxisRef::Time;
         req.x_range = (0.0, 1000.0);
         let b = fixed_point_search_box(&req, 3);
@@ -753,13 +863,23 @@ mod tests {
         assert!(err.contains("1 parameter"), "{err}");
         req.params = vec![1.0];
         req.y_axis = AxisRef::State { index: 2 };
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("vertical axis"));
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("vertical axis"));
         req.y_axis = AxisRef::State { index: 1 };
         req.x_range = (1.0, 1.0);
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("horizontal range"));
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("horizontal range"));
         req.x_range = (-1.0, 1.0);
-        req.trajectories = vec![TrajectoryRequest { x0: vec![1.0], t0: 0.0, t1: 1.0 }];
-        assert!(compute_portrait(&sys, &req).unwrap_err().contains("Starting point 1"));
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0],
+            t0: 0.0,
+            t1: 1.0,
+        }];
+        assert!(compute_portrait(&sys, &req)
+            .unwrap_err()
+            .contains("Starting point 1"));
         req.trajectories.clear();
         assert!(compute_portrait(&sys, &req).is_ok());
     }
@@ -769,12 +889,18 @@ mod tests {
         let store = SystemStore::new();
         let res = compile_system(
             &store,
-            &CompileRequest { source: "\\dot{x}=y+\n\\dot{y}=-x".into(), format: InputFormat::Latex },
+            &CompileRequest {
+                source: "\\dot{x}=y+\n\\dot{y}=-x".into(),
+                format: InputFormat::Latex,
+            },
         );
         assert!(!res.ok);
         assert!(res.system_id.is_none() && res.kind.is_none());
         assert!(res.states.is_empty());
-        assert!(res.diagnostics.iter().any(|d| d.severity == Severity::Error && d.span.is_some()));
+        assert!(res
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.span.is_some()));
         assert!(store.is_empty());
         let json = serde_json::to_value(&res).unwrap();
         assert!(json.get("systemId").is_none());
@@ -784,14 +910,59 @@ mod tests {
     #[test]
     fn store_ids_increase_and_old_systems_are_evicted() {
         let store = SystemStore::new();
-        let ids: Vec<u32> =
-            (0..MAX_STORED_SYSTEMS + 5).map(|_| compile_src(&store, "\\dot{x}=-x")).collect();
+        let ids: Vec<u32> = (0..RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS + 5)
+            .map(|_| compile_src(&store, "\\dot{x}=-x"))
+            .collect();
         assert!(ids.windows(2).all(|w| w[1] == w[0] + 1));
         assert_eq!(ids[0], 1);
-        assert_eq!(store.len(), MAX_STORED_SYSTEMS);
+        assert_eq!(store.len(), RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS);
         assert!(store.get(ids[4]).is_none());
         assert!(store.get(ids[5]).is_some());
         assert!(store.get(*ids.last().unwrap()).is_some());
+    }
+
+    /// Every state's equation is `x_i' = 0`, so every Newton start is a
+    /// fixed point and the number of points found is the number of starts.
+    fn zero_system_fixed_point_count(dim: usize) -> usize {
+        let store = SystemStore::new();
+        let src: Vec<String> = (1..=dim).map(|i| format!("x{i}' = 0")).collect();
+        let res = compile_system(
+            &store,
+            &CompileRequest {
+                source: src.join("\n"),
+                format: InputFormat::Text,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let sys = store.get(res.system_id.unwrap()).unwrap();
+        let mut req = simple_request(res.system_id.unwrap(), dim);
+        req.field_grid = 0;
+        req.fixed_points = true;
+        compute_portrait(&sys, &req).unwrap().fixed_points.len()
+    }
+
+    #[test]
+    fn the_newton_seed_budget_is_a_hard_cap_in_every_dimension() {
+        for (dim, want) in [
+            (1, 40),
+            (2, 14 * 14),
+            (3, 9 * 9 * 9),
+            (10, 1000),
+            (12, 1000),
+        ] {
+            let per_axis = seeds_per_axis(dim);
+            let starts = dyn_analysis::seed_count(dim, per_axis, MAX_TOTAL_SEEDS);
+            assert_eq!(starts, want, "dim {dim}");
+            assert!(starts <= MAX_TOTAL_SEEDS, "dim {dim}: {starts} seeds");
+            assert_eq!(zero_system_fixed_point_count(dim), want, "dim {dim}");
+        }
+        for dim in 1..=20 {
+            let starts = dyn_analysis::seed_count(dim, seeds_per_axis(dim), MAX_TOTAL_SEEDS);
+            assert!(starts <= MAX_TOTAL_SEEDS, "dim {dim}: {starts} seeds");
+        }
+        assert_eq!(seeds_per_axis(4), 5);
+        assert_eq!(seeds_per_axis(5), 3);
+        assert_eq!(seeds_per_axis(10), 2);
     }
 
     #[test]
@@ -808,32 +979,147 @@ mod tests {
         .expect("the request the UI sends deserializes");
         assert_eq!(req.x_axis, AxisRef::Time);
         assert_eq!(req.y_axis, AxisRef::State { index: 0 });
-        assert_eq!(req.solver.h_max, 0.0);
+        assert_eq!(req.solver.h_max, None);
 
         let store = SystemStore::new();
         let res = compile_system(
             &store,
-            &CompileRequest { source: "\\dot{x}=-x".into(), format: InputFormat::Latex },
+            &CompileRequest {
+                source: "\\dot{x}=-x".into(),
+                format: InputFormat::Latex,
+            },
         );
         let json = serde_json::to_value(&res).unwrap();
-        for key in ["ok", "systemId", "kind", "hamiltonian", "autonomous", "states", "params"] {
+        for key in [
+            "ok",
+            "systemId",
+            "kind",
+            "hamiltonian",
+            "autonomous",
+            "states",
+            "params",
+        ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
         assert!(json.get("equationsLatex").is_some() && json.get("diagnostics").is_some());
         assert_eq!(json["kind"], "ode");
+        assert_eq!(json["states"][0]["derived"], false);
+        let second_order = compile_system(
+            &SystemStore::new(),
+            &CompileRequest {
+                source: "\\ddot{\\theta}=-\\sin\\theta".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        let states = serde_json::to_value(&second_order.states).unwrap();
+        assert_eq!(
+            states,
+            serde_json::json!([
+                { "name": "theta", "latex": "\\theta", "derived": false },
+                { "name": "theta'", "latex": "\\dot{\\theta}", "derived": true }
+            ])
+        );
 
         let out = compute_portrait(&store.get(1).unwrap(), &req).unwrap();
         let json = serde_json::to_value(&out).unwrap();
-        for key in ["requestId", "arrows", "nullclines", "fixedPoints", "trajectories", "elapsedMs"]
-        {
+        for key in [
+            "requestId",
+            "arrows",
+            "nullclines",
+            "fixedPoints",
+            "trajectories",
+            "elapsedMs",
+        ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
         assert_eq!(json["requestId"], 3);
-        // 1D flows use sink/source (Strogatz ch. 2 "stable"/"unstable").
         assert_eq!(json["fixedPoints"][0]["classification"], "sink");
         assert!(json["fixedPoints"][0]["eigenvalues"][0].is_array());
+        assert_eq!(
+            json["fixedPoints"][0]["eigenvectors"][0],
+            serde_json::json!([1.0])
+        );
+        assert!(json["fixedPoints"][0]["eigenvectorsIm"][0].is_null());
         assert_eq!(json["trajectories"][0]["status"], "completed");
         assert!(json["trajectories"][0]["stats"]["evals"].is_u64());
         assert!(json["nullclines"][0]["polylines"][0][0].is_array());
+    }
+
+    #[test]
+    fn every_template_converts_to_its_generated_text_over_ipc() {
+        let text: HashMap<String, Vec<String>> =
+            serde_json::from_str(TEMPLATE_TEXT_JSON).expect("the template text parses");
+        let store = SystemStore::new();
+        for t in templates() {
+            let res = convert_source(&ConvertRequest {
+                lines: t.equations.clone(),
+                from: InputFormat::Latex,
+                to: InputFormat::Text,
+            });
+            let lines: Vec<String> = res
+                .lines
+                .iter()
+                .map(|l| {
+                    assert!(l.converted && l.note.is_none(), "{}: {l:?}", t.id);
+                    l.source.clone()
+                })
+                .collect();
+            assert_eq!(Some(&lines), text.get(&t.id), "{}", t.id);
+            let latex = compile_ok(&store, &t);
+            let plain = compile_system(
+                &store,
+                &CompileRequest {
+                    source: lines.join("\n"),
+                    format: InputFormat::Text,
+                },
+            );
+            assert!(plain.ok, "{}: {:?}", t.id, plain.diagnostics);
+            assert_eq!(plain.states, latex.states, "{}", t.id);
+            assert_eq!(plain.params, latex.params, "{}", t.id);
+        }
+    }
+
+    #[test]
+    fn convert_source_keeps_lines_it_cannot_convert_with_a_note() {
+        let res = convert_source(&ConvertRequest {
+            lines: vec!["x' = y".into(), "".into(), "y' = (x".into()],
+            from: InputFormat::Text,
+            to: InputFormat::Latex,
+        });
+        let json = serde_json::to_value(&res).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "lines": [
+                { "source": "\\dot{x} = y", "converted": true, "error": false },
+                { "source": "", "converted": true, "error": false },
+                { "source": "y' = (x", "converted": false, "error": true,
+                  "note": "This line has an error, so it was kept as typed" }
+            ]})
+        );
+        let req: ConvertRequest = serde_json::from_value(serde_json::json!({
+            "lines": ["\\dot{x}=-x"], "from": "latex", "to": "text"
+        }))
+        .expect("the request the UI sends deserializes");
+        assert_eq!(convert_source(&req).lines[0].source, "x' = -x");
+    }
+
+    #[test]
+    fn a_valid_line_the_target_cannot_write_is_not_an_error() {
+        // Kept as typed, LaTeX would read it as -x/9.109·e - 31: the UI must
+        // not switch, so the line is flagged as valid (`error: false`).
+        let res = convert_source(&ConvertRequest {
+            lines: vec!["x' = -x/9.109e-31".into(), "y' = (x".into()],
+            from: InputFormat::Text,
+            to: InputFormat::Latex,
+        });
+        let json = serde_json::to_value(&res).unwrap();
+        assert_eq!(json["lines"][0]["converted"], false);
+        assert_eq!(json["lines"][0]["error"], false);
+        assert_eq!(
+            json["lines"][0]["note"],
+            "LaTeX can't write the number 9.109e-31 exactly"
+        );
+        assert_eq!(json["lines"][1]["converted"], false);
+        assert_eq!(json["lines"][1]["error"], true);
     }
 }

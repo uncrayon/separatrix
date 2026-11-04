@@ -1,19 +1,10 @@
-// The floating canvas toolbar (design system: CanvasToolbar). One row at the
-// top-left of the plot: the tool (Select, Pan, Add trajectory), the view
-// actions (Zoom to fit, Reset view), the layer toggles and the axis picker.
-// Settings that are not about what a click does or what is drawn live in the
-// inspector (the time span among them).
-//
-// Keyboard: one tab stop (the chosen tool); Left/Right move through every
-// button, Home/End jump to the ends. The axis picker is a menu button: Enter,
-// Space or Down opens it on the current horizontal axis, Escape closes it.
-
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AxisRef } from "../api/types";
 import { fitRanges } from "../canvas/viewport";
 import { Tex } from "../math/Tex";
 import { axisLabelLatex, axisLatex, latexToPlain, sameAxis } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
+import { hasNullclineLayer, portraitFits } from "../state/model";
 import {
   IconCheck,
   IconChevronDown,
@@ -27,13 +18,8 @@ import {
   IconZoomFit,
 } from "./icons";
 
-/* ------------------------------------------------------------ the tool */
-
-/** What a click or drag on the plot does. */
 export type CanvasTool = "select" | "pan" | "add";
 
-// The toolbar and the plot are siblings in the layout; the chosen tool is
-// shared through this tiny store (one plot per window).
 let currentTool: CanvasTool = "select";
 const toolListeners = new Set<() => void>();
 function setCanvasTool(t: CanvasTool) {
@@ -45,12 +31,9 @@ function subscribeTool(l: () => void) {
   toolListeners.add(l);
   return () => toolListeners.delete(l);
 }
-/** The chosen canvas tool (Select by default). */
 export function useCanvasTool(): CanvasTool {
   return useSyncExternalStore(subscribeTool, () => currentTool);
 }
-
-/* ------------------------------------------------------------ toolbar */
 
 interface Props {
   state: StudioState;
@@ -81,15 +64,12 @@ const TOOLS: { key: CanvasTool; label: string; tip: string; icon: ReactNode }[] 
 export function CanvasToolbar({ state, actions }: Props) {
   const tool = useCanvasTool();
   const rootRef = useRef<HTMLDivElement>(null);
-  /** The button that holds the toolbar's single tab stop. */
   const [stop, setStop] = useState<string>(tool);
-  /** A tooltip dismissed with Escape stays hidden until pointer leave or blur. */
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   const sys = state.compiled;
   if (!sys) return null;
   const isMap = sys.kind === "map";
-  const timeOnAxis = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
 
   const zoomToFit = () => {
     const fit = fitView(state);
@@ -113,9 +93,6 @@ export function CanvasToolbar({ state, actions }: Props) {
       onClick: actions.resetView,
     },
   ];
-  // Layers that do not apply are hidden, not disabled: a map has no field or
-  // nullclines; with time on an axis there are no nullclines to draw (except in
-  // 1D, where ẋ = 0 is the line through each fixed point).
   const layers: IconButtonSpec[] = [
     ...(!isMap
       ? [
@@ -129,7 +106,8 @@ export function CanvasToolbar({ state, actions }: Props) {
           },
         ]
       : []),
-    ...(!isMap && (!timeOnAxis || sys.states.length === 1)
+    // Shown whenever the layer is requested and drawn, time on an axis or not.
+    ...(hasNullclineLayer(sys.kind)
       ? [
           {
             key: "nullclines",
@@ -157,13 +135,11 @@ export function CanvasToolbar({ state, actions }: Props) {
     ...layers.map((b) => b.key),
     "axes",
   ];
-  // The view actions hide on narrow plots (canvas.css), so they never hold the tab stop.
   const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : tool;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest("[role=menu]")) return;
-    // Only the buttons on screen: the view group hides on narrow plots.
     const buttons = [
       ...(rootRef.current?.querySelectorAll<HTMLButtonElement>("button[data-key]") ?? []),
     ].filter((b) => b.offsetParent !== null);
@@ -224,8 +200,6 @@ export function CanvasToolbar({ state, actions }: Props) {
           }),
         )}
       </div>
-      {/* The view actions are the first to go on a narrow plot (canvas.css): the
-          inspector and the keyboard (0) reset the view, and so does a double-click. */}
       <span className="ds-canvas-toolbar-divider toolbar-view" role="separator" aria-orientation="vertical" />
       <div className="ds-canvas-toolbar-group toolbar-view" role="group" aria-label="View">
         {view.map(button)}
@@ -245,14 +219,6 @@ export function CanvasToolbar({ state, actions }: Props) {
   );
 }
 
-/* ------------------------------------------------------------ zoom to fit */
-
-/**
- * Ranges that frame the start points, the fixed points and the trajectories
- * near them, on the current axes. A curve that runs off towards infinity would
- * zoom the picture out to nothing, so trajectory samples count only within a
- * window around the start and fixed points (a quarter span beyond them).
- */
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
   if (!sys) return null;
@@ -261,7 +227,7 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
   const xs: number[] = [];
   const ys: number[] = [];
   const p = state.portrait;
-  const valid = !!p && p.meta.systemId === sys.systemId;
+  const valid = portraitFits(sys, state.shapeId, p);
   for (const ic of state.ics) {
     if (ic.x0.length !== dim) continue;
     const t0 = sys.kind === "map" ? 0 : ic.t0;
@@ -274,9 +240,12 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
       ys.push(fp.x[yAxis.index]);
     }
   }
-  const core = fitRanges(xs, ys);
+  // The start points and fixed points set each axis's scale for telling a blow-up from large states.
+  const size = (vs: number[], axis: AxisRef) =>
+    axis.kind === "time" ? Infinity : vs.reduce((m, v) => (Number.isFinite(v) ? Math.max(m, Math.abs(v)) : m), 0);
+  const scale: [number, number] = [size(xs, xAxis), size(ys, yAxis)];
+  const core = fitRanges(xs, ys, 0, scale);
   const window = (r: [number, number] | undefined, axis: AxisRef): [number, number] => {
-    // Time runs forward from the start: the whole integrated span is of interest.
     if (!r || axis.kind === "time") return [-Infinity, Infinity];
     const span = Math.max(r[1] - r[0], 1);
     return [r[0] - span / 4, r[1] + span / 4];
@@ -295,11 +264,12 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
       }
     }
   }
-  // Extra room above, so the toolbar does not cover what it just framed.
-  return fitRanges(xs, ys, 0.1);
+  return fitRanges(xs, ys, 0.1, scale);
 }
 
-/* ------------------------------------------------------------ axis picker */
+function menuItems(menu: HTMLElement | null): HTMLButtonElement[] {
+  return [...(menu?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]") ?? [])];
+}
 
 function AxisPicker({
   state,
@@ -329,18 +299,15 @@ function AxisPicker({
       hint: isMap ? "iterate" : "time",
     },
   ];
-  // The summary names the axes as the plot does: "→ n ↑ xₙ" for a map.
   const xLatex = axisLabelLatex(state.view.xAxis, state.view.yAxis, sys.states, sys.kind);
   const yLatex = axisLabelLatex(state.view.yAxis, state.view.xAxis, sys.states, sys.kind);
   const xPlain = latexToPlain(axisLatex(state.view.xAxis, sys.states, sys.kind));
   const yPlain = latexToPlain(axisLatex(state.view.yAxis, sys.states, sys.kind));
-  const items = () => [
-    ...(menuRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]") ?? []),
-  ];
+  const items = () => menuItems(menuRef.current);
 
   useEffect(() => {
     if (!open) return;
-    const all = items();
+    const all = menuItems(menuRef.current);
     const where = focusOnOpen.current;
     const current = all.findIndex((el) => el.getAttribute("aria-checked") === "true");
     all[where === "first" ? 0 : where === "last" ? all.length - 1 : Math.max(0, current)]?.focus();
@@ -349,7 +316,6 @@ function AxisPicker({
     };
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
-    // Runs only when the menu opens: re-focusing on every change would steal focus.
   }, [open]);
 
   const openWith = (where: "current" | "first" | "last") => {

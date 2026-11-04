@@ -10,6 +10,7 @@
 //! | Command | Request | Response |
 //! | --- | --- | --- |
 //! | `compile_system` | [`ipc::CompileRequest`] | [`ipc::CompileResponse`] |
+//! | `convert_source` | [`ipc::ConvertRequest`] | [`ipc::ConvertResponse`] |
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
 
 pub mod ipc;
@@ -24,10 +25,15 @@ fn core_version() -> &'static str {
 }
 
 /// Parses the equations and keeps the compiled system for later portraits.
-/// Compiling takes well under a millisecond, so this runs synchronously.
-#[tauri::command]
+#[tauri::command(async)]
 fn compile_system(req: ipc::CompileRequest, store: State<'_, SystemStore>) -> ipc::CompileResponse {
     service::compile_system(&store, &req)
+}
+
+/// Rewrites the equations in the other input format, for a mode switch.
+#[tauri::command(async)]
+fn convert_source(req: ipc::ConvertRequest) -> ipc::ConvertResponse {
+    service::convert_source(&req)
 }
 
 /// Computes field, nullclines, fixed points and trajectories for one view.
@@ -40,7 +46,10 @@ async fn compute_portrait(
     store: State<'_, SystemStore>,
 ) -> Result<ipc::PortraitResponse, String> {
     let system = store.get(req.system_id).ok_or_else(|| {
-        format!("System {} is no longer available; edit the equations to recompile.", req.system_id)
+        format!(
+            "System {} is no longer available; edit the equations to recompile.",
+            req.system_id
+        )
     })?;
     tauri::async_runtime::spawn_blocking(move || service::compute_portrait(&system, &req))
         .await
@@ -52,7 +61,12 @@ async fn compute_portrait(
 pub fn run() {
     tauri::Builder::default()
         .manage(SystemStore::new())
-        .invoke_handler(tauri::generate_handler![core_version, compile_system, compute_portrait])
+        .invoke_handler(tauri::generate_handler![
+            core_version,
+            compile_system,
+            convert_source,
+            compute_portrait
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the app");
 }

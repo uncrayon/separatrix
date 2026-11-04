@@ -1,17 +1,3 @@
-//! Semantic pass: from parsed lines to a resolved first-order system.
-//!
-//! 1. **Classify** each line by its left-hand side: `\dot{x}` / `x'` /
-//!    `\frac{dx}{dt}` (flow), `x_{n+1}` (map), `H(q, p)` (Hamiltonian) or a
-//!    plain symbol (parameter default). Leibniz derivatives anywhere in the
-//!    line are first rewritten as `\dot{x}`-style derivatives. Lines such as
-//!    `x'' + x = 0` or `x = -\ddot{x}` are solved for their highest
-//!    derivative when it appears linearly.
-//! 2. **States** are collected in equation order; an equation of order `k`
-//!    for `x` adds `x, x', …, x^(k-1)`.
-//! 3. **Resolve** right-hand sides: every name becomes a state, time, a
-//!    constant or a parameter (in order of first appearance).
-//! 4. Build [`SystemInfo`], the display LaTeX and the expressions to compile.
-
 use std::collections::HashMap;
 
 use dyn_core::SystemKind;
@@ -24,25 +10,36 @@ use crate::program::call1;
 use crate::token::{is_greek, sym_from_word, Span, SymName};
 use crate::{InputFormat, ParamInfo, SymbolInfo, SystemInfo};
 
-/// Result of a successful analysis.
-pub(crate) struct Analysis {
-    pub info: SystemInfo,
-    /// Direct systems: one expression per state (the field). Hamiltonian
-    /// systems: a single expression, `H`.
-    pub roots: Vec<Node>,
-    /// `Some(k)` for a Hamiltonian with `k` degrees of freedom.
-    pub hamiltonian_dof: Option<usize>,
+/// The right-hand sides of a system, by how they define the field.
+#[derive(Debug)]
+pub(crate) enum Form {
+    /// One expression per state.
+    Direct(Vec<Node>),
+    /// A single Hamiltonian `H(q, p)` with `dof` coordinates and momenta.
+    Hamiltonian { h: Node, dof: usize },
 }
 
-/// What a line defines.
+impl Form {
+    fn roots(&self) -> &[Node] {
+        match self {
+            Form::Direct(roots) => roots,
+            Form::Hamiltonian { h, .. } => std::slice::from_ref(h),
+        }
+    }
+}
+
+pub(crate) struct Analysis {
+    pub info: SystemInfo,
+    pub form: Form,
+}
+
 enum Target {
-    /// `k`-th derivative of a symbol.
     Ode(SymName, u32),
-    /// Next iterate of a symbol.
     Map(SymName),
-    /// Hamiltonian with coordinates then momenta.
-    Ham(Vec<SymName>),
-    /// Default value of a parameter.
+    Ham {
+        coords: Vec<SymName>,
+        momenta: Vec<SymName>,
+    },
     Default(SymName),
 }
 
@@ -56,7 +53,6 @@ fn error(msg: impl Into<String>, span: Span) -> Diagnostic {
     Diagnostic::error(msg, Some(span))
 }
 
-/// How to show a name in a message, in the user's own notation.
 fn show(s: &SymName, text: bool) -> String {
     if text {
         s.name.clone()
@@ -81,44 +77,49 @@ fn examples(text: bool) -> &'static str {
     }
 }
 
-// ----- classification ----------------------------------------------------
-
 fn classify(line: Line, text: bool) -> Result<Eqn, Diagnostic> {
     let Line { lhs, rhs, span } = line;
     let lhs = leibniz_to_deriv(lhs);
     let rhs = leibniz_to_deriv(rhs);
     let lhs_span = lhs.span;
-    let target = match &lhs.kind {
-        AstKind::Deriv(s, k) => Target::Ode(s.clone(), *k),
-        AstKind::Next(s) => Target::Map(s.clone()),
-        AstKind::Apply(s, args) if s.name == "H" => {
-            Target::Ham(hamiltonian_args(args, lhs_span, text)?)
-        }
-        // `x = -\ddot{x}` is an equation for x'', not a value for x.
-        AstKind::Sym(_) if has_deriv(&rhs) => return rearrange(&lhs, &rhs, span, text),
-        AstKind::Sym(s) => Target::Default(s.clone()),
+    let target = match (&lhs.kind, lhs.plain_symbol()) {
+        (AstKind::Deriv(s, k), _) => Target::Ode(s.clone(), *k),
+        (AstKind::Next(s), _) => Target::Map(s.clone()),
+        (AstKind::Apply(s, args), _) if s.name == "H" => hamiltonian_args(args, lhs_span, text)?,
+        (_, Some(_)) if has_deriv(&rhs) => return rearrange(&lhs, &rhs, span, text),
+        (_, Some(s)) => Target::Default(s),
         _ if has_deriv(&lhs) || has_deriv(&rhs) => return rearrange(&lhs, &rhs, span, text),
         _ => {
             let msg = other_variable_message(&lhs, text).unwrap_or_else(|| {
-                format!("Can't tell what this line defines. Start it with {}", examples(text))
+                format!(
+                    "Can't tell what this line defines. Start it with {}",
+                    examples(text)
+                )
             });
             return Err(error(msg, lhs_span));
         }
     };
-    Ok(Eqn { target, rhs, lhs_span })
+    Ok(Eqn {
+        target,
+        rhs,
+        lhs_span,
+    })
 }
 
-fn hamiltonian_args(args: &[Ast], span: Span, text: bool) -> Result<Vec<SymName>, Diagnostic> {
+fn hamiltonian_args(args: &[Ast], span: Span, text: bool) -> Result<Target, Diagnostic> {
     let mut out: Vec<SymName> = Vec::new();
     for a in args {
-        match &a.kind {
-            AstKind::Sym(s) => {
+        match a.plain_symbol() {
+            Some(s) => {
                 if out.iter().any(|o| o.name == s.name) {
-                    return Err(error(format!("{} is listed twice in H(…)", show(s, text)), a.span));
+                    return Err(error(
+                        format!("{} is listed twice in H(…)", show(&s, text)),
+                        a.span,
+                    ));
                 }
-                out.push(s.clone());
+                out.push(s);
             }
-            _ => {
+            None => {
                 return Err(error(
                     "H(…) must list plain variable names, like H(q, p) or H(q_1, q_2, p_1, p_2)",
                     a.span,
@@ -133,7 +134,11 @@ fn hamiltonian_args(args: &[Ast], span: Span, text: bool) -> Result<Vec<SymName>
             span,
         ));
     }
-    Ok(out)
+    let momenta = out.split_off(out.len() / 2);
+    Ok(Target::Ham {
+        coords: out,
+        momenta,
+    })
 }
 
 fn is_sym(a: &Ast, name: &str) -> bool {
@@ -147,7 +152,6 @@ fn whole_number(a: &Ast) -> Option<u32> {
     }
 }
 
-/// `d` → 1, `d^k` → k.
 fn d_power(a: &Ast) -> Option<u32> {
     match &a.kind {
         AstKind::Sym(s) if s.name == "d" => Some(1),
@@ -156,82 +160,86 @@ fn d_power(a: &Ast) -> Option<u32> {
     }
 }
 
-/// Denominator of a Leibniz derivative: `dt` → (1, t), `dt^k` → (k, t),
-/// and likewise for any other variable (`dx` → (1, x)). LaTeX writes
-/// `d t` (two symbols), text mode the word `dt`.
+/// The variable of a differential written as one word, as text mode reads
+/// `dx` and `dx_1`. A Greek letter that starts with d (`\delta`, the word
+/// `delta`) is that letter, not `d` times `elta`.
+fn one_word_differential(name: &str) -> Option<SymName> {
+    let rest = name.strip_prefix('d')?;
+    let base = name.split('_').next().unwrap_or(name);
+    (rest.starts_with(|c: char| c.is_ascii_alphabetic()) && !is_greek(base))
+        .then(|| sym_from_word(rest))
+}
+
+/// Text mode writes `dt` as one word: the variable it differentiates by.
+fn text_d_word(s: &SymName) -> Option<SymName> {
+    s.sub_latex
+        .is_none()
+        .then(|| one_word_differential(&s.name))
+        .flatten()
+}
+
 fn d_var_power(a: &Ast) -> Option<(u32, SymName)> {
-    // Text-mode word `dt` → t.
-    let word = |s: &SymName| {
-        (s.name.len() > 1 && s.name.starts_with('d') && s.sub_latex.is_none())
-            .then(|| sym_from_word(&s.name[1..]))
-    };
     match &a.kind {
-        AstKind::Sym(s) => Some((1, word(s)?)),
+        AstKind::Sym(s) => Some((1, text_d_word(s)?)),
         AstKind::Bin(BinOp::Pow, b, e) => match &b.kind {
-            AstKind::Sym(s) => Some((whole_number(e)?, word(s)?)),
+            AstKind::Sym(s) => Some((whole_number(e)?, text_d_word(s)?)),
             _ => None,
         },
         AstKind::Bin(BinOp::Mul, d, v) if d_power(d) == Some(1) => match &v.kind {
-            AstKind::Sym(s) => Some((1, s.clone())),
-            AstKind::Bin(BinOp::Pow, b, e) => match &b.kind {
-                AstKind::Sym(s) => Some((whole_number(e)?, s.clone())),
-                _ => None,
-            },
-            _ => None,
+            AstKind::Bin(BinOp::Pow, b, e) => Some((whole_number(e)?, b.plain_symbol()?)),
+            _ => Some((1, v.plain_symbol()?)),
         },
         _ => None,
     }
 }
 
-/// A Leibniz derivative `\frac{dx}{dv}`, `\frac{d^2x}{dv^2}`,
-/// `\frac{d}{dv}x` or text `dx/dv`: returns `(x, order, v)`.
+/// `d^k x / d var^k` (or `d^k/d var^k x`) as `(x, k, var)`. The variables are
+/// read as plain names, so `x_n` is the variable `x_n`, as in `x_n'`.
 fn leibniz_wrt(a: &Ast) -> Option<(SymName, u32, SymName)> {
     match &a.kind {
         AstKind::Bin(BinOp::Div, num, den) => {
             let (k, var) = d_var_power(den)?;
             match &num.kind {
-                AstKind::Bin(BinOp::Mul, d, x) => match &x.kind {
-                    AstKind::Sym(s) if d_power(d) == Some(k) => Some((s.clone(), k, var)),
-                    _ => None,
-                },
-                AstKind::Sym(s) if k == 1 && s.name.len() > 1 && s.name.starts_with('d') => {
-                    Some((sym_from_word(&s.name[1..]), 1, var))
+                AstKind::Bin(BinOp::Mul, d, x) if d_power(d) == Some(k) => {
+                    Some((x.plain_symbol()?, k, var))
                 }
+                _ if k == 1 => Some((one_word_differential(&num.plain_symbol()?.name)?, 1, var)),
                 _ => None,
             }
         }
         AstKind::Bin(BinOp::Mul, op, x) => {
-            let AstKind::Bin(BinOp::Div, d, den) = &op.kind else { return None };
+            let AstKind::Bin(BinOp::Div, d, den) = &op.kind else {
+                return None;
+            };
             let (k, var) = d_var_power(den)?;
-            match &x.kind {
-                AstKind::Sym(s) if d_power(d) == Some(k) => Some((s.clone(), k, var)),
-                _ => None,
+            if d_power(d) != Some(k) {
+                return None;
             }
+            Some((x.plain_symbol()?, k, var))
         }
         _ => None,
     }
 }
 
-/// Leibniz notation for a time derivative: `\frac{dx}{dt}`,
-/// `\frac{d^2x}{dt^2}`, `\frac{d}{dt}x`, text `dx/dt`.
 fn leibniz(a: &Ast) -> Option<(SymName, u32)> {
     let (s, k, var) = leibniz_wrt(a)?;
     (var.name == "t").then_some((s, k))
 }
 
-/// Replace every Leibniz time derivative in the tree by a
-/// [`AstKind::Deriv`] node, so `\frac{d^2x}{dt^2} + x = 0` is handled
-/// like `\ddot{x} + x = 0`.
-fn leibniz_to_deriv(a: Ast) -> Ast {
+pub(crate) fn leibniz_to_deriv(a: Ast) -> Ast {
     if let Some((s, k)) = leibniz(&a) {
         return Ast::new(AstKind::Deriv(s, k), a.span);
     }
     let kind = match a.kind {
         AstKind::Neg(x) => AstKind::Neg(Box::new(leibniz_to_deriv(*x))),
-        AstKind::Bin(op, x, y) => {
-            AstKind::Bin(op, Box::new(leibniz_to_deriv(*x)), Box::new(leibniz_to_deriv(*y)))
+        AstKind::Bin(op, x, y) => AstKind::Bin(
+            op,
+            Box::new(leibniz_to_deriv(*x)),
+            Box::new(leibniz_to_deriv(*y)),
+        ),
+        AstKind::Call(f, args) => {
+            AstKind::Call(f, args.into_iter().map(leibniz_to_deriv).collect())
         }
-        AstKind::Call(f, args) => AstKind::Call(f, args.into_iter().map(leibniz_to_deriv).collect()),
         AstKind::Apply(s, args) => {
             AstKind::Apply(s, args.into_iter().map(leibniz_to_deriv).collect())
         }
@@ -240,8 +248,6 @@ fn leibniz_to_deriv(a: Ast) -> Ast {
     Ast::new(kind, a.span)
 }
 
-/// For a line like `\frac{dy}{dx} = x - y`: explain that derivatives are
-/// with respect to time, and how to get a slope field of dy/dx.
 fn other_variable_message(lhs: &Ast, text: bool) -> Option<String> {
     let mut found = None;
     lhs.walk(&mut |n| {
@@ -251,9 +257,17 @@ fn other_variable_message(lhs: &Ast, text: bool) -> Option<String> {
     });
     let (y, k, x) = found?;
     let (yd, xd, yt) = if text {
-        (show_deriv(&y, 1, true), show_deriv(&x, 1, true), format!("d{}/dt", y.name))
+        (
+            show_deriv(&y, 1, true),
+            show_deriv(&x, 1, true),
+            format!("d{}/dt", y.name),
+        )
     } else {
-        (show_deriv(&y, 1, false), show_deriv(&x, 1, false), format!("\\frac{{d{}}}{{dt}}", y.latex()))
+        (
+            show_deriv(&y, 1, false),
+            show_deriv(&x, 1, false),
+            format!("\\frac{{d{}}}{{dt}}", y.latex()),
+        )
     };
     let (yn, xn) = (show(&y, text), show(&x, text));
     let mut msg = format!(
@@ -282,7 +296,6 @@ fn contains_target(a: &Ast, name: &str, k: u32) -> bool {
     found
 }
 
-/// Split a sum into signed terms.
 fn flatten(a: &Ast, sign: f64, out: &mut Vec<(f64, Ast)>) {
     match &a.kind {
         AstKind::Bin(BinOp::Add, x, y) => {
@@ -305,33 +318,77 @@ fn mul_opt(a: Ast, b: Option<Ast>) -> Ast {
     }
 }
 
-/// Write `term` as `sign · num · D / den` where `D` is the target
-/// derivative and `num`, `den` don't contain it (`None` means 1).
-fn extract(a: &Ast, name: &str, k: u32) -> Option<(f64, Option<Ast>, Option<Ast>)> {
+/// The target derivative `D` as it sits in one term: `sign · num · D / den`.
+struct TargetTerm {
+    sign: f64,
+    num: Option<Ast>,
+    den: Option<Ast>,
+}
+
+/// Read `a` as a multiple of the target derivative, if it is one.
+fn as_target_multiple(a: &Ast, name: &str, k: u32) -> Option<TargetTerm> {
     match &a.kind {
-        AstKind::Deriv(s, j) if s.name == name && *j == k => Some((1.0, None, None)),
-        AstKind::Neg(x) => extract(x, name, k).map(|(s, n, d)| (-s, n, d)),
+        AstKind::Deriv(s, j) if s.name == name && *j == k => Some(TargetTerm {
+            sign: 1.0,
+            num: None,
+            den: None,
+        }),
+        AstKind::Neg(x) => {
+            as_target_multiple(x, name, k).map(|t| TargetTerm { sign: -t.sign, ..t })
+        }
         AstKind::Bin(BinOp::Mul, x, y) => {
             let (inner, other) = match (contains_target(x, name, k), contains_target(y, name, k)) {
                 (true, false) => (x, y),
                 (false, true) => (y, x),
                 _ => return None,
             };
-            let (s, n, d) = extract(inner, name, k)?;
-            Some((s, Some(mul_opt((**other).clone(), n)), d))
+            let t = as_target_multiple(inner, name, k)?;
+            Some(TargetTerm {
+                num: Some(mul_opt((**other).clone(), t.num)),
+                ..t
+            })
         }
         AstKind::Bin(BinOp::Div, x, y)
             if contains_target(x, name, k) && !contains_target(y, name, k) =>
         {
-            let (s, n, d) = extract(x, name, k)?;
-            Some((s, n, Some(mul_opt((**y).clone(), d))))
+            let t = as_target_multiple(x, name, k)?;
+            Some(TargetTerm {
+                den: Some(mul_opt((**y).clone(), t.den)),
+                ..t
+            })
         }
         _ => None,
     }
 }
 
-/// Solve `lhs = rhs` for its highest derivative, e.g.
-/// `x'' + c x' + x = 0` → `x'' = -c x' - x`.
+/// Solve `sign · num · D / den + Σ s_i t_i = 0` for `D`:
+/// `D = den · Σ(-sign · s_i · t_i) / num`.
+fn solve_for_target(term: TargetTerm, others: Vec<(f64, Ast)>, span: Span) -> Ast {
+    let mut sum: Option<Ast> = None;
+    for (s, t) in others {
+        if matches!(t.kind, AstKind::Num(v) if v == 0.0) {
+            continue;
+        }
+        let positive = -term.sign * s > 0.0;
+        sum = Some(match sum {
+            None if positive => t,
+            None => {
+                let sp = t.span;
+                Ast::new(AstKind::Neg(Box::new(t)), sp)
+            }
+            Some(acc) => Ast::bin(if positive { BinOp::Add } else { BinOp::Sub }, acc, t),
+        });
+    }
+    let mut out = sum.unwrap_or_else(|| Ast::new(AstKind::Num(0.0), span));
+    if let Some(d) = term.den {
+        out = Ast::bin(BinOp::Mul, d, out);
+    }
+    if let Some(n) = term.num {
+        out = Ast::bin(BinOp::Div, out, n);
+    }
+    out
+}
+
 fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagnostic> {
     let mut derivs: Vec<(SymName, u32)> = Vec::new();
     let mut collect = |n: &Ast| {
@@ -353,7 +410,10 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
             format!(
                 "Several highest derivatives ({}) appear in one line; write one equation per \
                  variable, each starting with its derivative",
-                tops.iter().map(|s| show_deriv(s, top, text)).collect::<Vec<_>>().join(", ")
+                tops.iter()
+                    .map(|s| show_deriv(s, top, text))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             span,
         ));
@@ -363,8 +423,9 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
     let mut terms = Vec::new();
     flatten(lhs, 1.0, &mut terms);
     flatten(rhs, -1.0, &mut terms);
-    let (with, without): (Vec<_>, Vec<_>) =
-        terms.into_iter().partition(|(_, t)| contains_target(t, &target.name, top));
+    let (with, without): (Vec<_>, Vec<_>) = terms
+        .into_iter()
+        .partition(|(_, t)| contains_target(t, &target.name, top));
     if with.len() != 1 {
         return Err(error(
             format!(
@@ -375,50 +436,30 @@ fn rearrange(lhs: &Ast, rhs: &Ast, span: Span, text: bool) -> Result<Eqn, Diagno
         ));
     }
     let (s0, term) = &with[0];
-    let Some((s1, num, den)) = extract(term, &target.name, top) else {
-        return Err(error(format!("Can't solve this line for {dname}; write it as {dname} = …"), span));
+    let Some(term) = as_target_multiple(term, &target.name, top) else {
+        return Err(error(
+            format!("Can't solve this line for {dname}; write it as {dname} = …"),
+            span,
+        ));
     };
-    let sigma = s0 * s1;
-    // 0 = σ·num·D/den + Σ sᵢ tᵢ  ⇒  D = den · Σ(−σ sᵢ tᵢ) / num   (σ = ±1).
-    let mut sum: Option<Ast> = None;
-    for (s, t) in without {
-        if matches!(t.kind, AstKind::Num(v) if v == 0.0) {
-            continue;
-        }
-        let positive = -sigma * s > 0.0;
-        sum = Some(match sum {
-            None if positive => t,
-            None => {
-                let sp = t.span;
-                Ast::new(AstKind::Neg(Box::new(t)), sp)
-            }
-            Some(acc) => Ast::bin(if positive { BinOp::Add } else { BinOp::Sub }, acc, t),
-        });
-    }
-    let mut out = sum.unwrap_or_else(|| Ast::new(AstKind::Num(0.0), span));
-    if let Some(d) = den {
-        out = Ast::bin(BinOp::Mul, d, out);
-    }
-    if let Some(n) = num {
-        out = Ast::bin(BinOp::Div, out, n);
-    }
-    Ok(Eqn { target: Target::Ode(target, top), rhs: out, lhs_span: span })
+    let term = TargetTerm {
+        sign: s0 * term.sign,
+        ..term
+    };
+    Ok(Eqn {
+        target: Target::Ode(target, top),
+        rhs: solve_for_target(term, without, span),
+        lhs_span: span,
+    })
 }
 
-// ----- states ------------------------------------------------------------
-
-/// The state variables, in order.
 #[derive(Default)]
 struct StateTable {
-    /// Base symbol of each state.
     syms: Vec<SymName>,
-    /// Derivative order of each state (`x'` has order 1).
     orders: Vec<u32>,
-    /// Base name → indices of `x, x', x'', …`.
     by_name: HashMap<String, Vec<usize>>,
 }
 
-/// Names that can't be states or parameter defaults.
 fn reserved_message(name: &str, kind: SystemKind) -> Option<&'static str> {
     match name {
         "t" if kind == SystemKind::Ode => {
@@ -449,7 +490,10 @@ impl StateTable {
         }
         if self.by_name.contains_key(&s.name) {
             diags.push(error(
-                format!("{} has more than one equation; keep only one", show(s, text)),
+                format!(
+                    "{} has more than one equation; keep only one",
+                    show(s, text)
+                ),
                 span,
             ));
             return false;
@@ -469,18 +513,28 @@ impl StateTable {
         self.syms.len()
     }
 
+    /// The state a plain name reads: the one it names, or in a map the one
+    /// whose current iterate it names (`x_n`, as `x_n(t)` keeps it, is `x`).
+    fn state_named(&self, name: &str, kind: SystemKind) -> Option<usize> {
+        if let Some(idx) = self.by_name.get(name) {
+            return Some(idx[0]);
+        }
+        let base = name
+            .strip_suffix("_n")
+            .filter(|_| kind == SystemKind::Map)?;
+        self.by_name.get(base).map(|idx| idx[0])
+    }
+
     fn info(&self, i: usize) -> SymbolInfo {
         SymbolInfo {
             name: self.syms[i].derived_name(self.orders[i]),
             latex: self.syms[i].dotted(self.orders[i]),
+            derived: self.orders[i] > 0,
         }
     }
 }
 
-// ----- constant expressions ---------------------------------------------
-
 enum ConstErr {
-    /// Uses a name that isn't a constant.
     Symbol(String),
     Other(String, Span),
 }
@@ -493,7 +547,6 @@ fn eval_func(f: Func, v: &[f64]) -> f64 {
     }
 }
 
-/// Value of an expression made of numbers, `\pi`, `e` and functions.
 fn const_eval(a: &Ast) -> Result<f64, ConstErr> {
     Ok(match &a.kind {
         AstKind::Num(v) => *v,
@@ -502,6 +555,7 @@ fn const_eval(a: &Ast) -> Result<f64, ConstErr> {
         AstKind::Sym(s) | AstKind::Deriv(s, _) | AstKind::Next(s) | AstKind::Apply(s, _) => {
             return Err(ConstErr::Symbol(s.name.clone()))
         }
+        AstKind::Current(s) => return Err(ConstErr::Symbol(s.at_index_n().name)),
         AstKind::Neg(x) => -const_eval(x)?,
         AstKind::Bin(op, x, y) => {
             let l = const_eval(x)?;
@@ -524,30 +578,112 @@ fn const_eval(a: &Ast) -> Result<f64, ConstErr> {
     })
 }
 
-// ----- name resolution ---------------------------------------------------
-
-/// `sinx` → "did you mean sin(x)?" for multi-letter names.
-fn function_typo(name: &str, text: bool, table: &StateTable) -> Option<String> {
-    for f in FUNCTION_WORDS {
-        if name.len() > f.len() && name.starts_with(f) {
-            let rest = &name[f.len()..];
-            let plausible =
-                rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
-            if plausible && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                let fix = if text { format!("{f}({rest})") } else { format!("\\{f} {rest}") };
-                return Some(format!("{name} is not a function; did you mean {fix}?"));
-            }
-        }
-    }
-    None
+/// The function a multi-letter name looks like, followed by a plausible
+/// argument (`cost` → `\cos t`), as `(function, rest)`. A text-mode word
+/// joins its parts with `_`, which is not part of the argument: `sin_x`
+/// looks like `sin(x)`, not `sin(_x)`.
+fn function_lookalike<'n>(name: &'n str, table: &StateTable) -> Option<(&'static str, &'n str)> {
+    FUNCTION_WORDS.iter().find_map(|&f| {
+        let rest = name.strip_prefix(f)?;
+        let rest = rest.strip_prefix('_').unwrap_or(rest);
+        let rest = Some(rest).filter(|r| !r.is_empty())?;
+        let plausible = rest.len() <= 2 || is_greek(rest) || table.by_name.contains_key(rest);
+        let word = rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        (plausible && word).then_some((f, rest))
+    })
 }
 
-struct Resolver<'a> {
+/// How the function a name looks like would be written: `cos(t)` or `\cos t`.
+fn function_fix(f: &str, rest: &str, text: bool) -> String {
+    if text {
+        format!("{f}({rest})")
+    } else {
+        format!("\\{f} {rest}")
+    }
+}
+
+/// What a plain name means in a system.
+enum Meaning {
+    State(usize),
+    Time,
+    Pi,
+    E,
+    Param,
+}
+
+/// The names a system defines: what its right-hand sides can refer to.
+struct Scope<'a> {
     kind: SystemKind,
     text: bool,
     table: &'a StateTable,
-    /// Parameters in order of first appearance, with that first span.
-    params: Vec<(SymName, Span)>,
+}
+
+impl Scope<'_> {
+    fn meaning(&self, s: &SymName) -> Meaning {
+        if let Some(i) = self.table.state_named(&s.name, self.kind) {
+            return Meaning::State(i);
+        }
+        match (s.name.as_str(), self.kind) {
+            ("t", SystemKind::Ode) | ("n", SystemKind::Map) => return Meaning::Time,
+            ("pi", _) => return Meaning::Pi,
+            ("e", _) => return Meaning::E,
+            _ => {}
+        }
+        // A multi-letter name only reaches here when it was spelled as one
+        // name (`\mathrm{cost}`, or the word `cost` in text mode), so it is a
+        // parameter even if it looks like a function; `warn_function_lookalikes`
+        // points out the possible typo.
+        Meaning::Param
+    }
+
+    /// The state that `s_n` reads, in a map that has a state `s`.
+    fn current_state(&self, s: &SymName) -> Option<usize> {
+        if self.kind != SystemKind::Map {
+            return None;
+        }
+        self.table.by_name.get(&s.name).map(|idx| idx[0])
+    }
+
+    /// The plain name a node reads, if any: a variable, a current iterate
+    /// that is not a state's, or the name in front of `x(…)`.
+    fn name_read(&self, a: &Ast) -> Option<SymName> {
+        match &a.kind {
+            AstKind::Sym(s) | AstKind::Apply(s, _) => Some(s.clone()),
+            AstKind::Current(s) if self.current_state(s).is_none() => Some(s.at_index_n()),
+            _ => None,
+        }
+    }
+}
+
+/// The parameters the accepted right-hand sides use, in order of first
+/// appearance in the source, each with the span of that first use.
+fn parameters_by_first_appearance(
+    scope: &Scope,
+    eqns: &[Eqn],
+    accepted: &[bool],
+) -> Vec<(SymName, Span)> {
+    let mut uses: Vec<(SymName, Span)> = Vec::new();
+    for (e, _) in eqns.iter().zip(accepted).filter(|(_, &ok)| ok) {
+        e.rhs.walk(&mut |n| {
+            if let Some(s) = scope.name_read(n) {
+                if matches!(scope.meaning(&s), Meaning::Param) {
+                    uses.push((s, n.span));
+                }
+            }
+        });
+    }
+    uses.sort_by_key(|(_, span)| span.0);
+    let mut params: Vec<(SymName, Span)> = Vec::new();
+    for (s, span) in uses {
+        if !params.iter().any(|(p, _)| p.name == s.name) {
+            params.push((s, span));
+        }
+    }
+    params
+}
+
+struct Resolver<'a> {
+    scope: &'a Scope<'a>,
     index: HashMap<String, usize>,
     diags: &'a mut Vec<Diagnostic>,
 }
@@ -561,7 +697,11 @@ impl Resolver<'_> {
     fn resolve(&mut self, a: &Ast) -> Node {
         match &a.kind {
             AstKind::Num(v) => Node::Num(*v),
-            AstKind::Sym(s) => self.symbol(s, a.span),
+            AstKind::Sym(s) => self.symbol(s),
+            AstKind::Current(s) => match self.scope.current_state(s) {
+                Some(i) => Node::State(i),
+                None => self.symbol(&s.at_index_n()),
+            },
             AstKind::Deriv(s, k) => self.derivative(s, *k, a.span),
             AstKind::Next(s) => self.fail(
                 format!("{} can only appear on the left of =", s.map_latex("n+1")),
@@ -569,8 +709,6 @@ impl Resolver<'_> {
             ),
             AstKind::Neg(x) => Node::Neg(Box::new(self.resolve(x))),
             AstKind::Bin(op, x, y) => {
-                // A denominator that is always 0, literally (`/0`) or after
-                // folding constants (`\frac{x}{1-1}`).
                 if *op == BinOp::Div && matches!(const_eval(y), Ok(v) if v == 0.0) {
                     return self.fail("Division by zero", y.span);
                 }
@@ -586,47 +724,24 @@ impl Resolver<'_> {
         }
     }
 
-    fn symbol(&mut self, s: &SymName, span: Span) -> Node {
-        if let Some(idx) = self.table.by_name.get(&s.name) {
-            return Node::State(idx[0]);
+    fn symbol(&self, s: &SymName) -> Node {
+        match self.scope.meaning(s) {
+            Meaning::State(i) => Node::State(i),
+            Meaning::Time => Node::Time,
+            Meaning::Pi => Node::Pi,
+            Meaning::E => Node::E,
+            Meaning::Param => Node::Param(self.index[&s.name]),
         }
-        if self.kind == SystemKind::Map {
-            // x_n is the current iterate of x.
-            if let Some(idx) = s.name.strip_suffix("_n").and_then(|b| self.table.by_name.get(b)) {
-                return Node::State(idx[0]);
-            }
-        }
-        match (s.name.as_str(), self.kind) {
-            ("t", SystemKind::Ode) | ("n", SystemKind::Map) => return Node::Time,
-            ("pi", _) => return Node::Pi,
-            ("e", _) => return Node::E,
-            _ => {}
-        }
-        if let Some(msg) = function_typo(&s.name, self.text, self.table) {
-            return self.fail(msg, span);
-        }
-        if let Some(&i) = self.index.get(&s.name) {
-            // Keep the earliest occurrence in the source: a rearranged line
-            // is visited out of source order (`m\ddot{x} = -kx + mg` visits
-            // the left-hand m last).
-            if span.0 < self.params[i].1 .0 {
-                self.params[i].1 = span;
-            }
-            return Node::Param(i);
-        }
-        let i = self.params.len();
-        self.params.push((s.clone(), span));
-        self.index.insert(s.name.clone(), i);
-        Node::Param(i)
     }
 
     fn derivative(&mut self, s: &SymName, k: u32, span: Span) -> Node {
-        let d = show_deriv(s, k, self.text);
-        let x = show(s, self.text);
-        if self.kind == SystemKind::Map {
+        let text = self.scope.text;
+        let d = show_deriv(s, k, text);
+        let x = show(s, text);
+        if self.scope.kind == SystemKind::Map {
             return self.fail(format!("Derivatives like {d} can't appear in a map"), span);
         }
-        match self.table.by_name.get(&s.name) {
+        match self.scope.table.by_name.get(&s.name) {
             Some(idx) if (k as usize) < idx.len() => Node::State(idx[k as usize]),
             Some(idx) => {
                 let order = idx.len() as u32;
@@ -635,51 +750,69 @@ impl Resolver<'_> {
                         "{d} can't appear on the right: {x} has an order-{order} equation, so \
                          {d} isn't one of the variables. Only lower derivatives of a higher-order \
                          equation can (like {} in {} = …)",
-                        show_deriv(s, 1, self.text),
-                        show_deriv(s, 2, self.text)
+                        show_deriv(s, 1, text),
+                        show_deriv(s, 2, text)
                     ),
                     span,
                 )
             }
-            None => self.fail(format!("{d} appears on the right, but {x} has no equation"), span),
+            None => self.fail(
+                format!("{d} appears on the right, but {x} has no equation"),
+                span,
+            ),
         }
     }
 
     fn apply(&mut self, s: &SymName, args: &[Ast], span: Span) -> Node {
+        let text = self.scope.text;
         let arg_is_t = args.len() == 1 && is_sym(&args[0], "t");
-        // x(t): a state written as a function of time.
-        if arg_is_t && self.kind == SystemKind::Ode {
-            if let Some(idx) = self.table.by_name.get(&s.name) {
+        if arg_is_t && self.scope.kind == SystemKind::Ode {
+            if let Some(idx) = self.scope.table.by_name.get(&s.name) {
                 return Node::State(idx[0]);
             }
         }
-        if !self.text && args.len() == 1 {
-            // LaTeX a(t) or H(x): ordinary multiplication.
+        if !text && args.len() == 1 {
             if arg_is_t {
                 let x = show(s, false);
+                // Reached for a state only in a map, where t is a parameter.
+                let why = if matches!(self.scope.meaning(s), Meaning::State(_)) {
+                    "t is not the time in a map".to_string()
+                } else {
+                    format!("{x} has no equation")
+                };
                 self.diags.push(Diagnostic::warning(
-                    format!("{x}(t) is read as {x}·t, since {x} has no equation"),
+                    format!("{x}(t) is read as {x}·t, since {why}"),
                     Some(span),
                 ));
             }
-            let l = self.symbol(s, span);
+            let l = self.symbol(s);
             let r = self.resolve(&args[0]);
             return Node::bin(BinOp::Mul, l, r);
         }
-        if !self.text {
+        if !text {
             return self.fail(
-                format!("{}(…) can only be used on the left, as in H(q, p) = …", s.name),
+                format!(
+                    "{}(…) can only be used on the left, as in H(q, p) = …",
+                    s.name
+                ),
                 span,
             );
         }
-        if let Some(msg) = function_typo(&s.name, true, self.table) {
-            return self.fail(msg, span);
+        if let Some((f, rest)) = function_lookalike(&s.name, self.scope.table) {
+            return self.fail(
+                format!(
+                    "{0} is not a function; did you mean {1}? To multiply, write {0}*(…)",
+                    s.name,
+                    function_fix(f, rest, true)
+                ),
+                span,
+            );
         }
         self.fail(
             format!(
                 "{0} is not a known function. To multiply, write {0}*(…). Known functions: \
-                 sin, cos, tan, exp, ln, log, sqrt, abs, sign, sinh, cosh, tanh, arcsin, arccos, \
-                 arctan, min, max",
+                 sin, cos, tan, exp, ln, log, sqrt, cbrt, root, abs, sign, sinh, cosh, tanh, \
+                 arcsin, arccos, arctan, min, max",
                 s.name
             ),
             span,
@@ -687,34 +820,9 @@ impl Resolver<'_> {
     }
 }
 
-/// Replace `Param(k)` by `Param(map[k])` everywhere.
-fn renumber_params(n: &mut Node, map: &[usize]) {
-    match n {
-        Node::Param(k) => *k = map[*k],
-        Node::Neg(a) => renumber_params(a, map),
-        Node::Bin(_, a, b) => {
-            renumber_params(a, map);
-            renumber_params(b, map);
-        }
-        Node::Call(_, args) => args.iter_mut().for_each(|a| renumber_params(a, map)),
-        Node::Num(_) | Node::Pi | Node::E | Node::Time | Node::State(_) => {}
-    }
-}
-
-// ----- driver ------------------------------------------------------------
-
-/// Names that are usually state variables; a parameter with one of these
-/// names probably means a missing equation.
 const STATE_LIKE: &[&str] = &["x", "y", "z", "u", "v", "w"];
 
-/// Run the semantic pass. Problems go to `diags`; returns `None` if there
-/// are errors (including ones already in `diags` from parsing).
-pub(crate) fn analyze(
-    lines: Vec<Line>,
-    format: InputFormat,
-    diags: &mut Vec<Diagnostic>,
-) -> Option<Analysis> {
-    let text = format == InputFormat::Text;
+fn classify_lines(lines: Vec<Line>, text: bool, diags: &mut Vec<Diagnostic>) -> Vec<Eqn> {
     let mut eqns = Vec::new();
     for line in lines {
         match classify(line, text) {
@@ -722,14 +830,20 @@ pub(crate) fn analyze(
             Err(d) => diags.push(d),
         }
     }
+    eqns
+}
 
-    // Kind of system.
-    let is_flow = |e: &Eqn| matches!(e.target, Target::Ode(..) | Target::Ham(_));
+fn system_kind(eqns: &[Eqn], text: bool, diags: &mut Vec<Diagnostic>) -> Option<SystemKind> {
+    let is_flow = |e: &Eqn| matches!(e.target, Target::Ode(..) | Target::Ham { .. });
     let first_flow = eqns.iter().position(is_flow);
     let first_map = eqns.iter().position(|e| matches!(e.target, Target::Map(_)));
-    let kind = match (first_flow, first_map) {
+    match (first_flow, first_map) {
         (Some(a), Some(b)) => {
-            let (ode, map) = if text { ("x' = …", "x_{n+1} = …") } else { ("\\dot{x} = …", "x_{n+1} = …") };
+            let (ode, map) = if text {
+                ("x' = …", "x_{n+1} = …")
+            } else {
+                ("\\dot{x} = …", "x_{n+1} = …")
+            };
             diags.push(error(
                 format!(
                     "This mixes differential equations ({ode}) and maps ({map}); \
@@ -737,10 +851,10 @@ pub(crate) fn analyze(
                 ),
                 eqns[a.max(b)].lhs_span,
             ));
-            return None;
+            None
         }
-        (Some(_), None) => SystemKind::Ode,
-        (None, Some(_)) => SystemKind::Map,
+        (Some(_), None) => Some(SystemKind::Ode),
+        (None, Some(_)) => Some(SystemKind::Map),
         (None, None) => {
             if !diags.iter().any(Diagnostic::is_error) {
                 let span = eqns.first().map(|e| e.lhs_span);
@@ -750,52 +864,83 @@ pub(crate) fn analyze(
                     span,
                 ));
             }
-            return None;
-        }
-    };
-
-    // A Hamiltonian must stand alone.
-    let hams: Vec<&Eqn> = eqns.iter().filter(|e| matches!(e.target, Target::Ham(_))).collect();
-    let mut hamiltonian_dof = None;
-    if let Some(first) = hams.first() {
-        if let Some(second) = hams.get(1) {
-            diags.push(error("Only one Hamiltonian H(…) = … is allowed", second.lhs_span));
-            return None;
-        }
-        if let Some(ode) = eqns.iter().find(|e| matches!(e.target, Target::Ode(..))) {
-            diags.push(error(
-                "A Hamiltonian H(q, p) = … already defines the whole system; remove the other \
-                 equations, or write every equation out instead of H",
-                ode.lhs_span,
-            ));
-            return None;
-        }
-        if let Target::Ham(args) = &first.target {
-            hamiltonian_dof = Some(args.len() / 2);
+            None
         }
     }
+}
 
-    // States, in equation order.
+/// The Hamiltonian's degrees of freedom, if the system is one. A
+/// Hamiltonian must be the system's only equation.
+fn check_hamiltonian_alone(eqns: &[Eqn]) -> Result<Option<usize>, Diagnostic> {
+    let mut hams = eqns.iter().filter_map(|e| match &e.target {
+        Target::Ham { coords, .. } => Some((e, coords.len())),
+        _ => None,
+    });
+    let Some((_, dof)) = hams.next() else {
+        return Ok(None);
+    };
+    if let Some((second, _)) = hams.next() {
+        return Err(error(
+            "Only one Hamiltonian H(…) = … is allowed",
+            second.lhs_span,
+        ));
+    }
+    if let Some(ode) = eqns.iter().find(|e| matches!(e.target, Target::Ode(..))) {
+        return Err(error(
+            "A Hamiltonian H(q, p) = … already defines the whole system; remove the other \
+             equations, or write every equation out instead of H",
+            ode.lhs_span,
+        ));
+    }
+    Ok(Some(dof))
+}
+
+/// The state table, and for each equation whether its states were accepted.
+fn collect_states(
+    eqns: &[Eqn],
+    kind: SystemKind,
+    text: bool,
+    diags: &mut Vec<Diagnostic>,
+) -> (StateTable, Vec<bool>) {
     let mut table = StateTable::default();
-    let mut accepted = vec![false; eqns.len()];
-    for (i, e) in eqns.iter().enumerate() {
-        accepted[i] = match &e.target {
+    let accepted = eqns
+        .iter()
+        .map(|e| match &e.target {
             Target::Ode(s, k) => table.add(s, *k, kind, e.lhs_span, text, diags),
             Target::Map(s) => table.add(s, 1, kind, e.lhs_span, text, diags),
-            Target::Ham(args) => {
-                args.iter().all(|a| table.add(a, 1, kind, e.lhs_span, text, diags))
-            }
+            Target::Ham { coords, momenta } => coords
+                .iter()
+                .chain(momenta)
+                .all(|a| table.add(a, 1, kind, e.lhs_span, text, diags)),
             Target::Default(_) => false,
-        };
-    }
+        })
+        .collect();
+    (table, accepted)
+}
 
-    // Parameter defaults.
-    let mut defaults: HashMap<String, f64> = HashMap::new();
-    let mut default_lines: Vec<(SymName, Span)> = Vec::new();
-    for e in &eqns {
-        let Target::Default(s) = &e.target else { continue };
+/// Values set by lines like `a = 2`, and the lines that set them.
+struct Defaults {
+    values: HashMap<String, f64>,
+    lines: Vec<(SymName, Span)>,
+}
+
+fn parameter_defaults(
+    eqns: &[Eqn],
+    table: &StateTable,
+    kind: SystemKind,
+    text: bool,
+    diags: &mut Vec<Diagnostic>,
+) -> Defaults {
+    let mut d = Defaults {
+        values: HashMap::new(),
+        lines: Vec::new(),
+    };
+    for e in eqns {
+        let Target::Default(s) = &e.target else {
+            continue;
+        };
         let a = show(s, text);
-        if table.by_name.contains_key(&s.name) {
+        if table.state_named(&s.name, kind).is_some() {
             diags.push(error(
                 format!(
                     "{a} is a state variable, so it can't be given a fixed value here. \
@@ -811,13 +956,16 @@ pub(crate) fn analyze(
         }
         match const_eval(&e.rhs) {
             Ok(v) if v.is_finite() => {
-                if defaults.insert(s.name.clone(), v).is_some() {
+                if d.values.insert(s.name.clone(), v).is_some() {
                     diags.push(error(format!("{a} is given a value twice"), e.lhs_span));
                 } else {
-                    default_lines.push((s.clone(), e.lhs_span));
+                    d.lines.push((s.clone(), e.lhs_span));
                 }
             }
-            Ok(_) => diags.push(error(format!("The value of {a} isn't a finite number"), e.rhs.span)),
+            Ok(_) => diags.push(error(
+                format!("The value of {a} isn't a finite number"),
+                e.rhs.span,
+            )),
             Err(ConstErr::Other(msg, span)) => diags.push(error(msg, span)),
             Err(ConstErr::Symbol(used)) => {
                 let msg = if s.name == "H" {
@@ -833,51 +981,239 @@ pub(crate) fn analyze(
             }
         }
     }
+    d
+}
 
-    // Right-hand sides.
-    let mut r = Resolver {
-        kind,
-        text,
-        table: &table,
-        params: Vec::new(),
-        index: HashMap::new(),
-        diags: &mut *diags,
-    };
+/// One right-hand side per state: an order-`k` equation contributes the
+/// trivial rows `x' = x'`, …, then its own right-hand side.
+fn resolve_rhs(r: &mut Resolver, table: &StateTable, eqns: &[Eqn], accepted: &[bool]) -> Vec<Node> {
     let mut roots = Vec::new();
-    for (i, e) in eqns.iter().enumerate() {
-        if !accepted[i] {
-            continue;
-        }
+    for (e, _) in eqns.iter().zip(accepted).filter(|(_, &ok)| ok) {
         let node = r.resolve(&e.rhs);
         if let Target::Ode(s, k) = &e.target {
-            // x' = x', ..., x^(k-1)' = x^(k-1)', x^(k-1)' = rhs
             let idx = &table.by_name[&s.name];
-            for &j in &idx[1..*k as usize] {
-                roots.push(Node::State(j));
-            }
+            roots.extend(idx[1..*k as usize].iter().map(|&j| Node::State(j)));
         }
         roots.push(node);
     }
-    let params = std::mem::take(&mut r.params);
-    let param_index = std::mem::take(&mut r.index);
-    // Order parameters by where they first appear in the source (this
-    // matters for rearranged lines such as `m x'' + k x = 0`, whose
-    // resolved form visits `m` last; `symbol` keeps the earliest span).
-    let mut order: Vec<usize> = (0..params.len()).collect();
-    order.sort_by_key(|&i| params[i].1 .0);
-    let mut new_of_old = vec![0; params.len()];
-    for (new, &old) in order.iter().enumerate() {
-        new_of_old[old] = new;
-    }
-    for root in &mut roots {
-        renumber_params(root, &new_of_old);
-    }
-    let params: Vec<(SymName, Span)> = order.iter().map(|&i| params[i].clone()).collect();
+    roots
+}
 
-    for (s, span) in &default_lines {
-        if !param_index.contains_key(&s.name) {
+fn warn_parameter_lookalikes(
+    params: &[(SymName, Span)],
+    defaults: &Defaults,
+    table: &StateTable,
+    kind: SystemKind,
+    text: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (s, span) in params {
+        if defaults.values.contains_key(&s.name) {
+            continue;
+        }
+        let base = s.name.split('_').next().unwrap_or("");
+        let sibling = table
+            .syms
+            .iter()
+            .any(|t| t.sub_latex.is_some() && t.name.starts_with(&format!("{base}_")));
+        // In a map `y_n` is written as an iterate, so without a `y_{n+1}`
+        // equation it is a forgotten one, as a bare `y` is.
+        let iterate = kind == SystemKind::Map && s.name.ends_with("_n");
+        if STATE_LIKE.contains(&s.name.as_str()) || sibling || iterate {
             diags.push(Diagnostic::warning(
-                format!("{} is given a value but isn't used in any equation", show(s, text)),
+                format!(
+                    "{} has no equation; treating it as a parameter",
+                    show(s, text)
+                ),
+                Some(*span),
+            ));
+        }
+    }
+}
+
+/// A parameter whose name starts with a function name (`\mathrm{cost}`,
+/// `signal`) compiles as that parameter, but may be a missing space or
+/// bracket, so say how the function would be written. A parameter given a
+/// value on its own line is clearly meant as a name, and a name already
+/// reported as an error where it first appears (`cost(x)` in text mode) needs
+/// no second note.
+fn warn_function_lookalikes(
+    params: &[(SymName, Span)],
+    defaults: &Defaults,
+    table: &StateTable,
+    text: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (s, span) in params {
+        let reported = diags
+            .iter()
+            .any(|d| d.is_error() && d.span.is_some_and(|(a, _)| a == span.0));
+        if reported || defaults.values.contains_key(&s.name) {
+            continue;
+        }
+        if let Some((f, rest)) = function_lookalike(&s.name, table) {
+            diags.push(Diagnostic::warning(
+                format!(
+                    "{} is read as a parameter named {}; did you mean {}?",
+                    show(s, text),
+                    s.name,
+                    function_fix(f, rest, text)
+                ),
+                Some(*span),
+            ));
+        }
+    }
+}
+
+fn display_latex(form: &Form, kind: SystemKind, table: &StateTable, names: &Names) -> Vec<String> {
+    match (form, kind) {
+        (Form::Hamiltonian { dof, .. }, _) => {
+            let dof = *dof;
+            let (q, p) = table.syms.split_at(dof);
+            let flows = q.iter().zip(p).map(|(q, p)| {
+                format!(
+                    "{} = \\frac{{\\partial H}}{{\\partial {}}}",
+                    q.dotted(1),
+                    p.latex()
+                )
+            });
+            let forces = q.iter().zip(p).map(|(q, p)| {
+                format!(
+                    "{} = -\\frac{{\\partial H}}{{\\partial {}}}",
+                    p.dotted(1),
+                    q.latex()
+                )
+            });
+            flows.chain(forces).collect()
+        }
+        (Form::Direct(roots), SystemKind::Ode) => (0..table.len())
+            .map(|i| {
+                let lhs = table.syms[i].dotted(table.orders[i] + 1);
+                format!("{lhs} = {}", to_latex(&roots[i], names))
+            })
+            .collect(),
+        (Form::Direct(roots), SystemKind::Map) => (0..table.len())
+            .map(|i| {
+                format!(
+                    "{} = {}",
+                    table.syms[i].map_latex("n+1"),
+                    to_latex(&roots[i], names)
+                )
+            })
+            .collect(),
+    }
+}
+
+/// Whether two analyses define the same system: the same kind, flags,
+/// states, parameters (names and default values, bit for bit) and
+/// right-hand sides. The display LaTeX is not compared, and neither is the
+/// order of the parameters: it follows where each name first appears, which
+/// the two input formats can put differently (LaTeX `\sin^{a} b` names `a`
+/// first, its text form `sin(b)^a` names `b` first).
+pub(crate) fn same_meaning(a: &Analysis, b: &Analysis) -> bool {
+    let (x, y) = (&a.info, &b.info);
+    let states = x.states.len() == y.states.len()
+        && x.states
+            .iter()
+            .zip(&y.states)
+            .all(|(s, t)| s.name == t.name && s.derived == t.derived);
+    let Some(b_to_a) = param_correspondence(&x.params, &y.params) else {
+        return false;
+    };
+    let forms = match (&a.form, &b.form) {
+        (Form::Direct(xs), Form::Direct(ys)) => {
+            xs.len() == ys.len() && xs.iter().zip(ys).all(|(u, v)| same_node(u, v, &b_to_a))
+        }
+        (Form::Hamiltonian { h: g, dof: m }, Form::Hamiltonian { h, dof }) => {
+            m == dof && same_node(g, h, &b_to_a)
+        }
+        _ => false,
+    };
+    x.kind == y.kind
+        && x.hamiltonian == y.hamiltonian
+        && x.autonomous == y.autonomous
+        && states
+        && forms
+}
+
+/// For each parameter of `b`, the index of the parameter of `a` with the
+/// same name and default value (bit for bit); `None` unless the two lists
+/// hold the same parameters, in any order.
+fn param_correspondence(a: &[ParamInfo], b: &[ParamInfo]) -> Option<Vec<usize>> {
+    if a.len() != b.len() {
+        return None;
+    }
+    b.iter()
+        .map(|q| {
+            a.iter()
+                .position(|p| p.name == q.name && p.default.to_bits() == q.default.to_bits())
+        })
+        .collect()
+}
+
+/// `u` and `v` are the same expression, parameter `j` of `v` standing for
+/// parameter `b_to_a[j]` of `u`.
+fn same_node(u: &Node, v: &Node, b_to_a: &[usize]) -> bool {
+    match (u, v) {
+        (Node::Param(i), Node::Param(j)) => b_to_a.get(*j) == Some(i),
+        (Node::Neg(p), Node::Neg(q)) => same_node(p, q, b_to_a),
+        (Node::Bin(o, p1, p2), Node::Bin(r, q1, q2)) => {
+            o == r && same_node(p1, q1, b_to_a) && same_node(p2, q2, b_to_a)
+        }
+        (Node::Call(f, ps), Node::Call(g, qs)) => {
+            f == g
+                && ps.len() == qs.len()
+                && ps.iter().zip(qs).all(|(p, q)| same_node(p, q, b_to_a))
+        }
+        _ => u == v,
+    }
+}
+
+pub(crate) fn analyze(
+    lines: Vec<Line>,
+    format: InputFormat,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Analysis> {
+    let text = format == InputFormat::Text;
+    let eqns = classify_lines(lines, text, diags);
+    let kind = system_kind(&eqns, text, diags)?;
+    let hamiltonian_dof = match check_hamiltonian_alone(&eqns) {
+        Ok(dof) => dof,
+        Err(d) => {
+            diags.push(d);
+            return None;
+        }
+    };
+    let (table, accepted) = collect_states(&eqns, kind, text, diags);
+    let defaults = parameter_defaults(&eqns, &table, kind, text, diags);
+
+    let scope = Scope {
+        kind,
+        text,
+        table: &table,
+    };
+    let params = parameters_by_first_appearance(&scope, &eqns, &accepted);
+    let index: HashMap<String, usize> = params
+        .iter()
+        .enumerate()
+        .map(|(i, (s, _))| (s.name.clone(), i))
+        .collect();
+    let mut resolver = Resolver {
+        scope: &scope,
+        index,
+        diags: &mut *diags,
+    };
+    let mut roots = resolve_rhs(&mut resolver, &table, &eqns, &accepted);
+    let index = resolver.index;
+    warn_function_lookalikes(&params, &defaults, &table, text, diags);
+
+    for (s, span) in &defaults.lines {
+        if !index.contains_key(&s.name) {
+            diags.push(Diagnostic::warning(
+                format!(
+                    "{} is given a value but isn't used in any equation",
+                    show(s, text)
+                ),
                 Some(*span),
             ));
         }
@@ -885,21 +1221,17 @@ pub(crate) fn analyze(
     if diags.iter().any(Diagnostic::is_error) {
         return None;
     }
-    for (s, span) in &params {
-        if defaults.contains_key(&s.name) {
-            continue;
-        }
-        let base = s.name.split('_').next().unwrap_or("");
-        let sibling = table.syms.iter().any(|t| t.sub_latex.is_some() && t.name.starts_with(&format!("{base}_")));
-        if STATE_LIKE.contains(&s.name.as_str()) || sibling {
-            diags.push(Diagnostic::warning(
-                format!("{} has no equation; treating it as a parameter", show(s, text)),
-                Some(*span),
-            ));
-        }
-    }
+    warn_parameter_lookalikes(&params, &defaults, &table, kind, text, diags);
 
-    // Display.
+    let form = match hamiltonian_dof {
+        Some(dof) => {
+            let h = roots
+                .pop()
+                .expect("a Hamiltonian is the system's only equation");
+            Form::Hamiltonian { h, dof }
+        }
+        None => Form::Direct(roots),
+    };
     let states: Vec<SymbolInfo> = (0..table.len()).map(|i| table.info(i)).collect();
     let state_disp: Vec<String> = match kind {
         SystemKind::Ode => states.iter().map(|s| s.latex.clone()).collect(),
@@ -910,7 +1242,7 @@ pub(crate) fn analyze(
         .map(|(s, _)| ParamInfo {
             name: s.name.clone(),
             latex: s.latex(),
-            default: defaults.get(&s.name).copied().unwrap_or(1.0),
+            default: defaults.values.get(&s.name).copied().unwrap_or(1.0),
         })
         .collect();
     let param_disp: Vec<String> = params.iter().map(|p| p.latex.clone()).collect();
@@ -919,47 +1251,17 @@ pub(crate) fn analyze(
         params: &param_disp,
         time: if kind == SystemKind::Map { "n" } else { "t" },
     };
-    let equations_latex: Vec<String> = match (kind, hamiltonian_dof) {
-        (_, Some(dof)) => {
-            let mut v = Vec::new();
-            for i in 0..dof {
-                v.push(format!(
-                    "{} = \\frac{{\\partial H}}{{\\partial {}}}",
-                    table.syms[i].dotted(1),
-                    table.syms[dof + i].latex()
-                ));
-            }
-            for i in 0..dof {
-                v.push(format!(
-                    "{} = -\\frac{{\\partial H}}{{\\partial {}}}",
-                    table.syms[dof + i].dotted(1),
-                    table.syms[i].latex()
-                ));
-            }
-            v
-        }
-        (SystemKind::Ode, None) => (0..table.len())
-            .map(|i| {
-                let lhs = table.syms[i].dotted(table.orders[i] + 1);
-                format!("{lhs} = {}", to_latex(&roots[i], &names))
-            })
-            .collect(),
-        (SystemKind::Map, None) => (0..table.len())
-            .map(|i| format!("{} = {}", table.syms[i].map_latex("n+1"), to_latex(&roots[i], &names)))
-            .collect(),
-    };
-
-    let autonomous = !roots.iter().any(Node::uses_time);
+    let equations_latex = display_latex(&form, kind, &table, &names);
+    let autonomous = !form.roots().iter().any(Node::uses_time);
     Some(Analysis {
         info: SystemInfo {
             kind,
-            hamiltonian: hamiltonian_dof.is_some(),
+            hamiltonian: matches!(form, Form::Hamiltonian { .. }),
             autonomous,
             states,
             params,
             equations_latex,
         },
-        roots,
-        hamiltonian_dof,
+        form,
     })
 }

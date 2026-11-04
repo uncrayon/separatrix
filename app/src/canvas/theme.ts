@@ -1,9 +1,3 @@
-// Reads the design tokens the canvas needs from CSS custom properties, so the
-// plot follows the design system (styles/ds/tokens.css) and Projector mode
-// without duplicating colours. Read again on every theme change: never cache
-// colours across one (PhasePlane README, "Read every colour at draw time").
-
-/** Colours, scales and fonts used by the canvas renderer. */
 export interface PlotTheme {
   bg: string;
   grid: string;
@@ -15,21 +9,15 @@ export interface PlotTheme {
   accent: string;
   traj: string[];
   nullcline: string[];
-  /** `s`: multiplier for every line width (1 on the chalkboard, 1.75 in projector mode). */
   lineScale: number;
-  /** `g` = 0.6 + 0.4 × s: the gentler scale for glyphs, heads and handles (1 and 1.3). */
   glyphScale: number;
-  /** Tick labels: the `numeric-sm` type style (Atkinson Hyperlegible Mono). */
   tickFont: string;
-  /** Line height of the tick font in CSS px (for label boxes). */
   tickSize: number;
 }
 
-/**
- * Snapshot the current tokens. `probe` is an element carrying the `numeric-sm`
- * class: its computed font is the tick font, so projector mode (115% root)
- * grows the labels with the rest of the type.
- */
+/** Font size of the `numeric-sm` type token (styles/ds/tokens.json), in rem. */
+const NUMERIC_SM_REM = 0.6875;
+
 export function readPlotTheme(probe?: Element | null): PlotTheme {
   const css = getComputedStyle(document.documentElement);
   const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
@@ -44,8 +32,7 @@ export function readPlotTheme(probe?: Element | null): PlotTheme {
     tickSize = parseFloat(p.fontSize) || 11;
     tickFont = `${p.fontStyle} ${p.fontWeight} ${p.fontSize} ${p.fontFamily}`;
   } else {
-    // numeric-sm is 0.6875rem in the mono face; rem follows the root size.
-    tickSize = 0.6875 * (parseFloat(css.fontSize) || 16);
+    tickSize = NUMERIC_SM_REM * (parseFloat(css.fontSize) || 16);
     tickFont = `400 ${tickSize}px ${v("--font-mono", "monospace")}`;
   }
 

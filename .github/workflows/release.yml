@@ -1,7 +1,5 @@
 name: Release
 
-# Builds unsigned installers for Windows, macOS and Linux and attaches them to
-# a draft GitHub Release. Run manually, or push a tag like v0.2.0.
 on:
   workflow_dispatch:
   push:

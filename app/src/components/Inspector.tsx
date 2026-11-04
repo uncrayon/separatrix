@@ -1,16 +1,41 @@
-// Right panel (the inspector): collapsible DS PanelSections for the plot layers,
-// the axes and slice, the solver, the fixed points and the trajectories, plus
-// the details of the selected trajectory.
-
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { AxisRef, Classification, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
+import type { AxisRef, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
 import { Tex } from "../math/Tex";
-import { classificationExplain, fmt, latexToPlain, sameAxis } from "../math/format";
+import {
+  classificationExplain,
+  classificationTitle,
+  COMPUTED_ZERO,
+  fmt,
+  latexToPlain,
+  sameAxis,
+  withSubscript,
+} from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { DEFAULT_FIXED_STEP, PALETTE_SIZE, trajectorySpans, type InitialCondition } from "../state/model";
+import {
+  DEFAULT_FIXED_STEP,
+  PALETTE_SIZE,
+  portraitFits,
+  searchedFixedPoints,
+  selectFixedPoint,
+  selectedFixedPointIndex,
+  trajectorySpans,
+  type InitialCondition,
+} from "../state/model";
 import { Button, IconButton, NumberField, Select, Switch, withMinus, type SelectOption } from "./controls";
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
+import { dec, startPointParts } from "./startPoint";
+import { fixedPointGlyph } from "../canvas/draw";
+import { FixedPointIcon } from "../canvas/PortraitCanvas";
+import {
+  hasComplexEigenvalue,
+  numberedEigenvalues,
+  othersHaveRealEigenvectors,
+  realEigenvectors,
+  setShowEigenvectors,
+  subscriptDigits,
+  useShowEigenvectors,
+} from "../canvas/eigen";
 import {
   IconClose,
   IconEye,
@@ -30,45 +55,23 @@ interface Props {
 
 const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
 
-/* ------------------------------------------------------------ formatting */
+const short = (v: number, digits = 4) => withMinus(fmt(v, digits, COMPUTED_ZERO));
 
-/** Fixed decimals with the true minus sign, and never "−0.000". */
-function dec(v: number, places: number): string {
-  if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  const s = v.toFixed(places);
-  return withMinus(Number(s) === 0 ? (0).toFixed(places) : s);
-}
-
-/** A short number (4 significant digits) with the true minus sign. */
-const short = (v: number, digits = 4) => withMinus(fmt(v, digits));
-
-/** A stopping time: the integer step, or two decimals. */
 const atTime = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? withMinus(String(Math.round(v))) : dec(v, 2));
-
-const SUB_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
-const sub = (n: number) => String(n).replace(/\d/g, (d) => SUB_DIGITS[Number(d)]);
 
 const plainName = (latex: string) => latexToPlain(latex);
 
-/**
- * A state's name for a native <select> option, which cannot typeset: dotted
- * names in words ("θ dot"), since a combining dot does not sit on the letter
- * in the UI font.
- */
+const DOTS: Record<string, string> = { dot: "dot", ddot: "double dot", dddot: "triple dot" };
+
+/** `\dot{x}_{1}` as "x_1 dot": the dotted base, then any subscript after it. */
 function optionName(latex: string): string {
-  const dd = /^\\ddot\{(.*)\}$/.exec(latex);
-  if (dd) return `${latexToPlain(dd[1])} double dot`;
-  const d = /^\\dot\{(.*)\}$/.exec(latex);
-  if (d) return `${latexToPlain(d[1])} dot`;
+  const m = /^\\(d{0,2}dot)\{([^{}]*)\}(.*)$/.exec(latex);
+  if (m) return `${latexToPlain(m[2] + m[3])} ${DOTS[m[1]]}`;
   return latexToPlain(latex);
 }
 
-/* -------------------------------------------------------- section state */
-
 type SectionKey = "layers" | "axes" | "solver" | "fixedPoints" | "trajectories" | "selected";
 const SECTIONS_KEY = "separatrix.inspector.sections";
-
-/* --------------------------------------------------------------- panel */
 
 export function Inspector({ state, actions }: Props) {
   const sys = state.compiled;
@@ -77,22 +80,20 @@ export function Inspector({ state, actions }: Props) {
     axes: true,
     solver: true,
     fixedPoints: true,
-    // Long lists start closed (PanelSection guideline).
     trajectories: state.ics.length <= 5,
     selected: true,
   });
 
-  // Selecting on the plot opens the section that shows the selection.
   const sel = state.selection;
-  const selKey = sel ? `${sel.kind}:${sel.kind === "ic" ? sel.id : sel.index}` : "";
+  const selKind = sel?.kind ?? null;
+  const selId = sel ? (sel.kind === "ic" ? sel.id : sel.key) : null;
   useEffect(() => {
-    if (sel?.kind === "fp") setOpen("fixedPoints", true);
-    if (sel?.kind === "ic") {
+    if (selKind === "fp") setOpen("fixedPoints", true);
+    if (selKind === "ic") {
       setOpen("trajectories", true);
       setOpen("selected", true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selKey]);
+  }, [selKind, selId, setOpen]);
 
   return (
     <aside
@@ -138,10 +139,6 @@ interface SectionProps extends Props {
   onToggle: (open: boolean) => void;
 }
 
-/**
- * One key-value row whose value is an editable field. `tip` spells the key out
- * in a tooltip for sight; the field's own accessible name says the same.
- */
 function FieldRow({ label, tip, children }: { label: ReactNode; tip?: string; children: ReactNode }) {
   return (
     <div className="ds-panel-section-kv-row">
@@ -153,7 +150,6 @@ function FieldRow({ label, tip, children }: { label: ReactNode; tip?: string; ch
   );
 }
 
-/** One read-only key-value row. */
 function KvRow({ label, children, text }: { label: ReactNode; children: ReactNode; text?: boolean }) {
   return (
     <div className="ds-panel-section-kv-row">
@@ -166,8 +162,6 @@ function KvRow({ label, children, text }: { label: ReactNode; children: ReactNod
     </div>
   );
 }
-
-/* --------------------------------------------------------------- layers */
 
 function LayersSection({ state, actions, open, onToggle }: SectionProps) {
   const isMap = state.compiled?.kind === "map";
@@ -230,8 +224,6 @@ function LayersSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/* ----------------------------------------------------------------- axes */
-
 const axisValue = (a: AxisRef) => (a.kind === "time" ? "time" : `s${a.index}`);
 const axisFromValue = (v: string): AxisRef => (v === "time" ? { kind: "time" } : { kind: "state", index: Number(v.slice(1)) });
 
@@ -243,7 +235,6 @@ function AxesSection({ state, actions, open, onToggle }: SectionProps) {
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     { value: "time", label: kind === "map" ? "n" : "t" },
   ];
-  // States not on an axis are held at a value (the slice) for the field and nullclines.
   const sliceStates =
     kind === "ode"
       ? sys.states
@@ -332,8 +323,6 @@ function AxesSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/* --------------------------------------------------------------- solver */
-
 const METHODS: (SelectOption<Method> & { about: string })[] = [
   {
     value: "dopri5",
@@ -346,6 +335,9 @@ const METHODS: (SelectOption<Method> & { about: string })[] = [
 ];
 
 const positive = (v: number) => (v > 0 ? null : "Must be positive");
+
+/** MAX_SAMPLES in app/src-tauri/src/service.rs: the core takes no more per trajectory. */
+const MAX_SAMPLES = 200_000;
 
 function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
@@ -428,8 +420,6 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
           </FieldRow>
         )}
         {timeOnAxis ? (
-          // With t on an axis the visible time window is the span (see
-          // trajectorySpans); an editable T here would silently do nothing.
           <KvRow label="Time span" text>
             <span data-tooltip="Trajectories cover exactly the visible time window">
               follows the <Tex latex="t" /> axis
@@ -454,7 +444,9 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
             size="sm"
             value={s.samples}
             onCommit={(v) => actions.setSolver({ samples: Math.round(v) })}
-            validate={(v) => (v >= 0 ? null : "Must be 0 (auto) or more")}
+            validate={(v) =>
+              v >= 0 && v <= MAX_SAMPLES ? null : `Must be from 0 (auto) to ${MAX_SAMPLES.toLocaleString("en-US")}`
+            }
             digits={5}
             format={(v) => (v > 0 ? String(v) : "auto")}
             ariaLabel="Samples per trajectory (0 = automatic)"
@@ -478,105 +470,38 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/* --------------------------------------------------------- fixed points */
+const NBSP = "\u00a0";
 
-type Stability = "stable" | "unstable" | "half";
-
-/** Which Strogatz glyph: filled (stable), open (unstable, saddle), half (linearization does not decide). */
-function stabilityOf(fp: FixedPointOut): Stability {
-  const c = fp.classification;
-  if (c === "center" || c === "non-hyperbolic" || c === "non-isolated") return "half";
-  return fp.stable ? "stable" : "unstable";
-}
-
-const CLASS_LABEL: Record<Classification, string> = {
-  saddle: "Saddle",
-  "stable node": "Stable node",
-  "unstable node": "Unstable node",
-  "stable spiral": "Stable spiral",
-  "unstable spiral": "Unstable spiral",
-  center: "Center",
-  "stable star": "Stable star",
-  "unstable star": "Unstable star",
-  "stable degenerate node": "Stable degenerate node",
-  "unstable degenerate node": "Unstable degenerate node",
-  "non-isolated": "Non-isolated",
-  sink: "Sink",
-  source: "Source",
-  "saddle (n-D)": "Saddle",
-  "non-hyperbolic": "Non-hyperbolic",
-};
-
-/** Classification in sentence case. In 1D, Strogatz (ch. 2) says stable / unstable. */
-function classLabel(c: Classification, dim: number): string {
-  if (dim === 1) {
-    if (c === "sink" || c.startsWith("stable")) return "Stable";
-    if (c === "source" || c.startsWith("unstable")) return "Unstable";
-  }
-  return CLASS_LABEL[c];
-}
-
-/**
- * Eigenvalues (λ) or multipliers (μ), three decimals: "λ₁ = −2.414, λ₂ = 0.414", "λ = −0.250 ± 0.968i",
- * "λ₁ = −13.855, λ₂,₃ = 0.094 ± 10.195i". Spaces inside one value are non-breaking, so a narrow
- * inspector wraps only after a comma, never between "λ₃ =" and its number.
- */
-function eigenText(evs: [number, number][], sym: string): string {
+function eigenText(fp: FixedPointOut, sym: string): string {
   const d = (v: number) => dec(v, 3);
-  const eq = " = ";
-  const isReal = ([, im]: [number, number]) => Math.abs(im) < 1e-9;
-  const pair = (label: string, re: number, im: number) =>
-    Math.abs(re) < 5e-4
-      ? `${label}${eq}±${d(Math.abs(im))}i`
-      : `${label}${eq}${d(re)} ± ${d(Math.abs(im))}i`;
-  if (evs.length === 1) return `${sym}${eq}${d(evs[0][0])}`;
-  if (evs.length === 2) {
-    const [a, b] = evs;
-    if (!isReal(a)) return pair(sym, a[0], a[1]);
-    if (Math.abs(a[0] - b[0]) <= 1e-9 * Math.max(1, Math.abs(a[0]))) return `${sym}${eq}${d(a[0])} (double)`;
-    const [lo, hi] = [a[0], b[0]].sort((x, y) => x - y);
-    return `${sym}₁${eq}${d(lo)}, ${sym}₂${eq}${d(hi)}`;
-  }
-  const reals = evs.filter(isReal).map(([re]) => re).sort((x, y) => x - y);
-  const pairs = evs.filter(([, im]) => im > 1e-9);
-  return [
-    ...reals.map((re, k) => `${sym}${sub(k + 1)}${eq}${d(re)}`),
-    ...pairs.map(([re, im], j) => {
-      const k = reals.length + 2 * j + 1;
-      return pair(`${sym}${sub(k)},${sub(k + 1)}`, re, im);
-    }),
-  ].join(", ");
+  const eq = `${NBSP}=${NBSP}`;
+  return numberedEigenvalues(fp)
+    .map((ev) => {
+      const label = sym + ev.numbers.map(subscriptDigits).join(",");
+      if (ev.im !== 0) {
+        return Math.abs(ev.re) < 5e-4
+          ? `${label}${eq}±${d(ev.im)}i`
+          : `${label}${eq}${d(ev.re)}${NBSP}±${NBSP}${d(ev.im)}i`;
+      }
+      return `${label}${eq}${d(ev.re)}${ev.double ? `${NBSP}(double)` : ""}`;
+    })
+    .join(", ");
 }
 
-/** The 16px Strogatz glyph used in chrome. */
-function FpIcon({ stability }: { stability: Stability }) {
-  return (
-    <svg className="ds-fp-icon" viewBox="-8 -8 16 16" aria-hidden="true">
-      <g className={`ds-fp ds-fp--${stability}`}>
-        <g className="ds-fp-mark">
-          <circle className="ds-fp-body" r="5" />
-          {stability === "half" && <path className="ds-fp-half" d="M0 -4.25A4.25 4.25 0 0 0 0 4.25Z" />}
-        </g>
-      </g>
-    </svg>
-  );
-}
-
-/** τ, Δ and the conclusion (Strogatz §5.2) for a planar flow; otherwise one sentence. */
 function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undefined; dim: number }) {
   const n = (label: string, v: number) => <span className="ds-num">{`${label} = ${short(v)}`}</span>;
   if (kind !== "map" && dim === 2 && fp.eigenvalues.length === 2) {
     const [[a, b], [c, d]] = fp.eigenvalues;
     const tau = a + c;
     const delta = a * c - b * d;
-    const eps = 1e-9;
     const disc = tau * tau - 4 * delta;
     const aStab = tau < 0 ? "a stable" : "an unstable";
+    const cls = fp.classification;
     let tail: ReactNode;
-    if (delta < -eps) tail = ". Δ < 0, so a saddle.";
-    else if (Math.abs(delta) <= eps) tail = ". Δ = 0, so the fixed point is not isolated.";
-    else if (Math.abs(tau) <= eps) tail = ". τ = 0 and Δ > 0: a center of the linearization; nonlinear terms can change that.";
-    else if (Math.abs(disc) <= eps)
+    if (cls === "saddle") tail = ". Δ < 0, so a saddle.";
+    else if (cls === "non-isolated") tail = ". Δ = 0, so the fixed point is not isolated.";
+    else if (cls === "center") tail = ". τ = 0 and Δ > 0: a center of the linearization; nonlinear terms can change that.";
+    else if (cls.endsWith("star") || cls.endsWith("degenerate node"))
       tail = (
         <>
           , {n("τ² − 4Δ", 0)}: {aStab} star or degenerate node.
@@ -585,7 +510,7 @@ function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undef
     else
       tail = (
         <>
-          , {n("τ² − 4Δ", disc)} {disc < 0 ? `< 0: ${aStab} spiral.` : `> 0: ${aStab} node.`}
+          , {n("τ² − 4Δ", disc)} {cls.endsWith("spiral") ? `< 0: ${aStab} spiral.` : `> 0: ${aStab} node.`}
         </>
       );
     return (
@@ -599,21 +524,45 @@ function FpHint({ fp, kind, dim }: { fp: FixedPointOut; kind: SystemKind | undef
   return <p className="ds-fp-hint caption">{withMinus(text)}</p>;
 }
 
-/**
- * "Show eigenvectors" (FixedPoint anatomy). The core does not return
- * eigenvectors yet, so the plot cannot draw `.ds-fp-eigen`: the switch is shown
- * disabled with the reason, as the guidelines ask for complex λ.
- */
-function EigenvectorSwitch({ fp }: { fp: FixedPointOut }) {
+function EigenvectorSwitch({
+  fps,
+  index,
+  kind,
+}: {
+  fps: FixedPointOut[];
+  index: number;
+  kind: SystemKind | undefined;
+}) {
   const reasonId = useId();
-  const complex = fp.eigenvalues.some(([, im]) => Math.abs(im) > 1e-9);
+  const on = useShowEigenvectors();
+  const fp = fps[index];
+  const sym = kind === "map" ? "μ" : "λ";
+  const real = realEigenvectors(fp, kind);
+  const complex = hasComplexEigenvalue(fp);
+  const rule = kind === "map" ? "in where |μ| < 1, out where |μ| > 1" : "in where λ < 0, out where λ > 0";
+  const others = on
+    ? othersHaveRealEigenvectors(fps, index, kind)
+      ? " Other fixed points show theirs."
+      : " No fixed point in this system has real eigenvectors."
+    : "";
+  const hint =
+    real.length === 0
+      ? (complex ? `Complex ${sym}, so no real eigenvectors.` : "No eigenvectors could be computed at this point.") +
+        others
+      : `Lines along each fixed point's real eigenvectors, arrows ${rule}.` +
+        (complex ? ` Complex ${sym} have none.` : "") +
+        (fp.x.length > 2 ? " Directions seen end-on in this view are left out." : "");
   return (
     <>
-      <Switch label="Show eigenvectors" checked={false} disabled describedBy={reasonId} onChange={() => {}} />
+      <Switch
+        label="Show eigenvectors"
+        checked={on}
+        disabled={real.length === 0 && !on}
+        describedBy={reasonId}
+        onChange={setShowEigenvectors}
+      />
       <p className="ds-fp-hint caption" id={reasonId}>
-        {complex
-          ? "Complex λ, so no real eigenvectors."
-          : "Eigenvector lines on the plot are not available in this version."}
+        {hint}
       </p>
     </>
   );
@@ -623,15 +572,21 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const dim = sys.states.length;
   const p = state.portrait;
-  const fps = p && p.meta.systemId === sys.systemId ? p.res.fixedPoints : [];
+  const found = searchedFixedPoints(sys, p, state.shapeId);
+  const fps = found ?? [];
   const sym = sys.kind === "map" ? "μ" : "λ";
-  const selected = state.selection?.kind === "fp" ? state.selection.index : null;
+  const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
   const coordsText = (fp: FixedPointOut) =>
     dim === 1 ? `${plainName(sys.states[0].latex)}* = ${dec(fp.x[0], 3)}` : `(${fp.x.map((v) => dec(v, 3)).join(", ")})`;
 
   let empty: string | null = null;
   if (!state.layers.fixedPoints) empty = "Turn on Fixed points in Layers to find them.";
-  else if (sys.kind === "ode" && !sys.autonomous) empty = "Not searched: the field changes with t, so fixed points would move.";
+  else if (!sys.autonomous)
+    empty =
+      sys.kind === "map"
+        ? "Not searched: the map changes with n, so fixed points would move."
+        : "Not searched: the field changes with t, so fixed points would move.";
+  else if (found === null) empty = state.computeError ? "Not searched: the plot could not be computed." : "Searching…";
   else if (fps.length === 0) empty = "No fixed points in view.";
 
   return (
@@ -650,7 +605,7 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
           <ul className="ds-fp-list" aria-label="Fixed points">
             {fps.map((fp, i) => {
               const isSel = selected === i;
-              const label = classLabel(fp.classification, dim);
+              const label = classificationTitle(fp.classification, dim);
               const coords = coordsText(fp);
               return (
                 <li key={i} className={cx("ds-fp-item", isSel && "is-selected")} data-fp-index={i}>
@@ -659,19 +614,19 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
                     className="ds-fp-row"
                     aria-pressed={isSel}
                     aria-label={`${label} at ${coords}`}
-                    onClick={() => actions.select(isSel ? null : { kind: "fp", index: i })}
+                    onClick={() => actions.select(isSel ? null : selectFixedPoint(fp.x))}
                   >
-                    <FpIcon stability={stabilityOf(fp)} />
+                    <FixedPointIcon kind={fixedPointGlyph(fp.classification, fp.stable)} />
                     <span className="ds-fp-row-text">
                       <span className="ds-fp-class body-strong">{label}</span>
                       <span className="ds-fp-coords numeric">{coords}</span>
-                      <span className="ds-fp-eig numeric-sm">{eigenText(fp.eigenvalues, sym)}</span>
+                      <span className="ds-fp-eig numeric-sm">{eigenText(fp, sym)}</span>
                     </span>
                   </button>
                   {isSel && (
                     <div className="ds-fp-detail">
                       <FpHint fp={fp} kind={sys.kind} dim={dim} />
-                      {dim >= 2 && <EigenvectorSwitch fp={fp} />}
+                      {dim >= 2 && <EigenvectorSwitch fps={fps} index={i} kind={sys.kind} />}
                     </div>
                   )}
                 </li>
@@ -685,8 +640,6 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/* --------------------------------------------------------- trajectories */
-
 const STATUS_WORDS: Record<Exclude<Status, "completed">, { words: string; stopped: boolean }> = {
   blewUp: { words: "Blew up at", stopped: false },
   maxSteps: { words: "Step limit at", stopped: true },
@@ -699,12 +652,11 @@ interface Run {
   direction: "forward" | "backward";
 }
 
-/** The computed runs (forward, backward) of one start point, if the portrait is current. */
 function runsOf(state: StudioState, ic: InitialCondition): Run[] {
   const sys = state.compiled;
   const p = state.portrait;
   const runs: Run[] = [];
-  if (!sys || !p || p.meta.systemId !== sys.systemId) return runs;
+  if (!portraitFits(sys, state.shapeId, p)) return runs;
   p.meta.trajectories.forEach((m, i) => {
     const out = p.res.trajectories[i];
     if (m.icId === ic.id && out) runs.push({ out, direction: m.direction });
@@ -713,15 +665,6 @@ function runsOf(state: StudioState, ic: InitialCondition): Run[] {
 }
 
 const swatchStyle = (ic: InitialCondition) => ({ ["--traj" as string]: `var(--traj-${(ic.color % PALETTE_SIZE) + 1})` });
-
-/** "(x₀, y₀) =" (as LaTeX, typeset so θ̇₀ keeps its dot) and "(0.50, 1.75)" for a start point. */
-function startPoint(state: StudioState, ic: InitialCondition): { nameLatex: string; value: string } {
-  const states = state.compiled?.states ?? [];
-  const names = states.map((s) => `${s.latex}_0`);
-  const values = ic.x0.map((v) => dec(v, 2));
-  if (names.length === 1) return { nameLatex: `${names[0]} =`, value: values[0] ?? "" };
-  return { nameLatex: `(${names.join(", ")}) =`, value: `(${values.join(", ")})` };
-}
 
 function RunStatus({ runs, timeName }: { runs: Run[]; timeName: string }) {
   if (runs.length === 0) return null;
@@ -753,7 +696,6 @@ function TrajectoriesSection({ state, actions, open, onToggle }: SectionProps) {
   const selectedId = state.selection?.kind === "ic" ? state.selection.id : null;
   const listRef = useRef<HTMLUListElement>(null);
 
-  // Keep the selected row in view when it is picked on the plot.
   useEffect(() => {
     if (selectedId === null || !open) return;
     listRef.current
@@ -813,7 +755,11 @@ function TrajectoriesSection({ state, actions, open, onToggle }: SectionProps) {
             const n = k + 1;
             const isSel = ic.id === selectedId;
             const hidden = ic.hidden === true;
-            const start = startPoint(state, ic);
+            const start = startPointParts(
+              (state.compiled?.states ?? []).map((st) => st.latex),
+              ic.x0,
+              null,
+            );
             const spans = trajectorySpans(sys.kind, state.view, ic, state.solver, state.layers);
             const ends = spans.flatMap((s) => [s.req.t0, s.req.t1]);
             const lo = ends.length ? Math.min(...ends) : ic.t0;
@@ -883,8 +829,6 @@ function TrajectoriesSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/* --------------------------------------------- the selected trajectory */
-
 function SelectedTrajectorySection({ state, actions, id, open, onToggle }: SectionProps & { id: number }) {
   const sys = state.compiled!;
   const ic = state.ics.find((i) => i.id === id);
@@ -924,7 +868,7 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
           <FieldRow key={s.name} label={i === 0 ? "Start state" : ""}>
             <NumberField
               size="sm"
-              lead={<Tex latex={`${s.latex}_0`} />}
+              lead={<Tex latex={withSubscript(s.latex, "0")} />}
               value={ic.x0[i]}
               onCommit={(v) =>
                 actions.updateIc(

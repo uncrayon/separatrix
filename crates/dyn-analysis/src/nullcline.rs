@@ -1,44 +1,3 @@
-//! Nullclines by marching squares.
-//!
-//! For every state variable `i` shown on an axis we trace the zero set of
-//! `g = f_i` over the plane: the curves where that variable momentarily stops
-//! changing. With a time axis and a 1D system this is the zero-slope
-//! isocline `f(t, x) = 0`.
-//!
-//! # Algorithm
-//!
-//! 1. Evaluate `f` on a `(grid + 1) x (grid + 1)` lattice of points covering
-//!    the plane (corners included).
-//! 2. For every lattice edge whose end values have opposite signs, place a
-//!    crossing point by linear interpolation, refined by one regula falsi
-//!    step (one extra evaluation). Values that are exactly `0` count as
-//!    positive, which keeps the case table consistent.
-//! 3. For every cell, connect its crossing points (marching squares). Cells
-//!    with four crossings (the ambiguous "saddle" case) are resolved with the
-//!    average of the four corner values, which approximates the value at the
-//!    cell centre.
-//! 4. Join the segments into polylines through their shared edges.
-//!
-//! # Rejecting poles and jumps
-//!
-//! A sign change does not always mean a zero: `1/y` changes sign across
-//! `y = 0` by jumping through infinity, and `tan x` does the same at `π/2`.
-//! A crossing on an edge from `v0` to `v1` is treated as spurious, and every
-//! segment that uses it is dropped, when **both** of these hold:
-//!
-//! - *Big jump*: `|v1 - v0|` is more than [`JUMP_FACTOR`] times the median
-//!   of `|Δg|` over all lattice edges (the typical variation of `g` between
-//!   neighbouring lattice points);
-//! - *Grows inwards*: `g` at the edge midpoint is larger in magnitude than
-//!   the end value on the same side of the sign change. A continuous function
-//!   crossing zero shrinks towards its zero, whereas near a pole it grows.
-//!
-//! Requiring both keeps steep but continuous crossings (like `tanh(50 y)`,
-//! which has a big jump but shrinks inwards) and crossings near the
-//! intersection of two branches of the same nullcline (which grow inwards
-//! but have small jumps). The midpoint, or any lattice value, being
-//! non-finite also marks the edge as spurious.
-
 use std::collections::HashMap;
 
 use dyn_core::{SystemKind, VectorField};
@@ -62,11 +21,17 @@ pub struct Nullcline {
 
 /// Computes the nullclines of every state variable shown on an axis.
 ///
-/// Uses a `(grid + 1) x (grid + 1)` lattice over the plane (see the module
-/// docs for the algorithm and the pole heuristic). One [`Nullcline`] is
-/// returned per state on an axis (x axis first), possibly with no
-/// polylines. Returns an empty `Vec` for maps, for `grid == 0` and for axes
-/// that refer to a non-existent state.
+/// Uses marching squares on a `(grid + 1) x (grid + 1)` lattice over the
+/// plane. One [`Nullcline`] is returned per state on an axis (x axis
+/// first), possibly with no polylines. Returns an empty `Vec` for maps, for
+/// `grid == 0` and for axes that refer to a non-existent state.
+///
+/// A sign change across a lattice edge from `v0` to `v1` is dropped as a
+/// pole or jump (such as `1/y` at `y = 0`) when `|v1 - v0|` is more than
+/// [`JUMP_FACTOR`] times the median variation over all lattice edges *and*
+/// the component at the edge midpoint is larger in magnitude than the end value on
+/// the same side of the sign change. A non-finite midpoint or lattice value
+/// also drops the edge.
 pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) -> Vec<Nullcline> {
     if f.kind() == SystemKind::Map || grid == 0 {
         return Vec::new();
@@ -88,7 +53,6 @@ pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) ->
     }
 
     let lattice = Lattice::new(plane, grid);
-    // values[k][j * n + i] = f_{states[k]} at lattice point (i, j).
     let n = grid + 1;
     let mut values = vec![vec![0.0; n * n]; states.len()];
     for j in 0..n {
@@ -96,7 +60,7 @@ pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) ->
             let (px, py) = lattice.point(i, j);
             sampler.eval(f, p, px, py);
             for (k, &s) in states.iter().enumerate() {
-                values[k][j * n + i] = sampler.out[s];
+                values[k][lattice.index(i, j)] = sampler.out[s];
             }
         }
     }
@@ -109,14 +73,15 @@ pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) ->
                 sampler.eval(f, p, px, py);
                 sampler.out[state]
             };
-            Nullcline { state, polylines: trace(&lattice, g, &mut eval_g) }
+            Nullcline {
+                state,
+                polylines: trace(&lattice, g, &mut eval_g),
+            }
         })
         .collect()
 }
 
-/// Geometry of the evaluation lattice.
 struct Lattice {
-    /// Number of cells per side.
     grid: usize,
     x0: f64,
     y0: f64,
@@ -128,17 +93,30 @@ impl Lattice {
     fn new(plane: &Plane, grid: usize) -> Self {
         let (x0, x1) = plane.x_range;
         let (y0, y1) = plane.y_range;
-        Self { grid, x0, y0, dx: (x1 - x0) / grid as f64, dy: (y1 - y0) / grid as f64 }
+        Self {
+            grid,
+            x0,
+            y0,
+            dx: (x1 - x0) / grid as f64,
+            dy: (y1 - y0) / grid as f64,
+        }
     }
 
-    /// Plot coordinates of lattice point `(i, j)`, `0 <= i, j <= grid`.
     fn point(&self, i: usize, j: usize) -> (f64, f64) {
         (self.x0 + i as f64 * self.dx, self.y0 + j as f64 * self.dy)
     }
+
+    /// Lattice points per side.
+    fn side(&self) -> usize {
+        self.grid + 1
+    }
+
+    /// Position of lattice point `(i, j)` in a row-major value array.
+    fn index(&self, i: usize, j: usize) -> usize {
+        j * self.side() + i
+    }
 }
 
-/// A lattice edge: `H(i, j)` joins points `(i, j)`–`(i+1, j)`,
-/// `V(i, j)` joins `(i, j)`–`(i, j+1)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Edge {
     H(usize, usize),
@@ -146,7 +124,6 @@ enum Edge {
 }
 
 impl Edge {
-    /// The two lattice points of the edge.
     fn ends(self) -> ((usize, usize), (usize, usize)) {
         match self {
             Edge::H(i, j) => ((i, j), (i + 1, j)),
@@ -155,21 +132,48 @@ impl Edge {
     }
 }
 
-/// What we know about an edge with a sign change.
+/// The edges of cell `(i, j)`, counter-clockwise from the bottom, so edge
+/// `k` joins corner `k` and corner `k + 1` (corners counter-clockwise from
+/// the bottom left).
+fn cell_edges(i: usize, j: usize) -> [Edge; 4] {
+    [
+        Edge::H(i, j),
+        Edge::V(i + 1, j),
+        Edge::H(i, j + 1),
+        Edge::V(i, j),
+    ]
+}
+
+/// Edge pairs of a saddle cell whose segments cut off corners 1 and 3.
+const CUT_OFF_CORNERS_1_AND_3: [(usize, usize); 2] = [(0, 1), (2, 3)];
+/// Edge pairs of a saddle cell whose segments cut off corners 0 and 2.
+const CUT_OFF_CORNERS_0_AND_2: [(usize, usize); 2] = [(3, 0), (1, 2)];
+
+/// A cell whose four edges are all crossed: the sign of the centre (the
+/// mean of the corners) decides which pair of opposite corners is cut off.
+fn resolve_saddle_cell(corners: [f64; 4]) -> [(usize, usize); 2] {
+    let centre = corners.iter().sum::<f64>() / 4.0;
+    if (centre >= 0.0) == (corners[0] >= 0.0) {
+        CUT_OFF_CORNERS_1_AND_3
+    } else {
+        CUT_OFF_CORNERS_0_AND_2
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Crossing {
-    /// A genuine zero at this point.
     Point((f64, f64)),
-    /// A pole or jump; segments using this edge are dropped.
     Spurious,
 }
 
-/// Traces the zero set of `g` (sampled on the lattice) into polylines.
-fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> Vec<Vec<(f64, f64)>> {
-    let n = lat.grid + 1;
-    let val = |(i, j): (usize, usize)| g[j * n + i];
+fn trace(
+    lat: &Lattice,
+    g: &[f64],
+    eval_g: &mut dyn FnMut(f64, f64) -> f64,
+) -> Vec<Vec<(f64, f64)>> {
+    let val = |(i, j): (usize, usize)| g[lat.index(i, j)];
     let positive = |v: f64| v >= 0.0;
-    let scale = median_edge_variation(g, n);
+    let scale = median_edge_variation(lat, g);
 
     let mut crossings: HashMap<Edge, Crossing> = HashMap::new();
     let mut crossing = |e: Edge| -> Crossing {
@@ -181,37 +185,32 @@ fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> V
         })
     };
 
-    // Segments as pairs of edges; their points are looked up in `crossings`.
     let mut segments: Vec<(Edge, Edge)> = Vec::new();
     for j in 0..lat.grid {
         for i in 0..lat.grid {
-            let corners = [val((i, j)), val((i + 1, j)), val((i + 1, j + 1)), val((i, j + 1))];
+            let corners = [
+                val((i, j)),
+                val((i + 1, j)),
+                val((i + 1, j + 1)),
+                val((i, j + 1)),
+            ];
             if corners.iter().any(|v| !v.is_finite()) {
                 continue;
             }
-            // Edges in counter-clockwise order: bottom, right, top, left.
-            // Edge k joins corner k and corner (k + 1) % 4.
-            let edges = [Edge::H(i, j), Edge::V(i + 1, j), Edge::H(i, j + 1), Edge::V(i, j)];
-            let crossed: Vec<usize> =
-                (0..4).filter(|&k| positive(corners[k]) != positive(corners[(k + 1) % 4])).collect();
+            let edges = cell_edges(i, j);
+            let crossed: Vec<usize> = (0..4)
+                .filter(|&k| positive(corners[k]) != positive(corners[(k + 1) % 4]))
+                .collect();
             let pairs: Vec<(usize, usize)> = match crossed.len() {
                 2 => vec![(crossed[0], crossed[1])],
-                4 => {
-                    // Saddle cell: corners 0 and 2 share a sign, as do 1 and 3.
-                    // If the centre has the sign of corner 0, corners 0 and 2
-                    // are connected through the middle, so cut off 1 and 3.
-                    let centre = corners.iter().sum::<f64>() / 4.0;
-                    if positive(centre) == positive(corners[0]) {
-                        vec![(0, 1), (2, 3)] // around corners 1 and 3
-                    } else {
-                        vec![(3, 0), (1, 2)] // around corners 0 and 2
-                    }
-                }
+                4 => resolve_saddle_cell(corners).to_vec(),
                 _ => Vec::new(),
             };
             for (ka, kb) in pairs {
                 let (ea, eb) = (edges[ka], edges[kb]);
-                if matches!(crossing(ea), Crossing::Point(_)) && matches!(crossing(eb), Crossing::Point(_)) {
+                if matches!(crossing(ea), Crossing::Point(_))
+                    && matches!(crossing(eb), Crossing::Point(_))
+                {
                     segments.push((ea, eb));
                 }
             }
@@ -228,18 +227,17 @@ fn trace(lat: &Lattice, g: &[f64], eval_g: &mut dyn FnMut(f64, f64) -> f64) -> V
         .collect()
 }
 
-/// Median of `|Δg|` over all lattice edges with finite, non-zero variation.
-/// Returns `0` if there is none (e.g. `g` is constant).
-fn median_edge_variation(g: &[f64], n: usize) -> f64 {
+fn median_edge_variation(lat: &Lattice, g: &[f64]) -> f64 {
+    let n = lat.side();
     let mut diffs = Vec::with_capacity(2 * n * n);
     for j in 0..n {
         for i in 0..n {
-            let v = g[j * n + i];
+            let v = g[lat.index(i, j)];
             if i + 1 < n {
-                diffs.push((g[j * n + i + 1] - v).abs());
+                diffs.push((g[lat.index(i + 1, j)] - v).abs());
             }
             if j + 1 < n {
-                diffs.push((g[(j + 1) * n + i] - v).abs());
+                diffs.push((g[lat.index(i, j + 1)] - v).abs());
             }
         }
     }
@@ -251,8 +249,6 @@ fn median_edge_variation(g: &[f64], n: usize) -> f64 {
     *diffs.select_nth_unstable_by(mid, f64::total_cmp).1
 }
 
-/// Decides whether the sign change from `v0` (at `p0`) to `v1` (at `p1`) is a
-/// zero (and where) or a pole/jump. See the module docs.
 fn classify_crossing(
     v0: f64,
     v1: f64,
@@ -269,34 +265,31 @@ fn classify_crossing(
         if !gm.is_finite() {
             return Crossing::Spurious;
         }
-        // End value on the same side of the sign change as the midpoint.
         let same_side = if (gm >= 0.0) == (v0 >= 0.0) { v0 } else { v1 };
         if gm.abs() > same_side.abs() {
             return Crossing::Spurious;
         }
     }
-    // v0 and v1 have different signs, so v0 - v1 != 0.
     let s = v0 / (v0 - v1);
-    // One regula falsi refinement: evaluate at the linear estimate and
-    // interpolate again on the part of the edge that still has the sign
-    // change. This makes curved nullclines markedly more accurate for the
-    // price of one evaluation per crossing.
     let (px, py) = lerp(s);
     let gs = eval_g(px, py);
-    let refined = if !gs.is_finite() || gs == 0.0 || s <= 0.0 || s >= 1.0 {
-        s
-    } else if (gs >= 0.0) == (v0 >= 0.0) {
-        s + (1.0 - s) * gs / (gs - v1) // sign change between s and 1
-    } else {
-        s * v0 / (v0 - gs) // sign change between 0 and s
-    };
-    Crossing::Point(lerp(refined))
+    Crossing::Point(lerp(regula_falsi_refine(s, v0, v1, gs)))
 }
 
-/// Joins segments that share an edge into chains of edges. Open chains come
-/// first; closed loops repeat their first edge at the end.
+/// One regula falsi step on the edge: the linear estimate `s` of the zero
+/// between values `v0` (at 0) and `v1` (at 1), improved with the value
+/// `gs` found there. Keeps `s` when `gs` cannot help.
+fn regula_falsi_refine(s: f64, v0: f64, v1: f64, gs: f64) -> f64 {
+    if !gs.is_finite() || gs == 0.0 || s <= 0.0 || s >= 1.0 {
+        s
+    } else if (gs >= 0.0) == (v0 >= 0.0) {
+        s + (1.0 - s) * gs / (gs - v1)
+    } else {
+        s * v0 / (v0 - gs)
+    }
+}
+
 fn join_segments(segments: &[(Edge, Edge)]) -> Vec<Vec<Edge>> {
-    // Each edge belongs to at most two cells, hence to at most two segments.
     let mut touching: HashMap<Edge, Vec<usize>> = HashMap::new();
     for (k, (a, b)) in segments.iter().enumerate() {
         touching.entry(*a).or_default().push(k);
@@ -304,7 +297,6 @@ fn join_segments(segments: &[(Edge, Edge)]) -> Vec<Vec<Edge>> {
     }
     let mut used = vec![false; segments.len()];
 
-    // Walks from `start` (an end of segment `first`) as far as possible.
     let walk = |first: usize, start: Edge, used: &mut Vec<bool>| -> Vec<Edge> {
         let mut chain = vec![start];
         let (mut seg, mut at) = (first, start);
@@ -323,21 +315,17 @@ fn join_segments(segments: &[(Edge, Edge)]) -> Vec<Vec<Edge>> {
     };
 
     let mut chains = Vec::new();
-    // Open chains start at an edge used by only one segment.
-    let mut ends: Vec<(Edge, usize)> = segments
+    let ends: Vec<(Edge, usize)> = segments
         .iter()
         .enumerate()
         .flat_map(|(k, (a, b))| [(*a, k), (*b, k)])
         .filter(|(e, _)| touching[e].len() == 1)
         .collect();
-    // Deterministic output regardless of hash order.
-    ends.sort_by_key(|&(_, k)| k);
     for (e, k) in ends {
         if !used[k] {
             chains.push(walk(k, e, &mut used));
         }
     }
-    // Whatever is left forms closed loops.
     for k in 0..segments.len() {
         if !used[k] {
             chains.push(walk(k, segments[k].0, &mut used));
@@ -352,7 +340,14 @@ mod tests {
     use dyn_core::FnField;
 
     fn xy_plane(x_range: (f64, f64), y_range: (f64, f64)) -> Plane {
-        Plane { x: Axis::State(0), y: Axis::State(1), x_range, y_range, base_state: vec![0.0, 0.0], t: 0.0 }
+        Plane {
+            x: Axis::State(0),
+            y: Axis::State(1),
+            x_range,
+            y_range,
+            base_state: vec![0.0, 0.0],
+            t: 0.0,
+        }
     }
 
     fn rabbits_sheep() -> FnField {
@@ -378,26 +373,24 @@ mod tests {
             let pts = all_points(nc);
             assert!(pts.len() > 100, "too few points: {}", pts.len());
             for (x, y) in pts {
-                // Distance to the nearest true nullcline line.
                 let d = if nc.state == 0 {
                     x.abs().min((3.0 - x - 2.0 * y).abs() / 5f64.sqrt())
                 } else {
                     y.abs().min((2.0 - x - y).abs() / 2f64.sqrt())
                 };
-                // Where the two lines of one nullcline cross, g is locally a
-                // product of two small factors and interpolation is less
-                // accurate; elsewhere points are very close to the lines.
-                let crossing = if nc.state == 0 { (0.0, 1.5) } else { (2.0, 0.0) };
+                let crossing = if nc.state == 0 {
+                    (0.0, 1.5)
+                } else {
+                    (2.0, 0.0)
+                };
                 let near_crossing = (x - crossing.0).hypot(y - crossing.1) < 4.0 * h;
                 let tol = if near_crossing { 0.25 * h } else { 5e-3 * h };
                 assert!(d < tol, "state {} point ({x}, {y}) off by {d}", nc.state);
                 let mut o = [0.0; 2];
                 f.eval(0.0, &[x, y], &[], &mut o);
-                // Linear interpolation of a quadratic: error O(h²).
                 assert!(o[nc.state].abs() < h * h, "|f| = {}", o[nc.state].abs());
             }
         }
-        // Both lines of each nullcline are found: x = 0 and x + 2y = 3.
         let pts = all_points(&ncs[0]);
         assert!(pts.iter().any(|&(x, y)| x.abs() < 1e-3 && y > 3.0));
         assert!(pts.iter().any(|&(x, y)| x > 3.0 && y.abs() < 0.1));
@@ -405,14 +398,13 @@ mod tests {
 
     #[test]
     fn straight_line_is_one_polyline() {
-        // x' = y - x: the nullcline is the diagonal, traced as a single chain.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[1] - x[0] + 0.01;
             o[1] = 1.0;
         });
         let ncs = nullclines(&f, &[], &xy_plane((-1.0, 1.0), (-1.0, 1.0)), 20);
         assert_eq!(ncs[0].polylines.len(), 1);
-        assert!(ncs[1].polylines.is_empty()); // y' = 1 never vanishes
+        assert!(ncs[1].polylines.is_empty());
         let line = &ncs[0].polylines[0];
         assert!(line.len() > 20);
         for &(x, y) in line {
@@ -437,7 +429,6 @@ mod tests {
 
     #[test]
     fn pole_does_not_produce_a_nullcline() {
-        // x' = 1/y, y' = 1: no zero anywhere, but a sign change at y = 0.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = 1.0 / x[1];
             o[1] = 1.0;
@@ -456,7 +447,6 @@ mod tests {
 
     #[test]
     fn tan_keeps_zeros_but_drops_poles() {
-        // x' = tan(x): zeros at 0, ±π; poles at ±π/2.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[0].tan();
             o[1] = 1.0;
@@ -488,8 +478,6 @@ mod tests {
 
     #[test]
     fn saddle_cells_give_crossing_lines() {
-        // x' = x y: nullcline is both axes, crossing at the origin, which is
-        // the centre of a cell with this grid.
         let f = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[0] * x[1];
             o[1] = 1.0;
@@ -505,7 +493,6 @@ mod tests {
 
     #[test]
     fn one_dimensional_time_axis_isocline() {
-        // x' = x - t: zero-slope isocline x = t in the (t, x) plane.
         let f = FnField::new(1, 0, SystemKind::Ode, |t, x, _p, o| o[0] = x[0] - t).non_autonomous();
         let plane = Plane {
             x: Axis::Time,
@@ -525,7 +512,6 @@ mod tests {
 
     #[test]
     fn hidden_state_is_not_traced() {
-        // Plane (x, z) of a 3D system: nullclines of f_0 and f_2 only.
         let f = FnField::new(3, 0, SystemKind::Ode, |_t, x, _p, o| {
             o[0] = x[0] - x[1];
             o[1] = 0.0;
@@ -562,7 +548,10 @@ mod tests {
 
     #[test]
     fn serialises_as_point_arrays() {
-        let nc = Nullcline { state: 1, polylines: vec![vec![(0.0, 1.0), (2.0, 3.5)]] };
+        let nc = Nullcline {
+            state: 1,
+            polylines: vec![vec![(0.0, 1.0), (2.0, 3.5)]],
+        };
         let json = serde_json::to_string(&nc).unwrap();
         assert_eq!(json, r#"{"state":1,"polylines":[[[0.0,1.0],[2.0,3.5]]]}"#);
     }

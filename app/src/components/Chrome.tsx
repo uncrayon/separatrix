@@ -1,19 +1,16 @@
-// The app frame: top bar and bottom status bar (DS: Button, IconButton, StatusBar).
-
 import { useEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
 import { isTauri } from "../api/client";
-import type { AxisRef, Diagnostic, SymbolInfo, SystemKind } from "../api/types";
-import { insidePlot, makeViewport, toPlot, unitsPerPx, wantsEqualScales } from "../canvas/viewport";
+import type { AxisRef, StateInfo, SystemKind } from "../api/types";
+import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt } from "../math/format";
 import { Tex } from "../math/Tex";
-import type { SolverSettings } from "../state/model";
+import { searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { IconCheck, IconError, IconGallery, IconLogo, IconMoon, IconProjector, IconWarning } from "./icons";
+import { diagnosticLine } from "./diagnostics";
 
 type Theme = "dark" | "light";
-
-// ---------------------------------------------------------------- shared bits
 
 /** Escape hides an open IconButton tooltip without moving focus (WCAG 1.4.13). */
 export const tipDismiss = {
@@ -24,12 +21,9 @@ export const tipDismiss = {
   onBlur: (e: SyntheticEvent<HTMLElement>) => e.currentTarget.classList.remove("is-tip-dismissed"),
 };
 
-/** Real minus sign for display. */
 const minus = (s: string) => s.replace(/-/g, "−");
 
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
-
-// ---------------------------------------------------------------- top bar
 
 interface TopBarProps {
   state: StudioState;
@@ -39,7 +33,12 @@ interface TopBarProps {
 }
 
 export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarProps) {
-  const tpl = state.templateId ? templateById(state.templateId) : undefined;
+  const tpl = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
+  const title = systemTitle(
+    tpl,
+    state.equations.map((l) => l.source),
+    state.format,
+  );
   const projector = theme === "light";
   return (
     <header className="topbar">
@@ -48,14 +47,9 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
         <span className="title brand-name">Separatrix</span>
       </div>
       <div className="doc-title" aria-live="polite">
-        {tpl ? (
-          <>
-            <span className="body-strong doc-name">{tpl.title}</span>
-            {strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
-          </>
-        ) : (
-          state.compiled && <span className="body-strong doc-name">Untitled system</span>
-        )}
+        {(tpl || state.compiled) && <span className="body-strong doc-name">{title.name}</span>}
+        {title.edited && <span className="ds-template-card-tag doc-edited">Edited</span>}
+        {tpl && strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
       </div>
       <div className="topbar-actions">
         <button type="button" className="ds-button" onClick={onOpenGallery}>
@@ -83,9 +77,6 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
   );
 }
 
-// ---------------------------------------------------------------- status bar
-
-/** "Portrait 3.2 ms": one decimal under 10 ms, none above, seconds above 1000 ms. */
 function timing(ms: number): { num: string; unit: string } {
   if (ms >= 1000) return { num: (ms / 1000).toFixed(1), unit: "s" };
   if (ms >= 10) return { num: String(Math.round(ms)), unit: "ms" };
@@ -99,7 +90,6 @@ const METHOD: Record<SolverSettings["method"], { short: string; long: string }> 
   euler: { short: "Euler", long: "Euler" },
 };
 
-/** The solver's short name and key setting ("DOPRI5 · rtol 1e−6"), plus the spelled-out tooltip. */
 function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   if (kind === "map") {
     const n = Math.max(1, Math.round(s.tEnd));
@@ -114,24 +104,7 @@ function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.long}, step ${v}` };
 }
 
-/** Which equation line (0-based) a diagnostic points at; -1 if unknown. Same rule as the system panel. */
-function diagnosticLine(d: Diagnostic, lines: string[]): number {
-  if (!d.span) return -1;
-  const enc = new TextEncoder();
-  let offset = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === "") continue;
-    const end = offset + enc.encode(lines[i]).length;
-    if (d.span[0] <= end) return i;
-    offset = end + 1;
-  }
-  return -1;
-}
-
-/** Move focus to an equation line in the system panel. */
 function focusEquationLine(index: number) {
-  // One box per line in either mode: it holds the <math-field> (LaTeX mode) or
-  // is the plain <input> (Text mode).
   const boxes = document.querySelectorAll<HTMLElement>(".panel-left .ds-equation-editor-field");
   const box = boxes[Math.max(0, index)] ?? boxes[0];
   const target = box?.matches("input, math-field") ? box : box?.querySelector<HTMLElement>("math-field");
@@ -139,16 +112,8 @@ function focusEquationLine(index: number) {
   target?.focus();
 }
 
-/** Move focus to the Solver settings in the inspector, opening the section if it is folded. */
 function focusSolverSettings() {
-  const panel = document.querySelector<HTMLElement>(".panel-right");
-  if (!panel) return;
-  let section: HTMLElement | null = panel.querySelector<HTMLElement>("#solver-settings");
-  if (!section) {
-    const heads = Array.from(panel.querySelectorAll<HTMLElement>("h2, h3, .ds-panel-section-title"));
-    const head = heads.find((h) => /^(Solver|Iteration)/.test(h.textContent?.trim() ?? ""));
-    section = head?.closest<HTMLElement>("section, .ds-panel-section, .section") ?? head?.parentElement ?? null;
-  }
+  const section = document.querySelector<HTMLElement>(".panel-right #solver-settings");
   if (!section) return;
   const toggle = section.querySelector<HTMLButtonElement>("button[aria-expanded]");
   if (toggle && toggle.getAttribute("aria-expanded") === "false") toggle.click();
@@ -159,33 +124,23 @@ function focusSolverSettings() {
   target?.focus();
 }
 
-/** LaTeX name of an axis: the state's name, or t / n (typeset in the readout). */
-function axisName(axis: AxisRef, other: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
-  // Before anything is compiled, name the default plane's axes x and y.
+function axisName(axis: AxisRef, other: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "state" && !states[axis.index]) return axis.index === 0 ? "x" : axis.index === 1 ? "y" : "?";
   return axisLabelLatex(axis, other, states, kind);
 }
 
-/** A pointer position over the plot, in plot coordinates, with display decimals per axis. */
 interface PlotPointer {
   x: number;
   y: number;
   digits: [number, number];
 }
 
-/**
- * The pointer position in plot coordinates while it is over the plot, or null.
- * Listens on the document so the canvas component needs no extra wiring; the
- * mapping is the canvas's own (viewport.ts, margins scaled ×1.25 in projector mode).
- */
-function usePlotPointer(state: StudioState, theme: Theme): PlotPointer | null {
+function usePlotPointer(state: StudioState): PlotPointer | null {
   const [pos, setPos] = useState<PlotPointer | null>(null);
   const viewRef = useRef(state.view);
   viewRef.current = state.view;
   const kindRef = useRef(state.compiled?.kind);
   kindRef.current = state.compiled?.kind;
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
   const last = useRef<{ el: HTMLElement; cx: number; cy: number } | null>(null);
   const schedule = useRef<() => void>(() => {});
 
@@ -200,16 +155,7 @@ function usePlotPointer(state: StudioState, theme: Theme): PlotPointer | null {
       }
       const v = viewRef.current;
       const r = l.el.getBoundingClientRect();
-      const scale = themeRef.current === "light" ? 1.25 : 1;
-      // Same mapping as the canvas, equal scales on a phase plane included.
-      const vp = makeViewport(
-        l.el.clientWidth,
-        l.el.clientHeight,
-        v.xRange,
-        v.yRange,
-        scale,
-        wantsEqualScales(v.xAxis, v.yAxis, kindRef.current),
-      );
+      const vp = plotViewport(l.el.clientWidth, l.el.clientHeight, v, kindRef.current);
       const px = l.cx - r.left;
       const py = l.cy - r.top;
       if (!insidePlot(vp, px, py)) {
@@ -217,7 +163,6 @@ function usePlotPointer(state: StudioState, theme: Theme): PlotPointer | null {
         return;
       }
       const [x, y] = toPlot(vp, px, py);
-      // Two decimals; more once two stop changing from pixel to pixel.
       const [ux, uy] = unitsPerPx(vp);
       const dec = (u: number) => Math.min(8, Math.max(2, Math.ceil(-Math.log10(Math.abs(u) || 1)) - 1));
       setPos({ x, y, digits: [dec(ux), dec(uy)] });
@@ -243,15 +188,13 @@ function usePlotPointer(state: StudioState, theme: Theme): PlotPointer | null {
     };
   }, []);
 
-  // Zooming (wheel) under a still pointer changes what it points at.
   useEffect(() => {
     if (last.current) schedule.current();
-  }, [state.view, theme]);
+  }, [state.view]);
 
   return pos;
 }
 
-/** True once `on` has held for `delay` ms, so fast recomputes never flicker. */
 function useDelayed(on: boolean, delay: number): boolean {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -268,33 +211,30 @@ function useDelayed(on: boolean, delay: number): boolean {
 interface StatusBarProps {
   state: StudioState;
   actions: StudioActions;
-  theme: Theme;
 }
 
-export function StatusBar({ state, actions, theme }: StatusBarProps) {
+export function StatusBar({ state, actions }: StatusBarProps) {
   const p = state.portrait;
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
   const current = !!p && !!sys && p.meta.systemId === sys.systemId;
-  const nFp = current && state.layers.fixedPoints ? p.res.fixedPoints.length : null;
+  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
 
-  // Escaping to infinity is usually the maths; anything else is the solver giving up.
-  const stopped = p
+  const solverGaveUpIcIds = p
     ? p.res.trajectories.flatMap((t, i) =>
         t.status !== "completed" && t.status !== "blewUp" && p.meta.trajectories[i] ? [p.meta.trajectories[i].icId] : [],
       )
     : [];
-  const stoppedIcs = [...new Set(stopped)].filter((id) => state.ics.some((ic) => ic.id === id));
+  const solverGaveUpIcs = [...new Set(solverGaveUpIcIds)].filter((id) => state.ics.some((ic) => ic.id === id));
 
   const errors = state.diagnostics.filter((d) => d.severity === "error");
-  const lines = state.equations.map((l) => l.latex);
+  const lines = state.equations.map((l) => l.source);
   const firstBad = errors.length ? diagnosticLine(errors[0], lines) : -1;
 
   const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
-  const pointer = usePlotPointer(state, theme);
+  const pointer = usePlotPointer(state);
 
-  // Named as the plot names them: xₙ for a map's value against n.
   const xName = axisName(state.view.xAxis, state.view.yAxis, states, kind);
   const yName = axisName(state.view.yAxis, state.view.xAxis, states, kind);
   const solver = solverSummary(state.solver, kind);
@@ -336,13 +276,12 @@ export function StatusBar({ state, actions, theme }: StatusBarProps) {
         ) : (
           <span className="ds-statusbar-item">
             <span className="ds-statusbar-text">
-              {state.equations.some((l) => l.latex.trim() !== "") ? "Not compiled" : "No equations"}
+              {state.equations.some((l) => l.source.trim() !== "") ? "Not compiled" : "No equations"}
             </span>
           </span>
         )}
       </div>
 
-      {/* Axis names typeset (θ̇ needs the maths font), numbers in mono. */}
       {pointer ? (
         <span className="ds-statusbar-item ds-statusbar-coords">
           <span className="ds-sr">Cursor at </span>
@@ -359,16 +298,16 @@ export function StatusBar({ state, actions, theme }: StatusBarProps) {
       )}
 
       <div className="ds-statusbar-zone ds-statusbar-zone--end">
-        {stoppedIcs.length > 0 && (
+        {solverGaveUpIcs.length > 0 && (
           <button
             type="button"
             className="ds-statusbar-item ds-statusbar-item--button ds-statusbar-item--warn"
             data-tooltip="Select the trajectory"
             data-tooltip-desc="The inspector says why it stopped."
-            onClick={() => actions.select({ kind: "ic", id: stoppedIcs[0] })}
+            onClick={() => actions.select({ kind: "ic", id: solverGaveUpIcs[0] })}
           >
             <IconWarning />
-            <span className="ds-statusbar-text">{plural(stoppedIcs.length, "run")} stopped</span>
+            <span className="ds-statusbar-text">{plural(solverGaveUpIcs.length, "run")} stopped</span>
             <span className="ds-sr">. Select the trajectory to see why it stopped</span>
           </button>
         )}

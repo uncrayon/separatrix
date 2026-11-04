@@ -1,43 +1,48 @@
-// The template gallery: opens on first run, one click loads a full portrait.
-// DS: TemplateCard (cards in a list), a modal sheet on scrim (radius-lg, shadow-modal).
-
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Tex } from "../math/Tex";
 import { TEMPLATES, strogatzRef, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
 import { IconClose, IconPlus } from "./icons";
-import { TemplateThumb } from "./TemplateThumb";
+import { TemplateThumb, compileTemplate } from "./TemplateThumb";
 
 interface Props {
   onPick: (t: Template) => void;
   onBlank: () => void;
   onClose: () => void;
-  /** Hide the close button when there is nothing behind the dialog yet. */
   canClose: boolean;
 }
 
-/** Everything inside `root` that Tab can reach, in document order. */
 function tabbables(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]'),
   );
 }
 
-/**
- * The two tags of a card: dimension, then kind ("2D", "ODE"). The dimension is
- * the number of first-order states: θ̈ and a Hamiltonian H(q, p) count twice.
- */
-function tags(t: Template): [string, string] {
-  const isMap = t.equations.some((e) => /_\{?n\s*\+\s*1/.test(e));
-  const dim = t.equations.reduce((n, e) => n + (/\\ddot\{|^H\\left\(|^H\(/.test(e) ? 2 : 1), 0);
-  return [`${dim}D`, isMap ? "Map" : "ODE"];
+/** "2D" and "ODE" (or "Map") as the compiler understood the template. */
+function TemplateTags({ template }: { template: Template }) {
+  const [tags, setTags] = useState<[string, string] | null>(null);
+  useEffect(() => {
+    let live = true;
+    compileTemplate(template)
+      .then((sys) => {
+        if (live && sys.ok) setTags([`${sys.states.length}D`, sys.kind === "map" ? "Map" : "ODE"]);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [template]);
+  return (
+    <span className="ds-template-card-tags">
+      {tags?.map((tag) => (
+        <span className="ds-template-card-tag" key={tag}>
+          {tag}
+        </span>
+      ))}
+    </span>
+  );
 }
 
-/**
- * The gallery is a modal dialog: the app behind it is made `inert` by App.tsx,
- * and Tab / Shift+Tab wrap around inside the dialog here, so keyboard focus
- * can never land on controls hidden behind the backdrop.
- */
 export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -107,7 +112,6 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
           <ul className="ds-template-grid template-grid" aria-label="Templates">
             {TEMPLATES.map((t) => {
               const id = `tpl-${t.id}`;
-              const [dim, kind] = tags(t);
               return (
                 <li key={t.id}>
                   <button
@@ -134,10 +138,7 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
                       {t.description}
                     </span>
                     <span className="ds-template-card-meta">
-                      <span className="ds-template-card-tags">
-                        <span className="ds-template-card-tag">{dim}</span>
-                        <span className="ds-template-card-tag">{kind}</span>
-                      </span>
+                      <TemplateTags template={t} />
                       {strogatzRef(t) && <span className="ds-template-card-ref">{strogatzRef(t)}</span>}
                     </span>
                   </button>

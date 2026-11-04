@@ -9,6 +9,24 @@ All notable changes to this project are documented in this file.
 - New Cargo workspace: `dyn-core` (shared `VectorField` contract), `dyn-expr`, `dyn-solve`, `dyn-analysis`, and the Tauri shell in `app/`.
 - New CI: Rust tests on Linux, macOS and Windows; release workflow that builds unsigned installers.
 
+- Text mode is compiled by the core's text parser: every line is stored as typed in the system's
+  one input format, and switching modes asks the core to convert (`convert_source`), which checks
+  that each converted line, and the whole system, means exactly the same and keeps every name.
+  A line with an error is kept as typed with a note; a valid line the other format can't write
+  exactly (a number like `9.109e-31` in LaTeX) calls the switch off, with a note, since kept as
+  typed it would mean something else there. The UI's hand-written LaTeX/text translators are gone. Template text is generated (`templates.text.generated.json`).
+- Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
+
+### Fixed
+- The Nullclines toggle is shown whenever nullclines are drawn, including time-series views of
+  2-D and larger systems.
+- Diagnostics keep the hyphens of their prose ("right-hand side") instead of turning them into
+  minus signs, and a prime (`x'+y'`) is no longer taken for a quote.
+- Names spelled as one identifier that begin with a function name (`\mathrm{cost}`, `\mathrm{signal}`, the word `cost` in text mode) compile as that name, with a warning suggesting the function, instead of failing.
+- A selected fixed point stays selected while the list is recomputed and re-sorted (it is tracked by position) and is cleared when it disappears.
+- The fixed-point search never uses more than 1000 Newton seeds, in any dimension (10D and up used 2^d).
+- The UI's IPC types are the ts-rs bindings generated from Rust (`types.ts` re-exports them); states carry `derived` for those introduced by order reduction.
+
 ### Removed
 - Python backend (FastAPI, SciPy/Numba solvers, job queue, SQLite), the web frontend and the PyPI packaging. The `equation-phase-portrait-tool` package on PyPI is deprecated; v0.1.0 remains in git history.
 

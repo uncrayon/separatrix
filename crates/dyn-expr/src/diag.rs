@@ -1,9 +1,8 @@
-//! User-facing messages about the input.
-
 use serde::{Deserialize, Serialize};
 
 /// How serious a [`Diagnostic`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// The system cannot be built.
@@ -30,12 +29,20 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// An [`Severity::Error`] diagnostic.
     pub fn error(message: impl Into<String>, span: Option<(usize, usize)>) -> Self {
-        Diagnostic { severity: Severity::Error, message: message.into(), span }
+        Diagnostic {
+            severity: Severity::Error,
+            message: message.into(),
+            span,
+        }
     }
 
     /// A [`Severity::Warning`] diagnostic.
     pub fn warning(message: impl Into<String>, span: Option<(usize, usize)>) -> Self {
-        Diagnostic { severity: Severity::Warning, message: message.into(), span }
+        Diagnostic {
+            severity: Severity::Warning,
+            message: message.into(),
+            span,
+        }
     }
 
     /// True for [`Severity::Error`].

@@ -1,6 +1,3 @@
-//! Micro-benchmarks. Ignored by default; run with
-//! `cargo test -p dyn-expr --release --test bench -- --ignored --nocapture`.
-
 mod common;
 
 use std::hint::black_box;
@@ -10,11 +7,9 @@ use dyn_core::VectorField;
 
 const LORENZ: &str = "\\dot{x}=\\sigma\\left(y-x\\right)\\\\\\dot{y}=x\\left(\\rho-z\\right)-y\\\\\\dot{z}=xy-\\beta z\n\\sigma=10\n\\rho=28\n\\beta=\\frac{8}{3}";
 
-/// Nanoseconds per call: best of 5 rounds of `n / 5` calls (the minimum
-/// is the least disturbed by other processes).
 fn time_per_call(n: u32, mut f: impl FnMut(u32)) -> f64 {
     for i in 0..n / 10 {
-        f(i); // warm-up
+        f(i);
     }
     let round = n / 5;
     (0..5)
@@ -29,7 +24,7 @@ fn time_per_call(n: u32, mut f: impl FnMut(u32)) -> f64 {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmark: cargo test -p dyn-expr --release --test bench -- --ignored --nocapture"]
 fn bench_lorenz() {
     let sys = common::latex(LORENZ);
     let p = sys.default_params();
@@ -45,7 +40,6 @@ fn bench_lorenz() {
         sys.jacobian(0.0, black_box(&x), black_box(&p), &mut jac);
         black_box(&jac);
     });
-    // Hand-written reference.
     let native_ns = time_per_call(10_000_000, |i| {
         let x = black_box([f64::from(i % 7), 1.0, 2.0]);
         let p = black_box(&p);
@@ -62,7 +56,7 @@ fn bench_lorenz() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "benchmark: cargo test -p dyn-expr --release --test bench -- --ignored --nocapture"]
 fn bench_hamiltonian() {
     let sys = common::text("H(q, p) = p^2/2 - cos(q)");
     let mut out = [0.0; 2];

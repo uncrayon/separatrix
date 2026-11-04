@@ -31,6 +31,10 @@
 //!    subexpressions and folded constants.
 //! 5. [`ad`]: evaluation is generic over [`ad::Scalar`]; `f64` gives
 //!    values, [`ad::Dual`] gives exact derivatives.
+//!
+//! [`convert`] rewrites the equations from one [`InputFormat`] to the other
+//! with the same parser and analysis, checking that every converted line
+//! (and the whole system) still means exactly the same.
 
 #![warn(missing_docs)]
 
@@ -41,16 +45,21 @@ mod latex;
 mod parser;
 mod program;
 mod sema;
+mod source;
 mod system;
 mod token;
 
 use serde::{Deserialize, Serialize};
 
 pub use diag::{Diagnostic, Severity};
+#[doc(hidden)]
+pub use program::SMALL_PROGRAM;
+pub use source::{convert, ConvertedLine};
 pub use system::CompiledSystem;
 
 /// Which syntax the source uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum InputFormat {
     /// LaTeX as produced by MathLive: single-letter names, `\sigma`,
@@ -97,6 +106,12 @@ pub struct SymbolInfo {
     pub name: String,
     /// Display form, e.g. `"x"`, `"\theta"`, `"x_{1}"`, `"\dot{x}"`.
     pub latex: String,
+    /// `true` for a state introduced by reducing a higher-order equation to
+    /// first order (`x'` for `x'' = …`; `x'` and `x''` for `x''' = …`);
+    /// `false` for the states the user wrote equations for, including the
+    /// momenta of a Hamiltonian and `x` itself in `x' = …`.
+    #[serde(default)]
+    pub derived: bool,
 }
 
 /// A parameter and its default value.
@@ -117,8 +132,28 @@ pub struct ParamInfo {
 /// spans into `source`, and `system` is `None` if any is an error.
 pub fn compile(source: &str, format: InputFormat) -> CompileOutput {
     let mut diags = Vec::new();
-    let lines = parser::parse_lines(source, format, &mut diags);
-    let analysis = if lines.is_empty() {
+    let analysis = analyze_source(source, format, &mut diags);
+    let has_errors = diags.iter().any(Diagnostic::is_error);
+    let system = match analysis {
+        Some(a) if !has_errors => Some(CompiledSystem::new(a)),
+        _ => None,
+    };
+    diags.sort_by_key(|d| d.span.map_or(usize::MAX, |s| s.0));
+    CompileOutput {
+        system,
+        diagnostics: diags,
+    }
+}
+
+/// Parse and analyse `source`, adding its problems to `diags` (unsorted).
+/// The analysis is only usable when no error was added.
+pub(crate) fn analyze_source(
+    source: &str,
+    format: InputFormat,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<sema::Analysis> {
+    let lines = parser::parse_lines(source, format, diags);
+    if lines.is_empty() {
         if diags.is_empty() {
             let ex = match format {
                 InputFormat::Latex => "\\dot{x} = -x",
@@ -129,15 +164,7 @@ pub fn compile(source: &str, format: InputFormat) -> CompileOutput {
                 None,
             ));
         }
-        None
-    } else {
-        sema::analyze(lines, format, &mut diags)
-    };
-    let has_errors = diags.iter().any(Diagnostic::is_error);
-    let system = match analysis {
-        Some(a) if !has_errors => Some(CompiledSystem::new(a)),
-        _ => None,
-    };
-    diags.sort_by_key(|d| d.span.map_or(usize::MAX, |s| s.0));
-    CompileOutput { system, diagnostics: diags }
+        return None;
+    }
+    sema::analyze(lines, format, diags)
 }

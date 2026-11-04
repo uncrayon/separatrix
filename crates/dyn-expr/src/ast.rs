@@ -1,22 +1,15 @@
-//! Syntax tree produced by the parser, the resolved expression tree produced
-//! by the semantic pass, and the table of built-in functions.
-
 use crate::token::{Span, SymName};
 
-/// A built-in function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Func {
     Sin,
     Cos,
     Tan,
     Exp,
-    /// Natural logarithm (`\ln`, `\log`, `ln`, `log`).
     Ln,
     Sqrt,
-    /// Real cube root (also valid for negative arguments).
     Cbrt,
     Abs,
-    /// `-1`, `0` or `1`.
     Sign,
     Sinh,
     Cosh,
@@ -26,17 +19,18 @@ pub(crate) enum Func {
     Atan,
     Min,
     Max,
+    /// The real `n`-th root for an odd `n >= 5`, `sign(x)·|x|^(1/n)`
+    /// (`\sqrt[5]{x}`); `powf` gives NaN for `x < 0`. One node, so nested
+    /// roots stay linear in size.
+    OddRoot(u64),
 }
 
-/// Function names (text mode words and LaTeX command names), longest first
-/// so that prefix checks such as "sinhx" find `sinh` before `sin`.
 pub(crate) const FUNCTION_WORDS: &[&str] = &[
     "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "sqrt", "cbrt", "sign", "asin", "acos",
     "atan", "sin", "cos", "tan", "exp", "log", "abs", "sgn", "min", "max", "ln",
 ];
 
 impl Func {
-    /// Look up a function by its text-mode / LaTeX name (without backslash).
     pub(crate) fn from_name(name: &str) -> Option<Func> {
         use Func::*;
         Some(match name {
@@ -61,7 +55,6 @@ impl Func {
         })
     }
 
-    /// Number of arguments.
     pub(crate) fn arity(self) -> usize {
         match self {
             Func::Min | Func::Max => 2,
@@ -69,7 +62,11 @@ impl Func {
         }
     }
 
-    /// Name used in text mode and in messages.
+    /// `f(a, b) = f(b, a)`, so operand order can be normalised.
+    pub(crate) fn is_commutative(self) -> bool {
+        matches!(self, Func::Min | Func::Max)
+    }
+
     pub(crate) fn text_name(self) -> &'static str {
         use Func::*;
         match self {
@@ -90,20 +87,20 @@ impl Func {
             Atan => "arctan",
             Min => "min",
             Max => "max",
+            OddRoot(_) => "root",
         }
     }
 
-    /// LaTeX command for functions written as `\name x` (operator style).
     pub(crate) fn latex_name(self) -> String {
         match self {
             Func::Sign => "\\operatorname{sign}".to_string(),
             Func::Cbrt => "\\operatorname{cbrt}".to_string(),
             Func::Abs => "\\operatorname{abs}".to_string(),
+            Func::OddRoot(n) => format!("\\sqrt[{n}]"),
             f => format!("\\{}", f.text_name()),
         }
     }
 
-    /// `\sin^{-1}` means `\arcsin`, etc.
     pub(crate) fn inverse(self) -> Option<Func> {
         match self {
             Func::Sin => Some(Func::Asin),
@@ -114,7 +111,6 @@ impl Func {
     }
 }
 
-/// Binary operators, shared by the syntax tree and the resolved tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum BinOp {
     Add,
@@ -124,54 +120,49 @@ pub(crate) enum BinOp {
     Pow,
 }
 
-/// A node of the syntax tree, with the byte span it came from.
 #[derive(Debug, Clone)]
 pub(crate) struct Ast {
     pub kind: AstKind,
     pub span: Span,
-    /// Number of levels in this tree (1 for a leaf). Every later pass
-    /// recurses over the tree, so the parser keeps this bounded (see
-    /// [`MAX_HEIGHT`]).
     pub height: u32,
 }
 
-/// Largest tree height the parser accepts. The passes after parsing
-/// (semantic analysis, display, compilation, and dropping the tree) are
-/// recursive, so this bounds their stack use. 256 levels is far beyond
-/// any equation typed by hand (a sum of 250 terms, or brackets nested 50
-/// deep) while keeping stack use under 512 KiB in release builds.
 pub(crate) const MAX_HEIGHT: u32 = 256;
 
-/// What a syntax-tree node is. Names are not resolved yet: `Sym("x")` may
-/// later become a state, a parameter, time or a constant.
 #[derive(Debug, Clone)]
 pub(crate) enum AstKind {
     Num(f64),
     Sym(SymName),
-    /// `\dot{x}` (order 1), `x''` (order 2), ...
+    /// `x_n` or `x_{1,n}`: the current iterate of the state named here
+    /// (`x`, `x_1`). Outside a map it is the plain symbol `x_n`.
+    Current(SymName),
     Deriv(SymName, u32),
-    /// `x_{n+1}` (left-hand side of a map).
     Next(SymName),
     Neg(Box<Ast>),
     Bin(BinOp, Box<Ast>, Box<Ast>),
     Call(Func, Vec<Ast>),
-    /// `name(args)` where `name` is not a built-in function: `H(q, p)`,
-    /// `x(t)`, or a text-mode call to an unknown function. The semantic pass
-    /// decides what it means.
     Apply(SymName, Vec<Ast>),
 }
 
 impl Ast {
     pub(crate) fn new(kind: AstKind, span: Span) -> Ast {
         let below = match &kind {
-            AstKind::Num(_) | AstKind::Sym(_) | AstKind::Deriv(..) | AstKind::Next(_) => 0,
+            AstKind::Num(_)
+            | AstKind::Sym(_)
+            | AstKind::Current(_)
+            | AstKind::Deriv(..)
+            | AstKind::Next(_) => 0,
             AstKind::Neg(a) => a.height,
             AstKind::Bin(_, a, b) => a.height.max(b.height),
             AstKind::Call(_, args) | AstKind::Apply(_, args) => {
                 args.iter().map(|a| a.height).max().unwrap_or(0)
             }
         };
-        Ast { kind, span, height: below + 1 }
+        Ast {
+            kind,
+            span,
+            height: below + 1,
+        }
     }
 
     pub(crate) fn bin(op: BinOp, a: Ast, b: Ast) -> Ast {
@@ -179,7 +170,16 @@ impl Ast {
         Ast::new(AstKind::Bin(op, Box::new(a), Box::new(b)), span)
     }
 
-    /// Calls `f` on this node and every descendant (pre-order).
+    /// The name this node spells when read as a plain variable: `x` for
+    /// `x`, and `x_n` for the current iterate `x_n`.
+    pub(crate) fn plain_symbol(&self) -> Option<SymName> {
+        match &self.kind {
+            AstKind::Sym(s) => Some(s.clone()),
+            AstKind::Current(s) => Some(s.at_index_n()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn walk(&self, f: &mut impl FnMut(&Ast)) {
         f(self);
         match &self.kind {
@@ -193,19 +193,20 @@ impl Ast {
                     a.walk(f);
                 }
             }
-            AstKind::Num(_) | AstKind::Sym(_) | AstKind::Deriv(..) | AstKind::Next(_) => {}
+            AstKind::Num(_)
+            | AstKind::Sym(_)
+            | AstKind::Current(_)
+            | AstKind::Deriv(..)
+            | AstKind::Next(_) => {}
         }
     }
 }
 
-/// Resolved expression: every name is now a state, a parameter, time or a
-/// constant. This is what gets printed back as LaTeX and compiled.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Node {
     Num(f64),
     Pi,
     E,
-    /// `t` for flows, `n` for maps.
     Time,
     State(usize),
     Param(usize),
@@ -219,7 +220,6 @@ impl Node {
         Node::Bin(op, Box::new(a), Box::new(b))
     }
 
-    /// True if [`Node::Time`] occurs anywhere.
     pub(crate) fn uses_time(&self) -> bool {
         match self {
             Node::Time => true,
@@ -228,5 +228,20 @@ impl Node {
             Node::Call(_, args) => args.iter().any(Node::uses_time),
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_words_are_longest_first_so_prefix_matching_picks_the_full_name() {
+        assert!(FUNCTION_WORDS.windows(2).all(|w| w[0].len() >= w[1].len()));
+    }
+
+    #[test]
+    fn every_function_word_names_a_function() {
+        assert!(FUNCTION_WORDS.iter().all(|w| Func::from_name(w).is_some()));
     }
 }

@@ -1,19 +1,17 @@
-// Left panel: the system as the user wrote it (EquationEditor), what we inferred
-// from it (InferenceChips), its parameters (ParamSlider rows) and its initial
-// conditions. Markup follows the design system components of the same names.
-
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { Diagnostic } from "../api/types";
-import { MathField, latexToText, textToLatex } from "../math/MathField";
+import type { Diagnostic, InputFormat } from "../api/types";
+import { MathField } from "../math/MathField";
 import { Tex } from "../math/Tex";
 import { firstOrderDisplay, fmt, diagnosticText } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import type { InitialCondition, ParamState } from "../state/model";
 import { IconClose, IconError, IconInfo, IconPlus, IconTrajectoryAdd, IconTrash, IconWarning } from "./icons";
 import { tipDismiss } from "./Chrome";
-import { IconButton } from "./controls";
+import { IconButton, parseNumber as parseNum } from "./controls";
 import { focusAfterTrajectoryDelete, focusLater, neighbourAfterDelete } from "./focus";
 import { PanelSection, useSections } from "./PanelSection";
+import { diagnosticLine } from "./diagnostics";
+import { startPointParts } from "./startPoint";
 
 interface Props {
   state: StudioState;
@@ -21,22 +19,17 @@ interface Props {
 }
 
 export function SystemPanel({ state, actions }: Props) {
-  /** The parameter whose slider has focus (its chip shows "slider focused"). */
   const [currentParam, setCurrentParam] = useState<string | null>(null);
   const [open, setOpen] = useSections<"params" | "ics">(SECTIONS_KEY, {
     params: true,
-    // Long lists start closed (PanelSection guideline).
     ics: state.ics.length <= 5,
   });
-  // Selecting a trajectory on the plot opens the list that shows it.
   const selIc = state.selection?.kind === "ic" ? state.selection.id : null;
   useEffect(() => {
     if (selIc !== null) setOpen("ics", true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selIc]);
+  }, [selIc, setOpen]);
   return (
     <aside className="panel panel-left ds-panel-section-panel ds-panel-section-panel--left" aria-label="System">
-      {/* The equations never fold: the editor is the panel's reason to exist. */}
       <section className="ds-panel-section sys-top" aria-label="Equations">
         <EquationEditor state={state} actions={actions} />
         <InferenceChips state={state} currentParam={currentParam} />
@@ -53,28 +46,10 @@ export function SystemPanel({ state, actions }: Props) {
   );
 }
 
-/* ------------------------------------------------------------------ shared */
-
 const SECTIONS_KEY = "separatrix.system.sections";
 
-/** Fixed decimals with the true minus sign, and never "−0.00". */
-function dec(v: number, places: number): string {
-  if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  const s = v.toFixed(places);
-  return (Number(s) === 0 ? (0).toFixed(places) : s).replace(/^-/, "−");
-}
-
-/** A number as shown at rest: up to `digits` significant digits, real minus sign. */
 function fmtNum(v: number, digits = 4): string {
   return fmt(v, digits).replace(/^-/, "−");
-}
-
-/** Parse what a person types into a number field: `-`, `−`, `pi`, `π`, `1e-6`. */
-function parseNum(s: string): number {
-  const t = s.trim().replace(/−/g, "-").toLowerCase();
-  if (t === "pi" || t === "π") return Math.PI;
-  if (t === "-pi" || t === "-π") return -Math.PI;
-  return t === "" ? NaN : Number(t);
 }
 
 const SEVERITY_WORD: Record<Diagnostic["severity"], string> = {
@@ -90,7 +65,6 @@ function SeverityIcon({ severity }: { severity: Diagnostic["severity"] }) {
   return <IconInfo className={cls} />;
 }
 
-/** One Diagnostic: icon + severity word + message (compact under a line, block elsewhere). */
 function DiagnosticItem({
   d,
   variant,
@@ -105,8 +79,7 @@ function DiagnosticItem({
   return (
     <li
       id={id}
-      // `diag <severity>` is kept for the e2e checks.
-      className={`ds-diagnostic ds-diagnostic--${variant} ds-diagnostic--${d.severity} diag ${d.severity}`}
+      className={`ds-diagnostic ds-diagnostic--${variant} ds-diagnostic--${d.severity}`}
     >
       <SeverityIcon severity={d.severity} />
       <span className="ds-diagnostic-body">
@@ -118,57 +91,13 @@ function DiagnosticItem({
   );
 }
 
-/* ------------------------------------------------------------------ equations */
-
-/**
- * Which equation line a diagnostic points at. Spans are byte offsets into the
- * compiled source: the non-empty lines joined with "\n". Returns -1 if unknown.
- */
-function diagnosticLine(d: Diagnostic, lines: string[]): number {
-  if (!d.span) return -1;
-  const enc = new TextEncoder();
-  let offset = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === "") continue;
-    const end = offset + enc.encode(lines[i]).length;
-    if (d.span[0] <= end) return i;
-    offset = end + 1;
-  }
-  return -1;
-}
-
-type InputMode = "latex" | "text";
-const MODE_KEY = "separatrix.inputMode";
-
-function readMode(): InputMode {
-  try {
-    return localStorage.getItem(MODE_KEY) === "text" ? "text" : "latex";
-  } catch {
-    return "latex";
-  }
-}
-
-/** At most this many messages sit under one line; the rest go to the list at the end. */
 const MAX_PER_LINE = 2;
 
 function EquationEditor({ state, actions }: Props) {
-  const [mode, setModeState] = useState<InputMode>(readMode);
+  const mode = state.format;
   const [focusedLine, setFocusedLine] = useState<number | null>(null);
-  /** Text-mode drafts: what the person typed, valid while the stored LaTeX is what it produced. */
-  const [drafts, setDrafts] = useState<Record<number, { text: string; latex: string }>>({});
-  /** A line created by Enter or "Add equation", to focus once it is rendered. */
   const focusNext = useRef<number | null>(null);
   const textRefs = useRef(new Map<number, HTMLInputElement>());
-
-  const setMode = (m: InputMode) => {
-    setModeState(m);
-    setDrafts({});
-    try {
-      localStorage.setItem(MODE_KEY, m);
-    } catch {
-      /* storage unavailable: the choice lasts for this session */
-    }
-  };
 
   const addLine = (afterId?: number) => {
     focusNext.current = actions.addEquation(afterId);
@@ -177,7 +106,6 @@ function EquationEditor({ state, actions }: Props) {
   useEffect(() => {
     const id = focusNext.current;
     if (id === null) return;
-    // LaTeX mode: the new MathField focuses itself (autoFocus on an empty line).
     if (mode === "latex") {
       focusNext.current = null;
       return;
@@ -189,21 +117,23 @@ function EquationEditor({ state, actions }: Props) {
     }
   });
 
-  const latexes = state.equations.map((l) => l.latex);
-  const located = state.diagnostics.map((d) => ({ d, line: diagnosticLine(d, latexes) }));
+  const sources = state.equations.map((l) => l.source);
+  const located = state.diagnostics.map((d) => ({ d, line: diagnosticLine(d, sources) }));
   const general: { d: Diagnostic; line: number }[] = located.filter((x) => x.line < 0);
   const single = state.equations.length === 1;
 
   const lines = state.equations.map((line, i) => {
+    const note = state.conversionNotes[line.id];
     const all = located.filter((x) => x.line === i).map((x) => x.d);
-    const here = all.slice(0, MAX_PER_LINE);
-    for (const d of all.slice(MAX_PER_LINE)) general.push({ d, line: i });
+    const here: Diagnostic[] = [...(note ? [{ severity: "info" as const, message: note }] : []), ...all].slice(
+      0,
+      MAX_PER_LINE,
+    );
+    for (const d of all.slice(MAX_PER_LINE - (note ? 1 : 0))) general.push({ d, line: i });
     const hasError = all.some((d) => d.severity === "error");
     const diagIds = here.map((_, k) => `eq-${line.id}-d${k}`);
     const label = `Equation ${i + 1}`;
     const describedBy = diagIds.length ? diagIds.join(" ") : undefined;
-    const draft = drafts[line.id];
-    const text = draft && draft.latex === line.latex ? draft.text : latexToText(line.latex);
     const focused = focusedLine === line.id;
     return (
       <li
@@ -217,14 +147,14 @@ function EquationEditor({ state, actions }: Props) {
         </span>
         {mode === "latex" ? (
           <MathField
-            value={line.latex}
+            value={line.source}
             onChange={(latex) => actions.setEquation(line.id, latex)}
             onEnter={() => addLine(line.id)}
             onFocusChange={(f) => setFocusedLine((cur) => (f ? line.id : cur === line.id ? null : cur))}
             placeholder={i === 0 ? "\\dot{x}=" : ""}
             ariaLabel={label}
             ariaDescribedBy={describedBy}
-            autoFocus={line.latex === ""}
+            autoFocus={line.source === ""}
             invalid={hasError}
           />
         ) : (
@@ -241,13 +171,8 @@ function EquationEditor({ state, actions }: Props) {
             autoComplete="off"
             autoCapitalize="off"
             placeholder={i === 0 ? "x' =" : undefined}
-            value={text}
-            onChange={(e) => {
-              const t = e.target.value;
-              const latex = textToLatex(t);
-              setDrafts((d) => ({ ...d, [line.id]: { text: t, latex } }));
-              actions.setEquation(line.id, latex);
-            }}
+            value={line.source}
+            onChange={(e) => actions.setEquation(line.id, e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -265,7 +190,6 @@ function EquationEditor({ state, actions }: Props) {
             type="button"
             className="ds-icon-button ds-icon-button--sm ds-equation-editor-remove"
             onClick={() => {
-              // Keep the keyboard user's place: the next line, else the previous one.
               const ids = state.equations.map((l) => l.id);
               const next = neighbourAfterDelete(ids, i);
               actions.removeEquation(line.id);
@@ -298,7 +222,7 @@ function EquationEditor({ state, actions }: Props) {
     <div className={"ds-equation-editor" + (mode === "text" ? " ds-equation-editor--text" : "")}>
       <header className="ds-equation-editor-head">
         <h2 className="ds-equation-editor-title heading">Equations</h2>
-        <ModeSwitch mode={mode} onChange={setMode} />
+        <ModeSwitch mode={mode} disabled={state.converting} onChange={(m) => void actions.setFormat(m)} />
       </header>
       <ol className="ds-equation-editor-lines">{lines}</ol>
       <div className="ds-equation-editor-foot">
@@ -320,17 +244,25 @@ function EquationEditor({ state, actions }: Props) {
   );
 }
 
-/** LaTeX | Text: a small SegmentedControl, one tab stop, arrow keys move. */
-function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMode) => void }) {
-  const refs = useRef<Record<InputMode, HTMLButtonElement | null>>({ latex: null, text: null });
-  const options: { value: InputMode; label: string; title: string }[] = [
+function ModeSwitch({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: InputFormat;
+  disabled: boolean;
+  onChange: (m: InputFormat) => void;
+}) {
+  const refs = useRef<Record<InputFormat, HTMLButtonElement | null>>({ latex: null, text: null });
+  const options: { value: InputFormat; label: string; title: string }[] = [
     { value: "latex", label: "LaTeX", title: "Type maths as you would write it (MathLive)" },
     { value: "text", label: "Text", title: "Plain text: x' = x*(3 - x - 2y)" },
   ];
   const onKey = (e: KeyboardEvent) => {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
-    const next: InputMode =
+    if (disabled) return;
+    const next: InputFormat =
       e.key === "Home" ? "latex" : e.key === "End" ? "text" : mode === "latex" ? "text" : "latex";
     onChange(next);
     refs.current[next]?.focus();
@@ -340,6 +272,7 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
       className="ds-segmented ds-segmented--sm ds-equation-editor-mode"
       role="radiogroup"
       aria-label="Input mode"
+      aria-busy={disabled || undefined}
       onKeyDown={onKey}
     >
       {options.map((o) => (
@@ -353,8 +286,11 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
           role="radio"
           aria-checked={mode === o.value}
           tabIndex={mode === o.value ? 0 : -1}
+          aria-disabled={disabled || undefined}
           data-tooltip={o.title}
-          onClick={() => onChange(o.value)}
+          onClick={() => {
+            if (!disabled) onChange(o.value);
+          }}
         >
           {o.label}
         </button>
@@ -363,14 +299,11 @@ function ModeSwitch({ mode, onChange }: { mode: InputMode; onChange: (m: InputMo
   );
 }
 
-/* ------------------------------------------------------------------ inference */
-
 const sliderId = (name: string) => `param-slider-${name}`;
 const chipId = (name: string) => `param-chip-${name}`;
 
 function InferenceChips({ state, currentParam }: { state: StudioState; currentParam: string | null }) {
   const sys = state.compiled;
-  // Hidden while the equations do not compile: no stale chips next to an error.
   if (!sys || !state.compileOk) return null;
   const kind = sys.hamiltonian ? "Hamiltonian" : sys.kind === "map" ? "Map" : "ODE";
   const kindTitle = sys.hamiltonian
@@ -381,8 +314,7 @@ function InferenceChips({ state, currentParam }: { state: StudioState; currentPa
   const quals = [`${sys.states.length}D`];
   if (sys.kind !== "map" && !sys.hamiltonian) quals.push(sys.autonomous ? "autonomous" : "non-autonomous");
   const isMap = sys.kind === "map";
-  const firstOrder =
-    sys.hamiltonian || sys.equationsLatex.length !== state.equations.filter((e) => e.latex.trim()).length;
+  const firstOrder = sys.hamiltonian || sys.states.some((s) => s.derived);
 
   const goToSlider = (name: string) => {
     const el = document.getElementById(sliderId(name));
@@ -461,8 +393,6 @@ function InferenceChips({ state, currentParam }: { state: StudioState; currentPa
   );
 }
 
-/* ------------------------------------------------------------------ parameters */
-
 function ParamsSection({
   params,
   actions,
@@ -491,7 +421,6 @@ function ParamsSection({
 
 type Hint = { kind: "info" | "error"; text: string } | null;
 
-/** One ParamSlider row: name, slider, exact value, editable range, optional hint. */
 function ParamRow({
   p,
   actions,
@@ -526,7 +455,6 @@ function ParamRow({
     };
   }, [dragging]);
 
-  /** Set the value; a value outside the range widens it (never clamped), and says so. */
   const commitValue = useCallback(
     (v: number, announce: boolean) => {
       const rounded = Number(v.toPrecision(12));
@@ -581,7 +509,6 @@ function ParamRow({
   };
 
   const commitDraft = (s: string) => {
-    // Focus shows the value at full precision; leaving it untouched changes nothing.
     if (s === fmt(p.value, 10)) {
       setValueInvalid(false);
       return true;
@@ -602,7 +529,8 @@ function ParamRow({
     setBoundDraft(fmt(which === "min" ? p.min : p.max, 8));
     setBoundInvalid(false);
   };
-  const endBound = (commit: boolean) => {
+  /** Close the bound editor; `refocus` puts focus back on its button (not after a blur, which moved it elsewhere). */
+  const endBound = (commit: boolean, refocus = true) => {
     const which = bound;
     if (!which) return;
     if (commit) {
@@ -626,7 +554,7 @@ function ParamRow({
     setHint(null);
     setBound(null);
     setBoundInvalid(false);
-    requestAnimationFrame(() => boundRefs.current[which]?.focus());
+    if (refocus) requestAnimationFrame(() => boundRefs.current[which]?.focus());
   };
 
   const describedBy = hint ? hintId : undefined;
@@ -649,11 +577,10 @@ function ParamRow({
           onChange={(e) => setBoundDraft(e.target.value)}
           onBlur={() => {
             if (bound === which) {
-              // Blur commits; an invalid bound reverts so the slider keeps a usable range.
               const v2 = parseNum(boundDraft);
               const lo = which === "min" ? v2 : p.min;
               const hi = which === "max" ? v2 : p.max;
-              if (Number.isFinite(v2) && lo < hi) endBound(true);
+              if (Number.isFinite(v2) && lo < hi) endBound(true, false);
               else {
                 setBound(null);
                 setBoundInvalid(false);
@@ -773,22 +700,17 @@ function ParamRow({
   );
 }
 
-/* ------------------------------------------------------------------ initial conditions */
-
-/**
- * `(x₀, y₀, z₀) =` (typeset, so θ̇₀ keeps its dot) and `(0.00, 1.00, 0.00)`
- * for one initial condition, as TrajectoryList writes a start point.
- */
 function icParts(ic: InitialCondition, state: StudioState): { nameLatex: string; value: string } {
   const sys = state.compiled;
   if (!sys) return { nameLatex: "", value: "" };
   const withTime =
     sys.kind === "ode" &&
     (!sys.autonomous || state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time");
-  const names = [...(withTime ? ["t"] : []), ...sys.states.map((s) => s.latex)].map((n) => `${n}_0`);
-  const vals = [...(withTime ? [ic.t0] : []), ...ic.x0].map((v) => dec(v, 2));
-  if (names.length === 1) return { nameLatex: `${names[0]} =`, value: vals[0] };
-  return { nameLatex: `(${names.join(", ")}) =`, value: `(${vals.join(", ")})` };
+  return startPointParts(
+    sys.states.map((s) => s.latex),
+    ic.x0,
+    withTime ? ic.t0 : null,
+  );
 }
 
 function IcSection({ state, actions, open, onToggle }: Props & { open: boolean; onToggle: (open: boolean) => void }) {

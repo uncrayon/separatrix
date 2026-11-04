@@ -21,6 +21,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test numerical crates
         run: cargo test --workspace --exclude separatrix --release
+      - name: Formatting
+        if: matrix.os == 'ubuntu-22.04'
+        run: cargo fmt --all -- --check
       - name: Clippy
         if: matrix.os == 'ubuntu-22.04'
         run: cargo clippy --workspace --exclude separatrix --all-targets -- -D warnings
@@ -48,3 +51,5 @@ jobs:
           npm run build
       - name: Tauri crate
         run: cargo build -p separatrix
+      - name: IPC TypeScript bindings are up to date
+        run: cargo test -p separatrix --lib typescript_bindings_are_up_to_date

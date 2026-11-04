@@ -1,18 +1,12 @@
-//! Accuracy and behaviour tests for `integrate` / `integrate_with_events`.
-
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use dyn_core::{FnField, SystemKind};
 use dyn_solve::*;
 
-// ----------------------------------------------------------------- systems
-
-/// x' = -k x
 fn decay() -> FnField {
     FnField::new(1, 1, SystemKind::Ode, |_t, x, p, out| out[0] = -p[0] * x[0])
 }
 
-/// x' = v, v' = -x  (x = cos t, v = -sin t from (1, 0))
 fn oscillator() -> FnField {
     FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = x[1];
@@ -59,7 +53,39 @@ fn max_abs_diff(a: &[f64], b: &[f64]) -> f64 {
         .fold(0.0, f64::max)
 }
 
-// ---------------------------------------------------------------- accuracy
+fn x_squared() -> FnField {
+    FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0] * x[0])
+}
+
+fn exp_growth() -> FnField {
+    FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0].exp())
+}
+
+fn forced_decay() -> FnField {
+    FnField::new(1, 0, SystemKind::Ode, |t, x, _p, out| {
+        out[0] = -x[0] + t.sin()
+    })
+    .non_autonomous()
+}
+
+/// Solution of `x' = -x + sin t` with `x(0) = 2`.
+fn forced_decay_exact(t: f64) -> f64 {
+    0.5 * (t.sin() - t.cos()) + 2.5 * (-t).exp()
+}
+
+/// `x' = -x^{1/2} - 1`, which reaches 0 and then takes the root of a
+/// negative number.
+fn sqrt_into_negative() -> FnField {
+    FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = -x[0].sqrt() - 1.0
+    })
+}
+
+fn pole_at_two(m: i32) -> FnField {
+    FnField::new(1, 0, SystemKind::Ode, move |_t, x, _p, out| {
+        out[0] = 1.0 / (2.0 - x[0]).powi(m)
+    })
+}
 
 #[test]
 fn exponential_decay_matches_exact_solution() {
@@ -102,7 +128,6 @@ fn harmonic_oscillator_returns_after_one_period() {
     }
 }
 
-/// Global error at t = 1 for the oscillator with step h.
 fn oscillator_error(method: Method, h: f64) -> f64 {
     let sol = integrate(
         &oscillator(),
@@ -153,12 +178,10 @@ fn dopri5_global_error_scales_with_tolerance() {
             Sampling::Steps,
         );
         let err = max_abs_diff(&final_state(&sol), &exact);
-        // Error is of the order of the tolerance...
         assert!(
             err < 100.0 * tol && err > 1e-4 * tol,
             "tol {tol}: err {err}"
         );
-        // ...and shrinks substantially when the tolerance does.
         assert!(err < prev / 10.0, "tol {tol}: err {err}, previous {prev}");
         prev = err;
     }
@@ -181,26 +204,34 @@ fn dopri5_statistics_are_sensible() {
     assert_eq!(sol.len(), s.accepted + 1);
     assert!(s.accepted > 5 && s.accepted < 200, "{s:?}");
     assert!(s.rejected <= s.accepted / 4 + 2, "{s:?}");
-    // FSAL: 6 evaluations per attempt, plus f(t0) and one for the initial-step guess.
     assert_eq!(s.evals, 6 * (s.accepted + s.rejected) + 2, "{s:?}");
+}
 
-    // Tighter tolerance => more steps.
-    let tight = integrate(
-        &f,
-        &[1.0],
-        0.0,
-        &[1.0],
-        10.0,
-        &dopri(1e-10, 1e-13),
-        Sampling::Steps,
-    );
+#[test]
+fn dopri5_tighter_tolerance_takes_more_steps() {
+    let f = decay();
+    let run = |rtol, atol| {
+        integrate(
+            &f,
+            &[1.0],
+            0.0,
+            &[1.0],
+            10.0,
+            &dopri(rtol, atol),
+            Sampling::Steps,
+        )
+        .stats
+    };
+    let (loose, tight) = (run(1e-6, 1e-9), run(1e-10, 1e-13));
     assert!(
-        tight.stats.accepted > 3 * s.accepted,
-        "{:?} vs {s:?}",
-        tight.stats
+        tight.accepted > 3 * loose.accepted,
+        "{tight:?} vs {loose:?}"
     );
+}
 
-    // A stiff-ish start forces rejections but must still finish.
+#[test]
+fn dopri5_too_large_user_step_is_rejected_first() {
+    let f = decay();
     let sol = integrate(
         &f,
         &[50.0],
@@ -243,7 +274,6 @@ fn fixed_step_statistics() {
 #[test]
 fn dense_output_is_accurate_at_midpoints() {
     let f = oscillator();
-    // Dopri5 4th-order continuous extension.
     let o = dopri(1e-9, 1e-12);
     let mut s = Stepper::new(&f, &[], 0.0, &[1.0, 0.0], 20.0, &o);
     let mut out = [0.0; 2];
@@ -257,7 +287,6 @@ fn dense_output_is_accurate_at_midpoints() {
     }
     assert!(worst < 1e-7, "dopri5 dense error {worst}");
 
-    // Hermite interpolation between RK4 steps: O(h^4).
     let mut s = Stepper::new(&f, &[], 0.0, &[1.0, 0.0], 5.0, &fixed(Method::Rk4, 0.05));
     let mut worst: f64 = 0.0;
     while s.step() == StepOutcome::Accepted {
@@ -304,7 +333,6 @@ fn uniform_sampling_count_and_endpoints() {
         }
     }
 
-    // Degenerate cases.
     let sol = integrate(
         &f,
         &[],
@@ -363,7 +391,6 @@ fn backward_integration_round_trip() {
         final_state(&bwd)
     );
 
-    // Fixed step backwards: x' = -x from t = 1 back to 0 grows by e.
     let sol = integrate(
         &decay(),
         &[1.0],
@@ -379,8 +406,7 @@ fn backward_integration_round_trip() {
 
 #[test]
 fn blow_up_of_x_squared() {
-    // x' = x^2, x(0) = 1  =>  x = 1/(1 - t), blows up at t = 1 (Strogatz §2.5).
-    let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = x[0] * x[0]);
+    let f = x_squared();
     let sol = integrate(
         &f,
         &[],
@@ -394,8 +420,11 @@ fn blow_up_of_x_squared() {
     let (t, x) = sol.last().unwrap();
     assert!((t - 1.0).abs() < 1e-5, "stopped at {t}");
     assert!(x[0] > BLOW_UP_THRESHOLD);
+}
 
-    // Uniform: only the grid points reached, then the blow-up point.
+#[test]
+fn blow_up_of_x_squared_on_a_uniform_grid_keeps_finite_samples() {
+    let f = x_squared();
     let sol = integrate(
         &f,
         &[],
@@ -406,13 +435,15 @@ fn blow_up_of_x_squared() {
         Sampling::Uniform(21),
     );
     assert_eq!(sol.status, Status::BlewUp);
-    // t = 0, 0.1, ..., 0.9 (and 1.0 if the numerical blow-up comes a hair late), then t ≈ 1.
     assert!(sol.len() == 11 || sol.len() == 12, "{:?}", sol.t);
     assert!(sol.x.iter().all(|v| v.is_finite()));
     assert!(sol.t.windows(2).all(|w| w[0] < w[1]));
     assert!((sol.state(9)[0] - 10.0).abs() < 1e-4);
+}
 
-    // Fixed step also stops (later, since RK4 at h = 0.01 lags behind).
+#[test]
+fn blow_up_of_x_squared_with_rk4() {
+    let f = x_squared();
     let sol = integrate(
         &f,
         &[],
@@ -456,12 +487,8 @@ fn lorenz_dopri5_agrees_with_fine_rk4() {
 
 #[test]
 fn non_autonomous_forced_decay() {
-    // x' = -x + sin t,  x(0) = x0  =>  x = (sin t - cos t)/2 + (x0 + 1/2) e^{-t}
-    let f = FnField::new(1, 0, SystemKind::Ode, |t, x, _p, out| {
-        out[0] = -x[0] + t.sin()
-    })
-    .non_autonomous();
-    let exact = |t: f64| 0.5 * (t.sin() - t.cos()) + 2.5 * (-t).exp();
+    let f = forced_decay();
+    let exact = forced_decay_exact;
     for opts in [
         dopri(1e-9, 1e-12),
         fixed(Method::Rk4, 0.01),
@@ -477,8 +504,12 @@ fn non_autonomous_forced_decay() {
             );
         }
     }
-    // And backwards from t = 15 to t = 5.
-    // (Backwards, the e^{-t} mode grows like e^{|dt|}, amplifying errors, so keep it short.)
+}
+
+#[test]
+fn non_autonomous_forced_decay_backwards_from_15_to_12() {
+    let f = forced_decay();
+    let exact = forced_decay_exact;
     let sol = integrate(
         &f,
         &[],
@@ -490,8 +521,6 @@ fn non_autonomous_forced_decay() {
     );
     assert!((final_state(&sol)[0] - exact(12.0)).abs() < 1e-7);
 }
-
-// ------------------------------------------------------------- stopping
 
 #[test]
 fn max_steps_returns_partial_solution() {
@@ -512,7 +541,6 @@ fn max_steps_returns_partial_solution() {
     assert_eq!(sol.len(), 26);
     assert!((sol.last().unwrap().0 - 0.25).abs() < 1e-12);
 
-    // Uniform: grid points reached plus the last computed point.
     let sol = integrate(
         &oscillator(),
         &[],
@@ -523,9 +551,8 @@ fn max_steps_returns_partial_solution() {
         Sampling::Uniform(101),
     );
     assert_eq!(sol.status, Status::MaxSteps);
-    assert_eq!(sol.len(), 4); // t = 0, 0.1, 0.2, 0.25
+    assert_eq!(sol.len(), 4);
 
-    // Exactly enough steps is fine.
     let o = SolverOptions {
         max_steps: 100,
         ..fixed(Method::Rk4, 0.01)
@@ -544,9 +571,6 @@ fn max_steps_returns_partial_solution() {
 
 #[test]
 fn non_finite_values_stop_the_integration() {
-    // x' = -1/(2 sqrt x), x0 = 1: (2/3) x^{3/2} = 2/3 - t/2 reaches 0 at t = 4/3 with
-    // infinite slope. Trial steps past it take sqrt of a negative number (NaN); the
-    // solver retreats and finally gives up just before t = 4/3.
     let f = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = -0.5 / x[0].sqrt()
     });
@@ -567,7 +591,10 @@ fn non_finite_values_stop_the_integration() {
     assert!(sol.x.iter().all(|v| v.is_finite()));
     let t_end = sol.last().unwrap().0;
     assert!((t_end - 4.0 / 3.0).abs() < 1e-4, "{t_end}");
-    // sqrt of a negative number with a fixed-step method.
+}
+
+#[test]
+fn rk4_root_of_negative_is_non_finite() {
     let h = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = x[0].sqrt() - 1.0
     });
@@ -582,7 +609,10 @@ fn non_finite_values_stop_the_integration() {
     );
     assert_eq!(sol.status, Status::NonFinite);
     assert!(sol.x.iter().all(|v| v.is_finite()));
+}
 
+#[test]
+fn nan_initial_state_is_non_finite_and_empty() {
     let sol = integrate(
         &decay(),
         &[1.0],
@@ -594,8 +624,10 @@ fn non_finite_values_stop_the_integration() {
     );
     assert_eq!(sol.status, Status::NonFinite);
     assert!(sol.is_empty());
+}
 
-    // f is NaN at the very start.
+#[test]
+fn nan_field_keeps_only_the_start_sample() {
     let g = FnField::new(1, 0, SystemKind::Ode, |_t, _x, _p, out| out[0] = f64::NAN);
     let sol = integrate(
         &g,
@@ -612,8 +644,6 @@ fn non_finite_values_stop_the_integration() {
 
 #[test]
 fn step_too_small_near_a_singularity() {
-    // x' = 1/sqrt(1 - t): x = 2 - 2 sqrt(1 - t) reaches the finite value 2
-    // with infinite slope at t = 1. Adaptive steps collapse there.
     let f = FnField::new(1, 0, SystemKind::Ode, |t, _x, _p, out| {
         out[0] = 1.0 / (1.0 - t).sqrt()
     })
@@ -639,9 +669,6 @@ fn step_too_small_near_a_singularity() {
 
 #[test]
 fn logarithmic_blow_up_is_blew_up() {
-    // x' = 1/(1 - t): x = -ln(1 - t) → ∞ as t → 1, but only like a
-    // logarithm, so |x| stays near 30 when the adaptive steps collapse.
-    // It is the same solution as x' = e^x from 0, a finite-time blow-up.
     let f = FnField::new(1, 0, SystemKind::Ode, |t, _x, _p, out| {
         out[0] = 1.0 / (1.0 - t)
     })
@@ -655,11 +682,14 @@ fn logarithmic_blow_up_is_blew_up() {
         &dopri(1e-8, 1e-10),
         Sampling::Steps,
     );
-    assert_eq!(sol.status, Status::BlewUp, "at t = {}", sol.last().unwrap().0);
+    assert_eq!(
+        sol.status,
+        Status::BlewUp,
+        "at t = {}",
+        sol.last().unwrap().0
+    );
     assert!((sol.last().unwrap().0 - 1.0).abs() < 1e-6);
 }
-
-// ----------------------------------------------------------------- events
 
 fn zero_of_x(direction: Direction) -> Event {
     Event {
@@ -685,7 +715,6 @@ fn events_locate_zeros_of_the_oscillator() {
     );
     assert_eq!(sol.status, Status::Completed);
     assert_eq!(sol.len(), 50);
-    // Zeros of cos t at π/2 + kπ below 20: k = 0..=5.
     assert_eq!(hits.len(), 6);
     for (k, hit) in hits.iter().enumerate() {
         let exact = FRAC_PI_2 + k as f64 * PI;
@@ -696,9 +725,7 @@ fn events_locate_zeros_of_the_oscillator() {
         );
         assert!(hit.x[0].abs() < 1e-9);
         assert_eq!(hit.event, 0);
-        // cos t falls through zero at π/2, rises at 3π/2, ...
         assert_eq!(hit.rising, k % 2 == 1);
-        // At the crossing |v| = 1.
         assert!((hit.x[1].abs() - 1.0).abs() < 1e-9);
     }
 }
@@ -710,7 +737,6 @@ fn events_direction_filtering_and_multiple_events() {
     let events = [
         zero_of_x(Direction::Rising),
         zero_of_x(Direction::Falling),
-        // v = 0 crossings at kπ (excluding t = 0 where g starts at exactly 0).
         Event {
             g: Box::new(|_t, x| x[1]),
             direction: Direction::Both,
@@ -736,25 +762,23 @@ fn events_direction_filtering_and_multiple_events() {
     let rising = times(0);
     let falling = times(1);
     let v_zero = times(2);
-    assert_eq!(rising.len(), 1); // 3π/2
+    assert_eq!(rising.len(), 1);
     assert!((rising[0] - 1.5 * PI).abs() < 1e-9);
-    assert_eq!(falling.len(), 2); // π/2, 5π/2
+    assert_eq!(falling.len(), 2);
     assert!((falling[0] - FRAC_PI_2).abs() < 1e-9);
     assert!((falling[1] - 2.5 * PI).abs() < 1e-9);
     assert!(hits.iter().filter(|h| h.event == 0).all(|h| h.rising));
     assert!(hits.iter().filter(|h| h.event == 1).all(|h| !h.rising));
-    assert_eq!(v_zero.len(), 3); // π, 2π, 3π
+    assert_eq!(v_zero.len(), 3);
     for (k, t) in v_zero.iter().enumerate() {
         assert!((t - (k + 1) as f64 * PI).abs() < 1e-9);
     }
-    // Hits come in time order.
     assert!(hits.windows(2).all(|w| w[0].t <= w[1].t));
 }
 
 #[test]
-fn events_with_fixed_step_and_backwards() {
+fn events_with_fixed_step() {
     let f = oscillator();
-    // RK4 + Hermite: the root is as accurate as the interpolant (~h^4).
     let events = [zero_of_x(Direction::Both)];
     let (_, hits) = integrate_with_events(
         &f,
@@ -769,10 +793,12 @@ fn events_with_fixed_step_and_backwards() {
     assert_eq!(hits.len(), 2);
     assert!((hits[0].t - FRAC_PI_2).abs() < 1e-8);
     assert!((hits[1].t - 1.5 * PI).abs() < 1e-8);
+}
 
-    // Backwards from t = 0: x = cos t is zero at -π/2 and -3π/2; hits are
-    // reported in integration order (decreasing t). Going backwards cos t
-    // goes from 1 down through 0 at -π/2, so that crossing is "falling".
+#[test]
+fn events_backwards_with_dopri5() {
+    let f = oscillator();
+    let events = [zero_of_x(Direction::Both)];
     let (_, hits) = integrate_with_events(
         &f,
         &[],
@@ -815,4 +841,178 @@ fn integrate_and_integrate_with_no_events_agree() {
     );
     assert_eq!(a, b);
     assert!(hits.is_empty());
+}
+
+#[test]
+fn fixed_step_exponential_blow_up_is_blew_up() {
+    let f = exp_growth();
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        for h in [0.1, 0.01, 0.001] {
+            for sampling in [Sampling::Steps, Sampling::Uniform(501)] {
+                let sol = integrate(&f, &[], 0.0, &[0.0], 5.0, &fixed(method, h), sampling);
+                let (t, x) = sol.last().unwrap();
+                assert_eq!(
+                    sol.status,
+                    Status::BlewUp,
+                    "{method:?}, h = {h}: stopped at t = {t}, x = {x:?}"
+                );
+                assert!(sol.x.iter().all(|v| v.is_finite()), "{method:?}, h = {h}");
+                assert!(t > 0.9 && t < 1.5, "{method:?}, h = {h}: t = {t}");
+                if sampling == Sampling::Steps {
+                    assert!(x[0] > 5.0, "{method:?}, h = {h}: x = {x:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn fixed_step_backwards_exponential_blow_up_is_blew_up() {
+    let g = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = (-x[0]).exp()
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &g,
+            &[],
+            0.0,
+            &[0.0],
+            -5.0,
+            &fixed(method, 0.01),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::BlewUp, "{method:?}");
+        let (t, x) = sol.last().unwrap();
+        assert!(t < -0.9 && t > -1.1, "{method:?}: t = {t}");
+        assert!(x[0] < -5.0, "{method:?}: x = {x:?}");
+    }
+}
+
+#[test]
+fn fixed_step_overflow_driven_by_another_component_is_blew_up() {
+    let k = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = x[1].exp();
+        out[1] = 1.0;
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &k,
+            &[],
+            0.0,
+            &[0.0, 700.0],
+            20.0,
+            &fixed(method, 0.1),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::BlewUp, "{method:?}");
+    }
+}
+
+#[test]
+fn fixed_step_nan_is_still_non_finite() {
+    let f = sqrt_into_negative();
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        for h in [0.1, 0.01] {
+            let sol = integrate(
+                &f,
+                &[],
+                0.0,
+                &[1.0],
+                10.0,
+                &fixed(method, h),
+                Sampling::Steps,
+            );
+            assert_eq!(sol.status, Status::NonFinite, "{method:?}, h = {h}");
+            assert!(sol.x.iter().all(|v| v.is_finite()));
+        }
+    }
+}
+
+#[test]
+fn fixed_step_nan_in_a_growing_system_is_non_finite() {
+    let g = FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
+        out[0] = x[0];
+        out[1] = (5.0 - x[0]).sqrt();
+    });
+    for method in [Method::Euler, Method::Heun, Method::Rk4] {
+        let sol = integrate(
+            &g,
+            &[],
+            0.0,
+            &[1.0, 0.0],
+            10.0,
+            &fixed(method, 0.01),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "{method:?}");
+    }
+}
+
+#[test]
+fn fixed_step_landing_on_the_pole_of_inverse_x_is_non_finite() {
+    let k = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, out| out[0] = -1.0 / x[0]);
+    let sol = integrate(
+        &k,
+        &[],
+        0.0,
+        &[1.0],
+        5.0,
+        &fixed(Method::Euler, 1.0),
+        Sampling::Steps,
+    );
+    assert_eq!(sol.status, Status::NonFinite);
+    assert_eq!(sol.x, vec![1.0]);
+}
+
+#[test]
+fn fixed_step_on_a_finite_pole_is_not_blew_up() {
+    for m in [1, 3] {
+        let pole = pole_at_two(m);
+        for method in [Method::Euler, Method::Heun, Method::Rk4] {
+            let sol = integrate(
+                &pole,
+                &[],
+                0.0,
+                &[1.0],
+                5.0,
+                &fixed(method, 1.0),
+                Sampling::Steps,
+            );
+            assert_ne!(
+                sol.status,
+                Status::BlewUp,
+                "m = {m}, {method:?}: {:?}",
+                sol.x
+            );
+            assert!(sol.x.iter().all(|v| v.is_finite()));
+        }
+    }
+}
+
+#[test]
+fn fixed_step_landing_on_a_finite_pole_is_non_finite() {
+    for m in [1, 3] {
+        let pole = pole_at_two(m);
+        let sol = integrate(
+            &pole,
+            &[],
+            0.0,
+            &[1.0],
+            5.0,
+            &fixed(Method::Euler, 1.0),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "m = {m}");
+        assert_eq!(sol.x, vec![1.0], "m = {m}");
+        let sol = integrate(
+            &pole,
+            &[],
+            0.0,
+            &[1.0],
+            5.0,
+            &fixed(Method::Heun, 1.0),
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::NonFinite, "m = {m}");
+    }
 }

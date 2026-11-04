@@ -50,12 +50,14 @@ use events::EventTracker;
 use sampling::Recorder;
 
 /// A trajectory is stopped with [`Status::BlewUp`] as soon as any component
-/// satisfies `|x_i| > BLOW_UP_THRESHOLD` (or when an adaptive step collapses
-/// in a blow-up that is too fast to reach it, see [`Stepper::step`]).
+/// satisfies `|x_i| > BLOW_UP_THRESHOLD` (or when a blow-up is too fast to
+/// reach it: an adaptive step collapses, or a fixed step overflows; see
+/// [`Stepper::step`]).
 pub const BLOW_UP_THRESHOLD: f64 = 1e12;
 
 /// Integration method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Method {
     /// Forward Euler, order 1, fixed step. (Strogatz §2.8.)
@@ -122,6 +124,7 @@ pub enum Sampling {
 
 /// Why an integration or iteration stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
     /// Reached `t1` (or performed all iterations).
@@ -133,6 +136,14 @@ pub enum Status {
     /// while the solution is running off to infinity too fast to ever reach
     /// the threshold in double precision (e.g. `x' = x^3`, `x' = e^x`); the
     /// last point is then the last one computed. See [`Stepper::step`].
+    ///
+    /// The fixed-step methods report it too when a step overflows (`f` or a
+    /// stage becomes ±∞) on a component that is growing and `f` is still
+    /// ±∞ just short of the overflowing point, e.g. Euler on `x' = e^x`
+    /// reaching a finite `x ≈ 1e9` where `e^x = ∞`. The last finite state
+    /// computed is included. A step landing exactly on a pole at a finite
+    /// point (`x' = 1/(2 - x)^3` at 2), where `f` is finite just short of
+    /// it, is [`Status::NonFinite`] instead.
     BlewUp,
     /// `max_steps` accepted steps were taken before reaching `t1`.
     MaxSteps,
@@ -141,12 +152,14 @@ pub enum Status {
     /// such as `x' = -1/x` reaching 0; fast blow-ups are [`Status::BlewUp`]).
     StepTooSmall,
     /// The right-hand side produced NaN or infinity (e.g. `sqrt` of a
-    /// negative number, division by zero). The bad point is *not* included.
+    /// negative number, division by zero) other than by a blow-up (see
+    /// [`Status::BlewUp`]). The bad point is *not* included.
     NonFinite,
 }
 
 /// Work counters, useful to compare methods.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Stats {
     /// Accepted steps (map iterations for [`iterate_map`]).
@@ -210,12 +223,10 @@ impl Solution {
     }
 }
 
-/// `true` if every entry is finite.
 pub(crate) fn all_finite(v: &[f64]) -> bool {
     v.iter().all(|a| a.is_finite())
 }
 
-/// `true` if some entry exceeds [`BLOW_UP_THRESHOLD`] in absolute value.
 pub(crate) fn blew_up(v: &[f64]) -> bool {
     v.iter().any(|a| a.abs() > BLOW_UP_THRESHOLD)
 }
@@ -254,7 +265,7 @@ pub fn integrate(
 ///
 /// # Panics
 /// If `x0.len() != f.dim()`.
-#[allow(clippy::too_many_arguments)] // mirrors the contract in docs/contracts.md
+#[allow(clippy::too_many_arguments)]
 pub fn integrate_with_events(
     f: &dyn VectorField,
     p: &[f64],
@@ -345,8 +356,10 @@ mod tests {
             serde_json::to_string(&Status::StepTooSmall).unwrap(),
             "\"stepTooSmall\""
         );
+    }
 
-        // The UI does not send hMax: it must default.
+    #[test]
+    fn missing_h_max_takes_default() {
         let parsed: SolverOptions = serde_json::from_str(
             r#"{"method":"heun","rtol":1e-3,"atol":1e-6,"h":0.1,"maxSteps":10}"#,
         )

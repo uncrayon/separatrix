@@ -1,27 +1,8 @@
-//! Tokenizers for the two input formats.
-//!
-//! * **LaTeX** (what MathLive produces): every plain letter is its own
-//!   symbol (`xy` is `x·y`), commands such as `\sigma` or `\sin` are single
-//!   tokens, and purely visual commands (`\,`, `\left`, `\displaystyle`, …)
-//!   are dropped here so the parser never sees them.
-//! * **Text**: identifiers are whole words (`sigma`, `x_1`), `**` is a power
-//!   and scientific numbers like `1.5e-3` are allowed.
-//!
-//! Problems found while tokenizing become [`Tok::Bad`] tokens; the parser
-//! reports them for the line they are on, so one bad line does not hide
-//! errors on other lines.
-
 use crate::ast::{Func, FUNCTION_WORDS};
 use crate::InputFormat;
 
-/// Byte range `(start, end)` into the source string.
 pub(crate) type Span = (usize, usize);
 
-/// A symbol name together with how to display it.
-///
-/// `name` is the identity used everywhere ("sigma", "x_1", "theta");
-/// the LaTeX form is kept in two parts so that decorations such as dots can
-/// go on the base: `\dot{x}_{1}` rather than `\dot{x_{1}}`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SymName {
     pub name: String,
@@ -30,9 +11,12 @@ pub(crate) struct SymName {
 }
 
 impl SymName {
-    /// A symbol without subscript.
     pub(crate) fn simple(name: &str, base_latex: &str) -> SymName {
-        SymName { name: name.to_string(), base_latex: base_latex.to_string(), sub_latex: None }
+        SymName {
+            name: name.to_string(),
+            base_latex: base_latex.to_string(),
+            sub_latex: None,
+        }
     }
 
     fn with_sub(&self, base: String) -> String {
@@ -42,13 +26,10 @@ impl SymName {
         }
     }
 
-    /// Display form, e.g. `\theta_{1}`.
     pub(crate) fn latex(&self) -> String {
         self.with_sub(self.base_latex.clone())
     }
 
-    /// Display form of the `k`-th time derivative: `x`, `\dot{x}`,
-    /// `\ddot{x}`, `\dddot{x}`, `x^{(4)}`, ...
     pub(crate) fn dotted(&self, k: u32) -> String {
         let b = &self.base_latex;
         match k {
@@ -60,7 +41,6 @@ impl SymName {
         }
     }
 
-    /// Display form with an iterate index: `x_{n}`, `x_{n+1}`, `x_{1,n}`.
     pub(crate) fn map_latex(&self, index: &str) -> String {
         match &self.sub_latex {
             Some(s) => format!("{}_{{{s},{index}}}", self.base_latex),
@@ -68,26 +48,91 @@ impl SymName {
         }
     }
 
-    /// Name of the `k`-th derivative state: `x`, `x'`, `x''`, ...
+    /// `x_n` (or `x_{1,n}` for `x_1`) as a plain symbol.
+    pub(crate) fn at_index_n(&self) -> SymName {
+        SymName {
+            name: format!("{}_n", self.name),
+            base_latex: self.base_latex.clone(),
+            sub_latex: Some(match &self.sub_latex {
+                Some(l) => format!("{l},n"),
+                None => "n".to_string(),
+            }),
+        }
+    }
+
+    /// The variable whose current iterate this name is (`x` for `x_n`, `x_1`
+    /// for `x_{1,n}`), the inverse of [`SymName::at_index_n`].
+    pub(crate) fn of_index_n(&self) -> Option<SymName> {
+        let name = self.name.strip_suffix("_n")?;
+        let sub_latex = match self.sub_latex.as_deref()? {
+            "n" => None,
+            s => Some(s.strip_suffix(",n")?.to_string()),
+        };
+        Some(SymName {
+            name: name.to_string(),
+            base_latex: self.base_latex.clone(),
+            sub_latex,
+        })
+    }
+
     pub(crate) fn derived_name(&self, k: u32) -> String {
         format!("{}{}", self.name, "'".repeat(k as usize))
     }
 }
 
-/// Greek letters accepted as `\name` (LaTeX) or `name` (text).
 const GREEK: &[&str] = &[
-    "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta",
-    "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma",
-    "varsigma", "tau", "upsilon", "phi", "varphi", "chi", "psi", "omega", "Gamma", "Delta",
-    "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon", "Phi", "Psi", "Omega",
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "vartheta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "varpi",
+    "rho",
+    "varrho",
+    "sigma",
+    "varsigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "varphi",
+    "chi",
+    "psi",
+    "omega",
+    "Gamma",
+    "Delta",
+    "Theta",
+    "Lambda",
+    "Xi",
+    "Pi",
+    "Sigma",
+    "Upsilon",
+    "Phi",
+    "Psi",
+    "Omega",
 ];
+
+/// A function name typed without its backslash in LaTeX reads as a product
+/// of letters. Short names and `min`/`max` are too common as products to flag.
+fn spelled_function_is_typo(f: &str) -> bool {
+    f.len() >= 3 && !matches!(f, "min" | "max")
+}
 
 pub(crate) fn is_greek(word: &str) -> bool {
     GREEK.contains(&word)
 }
 
-/// LaTeX for one word: Greek gets a backslash, one letter stays as is,
-/// longer words are set upright.
 fn latex_word(w: &str) -> String {
     if is_greek(w) {
         format!("\\{w}")
@@ -98,8 +143,6 @@ fn latex_word(w: &str) -> String {
     }
 }
 
-/// Build a symbol from a text-mode word: `sigma` → `\sigma`, `x_1` → `x_{1}`,
-/// `omega0` → `\omega_{0}`, `k_on` → `k_{\mathrm{on}}`.
 pub(crate) fn sym_from_word(word: &str) -> SymName {
     let (base, sub) = match word.find('_') {
         Some(i) => (&word[..i], Some(&word[i + 1..])),
@@ -120,7 +163,6 @@ pub(crate) fn sym_from_word(word: &str) -> SymName {
     }
 }
 
-/// Delimiter kinds for grouping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Delim {
     Paren,
@@ -145,7 +187,6 @@ impl Delim {
     }
 }
 
-/// Token kinds shared by both formats.
 #[derive(Debug, Clone)]
 pub(crate) enum Tok {
     Num(f64),
@@ -157,39 +198,37 @@ pub(crate) enum Tok {
     Slash,
     Caret,
     Underscore,
-    /// One or more primes: `'`, `\prime`, `\doubleprime`.
     Prime(u32),
     Open(Delim),
     Close(Delim),
-    /// A bare `|`: opens or closes an absolute value depending on context.
     Pipe,
-    /// `\left|`
     AbsOpen,
-    /// `\right|`
     AbsClose,
     Comma,
     Eq,
-    /// Equation separator: newline, `;` or `\\`.
     Sep,
     Frac,
     Sqrt,
-    /// `\dot` (1), `\ddot` (2), `\dddot` (3).
+    /// `root` in text mode: `root(x, n)` is the `n`-th root, as `\sqrt[n]{x}`.
+    Root,
     Dot(u32),
     Placeholder,
-    /// Something we could not read; the message explains why.
     Bad(String),
 }
 
-/// A token and its byte span in the source.
 #[derive(Debug, Clone)]
 pub(crate) struct Token {
     pub tok: Tok,
     pub span: Span,
 }
 
-/// Split `src` into tokens.
 pub(crate) fn tokenize(src: &str, format: InputFormat) -> Vec<Token> {
-    let mut lx = Lexer { src, pos: 0, out: Vec::new(), text: format == InputFormat::Text };
+    let mut lx = Lexer {
+        src,
+        pos: 0,
+        out: Vec::new(),
+        text: format == InputFormat::Text,
+    };
     lx.run();
     lx.out
 }
@@ -213,7 +252,10 @@ impl<'s> Lexer<'s> {
     }
 
     fn push(&mut self, tok: Tok, start: usize) {
-        self.out.push(Token { tok, span: (start, self.pos) });
+        self.out.push(Token {
+            tok,
+            span: (start, self.pos),
+        });
     }
 
     fn bad(&mut self, msg: impl Into<String>, start: usize) {
@@ -290,7 +332,6 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// Number: `12`, `1.5`, `.5`; in text mode also `1.5e-3`.
     fn number(&mut self) {
         let start = self.pos;
         let b = self.bytes();
@@ -317,7 +358,6 @@ impl<'s> Lexer<'s> {
             }
         }
         if i < b.len() && b[i] == b'.' {
-            // `1.2.3`: take the whole run so the error covers it.
             while i < b.len() && (b[i].is_ascii_digit() || b[i] == b'.') {
                 i += 1;
             }
@@ -327,18 +367,17 @@ impl<'s> Lexer<'s> {
         }
         self.pos = i;
         match self.src[start..i].parse::<f64>() {
-            Ok(v) => self.push(Tok::Num(v), start),
+            Ok(v) if v.is_finite() => self.push(Tok::Num(v), start),
+            Ok(_) => self.bad("This number is too large to compute with", start),
             Err(_) => self.bad("A lone '.' isn't a number", start),
         }
     }
 
-    /// LaTeX: a single letter. Runs of letters that spell a function name
-    /// (`sin` without backslash) are almost always a typo, so flag them.
     fn letter(&mut self) {
         let start = self.pos;
         let rest = &self.src[start..];
         for f in FUNCTION_WORDS {
-            if f.len() >= 3 && rest.starts_with(f) && !matches!(*f, "min" | "max") {
+            if spelled_function_is_typo(f) && rest.starts_with(f) {
                 self.pos += f.len();
                 let dotted: Vec<String> = f.chars().map(String::from).collect();
                 self.bad(
@@ -356,7 +395,6 @@ impl<'s> Lexer<'s> {
         self.push(Tok::Ident(SymName::simple(s, s)), start);
     }
 
-    /// Text mode: a whole word, `[A-Za-z][A-Za-z0-9]*` with `_suffix` parts.
     fn word(&mut self) {
         let start = self.pos;
         let b = self.bytes();
@@ -370,10 +408,11 @@ impl<'s> Lexer<'s> {
                 i += 1;
             }
         }
-        self.pos = i;
         let w = &self.src[start..i];
+        self.pos = i;
         let tok = match Func::from_name(w) {
             Some(f) => Tok::Func(f),
+            None if w == "root" => Tok::Root,
             None => Tok::Ident(sym_from_word(w)),
         };
         self.push(tok, start);
@@ -385,8 +424,6 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// Read `{...}` (with nesting) and return the inside, or `None` if the
-    /// next non-space character is not `{`.
     fn read_group(&mut self) -> Option<&'s str> {
         let save = self.pos;
         self.skip_spaces();
@@ -416,7 +453,6 @@ impl<'s> Lexer<'s> {
         None
     }
 
-    /// Read the letters of a command name after the backslash.
     fn command_name(&mut self) -> &'s str {
         let start = self.pos;
         while matches!(self.peek_byte(), Some(c) if c.is_ascii_alphabetic()) {
@@ -425,7 +461,6 @@ impl<'s> Lexer<'s> {
         &self.src[start..self.pos]
     }
 
-    /// A backslash command.
     fn command(&mut self) {
         let start = self.pos;
         self.pos += 1;
@@ -489,7 +524,18 @@ impl<'s> Lexer<'s> {
                     self.pos += 1;
                 }
                 match self.read_group() {
-                    Some(content) => named_group(content),
+                    Some(content) => match named_group(content) {
+                        Tok::Ident(s) if name == "operatorname" && s.name.len() > 1 => {
+                            Tok::Bad(format!(
+                                "{0} isn't a supported function. Known functions: sin, cos, \
+                                 tan, exp, ln, sqrt, abs, sign, sinh, cosh, tanh, arcsin, \
+                                 arccos, arctan, min, max. For a parameter or variable named \
+                                 {0}, write \\mathrm{{{0}}}",
+                                s.name
+                            ))
+                        }
+                        tok => tok,
+                    },
                     None => Tok::Bad(format!("\\{name} must be followed by {{…}}")),
                 }
             }
@@ -515,7 +561,6 @@ impl<'s> Lexer<'s> {
         self.push(tok, start);
     }
 
-    /// `\left(`, `\right)`, `\left|`, `\left.` ...
     fn left_right(&mut self, left: bool, start: usize) {
         self.skip_spaces();
         let Some(c) = self.peek_byte() else {
@@ -527,8 +572,10 @@ impl<'s> Lexer<'s> {
             match self.peek_byte() {
                 Some(c) if c.is_ascii_alphabetic() => self.command_name(),
                 Some(_) => {
+                    // A whole character: `\left\θ` must not be cut inside `θ`.
                     let s = self.pos;
-                    self.pos += 1;
+                    let ch = self.src[s..].chars().next().unwrap_or(' ');
+                    self.pos += ch.len_utf8();
                     &self.src[s..self.pos]
                 }
                 None => "",
@@ -556,16 +603,18 @@ impl<'s> Lexer<'s> {
         self.push(tok, start);
     }
 
-    /// `\begin{cases}` / `\end{aligned}` etc. are layout only.
     fn environment(&mut self, begin: bool, start: usize) {
         let Some(env) = self.read_group() else {
-            self.bad("\\begin / \\end must name an environment, like \\begin{cases}", start);
+            self.bad(
+                "\\begin / \\end must name an environment, like \\begin{cases}",
+                start,
+            );
             return;
         };
         match env.trim().trim_end_matches('*') {
-            "cases" | "dcases" | "rcases" | "aligned" | "align" | "alignat" | "gathered"
-            | "gather" | "split" | "array" => {
-                if begin && matches!(env.trim(), "array" | "alignat") {
+            name @ ("cases" | "dcases" | "rcases" | "aligned" | "align" | "alignat"
+            | "gathered" | "gather" | "split" | "array") => {
+                if begin && matches!(name, "array" | "alignat") {
                     let _ = self.read_group(); // column spec
                 }
             }
@@ -574,7 +623,6 @@ impl<'s> Lexer<'s> {
     }
 }
 
-/// Classify the inside of `\mathrm{…}` / `\operatorname{…}`.
 fn named_group(content: &str) -> Tok {
     let c: String = content.chars().filter(|c| !c.is_whitespace()).collect();
     if c.is_empty() {
@@ -586,7 +634,9 @@ fn named_group(content: &str) -> Tok {
     let ok = c.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic())
         && c.chars().all(|ch| ch.is_ascii_alphanumeric());
     if !ok {
-        return Tok::Bad(format!("Can't read the name \"{content}\"; use letters and digits only"));
+        return Tok::Bad(format!(
+            "Can't read the name \"{content}\"; use letters and digits only"
+        ));
     }
     if c.len() == 1 {
         Tok::Ident(SymName::simple(&c, &c))
@@ -597,7 +647,6 @@ fn named_group(content: &str) -> Tok {
     }
 }
 
-/// Unicode characters people paste: Greek letters, `·`, `×`, `−`, `′`.
 fn unicode_token(c: char) -> Option<Tok> {
     let greek = match c {
         'α' => "alpha",
@@ -672,22 +721,54 @@ mod tests {
         assert_eq!(
             k,
             [
-                "Dot(1)", "Open(Brace)", "id:x", "Close(Brace)", "Eq", "id:sigma", "Open(Paren)",
-                "id:y", "Minus", "id:x", "Close(Paren)"
+                "Dot(1)",
+                "Open(Brace)",
+                "id:x",
+                "Close(Brace)",
+                "Eq",
+                "id:sigma",
+                "Open(Paren)",
+                "id:y",
+                "Minus",
+                "id:x",
+                "Close(Paren)"
             ]
         );
     }
 
     #[test]
     fn latex_ignores_spacing_and_alignment() {
-        let k = kinds("\\begin{cases}x\\,&\\;y\\quad\\!\\end{cases}", InputFormat::Latex);
+        let k = kinds(
+            "\\begin{cases}x\\,&\\;y\\quad\\!\\end{cases}",
+            InputFormat::Latex,
+        );
         assert_eq!(k, ["id:x", "id:y"]);
     }
 
     #[test]
     fn latex_mathrm_and_operatorname() {
-        let k = kinds("\\mathrm{d}\\operatorname{sin}\\mathrm{foo}", InputFormat::Latex);
+        let k = kinds(
+            "\\mathrm{d}\\operatorname{sin}\\mathrm{foo}",
+            InputFormat::Latex,
+        );
         assert_eq!(k, ["id:d", "fn:sin", "id:foo"]);
+    }
+
+    #[test]
+    fn unknown_operatorname_is_not_a_variable() {
+        let k = kinds("\\operatorname{floor}\\operatorname{d}", InputFormat::Latex);
+        assert!(
+            k[0].starts_with("bad:floor isn't a supported function"),
+            "{k:?}"
+        );
+        assert!(k[0].ends_with("write \\mathrm{floor}"), "{k:?}");
+        assert_eq!(k[1], "id:d");
+    }
+
+    #[test]
+    fn starred_alignat_skips_its_column_spec() {
+        let k = kinds("\\begin{alignat*}{2}x\\end{alignat*}", InputFormat::Latex);
+        assert_eq!(k, ["id:x"]);
     }
 
     #[test]
@@ -710,10 +791,29 @@ mod tests {
         assert_eq!(
             k,
             [
-                "id:sigma", "Star", "id:x_1", "Plus", "num:0.0015", "Minus", "num:2", "id:e",
-                "id:x", "Caret", "num:2"
+                "id:sigma",
+                "Star",
+                "id:x_1",
+                "Plus",
+                "num:0.0015",
+                "Minus",
+                "num:2",
+                "id:e",
+                "id:x",
+                "Caret",
+                "num:2"
             ]
         );
+    }
+
+    #[test]
+    fn a_number_too_large_for_f64_is_an_error_not_infinity() {
+        let k = kinds("2e400*x", InputFormat::Text);
+        assert!(k[0].starts_with("bad:This number is too large"), "{k:?}");
+        let k = kinds(&"9".repeat(400), InputFormat::Latex);
+        assert!(k[0].starts_with("bad:This number is too large"), "{k:?}");
+        let t = tokenize("1e300", InputFormat::Text);
+        assert!(matches!(t[0].tok, Tok::Num(v) if v == 1e300), "{t:?}");
     }
 
     #[test]

@@ -1,13 +1,3 @@
-// Canvas2D renderer for the phase portrait. Pure drawing: no state, no events.
-//
-// Follows the PhasePlane conventions of the design system:
-// - z-order, bottom to top: plot-bg, grid, axes and tick marks, direction field,
-//   tick labels (on a halo), nullclines, trajectories (the selected one last),
-//   fixed points, start points (the selected one last);
-// - two scales from the theme: s = --line-scale for line widths, and the gentler
-//   g = 0.6 + 0.4 s for glyphs, heads and handles;
-// - every colour comes from the plot tokens, read at draw time (theme.ts).
-
 import type {
   Arrow,
   AxisRef,
@@ -18,20 +8,18 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import type { InitialCondition, TrajectoryMeta } from "../state/model";
+import { eigenDirections } from "./eigenvectors";
 import type { PlotTheme } from "./theme";
 import { niceTicks, sx, sy, tickLabel, type Viewport } from "./viewport";
 
-/** A screen rectangle in CSS px: [left, top, right, bottom]. */
 export type Box = [number, number, number, number];
 
-/** A trajectory ready to draw. */
 export interface SceneTrajectory {
   out: TrajectoryOut;
   meta: TrajectoryMeta;
   color: number;
 }
 
-/** Everything the renderer needs for one frame. */
 export interface Scene {
   kind: SystemKind;
   dim: number;
@@ -47,23 +35,15 @@ export interface Scene {
   selectedFp: number | null;
   hoverIc: number | null;
   hoverFp: number | null;
-  /** True while the drawn data belongs to an older view or system (drawn dimmer). */
+  eigenvectors: boolean;
   stale: boolean;
-  /**
-   * Boxes covered by chrome over the plot (the canvas toolbar, the typeset axis
-   * names): tick labels inside them are left out, and field marks keep clear of
-   * the axis names.
-   */
   avoid: { labels: Box[]; field: Box[] };
 }
 
-/** What the coordinate helpers need from a scene. */
 export type SceneAxes = Pick<Scene, "kind" | "dim" | "xAxis" | "yAxis">;
 
-/** Strogatz's fixed-point glyphs: the fill carries stability, never the shape. */
 export type FixedPointGlyphKind = "stable" | "unstable" | "half";
 
-/** Filled when stable, open when unstable or a saddle, half-filled when linearization does not decide. */
 export function fixedPointGlyph(c: Classification, stable: boolean): FixedPointGlyphKind {
   if (c === "center" || c === "non-hyperbolic" || c === "non-isolated") return "half";
   return stable ? "stable" : "unstable";
@@ -73,14 +53,14 @@ const CLAMP = 1e5;
 const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
 const TAU = Math.PI * 2;
 
-/** Screen position of a fixed point. On a time axis it sits at the left/bottom edge. */
 export function fixedPointPx(vp: Viewport, scene: SceneAxes, fp: FixedPointOut): [number, number] {
   const px = scene.xAxis.kind === "time" ? vp.left + 12 : sx(vp, fp.x[scene.xAxis.index]);
   const py = scene.yAxis.kind === "time" ? vp.top + vp.height - 12 : sy(vp, fp.x[scene.yAxis.index]);
   return [px, py];
 }
 
-/** Screen position of an initial-condition handle. */
+export { eigenDirections, type EigenDirection } from "./eigenvectors";
+
 export function icPx(vp: Viewport, scene: SceneAxes, ic: InitialCondition): [number, number] {
   const t0 = scene.kind === "map" ? 0 : ic.t0;
   const px = sx(vp, scene.xAxis.kind === "time" ? t0 : ic.x0[scene.xAxis.index]);
@@ -88,7 +68,6 @@ export function icPx(vp: Viewport, scene: SceneAxes, ic: InitialCondition): [num
   return [px, py];
 }
 
-/** Screen-space polyline of a trajectory (NaN-free, clamped). */
 export function trajectoryPx(vp: Viewport, scene: SceneAxes, out: TrajectoryOut): Float64Array {
   const n = out.t.length;
   const pts = new Float64Array(n * 2);
@@ -103,24 +82,18 @@ export function trajectoryPx(vp: Viewport, scene: SceneAxes, out: TrajectoryOut)
   return pts.subarray(0, m);
 }
 
-/**
- * Where the axes run on screen. An axis through the origin is `inView` when the
- * origin's coordinate is visible; otherwise it is pinned to the nearest edge,
- * where its tick labels stay (the grid still marks the values).
- */
-export function axisLines(vp: Viewport): { X: number; Y: number; xIn: boolean; yIn: boolean } {
+export function axisLines(vp: Viewport): { X: number; Y: number; xAxisInView: boolean; yAxisInView: boolean } {
   const right = vp.left + vp.width;
   const bottom = vp.top + vp.height;
   const [x0, x1] = vp.xRange;
   const [y0, y1] = vp.yRange;
-  const yIn = Math.min(x0, x1) < 0 && Math.max(x0, x1) > 0; // the y-axis (x = 0)
-  const xIn = Math.min(y0, y1) < 0 && Math.max(y0, y1) > 0; // the x-axis (y = 0)
-  const X = yIn ? Math.round(sx(vp, 0)) + 0.5 : sx(vp, 0) < vp.left ? vp.left : right;
-  const Y = xIn ? Math.round(sy(vp, 0)) + 0.5 : sy(vp, 0) > bottom ? bottom : vp.top;
-  return { X, Y, xIn, yIn };
+  const yAxisInView = Math.min(x0, x1) < 0 && Math.max(x0, x1) > 0;
+  const xAxisInView = Math.min(y0, y1) < 0 && Math.max(y0, y1) > 0;
+  const X = yAxisInView ? Math.round(sx(vp, 0)) + 0.5 : sx(vp, 0) < vp.left ? vp.left : right;
+  const Y = xAxisInView ? Math.round(sy(vp, 0)) + 0.5 : sy(vp, 0) > bottom ? bottom : vp.top;
+  return { X, Y, xAxisInView, yAxisInView };
 }
 
-/** Label steps for the visible ranges; grid lines also fall on the half steps. */
 function ticksFor(vp: Viewport) {
   return {
     x: niceTicks(vp.xRange[0], vp.xRange[1], Math.max(2, Math.round(vp.width / 140))),
@@ -137,7 +110,6 @@ interface Label {
   box: Box;
 }
 
-/** Draw a full frame. `w × h` is the canvas size in CSS px. */
 export function drawScene(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -146,7 +118,6 @@ export function drawScene(
   scene: Scene | null,
   th: PlotTheme,
 ): void {
-  // 1. plot-bg
   ctx.globalAlpha = 1;
   ctx.fillStyle = th.bg;
   ctx.fillRect(0, 0, w, h);
@@ -157,7 +128,6 @@ export function drawScene(
   ctx.clip();
 
   const ticks = ticksFor(vp);
-  // 2. grid, 3. axes and tick marks
   drawGrid(ctx, vp, ticks, th);
   const axes = axisLines(vp);
   drawAxes(ctx, vp, ticks, axes, th);
@@ -167,25 +137,19 @@ export function drawScene(
     return;
   }
 
-  // Tick labels are laid out first so the field can leave them clear. With time
-  // on an axis, fixed points sit at the edge of the other axis's labels: put
-  // those labels on the far side of the axis.
   const labels = layoutLabels(ctx, vp, ticks, axes, th, scene.avoid.labels, {
     yRight: scene.xAxis.kind === "time",
     xAbove: scene.yAxis.kind === "time",
   });
   const fade = scene.stale ? 0.55 : 1;
-  // 4. direction field
   ctx.globalAlpha = fade;
   drawField(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.field]);
-  // 5. tick labels on a halo, above the field
-  ctx.globalAlpha = 1;
-  drawLabels(ctx, labels, th);
-  // 6. nullclines, 7. trajectories
-  ctx.globalAlpha = fade;
   drawNullclines(ctx, vp, scene, th);
   drawTrajectories(ctx, vp, scene, th, fade);
-  // 8. fixed points, the selected one last
+  ctx.globalAlpha = fade;
+  const eigenLabels = scene.eigenvectors
+    ? drawEigenvectors(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.labels])
+    : [];
   ctx.globalAlpha = fade;
   const order = scene.fixedPoints.map((_, i) => i).filter((i) => i !== scene.selectedFp);
   if (scene.selectedFp !== null && scene.selectedFp < scene.fixedPoints.length) order.push(scene.selectedFp);
@@ -197,7 +161,10 @@ export function drawScene(
       selected: scene.selectedFp === i,
     });
   }
-  // 9. start points (drag handles), the selected one last
+  ctx.globalAlpha = 1;
+  drawLabels(ctx, labels, th);
+  ctx.globalAlpha = fade;
+  drawLabels(ctx, eigenLabels, th);
   ctx.globalAlpha = 1;
   drawHandles(ctx, vp, scene, th);
   ctx.restore();
@@ -216,10 +183,13 @@ function drawGrid(
     const s = step / 2;
     const a = Math.min(lo, hi);
     const b = Math.max(lo, hi);
-    for (let v = Math.ceil(a / s) * s; v <= b + s * 1e-9; v += s) out.push(v);
+    const first = Math.ceil(a / s);
+    const count = Math.floor(b / s + 1e-9) - first;
+    // A span that overflowed to ∞ has no ticks (niceTicks falls back to step 1), and no grid.
+    if (!Number.isFinite(count)) return out;
+    for (let k = 0; k <= count; k++) out.push((first + k) * s);
     return out;
   };
-  // 1px, not scaled, pixel-snapped.
   ctx.lineWidth = 1;
   ctx.strokeStyle = th.grid;
   ctx.beginPath();
@@ -236,6 +206,13 @@ function drawGrid(
   ctx.stroke();
 }
 
+/** Axis tick length at glyph scale 1. */
+const TICK_LEN = 4;
+/** Space between a tick and its label. */
+const TICK_LABEL_PAD = 3;
+/** Radius of the halo behind a fixed-point glyph at glyph scale 1. */
+const FP_HALO_R = 7.5;
+
 function drawAxes(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
@@ -244,15 +221,14 @@ function drawAxes(
   th: PlotTheme,
 ) {
   const s = th.lineScale;
-  const tick = 4 * th.glyphScale;
+  const tick = TICK_LEN * th.glyphScale;
   ctx.strokeStyle = th.axis;
   ctx.lineWidth = s;
   ctx.lineCap = "butt";
   ctx.beginPath();
-  if (axes.yIn) {
+  if (axes.yAxisInView) {
     ctx.moveTo(axes.X, vp.top);
     ctx.lineTo(axes.X, vp.top + vp.height);
-    // Tick marks point outward, towards the labels (left of the y-axis).
     for (const v of ticks.y.ticks) {
       if (v === 0) continue;
       const y = Math.round(sy(vp, v)) + 0.5;
@@ -260,7 +236,7 @@ function drawAxes(
       ctx.lineTo(axes.X - tick, y);
     }
   }
-  if (axes.xIn) {
+  if (axes.xAxisInView) {
     ctx.moveTo(vp.left, axes.Y);
     ctx.lineTo(vp.left + vp.width, axes.Y);
     for (const v of ticks.x.ticks) {
@@ -275,12 +251,6 @@ function drawAxes(
 
 const overlaps = (a: Box, b: Box) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 
-/**
- * Tick labels beside the axes: whole steps only, one "0" at the origin (below
- * and left), max(4g + 3, 7.5g + 2) px from the axis so a fixed point on the
- * axis never covers them. A label that would leave the plot or sit under chrome
- * is left out.
- */
 function layoutLabels(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
@@ -291,25 +261,15 @@ function layoutLabels(
   prefer: { yRight?: boolean; xAbove?: boolean } = {},
 ): Label[] {
   const g = th.glyphScale;
-  const gap = Math.max(4 * g + 3, 7.5 * g + 2);
+  const gap = Math.max(TICK_LEN * g + TICK_LABEL_PAD, FP_HALO_R * g + 2);
   const right = vp.left + vp.width;
   const bottom = vp.top + vp.height;
   const hgt = th.tickSize;
   ctx.font = th.tickFont;
-  const both = axes.xIn && axes.yIn;
+  const both = axes.xAxisInView && axes.yAxisInView;
   const out: Label[] = [];
-  const make = (
-    text: string,
-    x: number,
-    y: number,
-    align: CanvasTextAlign,
-    base: CanvasTextBaseline,
-  ): Label => {
-    const wid = ctx.measureText(text).width;
-    const l = align === "center" ? x - wid / 2 : align === "right" ? x - wid : x;
-    const t = base === "top" ? y : base === "middle" ? y - hgt / 2 : y - hgt;
-    return { text, x, y, align, base, box: [l - 3, t - 3, l + wid + 3, t + hgt + 3] };
-  };
+  const make = (text: string, x: number, y: number, align: CanvasTextAlign, base: CanvasTextBaseline) =>
+    makeLabel(ctx, hgt, text, x, y, align, base);
   const keep = (lab: Label) => {
     const [l, t, r, b] = lab.box;
     if (l < vp.left || r > right || t < vp.top || b > bottom) return;
@@ -318,14 +278,12 @@ function layoutLabels(
     out.push(lab);
   };
 
-  // x labels below the x-axis, or above it when it is pinned to the bottom edge.
   const xBelow = prefer.xAbove ? axes.Y - gap - hgt - 3 < vp.top : axes.Y + gap + hgt + 3 <= bottom;
   const xy = xBelow ? axes.Y + gap : axes.Y - gap;
   for (const v of ticks.x.ticks) {
     if (v === 0 && both) continue;
     keep(make(tickLabel(v, ticks.x.step), sx(vp, v), xy, "center", xBelow ? "top" : "bottom"));
   }
-  // y labels left of the y-axis, or right of it when it is pinned to the left edge.
   const yWidest = Math.max(0, ...ticks.y.ticks.map((v) => ctx.measureText(tickLabel(v, ticks.y.step)).width));
   const yLeft = prefer.yRight ? axes.X + gap + yWidest + 3 > right : axes.X - gap - yWidest - 3 >= vp.left;
   const yx = yLeft ? axes.X - gap : axes.X + gap;
@@ -347,6 +305,21 @@ function layoutLabels(
   return out;
 }
 
+function makeLabel(
+  ctx: CanvasRenderingContext2D,
+  hgt: number,
+  text: string,
+  x: number,
+  y: number,
+  align: CanvasTextAlign,
+  base: CanvasTextBaseline,
+): Label {
+  const wid = ctx.measureText(text).width;
+  const l = align === "center" ? x - wid / 2 : align === "right" ? x - wid : x;
+  const t = base === "top" ? y : base === "middle" ? y - hgt / 2 : y - hgt;
+  return { text, x, y, align, base, box: [l - 3, t - 3, l + wid + 3, t + hgt + 3] };
+}
+
 function drawLabels(ctx: CanvasRenderingContext2D, labels: Label[], th: PlotTheme) {
   ctx.font = th.tickFont;
   ctx.lineJoin = "round";
@@ -361,11 +334,6 @@ function drawLabels(ctx: CanvasRenderingContext2D, labels: Label[], th: PlotThem
   }
 }
 
-/**
- * One centred segment per cell, all the same length (the field shows direction,
- * never speed), with a small open V head at the tip. Zero vectors are skipped,
- * and so is any mark whose box would touch a label.
- */
 function drawField(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme, clear: Box[]) {
   if (!scene.arrows.length || scene.fieldGrid <= 0) return;
   const s = th.lineScale;
@@ -382,7 +350,6 @@ function drawField(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th
   ctx.lineJoin = "round";
   ctx.beginPath();
   for (const a of scene.arrows) {
-    // Normalise in screen space so marks look the same length at any aspect.
     const dx = a.u * sxu;
     const dy = -a.v * syu;
     const m = Math.hypot(dx, dy);
@@ -404,7 +371,6 @@ function drawField(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th
   ctx.stroke();
 }
 
-/** Dashed, in null-1 for the first equation, null-2 for the second, … */
 function drawNullclines(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme) {
   const s = th.lineScale;
   ctx.lineWidth = 1.5 * s;
@@ -436,15 +402,12 @@ function drawTrajectories(
 ) {
   const s = th.lineScale;
   const g = th.glyphScale;
-  // Backward halves first so forward time sits on top; the selected curve last.
   const rank = (t: SceneTrajectory) =>
     (scene.selectedIc === t.meta.icId ? 2 : 0) + (t.meta.direction === "forward" ? 1 : 0);
   const ordered = [...scene.trajectories].sort((a, b) => rank(a) - rank(b));
   const isMap = scene.kind === "map";
   const timeSeries = scene.xAxis.kind === "time" || scene.yAxis.kind === "time";
   const dense = scene.dim >= 3;
-  // Heads already placed (screen px), shared by all curves, so orbits that run
-  // together (a limit cycle, curves converging on a fixed point) stay readable.
   const placed: number[] = [];
 
   for (const tr of ordered) {
@@ -487,7 +450,6 @@ function drawTrajectories(
     drawHeads(ctx, vp, pts, backward, (selected ? 9 : 8) * g, dense ? 1 : 12, placed, 24 * g);
 
     if (tr.out.status !== "completed") {
-      // Mark where the solver stopped (blew up, step limit): a small cross.
       const x = pts[pts.length - 2];
       const y = pts[pts.length - 1];
       const c = 4 * g;
@@ -511,13 +473,17 @@ function strokePolyline(ctx: CanvasRenderingContext2D, pts: Float64Array) {
   ctx.stroke();
 }
 
-/**
- * Filled triangular heads pointing in forward time: one at half the visible arc
- * length (one per 300px on curves longer than 600px), each slid within the
- * middle third of its stretch to the straightest spot (least turning over
- * ±12px), so a head never sits on a bend. Backward halves point the way time
- * runs, not the way they were integrated.
- */
+/** Pixels of trajectory per arrow head once a trajectory is long enough for several. */
+const HEAD_SPACING_PX = 300;
+/** Trajectories shorter than this (in view) get a single head. */
+const SINGLE_HEAD_MAX_PX = 600;
+/** Half-length of the stretch over which a head's bend is measured. */
+const BEND_WINDOW_PX = 12;
+/** A spot must be straighter by this many radians to move a head off the middle. */
+const STRAIGHTNESS_TOL = 0.05;
+/** A head may slide this fraction of its share of the trajectory either way. */
+const HEAD_SLIDE_FRACTION = 1 / 6;
+
 function drawHeads(
   ctx: CanvasRenderingContext2D,
   vp: Viewport,
@@ -532,7 +498,6 @@ function drawHeads(
   if (n < 2) return;
   const right = vp.left + vp.width;
   const bottom = vp.top + vp.height;
-  // Cumulative visible arc length at each point.
   const acc = new Float64Array(n);
   let total = 0;
   for (let k = 1; k < n; k++) {
@@ -544,7 +509,6 @@ function drawHeads(
     acc[k] = total;
   }
   if (total < 3 * L) return;
-  /** First point index whose arc length reaches `t`. */
   const at = (t: number) => {
     let lo = 0;
     let hi = n - 1;
@@ -558,14 +522,14 @@ function drawHeads(
     return lo;
   };
   const turn = (k: number) => {
-    const a = at(acc[k] - 12);
-    const b = at(acc[k] + 12);
+    const a = at(acc[k] - BEND_WINDOW_PX);
+    const b = at(acc[k] + BEND_WINDOW_PX);
     if (a >= k || b <= k) return Infinity;
     const t1 = Math.atan2(pts[2 * k + 1] - pts[2 * a + 1], pts[2 * k] - pts[2 * a]);
     const t2 = Math.atan2(pts[2 * b + 1] - pts[2 * k + 1], pts[2 * b] - pts[2 * k]);
     return Math.abs(Math.atan2(Math.sin(t2 - t1), Math.cos(t2 - t1)));
   };
-  const count = Math.min(maxHeads, total > 600 ? Math.floor(total / 300) : 1);
+  const count = Math.min(maxHeads, total > SINGLE_HEAD_MAX_PX ? Math.floor(total / HEAD_SPACING_PX) : 1);
   const stretch = total / count;
   const gap2 = minGap * minGap;
   const hw = 0.45 * L;
@@ -574,10 +538,11 @@ function drawHeads(
     const mid = (h + 0.5) * stretch;
     let k = at(mid);
     let best = turn(k);
-    for (let t = mid - stretch / 6; t <= mid + stretch / 6; t += 4) {
+    const slide = stretch * HEAD_SLIDE_FRACTION;
+    for (let t = mid - slide; t <= mid + slide; t += 4) {
       const c = at(t);
       const v = turn(c) + 1e-3 * Math.abs(t - mid);
-      if (v < best - 0.05) {
+      if (v < best - STRAIGHTNESS_TOL) {
         best = v;
         k = c;
       }
@@ -591,7 +556,6 @@ function drawHeads(
       crowded = (placed[j] - x) ** 2 + (placed[j + 1] - y) ** 2 < gap2;
     }
     if (crowded) continue;
-    // Direction: back along the curve until the step has some length.
     let j = k - 1;
     while (j > 0 && Math.hypot(x - pts[2 * j], y - pts[2 * j + 1]) < 1) j--;
     const dx = x - pts[2 * j];
@@ -610,12 +574,85 @@ function drawHeads(
   ctx.fill();
 }
 
-/**
- * One fixed point in Strogatz's glyph, on a plot-halo disc so it reads over any
- * line: filled when stable, open when unstable or a saddle, left half filled
- * when linearization does not decide. Selection adds an accent ring outside the
- * halo; hover grows the mark 1.2×.
- */
+/** Half-length of an eigenvector line, as a fraction of the plot diagonal. */
+const EIGEN_HALF_LEN_FRAC = 0.06;
+const HEAD_HALF_ANGLE = Math.PI / 5;
+/** A direction with |x| below this is labelled above or below rather than beside. */
+const LABEL_SIDE_MIN_X = 0.3;
+/** Direction components beyond this anchor the label on that side. */
+const LABEL_ANCHOR_THRESHOLD = 0.38;
+
+function drawEigenvectors(
+  ctx: CanvasRenderingContext2D,
+  vp: Viewport,
+  scene: Scene,
+  th: PlotTheme,
+  clear: Box[],
+): Label[] {
+  const s = th.lineScale;
+  const g = th.glyphScale;
+  const half = Math.max(20 * g, EIGEN_HALF_LEN_FRAC * Math.hypot(vp.width, vp.height));
+  const head = 6 * g;
+  const spread = Math.tan(HEAD_HALF_ANGLE);
+  const sxu = vp.width / (vp.xRange[1] - vp.xRange[0]);
+  const syu = vp.height / (vp.yRange[1] - vp.yRange[0]);
+  const right = vp.left + vp.width;
+  const bottom = vp.top + vp.height;
+  const labels: Label[] = [];
+  ctx.font = th.tickFont;
+  const path = new Path2D();
+  const vee = (x: number, y: number, ux: number, uy: number) => {
+    path.moveTo(x - ux * head - uy * head * spread, y - uy * head + ux * head * spread);
+    path.lineTo(x, y);
+    path.lineTo(x - ux * head + uy * head * spread, y - uy * head - ux * head * spread);
+  };
+  scene.fixedPoints.forEach((fp, i) => {
+    const [cx, cy] = fixedPointPx(vp, scene, fp);
+    for (const e of eigenDirections(scene, fp)) {
+      const dx = e.p[0] * sxu;
+      const dy = -e.p[1] * syu;
+      const m = Math.hypot(dx, dy);
+      if (!Number.isFinite(m) || m === 0) continue;
+      const ux = dx / m;
+      const uy = dy / m;
+      path.moveTo(cx - ux * half, cy - uy * half);
+      path.lineTo(cx + ux * half, cy + uy * half);
+      for (const sg of [1, -1]) {
+        if (e.flow > 0) vee(cx + sg * ux * half, cy + sg * uy * half, sg * ux, sg * uy);
+        else if (e.flow < 0) vee(cx + sg * ux * half * 0.5, cy + sg * uy * half * 0.5, -sg * ux, -sg * uy);
+      }
+      if (scene.selectedFp !== i) continue;
+      const sg = Math.abs(ux) > LABEL_SIDE_MIN_X ? Math.sign(ux) : -Math.sign(uy) || 1;
+      const ex = sg * ux;
+      const ey = sg * uy;
+      const off = half + 4 * g + 2;
+      const lab = makeLabel(
+        ctx,
+        th.tickSize,
+        e.label,
+        cx + ex * off,
+        cy + ey * off,
+        ex > LABEL_ANCHOR_THRESHOLD ? "left" : ex < -LABEL_ANCHOR_THRESHOLD ? "right" : "center",
+        ey > LABEL_ANCHOR_THRESHOLD ? "top" : ey < -LABEL_ANCHOR_THRESHOLD ? "bottom" : "middle",
+      );
+      const [l, t, r, b] = lab.box;
+      if (l < vp.left || r > right || t < vp.top || b > bottom) continue;
+      if ([...clear, ...labels.map((o) => o.box)].some((c) => overlaps(lab.box, c))) continue;
+      labels.push(lab);
+    }
+  });
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([]);
+  ctx.strokeStyle = th.halo;
+  ctx.lineWidth = s + 3;
+  ctx.stroke(path);
+  ctx.strokeStyle = th.fp;
+  ctx.lineWidth = s;
+  ctx.stroke(path);
+  return labels;
+}
+
 export function drawFixedPoint(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -634,7 +671,7 @@ export function drawFixedPoint(
   }
   ctx.fillStyle = th.halo;
   ctx.beginPath();
-  ctx.arc(x, y, 7.5 * g, 0, TAU);
+  ctx.arc(x, y, FP_HALO_R * g, 0, TAU);
   ctx.fill();
 
   ctx.beginPath();
@@ -655,11 +692,6 @@ export function drawFixedPoint(
   ctx.stroke();
 }
 
-/**
- * Start points: a dot in the trajectory's colour with a plot-halo edge; bigger
- * on hover. The selected one sits on a plot-halo disc inside an accent ring
- * (the only place accent appears on the plot) and is drawn last.
- */
 function drawHandles(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme) {
   const g = th.glyphScale;
   let sel: { x: number; y: number; color: string } | null = null;
@@ -673,7 +705,6 @@ function drawHandles(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, 
     }
     const r = (scene.hoverIc === ic.id ? 4.5 : 3.5) * g;
     if (ic.hidden) {
-      // A hidden trajectory keeps its start point, drawn hollow.
       ctx.strokeStyle = th.halo;
       ctx.lineWidth = 3 * g;
       ctx.beginPath();

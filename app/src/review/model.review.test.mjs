@@ -1,13 +1,4 @@
-// UI review regression tests for the pure model helpers (app/src/state/model.ts).
-//
-// Plain JavaScript on purpose: `npm run build` type-checks app/src with tsc and
-// the app has no @types/node, so a .ts test importing node:test would break
-// the build. Node (>= 22.18) strips the types from model.ts when importing it.
-//
-// Run from app/:   node --test src/review/
-//
-// Each test states the behaviour the UI promises; a failing test is a bug
-// found in the review (see the test name).
+// Node (>= 22.18) strips the types from model.ts when importing it.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -36,10 +27,6 @@ test("backward time off: no backward run in the phase plane (baseline)", () => {
 });
 
 test("backward time off is respected when time is on an axis", () => {
-  // Lorenz template (backward: false) after choosing t on the horizontal axis.
-  // Today a backward run t: 0 -> -2 is still requested; it hits the step
-  // limit, draws a solid band at the left edge and raises
-  // "1 run stopped by the solver" although the user switched backward time off.
   const spans = trajectorySpans("ode", timeOnX, ic, DEFAULT_SOLVER, { ...DEFAULT_LAYERS, backward: false });
   assert.deepEqual(
     spans.map((s) => s.direction),
@@ -48,7 +35,6 @@ test("backward time off is respected when time is on an axis", () => {
   );
 });
 
-/** A PortraitResponse with one 3-state trajectory per entry. */
 function response(...runs) {
   return {
     requestId: 1,
@@ -66,9 +52,6 @@ function response(...runs) {
 }
 
 test("stateExtent: a run the solver abandoned does not stretch the axis range", () => {
-  // Lorenz: the attractor has |x| < 25; the abandoned backward run reached
-  // x = -4.5e5 before hitting maxSteps. setAxis() uses this extent for the new
-  // axis range AND stores it as the home view, so Reset view cannot undo it.
   const res = response(
     { status: "completed", x: [[0, 1, 0], [-18, -20, 40], [20, 25, 45]] },
     { status: "maxSteps", x: [[0, 1, 0], [-4.5e5, 2e5, 9e5]] },
@@ -76,4 +59,11 @@ test("stateExtent: a run the solver abandoned does not stretch the axis range", 
   const ext = stateExtent(res, 3, 0);
   assert.ok(ext, "extent exists");
   assert.ok(ext[0] >= -25, `x extent starts at ${ext[0]}, far outside the attractor`);
+});
+
+test("stateExtent: a portrait of a system with another number of states is not read with this one's stride", () => {
+  const res = response({ status: "completed", x: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] });
+  assert.deepEqual(stateExtent(res, 3, 1), [2, 8]);
+  assert.equal(stateExtent(res, 4, 3), null, "the new fourth state has no samples yet");
+  assert.equal(stateExtent(res, 2, 0), null);
 });

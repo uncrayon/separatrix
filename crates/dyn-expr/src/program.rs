@@ -1,49 +1,60 @@
-//! Flat register program: the compiled form of the right-hand sides.
-//!
-//! Each instruction writes one register, and its index *is* the register
-//! number (static single assignment), so evaluation is one loop over a
-//! slice. While building, identical instructions are shared (common
-//! subexpression elimination), constant sub-trees are folded, and
-//! instructions that no output needs are removed.
-//!
-//! Integer powers become multiplications (`x^2` → `x·x`) so they are fast
-//! and differentiate exactly at any sign of `x`.
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ad::{Dual, Scalar};
 use crate::ast::{BinOp, Func, Node};
 
-/// Register index.
 type Reg = u32;
 
-/// One instruction; the result goes to the register with the same index.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Inst {
-    Const(f64),
-    /// `t` (or `n` for maps).
+/// An `f64` compared and hashed by its bits, so instructions can be
+/// memoised by derived `Eq`/`Hash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Bits(u64);
+
+impl Bits {
+    pub(crate) fn of(v: f64) -> Bits {
+        Bits(v.to_bits())
+    }
+
+    pub(crate) fn get(self) -> f64 {
+        f64::from_bits(self.0)
+    }
+}
+
+/// An instruction that reads an input rather than registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Load {
+    Const(Bits),
     Time,
     State(u32),
     Param(u32),
+}
+
+/// An instruction computed from earlier registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Op {
     Neg(Reg),
     Add(Reg, Reg),
     Sub(Reg, Reg),
     Mul(Reg, Reg),
     Div(Reg, Reg),
     PowI(Reg, i32),
-    PowC(Reg, f64),
+    PowC(Reg, Bits),
     Pow(Reg, Reg),
     Call1(Func, Reg),
     Call2(Func, Reg, Reg),
 }
 
-impl Inst {
-    /// Registers this instruction reads.
-    fn operands(&self) -> [Option<Reg>; 2] {
-        use Inst::*;
-        match *self {
-            Const(_) | Time | State(_) | Param(_) => [None, None],
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Inst {
+    Load(Load),
+    Op(Op),
+}
+
+impl Op {
+    fn operands(self) -> [Option<Reg>; 2] {
+        use Op::*;
+        match self {
             Neg(a) | PowI(a, _) | PowC(a, _) | Call1(_, a) => [Some(a), None],
             Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Pow(a, b) | Call2(_, a, b) => {
                 [Some(a), Some(b)]
@@ -51,11 +62,9 @@ impl Inst {
         }
     }
 
-    /// Same instruction with operands renamed by `f`.
-    fn remap(self, f: impl Fn(Reg) -> Reg) -> Inst {
-        use Inst::*;
+    fn remap(self, f: impl Fn(Reg) -> Reg) -> Op {
+        use Op::*;
         match self {
-            Const(_) | Time | State(_) | Param(_) => self,
             Neg(a) => Neg(f(a)),
             Add(a, b) => Add(f(a), f(b)),
             Sub(a, b) => Sub(f(a), f(b)),
@@ -69,39 +78,52 @@ impl Inst {
         }
     }
 
-    /// Hashable identity for sharing. Commutative operands are sorted.
-    fn key(&self) -> (u8, u64, u64, u64) {
-        use Inst::*;
-        let sorted = |a: Reg, b: Reg| (u64::from(a.min(b)), u64::from(a.max(b)));
-        match *self {
-            Const(c) => (0, c.to_bits(), 0, 0),
-            Time => (1, 0, 0, 0),
-            State(k) => (2, k.into(), 0, 0),
-            Param(k) => (3, k.into(), 0, 0),
-            Neg(a) => (4, a.into(), 0, 0),
+    /// The same operation with commutative operands in a fixed order, so
+    /// `a + b` and `b + a` share one register.
+    fn normalised(self) -> Op {
+        use Op::*;
+        let sorted = |a: Reg, b: Reg| (a.min(b), a.max(b));
+        match self {
             Add(a, b) => {
                 let (x, y) = sorted(a, b);
-                (5, x, y, 0)
+                Add(x, y)
             }
-            Sub(a, b) => (6, a.into(), b.into(), 0),
             Mul(a, b) => {
                 let (x, y) = sorted(a, b);
-                (7, x, y, 0)
+                Mul(x, y)
             }
-            Div(a, b) => (8, a.into(), b.into(), 0),
-            PowI(a, n) => (9, a.into(), n as u64, 0),
-            PowC(a, c) => (10, a.into(), c.to_bits(), 0),
-            Pow(a, b) => (11, a.into(), b.into(), 0),
-            Call1(f, a) => (12, f as u64, a.into(), 0),
-            Call2(f, a, b) => {
-                let (x, y) = sorted(a, b); // min and max are commutative
-                (13, f as u64, x, y)
+            Call2(f, a, b) if f.is_commutative() => {
+                let (x, y) = sorted(a, b);
+                Call2(f, x, y)
             }
+            op => op,
         }
     }
 }
 
-/// Apply a unary built-in function.
+impl Inst {
+    fn operands(self) -> [Option<Reg>; 2] {
+        match self {
+            Inst::Load(_) => [None, None],
+            Inst::Op(op) => op.operands(),
+        }
+    }
+
+    fn remap(self, f: impl Fn(Reg) -> Reg) -> Inst {
+        match self {
+            Inst::Load(_) => self,
+            Inst::Op(op) => Inst::Op(op.remap(f)),
+        }
+    }
+
+    fn normalised(self) -> Inst {
+        match self {
+            Inst::Load(_) => self,
+            Inst::Op(op) => Inst::Op(op.normalised()),
+        }
+    }
+}
+
 #[inline]
 pub(crate) fn call1<T: Scalar>(f: Func, a: T) -> T {
     match f {
@@ -120,55 +142,50 @@ pub(crate) fn call1<T: Scalar>(f: Func, a: T) -> T {
         Func::Asin => a.asin(),
         Func::Acos => a.acos(),
         Func::Atan => a.atan(),
+        Func::OddRoot(n) => a.odd_root(n),
         Func::Min | Func::Max => unreachable!("binary function in Call1"),
     }
 }
 
-/// Compute an arithmetic instruction given a way to read registers.
-/// Loads (`Const`, `Time`, `State`, `Param`) are handled by the caller.
 #[inline]
-fn compute<T: Scalar>(inst: Inst, r: impl Fn(Reg) -> T) -> T {
-    use Inst::*;
-    match inst {
+fn compute<T: Scalar>(op: Op, r: impl Fn(Reg) -> T) -> T {
+    use Op::*;
+    match op {
         Neg(a) => -r(a),
         Add(a, b) => r(a) + r(b),
         Sub(a, b) => r(a) - r(b),
         Mul(a, b) => r(a) * r(b),
         Div(a, b) => r(a) / r(b),
         PowI(a, n) => r(a).powi(n),
-        PowC(a, c) => r(a).powc(c),
+        PowC(a, c) => r(a).powc(c.get()),
         Pow(a, b) => r(a).pow(r(b)),
         Call1(f, a) => call1(f, r(a)),
         Call2(Func::Min, a, b) => r(a).min(r(b)),
         Call2(_, a, b) => r(a).max(r(b)),
-        Const(c) => T::cst(c),
-        Time | State(_) | Param(_) => unreachable!("loads are handled by the caller"),
     }
 }
 
-/// A compiled set of expressions sharing one instruction list.
 #[derive(Debug, Clone)]
 pub(crate) struct Program {
     pub insts: Vec<Inst>,
-    /// Register holding each requested expression, in order.
     pub outputs: Vec<Reg>,
 }
 
 impl Program {
-    /// Compile the expressions `roots` into one program.
     pub(crate) fn compile(roots: &[Node]) -> Program {
         let mut b = Builder::default();
         let outputs: Vec<Reg> = roots.iter().map(|n| b.lower(n)).collect();
-        Program { insts: b.insts, outputs }.without_dead_code()
+        Program {
+            insts: b.insts,
+            outputs,
+        }
+        .without_dead_code()
     }
 
-    /// Number of registers needed.
     pub(crate) fn len(&self) -> usize {
         self.insts.len()
     }
 
-    /// Evaluate every instruction into `regs` (length [`Program::len`]).
-    /// `x(k)` and `p(k)` give the k-th state and parameter.
     #[inline]
     pub(crate) fn run<T: Scalar>(
         &self,
@@ -180,18 +197,16 @@ impl Program {
         debug_assert!(regs.len() >= self.insts.len());
         for (i, &inst) in self.insts.iter().enumerate() {
             let v = match inst {
-                Inst::Const(c) => T::cst(c),
-                Inst::Time => t,
-                Inst::State(k) => x(k as usize),
-                Inst::Param(k) => p(k as usize),
-                // Operands always refer to earlier registers.
-                op => compute(op, |a| regs[a as usize]),
+                Inst::Load(Load::Const(c)) => T::cst(c.get()),
+                Inst::Load(Load::Time) => t,
+                Inst::Load(Load::State(k)) => x(k as usize),
+                Inst::Load(Load::Param(k)) => p(k as usize),
+                Inst::Op(op) => compute(op, |a| regs[a as usize]),
             };
             regs[i] = v;
         }
     }
 
-    /// Drop instructions that no output depends on, and renumber.
     fn without_dead_code(self) -> Program {
         let n = self.insts.len();
         let mut live = vec![false; n];
@@ -213,36 +228,60 @@ impl Program {
                 insts.push(inst.remap(|a| new_index[a as usize]));
             }
         }
-        let outputs = self.outputs.iter().map(|&o| new_index[o as usize]).collect();
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|&o| new_index[o as usize])
+            .collect();
         Program { insts, outputs }
     }
 }
 
-/// Builds a [`Program`] with sharing and constant folding.
 #[derive(Default)]
 struct Builder {
     insts: Vec<Inst>,
-    memo: HashMap<(u8, u64, u64, u64), Reg>,
+    memo: HashMap<Inst, Reg>,
+}
+
+/// Integer powers up to this size become products (or `PowI`) rather than
+/// a general `powf`.
+const MAX_UNROLLED_INT_POW: f64 = 1024.0;
+
+fn is_small_integer_power(c: f64) -> bool {
+    c.fract() == 0.0 && c.abs() <= MAX_UNROLLED_INT_POW
 }
 
 impl Builder {
     fn constant(&self, r: Reg) -> Option<f64> {
         match self.insts[r as usize] {
-            Inst::Const(c) => Some(c),
+            Inst::Load(Load::Const(c)) => Some(c.get()),
             _ => None,
         }
     }
 
-    /// Add an instruction (or reuse an identical one). Instructions whose
-    /// operands are all constants are evaluated now.
-    fn push(&mut self, inst: Inst) -> Reg {
-        let ops = inst.operands();
-        let has_ops = ops[0].is_some();
-        if has_ops && ops.iter().flatten().all(|&a| self.constant(a).is_some()) {
-            let v = compute::<f64>(inst, |a| self.constant(a).expect("checked"));
-            return self.push(Inst::Const(v));
+    fn konst(&mut self, v: f64) -> Reg {
+        self.memoised(Inst::Load(Load::Const(Bits::of(v))))
+    }
+
+    fn load(&mut self, l: Load) -> Reg {
+        self.memoised(Inst::Load(l))
+    }
+
+    fn push(&mut self, op: Op) -> Reg {
+        if op
+            .operands()
+            .iter()
+            .flatten()
+            .all(|&a| self.constant(a).is_some())
+        {
+            let v = compute::<f64>(op, |a| self.constant(a).expect("checked"));
+            return self.konst(v);
         }
-        let key = inst.key();
+        self.memoised(Inst::Op(op))
+    }
+
+    fn memoised(&mut self, inst: Inst) -> Reg {
+        let key = inst.normalised();
         if let Some(&r) = self.memo.get(&key) {
             return r;
         }
@@ -258,18 +297,18 @@ impl Builder {
 
     fn lower(&mut self, n: &Node) -> Reg {
         match n {
-            Node::Num(v) => self.push(Inst::Const(*v)),
-            Node::Pi => self.push(Inst::Const(std::f64::consts::PI)),
-            Node::E => self.push(Inst::Const(std::f64::consts::E)),
-            Node::Time => self.push(Inst::Time),
-            Node::State(k) => self.push(Inst::State(*k as u32)),
-            Node::Param(k) => self.push(Inst::Param(*k as u32)),
+            Node::Num(v) => self.konst(*v),
+            Node::Pi => self.konst(std::f64::consts::PI),
+            Node::E => self.konst(std::f64::consts::E),
+            Node::Time => self.load(Load::Time),
+            Node::State(k) => self.load(Load::State(*k as u32)),
+            Node::Param(k) => self.load(Load::Param(*k as u32)),
             Node::Neg(a) => {
                 let a = self.lower(a);
-                if let Inst::Neg(inner) = self.insts[a as usize] {
+                if let Inst::Op(Op::Neg(inner)) = self.insts[a as usize] {
                     return inner;
                 }
-                self.push(Inst::Neg(a))
+                self.push(Op::Neg(a))
             }
             Node::Bin(BinOp::Pow, base, exp) => self.lower_pow(base, exp),
             Node::Bin(op, a, b) => {
@@ -278,14 +317,14 @@ impl Builder {
                 match op {
                     BinOp::Add if self.is_const(b, 0.0) => a,
                     BinOp::Add if self.is_const(a, 0.0) => b,
-                    BinOp::Add => self.push(Inst::Add(a, b)),
+                    BinOp::Add => self.push(Op::Add(a, b)),
                     BinOp::Sub if self.is_const(b, 0.0) => a,
-                    BinOp::Sub => self.push(Inst::Sub(a, b)),
+                    BinOp::Sub => self.push(Op::Sub(a, b)),
                     BinOp::Mul if self.is_const(b, 1.0) => a,
                     BinOp::Mul if self.is_const(a, 1.0) => b,
-                    BinOp::Mul => self.push(Inst::Mul(a, b)),
+                    BinOp::Mul => self.push(Op::Mul(a, b)),
                     BinOp::Div if self.is_const(b, 1.0) => a,
-                    BinOp::Div => self.push(Inst::Div(a, b)),
+                    BinOp::Div => self.push(Op::Div(a, b)),
                     BinOp::Pow => unreachable!("handled above"),
                 }
             }
@@ -293,9 +332,9 @@ impl Builder {
                 let a = self.lower(&args[0]);
                 if f.arity() == 2 {
                     let b = self.lower(&args[1]);
-                    self.push(Inst::Call2(*f, a, b))
+                    self.push(Op::Call2(*f, a, b))
                 } else {
-                    self.push(Inst::Call1(*f, a))
+                    self.push(Op::Call1(*f, a))
                 }
             }
         }
@@ -304,49 +343,46 @@ impl Builder {
     fn lower_pow(&mut self, base: &Node, exp: &Node) -> Reg {
         let e = self.lower(exp);
         if matches!(base, Node::E) {
-            return self.push(Inst::Call1(Func::Exp, e));
+            return self.push(Op::Call1(Func::Exp, e));
         }
         let b = self.lower(base);
         match self.constant(e) {
-            Some(c) if c.fract() == 0.0 && c.abs() <= 1024.0 => self.powi(b, c as i32),
-            Some(0.5) => self.push(Inst::Call1(Func::Sqrt, b)),
-            Some(c) => self.push(Inst::PowC(b, c)),
-            None => self.push(Inst::Pow(b, e)),
+            Some(c) if is_small_integer_power(c) => self.powi(b, c as i32),
+            Some(0.5) => self.push(Op::Call1(Func::Sqrt, b)),
+            Some(c) => self.push(Op::PowC(b, Bits::of(c))),
+            None => self.push(Op::Pow(b, e)),
         }
     }
 
-    /// `b^k` for an integer `k`, using multiplications for small `k`.
     fn powi(&mut self, b: Reg, k: i32) -> Reg {
         match k {
-            0 => self.push(Inst::Const(1.0)),
+            0 => self.konst(1.0),
             1 => b,
-            2 => self.push(Inst::Mul(b, b)),
+            2 => self.push(Op::Mul(b, b)),
             3 => {
-                let sq = self.push(Inst::Mul(b, b));
-                self.push(Inst::Mul(sq, b))
+                let sq = self.push(Op::Mul(b, b));
+                self.push(Op::Mul(sq, b))
             }
             4 => {
-                let sq = self.push(Inst::Mul(b, b));
-                self.push(Inst::Mul(sq, sq))
+                let sq = self.push(Op::Mul(b, b));
+                self.push(Op::Mul(sq, sq))
             }
             -1 => {
-                let one = self.push(Inst::Const(1.0));
-                self.push(Inst::Div(one, b))
+                let one = self.konst(1.0);
+                self.push(Op::Div(one, b))
             }
-            _ => self.push(Inst::PowI(b, k)),
+            _ => self.push(Op::PowI(b, k)),
         }
     }
 }
 
-/// Scalar types with a per-thread register buffer, so evaluation does not
-/// allocate on every call.
 pub(crate) trait Scratch: Scalar {
-    /// Run `f` with a register slice of length `len`.
     fn with_regs<R>(len: usize, f: impl FnOnce(&mut [Self]) -> R) -> R;
 }
 
-/// Programs up to this many instructions keep their registers on the stack.
-const SMALL_PROGRAM: usize = 32;
+/// Programs up to this many registers evaluate in a stack buffer; longer
+/// ones use a per-thread buffer.
+pub const SMALL_PROGRAM: usize = 32;
 
 macro_rules! impl_scratch {
     ($t:ty, $cell:ident) => {
@@ -356,21 +392,16 @@ macro_rules! impl_scratch {
         impl Scratch for $t {
             #[inline]
             fn with_regs<R>(len: usize, f: impl FnOnce(&mut [Self]) -> R) -> R {
-                // Small programs (the common case) use a stack array.
                 if len <= SMALL_PROGRAM {
                     let mut buf = [<$t as Scalar>::cst(0.0); SMALL_PROGRAM];
                     return f(&mut buf[..len]);
                 }
-                $cell.with(|cell| match cell.try_borrow_mut() {
-                    Ok(mut buf) => {
-                        if buf.len() < len {
-                            buf.resize(len, <$t as Scalar>::cst(0.0));
-                        }
-                        f(&mut buf[..len])
+                $cell.with(|cell| {
+                    let mut buf = cell.borrow_mut();
+                    if buf.len() < len {
+                        buf.resize(len, <$t as Scalar>::cst(0.0));
                     }
-                    // Re-entrant call (should not happen): fall back to a
-                    // fresh buffer rather than panic.
-                    Err(_) => f(&mut vec![<$t as Scalar>::cst(0.0); len]),
+                    f(&mut buf[..len])
                 })
             }
         }
@@ -397,21 +428,27 @@ mod tests {
 
     #[test]
     fn shares_common_subexpressions() {
-        // (x+y)^2 and sin(x+y) share x+y; y+x is the same as x+y.
         let s = Node::bin(BinOp::Add, st(0), st(1));
         let s2 = Node::bin(BinOp::Add, st(1), st(0));
         let a = Node::bin(BinOp::Pow, s.clone(), Node::Num(2.0));
         let b = Node::Call(Func::Sin, vec![s2]);
         let p = Program::compile(&[a, b]);
-        // x, y, x+y, (x+y)^2 via mul, sin
-        assert_eq!(p.len(), 5, "{:?}", p.insts);
+        assert_eq!(
+            p.insts,
+            vec![
+                Inst::Load(Load::State(0)),
+                Inst::Load(Load::State(1)),
+                Inst::Op(Op::Add(0, 1)),
+                Inst::Op(Op::Mul(2, 2)),
+                Inst::Op(Op::Call1(Func::Sin, 2)),
+            ]
+        );
         let v = eval(&p, &[1.0, 2.0]);
         assert_eq!(v, vec![9.0, 3f64.sin()]);
     }
 
     #[test]
     fn folds_constants_and_drops_dead_code() {
-        // x * (8/3) + 0 ; the exponent 2/2 folds to 1.
         let c = Node::bin(BinOp::Div, Node::Num(8.0), Node::Num(3.0));
         let e = Node::bin(BinOp::Div, Node::Num(2.0), Node::Num(2.0));
         let n = Node::bin(
@@ -420,13 +457,23 @@ mod tests {
             Node::Num(0.0),
         );
         let p = Program::compile(&[n]);
-        assert_eq!(p.insts, vec![Inst::State(0), Inst::Const(8.0 / 3.0), Inst::Mul(0, 1)]);
+        assert_eq!(
+            p.insts,
+            vec![
+                Inst::Load(Load::State(0)),
+                Inst::Load(Load::Const(Bits::of(8.0 / 3.0))),
+                Inst::Op(Op::Mul(0, 1)),
+            ]
+        );
     }
 
     #[test]
     fn integer_powers_are_products() {
         let p = Program::compile(&[Node::bin(BinOp::Pow, st(0), Node::Num(3.0))]);
-        assert!(p.insts.iter().all(|i| !matches!(i, Inst::PowI(..) | Inst::PowC(..))));
+        assert!(p
+            .insts
+            .iter()
+            .all(|i| !matches!(i, Inst::Op(Op::PowI(..) | Op::PowC(..)))));
         assert_eq!(eval(&p, &[-2.0]), vec![-8.0]);
         let p = Program::compile(&[Node::bin(BinOp::Pow, st(0), Node::Num(-3.0))]);
         assert_eq!(eval(&p, &[2.0]), vec![0.125]);
@@ -435,6 +482,6 @@ mod tests {
     #[test]
     fn e_power_is_exp() {
         let p = Program::compile(&[Node::bin(BinOp::Pow, Node::E, st(0))]);
-        assert_eq!(p.insts.last(), Some(&Inst::Call1(Func::Exp, 0)));
+        assert_eq!(p.insts.last(), Some(&Inst::Op(Op::Call1(Func::Exp, 0))));
     }
 }

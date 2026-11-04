@@ -37,8 +37,13 @@ pub struct SystemInfo {
     pub params: Vec<ParamInfo>,           // in order of first appearance
     pub equations_latex: Vec<String>,     // first-order system, display form (\dot{x} = ...)
 }
-pub struct SymbolInfo { pub name: String, pub latex: String }
+pub struct SymbolInfo { pub name: String, pub latex: String,
+                         pub derived: bool /* introduced by order reduction: x' for x'' */ }
 pub struct ParamInfo { pub name: String, pub latex: String, pub default: f64 }
+
+pub fn convert(lines: &[String], from: InputFormat, to: InputFormat) -> Vec<ConvertedLine>;
+pub struct ConvertedLine { pub source: String, pub converted: bool, pub error: bool,
+                          pub note: Option<String> }
 ```
 
 Accepted input (one equation per line; `;` and `\\` also separate):
@@ -52,12 +57,64 @@ Accepted input (one equation per line; `;` and `\\` also separate):
 | Parameter default | `\sigma = 10` (a plain symbol equal to a constant expression) |
 
 LaTeX mode: single-letter symbols with implicit multiplication (`2xy` = 2·x·y), Greek letters
-(`\sigma`, `\theta`, …), subscripted names (`x_1`, `k_{12}`), `\operatorname{name}` / `\mathrm{name}`
-for multi-letter names, `\frac`, `\sqrt`, `\sqrt[n]`, `^`, `\cdot`, `\times`, `\left( \right)`,
+(`\sigma`, `\theta`, …), subscripted names (`x_1`, `k_{12}`), `\mathrm{name}` for multi-letter
+names (`\operatorname{name}` is for functions: a multi-letter one that is not supported is an
+error), `\frac`, `\sqrt`, `\sqrt[n]`, `^`, `\cdot`, `\times`, `\left( \right)`,
 `\sin \cos \tan \exp \ln \log \sinh \cosh \tanh \arcsin \arccos \arctan`, `|x|`, `\pi`, `e`.
 Text mode: identifiers are whole words (`sigma`, `theta` map to Greek), explicit `*` between names,
 implicit multiplication only after numbers or between parenthesised groups, functions as `sin(x)`.
+A name spelled as one identifier (`\mathrm{cost}` in LaTeX, the word `cost` in text mode) is that
+name, even when it begins with a function name: it compiles (as a parameter, unless it has an
+equation) with a warning that suggests the function (`did you mean \cos t?` / `cos(t)`). Letters
+typed one by one that spell a function (`cost` in LaTeX) are still an error, since they would read
+as a product `c·o·s·t`.
+Text mode writes the `n`-th root (`\sqrt[n]{x}`) as `root(x, n)` with a whole number `n >= 2`; for
+odd `n` it is real for `x < 0`, unlike `x^(1/n)`.
 Reserved: `t` (time, ODE), `n` (iterate, maps), `\pi`, `e`.
+
+#### One format per system; converting between them
+
+A system has one input format, and every line is stored exactly as typed in it: the UI sends
+`{ source, format }` as is, so the text parser (and its text-worded messages, `cos(t)`,
+`x' = -x`) handles text, and diagnostic spans point into what the user typed.
+
+`convert` rewrites a system's lines (one UI line each; `;` inside a line is kept, written `"; "`;
+empty lines pass through, and a line with no equation in it, only spacing such as `\quad`, becomes
+empty) from one format to the other. Each line is parsed on its own; the
+constructs the formats read differently are rewritten to what they mean (`\frac{dx}{dt}` and `dx/dt`
+are `x'`; `x(t)` is the state `x` in a flow that has one, otherwise LaTeX's product `x·t`; `H(…)` on
+the left is kept), and the tree is written out node for node, never as a prettier form that is a
+different tree (`\exp x` is `exp(x)`, `e^x` stays `e^x`). The guarantee:
+
+- **A converted line means exactly the same and keeps every name.** The core parses its own output
+  and requires the same tree (names by name, numbers bit for bit); when the original system
+  compiles, the converted one must compile to the same kind, flags, states, parameters, defaults
+  and right-hand sides (parameters in any order: LaTeX `\sin^{a} b` names `a` first, text
+  `sin(b)^a` names `b` first), or nothing is converted. So the recompile after a switch finds the same
+  shape, and sliders, view and initial conditions are kept.
+- **A line that can't be converted is kept as typed**, with `converted: false` and a `note` the UI
+  shows under it: a line with an error (`error: true`), or a valid line the target can't write
+  exactly (`error: false`): a name the target can't write (`a_b_c` in LaTeX), or a number too long
+  for LaTeX's digits-only form (`1e300`).
+- **A valid line is never left in the old format.** Read in the other format it would mean
+  something else or nothing (text `-x/9.109e-31` is `-x/9.109·e - 31` in LaTeX), so when any line
+  comes back with `converted` and `error` both false the UI doesn't switch: every line stays as it
+  is, in the current format, with the note on the lines that stopped it. A line with an error was
+  broken already; the switch goes ahead and keeps it as typed.
+- **Names:** text writes the name as is; LaTeX writes its usual form (`x_{1}`, `\omega_{0}`,
+  `k_{\mathrm{on}}`) when that reads back as the same name, otherwise `\mathrm{name}`: text `x1` and
+  `omega0` become `\mathrm{x1}` and `\mathrm{omega0}`, not `x_{1}` and `\omega_{0}`, which are other
+  names.
+- **Numbers:** text uses plain decimals, or exponent notation when it is clearly shorter (`1e-7`);
+  LaTeX uses plain decimals (`0.0000001`).
+
+Switching straight back with no line changed restores the lines from before the switch exactly
+(the UI keeps them), so LaTeX → text → LaTeX gives back the user's own spelling.
+
+The gallery templates are authored in LaTeX; their text form is generated by `convert` into
+`app/src/templates/templates.text.generated.json` (template id → lines), which the UI loads in text
+mode without a conversion call. `UPDATE_TEMPLATE_TEXT=1 cargo test -p dyn-expr --test convert`
+rewrites it, and the test fails while it is out of date.
 
 ### `dyn-solve` (integrate and iterate)
 
@@ -82,7 +139,13 @@ pub struct EventHit { pub event: usize, pub t: f64, pub x: Vec<f64>, pub rising:
 pub fn integrate_with_events(..., events: &[Event]) -> (Solution, Vec<EventHit>);
 ```
 
-Blow-up: stop with `BlewUp` when any |x_i| > 1e12 (configurable later).
+Blow-up: stop with `BlewUp` when any |x_i| > 1e12 (configurable later), and also for blow-ups too
+fast to reach that in double precision: Dopri5's step size collapsing while |x| grows (`x' = x^3`),
+or a fixed step (Euler/Heun/RK4) overflowing to ±∞ in a growing component (`x' = e^x`) where `f` is
+still ±∞ just short of the overflowing point (a probe at `P - 1e-6·(P - x)`). `NonFinite` is kept
+for NaN/∞ that is not a blow-up (`sqrt` of a negative number, `-1/x` at 0, or a fixed step or stage
+landing exactly on a pole at a finite point, `x' = 1/(2 - x)^3` at 2, which Dopri5 reports as
+`StepTooSmall`).
 
 ### `dyn-analysis` (portrait analyses)
 
@@ -98,24 +161,89 @@ pub struct Nullcline { pub state: usize, pub polylines: Vec<Vec<(f64, f64)>> }
 pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) -> Vec<Nullcline>;
 
 pub struct FixedPoint { pub x: Vec<f64>, pub eigenvalues: Vec<(f64, f64)> /* re, im */,
+                        pub eigenvectors: Vec<Option<Vec<f64>>>,    // one per eigenvalue
+                        pub eigenvectors_im: Vec<Option<Vec<f64>>>, // complex λ only
                         pub classification: Classification, pub stable: bool }
 pub fn fixed_points(f: &dyn VectorField, p: &[f64], search: &[(f64, f64)] /* per state */,
                     seeds_per_axis: usize) -> Vec<FixedPoint>;     // ODE: f = 0; map: f(x) = x
+pub fn fixed_points_with_budget(f: &dyn VectorField, p: &[f64], search: &[(f64, f64)],
+                                seeds_per_axis: usize, max_seeds: usize) -> Vec<FixedPoint>;
+pub fn seed_count(dim: usize, seeds_per_axis: usize, max_seeds: usize) -> usize;
 pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification;
+
+pub struct Eigenvectors { pub re: Vec<Option<Vec<f64>>>, pub im: Vec<Option<Vec<f64>>> }
+pub fn eigenvectors(kind: SystemKind, n: usize, a: &[f64], eigenvalues: &[(f64, f64)]) -> Eigenvectors;
 ```
+
+Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in the same order:
+
+- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalised so that its
+  largest-magnitude component is positive (the first one on a tie); `eigenvectorsIm[k]` is `null`.
+- **Repeated λ** (same resolution as the classification, `|λ1 - λ2| ≲ 3e-5·max|λ|`; for 2D flows
+  `τ² - 4Δ ≈ 0`): as many vectors as the eigenspace has dimensions, the rest `null`. A star
+  (`J = λI`) gets an orthonormal basis (any basis is valid); a degenerate node gets its single
+  eigenvector and one `null`. Eigenvalues of different stability (flows: sign of `Re λ`; maps: sign
+  of `|μ| - 1`, as in the classification) are never treated as repeated, however close, so a
+  saddle's stable and unstable vectors are never mixed up (`kind` says which rule applies).
+  Distinct eigenvalues that are only nearly repeated (e.g. `diag(-1, -1 - 1e-5)`, drawn as a star)
+  still get each the vector of its own eigenvalue.
+- **Rounded repeated λ**: a repeated real eigenvalue that rounding turned into a slightly complex
+  pair (`|Im λ| ≤ 1.6e-5·max|λ|`, e.g. a degenerate node computed as `-1 ± 1e-6 i`) is treated as
+  real: `eigenvectors[k]` is a real vector (or `null` for the missing direction) and
+  `eigenvectorsIm[k]` is `null`, although `Im λ ≠ 0`. Consumers should take an entry with a vector
+  and a `null` Im part as a real eigenvector of `Re λ`, not re-test `Im λ`.
+- **Complex pair α ± iω**: `v = re + i·im` with `J v = λ v`, returned as `eigenvectors[k] = re`
+  and `eigenvectorsIm[k] = im`; the conjugate eigenvalue gets `(re, -im)`. The phase is fixed so
+  that `|re|² + |im|² = 1`, `re ⊥ im` and `|re| ≥ |im|`: re and im are the major and minor
+  semi-axes of the ellipses traced by the linearised orbits `Re(c·e^{λt}·v)` (spirals and
+  centres), and span the invariant plane. For a circle the largest component of `v` is made real
+  and positive. Sign as for real vectors, by `re`.
+- No linearisation (non-finite Jacobian): `eigenvalues`, `eigenvectors`, `eigenvectorsIm` are all
+  empty. Never NaN.
 
 Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stable/unstable spiral,
 centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
 for higher dimensions; maps classify by |μ| relative to 1.
 
+Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it has at most
+`max_seeds` points, otherwise the first `max_seeds` points of a Halton sequence in the box, so
+`max_seeds` (clamped to `MAX_SEEDS = 4096`; `fixed_points` uses `MAX_SEEDS`) is a hard cap in every
+dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
+(40, 14², 9³ grid points in 1D–3D; 2^10 = 1024 does not fit, so 10D and up use Halton points).
+
 ## IPC (Tauri commands)
 
-JSON, camelCase. Types mirrored in `app/src/api/types.ts`.
+JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
+every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputFormat`, `Severity`,
+`Method`, `Status`, `Stats`, `Classification`, derived behind each crate's `ts` feature), into
+`app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
+typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
+compiles against what Rust sends, and CI fails while the generated file is stale.
+
+`CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
+added by reducing a higher-order equation to first order (`\theta'` for `\ddot{\theta} = …`), never a
+Hamiltonian momentum or a first-order state, and the UI uses it (not the display LaTeX) to decide
+when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 
 | Command | Request | Response |
 | --- | --- | --- |
 | `compile_system` | `{ source, format: "latex" \| "text" }` | `CompileResponse` |
+| `convert_source` | `{ lines: string[], from, to }` (`ConvertRequest`) | `{ lines: { source, converted, error, note? }[] }` (`ConvertResponse`) |
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
+
+`compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
+one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,
+in order.
+
+`PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
+eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,
+with the eigenvector conventions of `dyn-analysis` above.
+
+The UI selects a fixed point by position, not by its index in `fixedPoints` (which is re-sorted
+on every recompute): after each response the selection moves to the nearest fixed point within 10%
+of the larger visible state-axis span, provided that point is not nearer to another of the
+previous response's fixed points (so a point that merges into a neighbour does not hand the
+selection to it), and is cleared otherwise.
 
 The UI never sends anything stale: it sends a monotonically increasing `requestId`
 and drops responses older than the latest it has drawn.

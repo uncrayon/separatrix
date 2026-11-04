@@ -1,5 +1,3 @@
-//! Iteration of discrete-time maps `x_{n+1} = f(n, x_n; p)`.
-
 use dyn_core::VectorField;
 
 use crate::{all_finite, blew_up, Solution, Stats, Status};
@@ -104,7 +102,6 @@ mod tests {
 
     #[test]
     fn logistic_converges_to_fixed_point() {
-        // r = 2.5: stable fixed point x* = 1 - 1/r = 0.6 (Strogatz §10.2).
         let sol = iterate_map(&logistic(), &[2.5], &[0.1], 50, 200);
         assert_eq!(sol.status, Status::Completed);
         assert_eq!(sol.len(), 51);
@@ -117,7 +114,6 @@ mod tests {
 
     #[test]
     fn index_is_passed_as_time() {
-        // x_{n+1} = x_n + n  =>  x_k = k(k-1)/2
         let f =
             FnField::new(1, 0, SystemKind::Map, |n, x, _p, out| out[0] = x[0] + n).non_autonomous();
         let sol = iterate_map(&f, &[], &[0.0], 10, 0);
@@ -131,14 +127,12 @@ mod tests {
         let sq = FnField::new(1, 0, SystemKind::Map, |_n, x, _p, out| out[0] = x[0] * x[0]);
         let sol = iterate_map(&sq, &[], &[2.0], 100, 0);
         assert_eq!(sol.status, Status::BlewUp);
-        // 2, 4, 16, 256, 65536, 2^32, 2^64 > 1e12
         assert_eq!(sol.len(), 7);
         assert!(sol.last().unwrap().1[0] > 1e12);
 
         let ln = FnField::new(1, 0, SystemKind::Map, |_n, x, _p, out| out[0] = x[0].ln());
         let sol = iterate_map(&ln, &[], &[0.5], 10, 0);
         assert_eq!(sol.status, Status::NonFinite);
-        // 0.5, ln 0.5 < 0, then ln(negative) = NaN is dropped.
         assert_eq!(sol.len(), 2);
         assert!(all_finite(&sol.x));
 
@@ -157,7 +151,6 @@ mod tests {
 
     #[test]
     fn two_dimensional_henon() {
-        // Hénon map (Strogatz §12.2) stays bounded for a = 1.4, b = 0.3.
         let f = FnField::new(2, 2, SystemKind::Map, |_n, x, p, out| {
             out[0] = x[1] + 1.0 - p[0] * x[0] * x[0];
             out[1] = p[1] * x[0];

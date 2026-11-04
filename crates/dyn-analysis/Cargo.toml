@@ -8,8 +8,13 @@ license.workspace = true
 [dependencies]
 dyn-core.workspace = true
 serde.workspace = true
+ts-rs = { workspace = true, optional = true }
 # Only used for eigenvalues of Jacobians of dimension >= 3 (real Schur form).
 nalgebra = { version = "0.35", default-features = false, features = ["std"] }
+
+[features]
+# TypeScript declarations (ts-rs) for the types sent to the UI.
+ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 approx.workspace = true

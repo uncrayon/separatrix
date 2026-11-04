@@ -1,26 +1,28 @@
-// All of the app's state, and every action that changes it, in one hook.
-//
-// Flow: equations → compile (debounced while typing) → params/view/ICs are
-// adapted → any change schedules a portrait recompute (coalesced per frame).
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AxisRef, CompileResponse, Diagnostic } from "../api/types";
-import { compileSystem, PortraitScheduler } from "../api/client";
-import type { Template } from "../templates";
+import type { AxisRef, CompileResponse, Diagnostic, InputFormat } from "../api/types";
+import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
+import { sameAxis } from "../math/format";
+import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
-  PALETTE_SIZE,
+  adaptBaseState,
   adaptInitialConditions,
-  axisValid,
+  adaptView,
   buildPortraitJob,
-  defaultParamRange,
   defaultView,
+  leastUsedPaletteIndex,
+  conversionOutcome,
+  planModeSwitch,
+  resolveParam,
   stateExtent,
+  templateLines,
   templateView,
+  trackSelection,
   type EquationLine,
   type InitialCondition,
   type Layers,
+  type ModeSnapshot,
   type ParamState,
   type PortraitMeta,
   type PortraitState,
@@ -32,37 +34,55 @@ import {
 
 const COMPILE_DEBOUNCE_MS = 160;
 
-/** A blank starting point: the harmonic oscillator, ready to edit. */
-const BLANK_TEMPLATE: Template = {
-  id: "blank",
-  title: "Untitled system",
-  chapter: "",
-  description: "",
-  format: "latex",
-  equations: ["\\dot{x}=y", "\\dot{y}=-x"],
-  params: {},
-  view: { x: "x", y: "y", xRange: [-4, 4], yRange: [-3, 3] },
-  initialConditions: [],
-  tEnd: 20,
-};
+/** The one input mode of the whole system, remembered across sessions. */
+const FORMAT_KEY = "separatrix.inputMode";
+
+function readFormat(): InputFormat {
+  try {
+    return localStorage.getItem(FORMAT_KEY) === "text" ? "text" : "latex";
+  } catch {
+    return "latex";
+  }
+}
+
+function saveFormat(format: InputFormat) {
+  try {
+    localStorage.setItem(FORMAT_KEY, format);
+  } catch {
+    // Storage may be unavailable (private mode); the mode then lasts this session only.
+  }
+}
 
 export interface StudioState extends StudioSnapshot {
+  /** The input format of every line in `equations`. */
+  format: InputFormat;
+  /** The lines exactly as typed, in `format`. */
   equations: EquationLine[];
+  /** Why a line was kept as typed by the last mode switch, by line id. */
+  conversionNotes: Record<number, string>;
+  /** A mode switch is waiting for the core. */
+  converting: boolean;
   diagnostics: Diagnostic[];
-  /** False while the latest edit does not compile (the last good system stays on screen). */
   compileOk: boolean;
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
-  templateId: string | null;
+  sourceTemplateId: string | null;
   computeError: string | null;
 }
 
 export type Studio = ReturnType<typeof useStudio>;
 
-/** The single source of truth for the UI. */
+/** A usable plot aspect rounded to 3 significant digits, or null. */
+function roundAspect(aspect: number | null): number | null {
+  return aspect && Number.isFinite(aspect) && aspect > 0 ? Number(aspect.toPrecision(3)) : null;
+}
+
 export function useStudio() {
+  const [format, setFormatState] = useState<InputFormat>(readFormat);
   const [equations, setEquations] = useState<EquationLine[]>([]);
+  const [conversionNotes, setConversionNotes] = useState<Record<number, string>>({});
+  const [converting, setConverting] = useState(false);
   const [compiled, setCompiled] = useState<CompileResponse | null>(null);
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [compileOk, setCompileOk] = useState(true);
@@ -81,12 +101,16 @@ export function useStudio() {
   const [solver, setSolverState] = useState<SolverSettings>(DEFAULT_SOLVER);
   const [selection, setSelection] = useState<Selection>(null);
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
-  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
+  const [shapeId, setShapeId] = useState(0);
 
   const state: StudioState = {
+    format,
     equations,
+    conversionNotes,
+    converting,
     compiled,
     diagnostics,
     compileOk,
@@ -100,34 +124,40 @@ export function useStudio() {
     solver,
     selection,
     portrait,
-    templateId,
+    sourceTemplateId,
     computeError,
     plotAspect,
+    shapeId,
   };
-  // Async callbacks (compile results, the scheduler) read the newest state here.
   const latest = useRef(state);
   latest.current = state;
 
   const nextLineId = useRef(1);
   const nextIcId = useRef(1);
-  const nextColor = useRef(0);
   const compileSeq = useRef(0);
   const compileTimer = useRef<number | undefined>(undefined);
+  const modeSnapshot = useRef<ModeSnapshot | null>(null);
+  const switching = useRef(false);
 
-  const makeIc = useCallback((x0: number[], t0: number): InitialCondition => {
-    const ic = { id: nextIcId.current++, x0, t0, color: nextColor.current % PALETTE_SIZE };
-    nextColor.current++;
-    return ic;
-  }, []);
-
-  // ------------------------------------------------------------ portrait
+  const makeIc = useCallback(
+    (x0: number[], t0: number): Omit<InitialCondition, "color"> => ({
+      id: nextIcId.current++,
+      x0,
+      t0,
+    }),
+    [],
+  );
 
   const scheduler = useMemo(
     () =>
       new PortraitScheduler<PortraitMeta>(
         () => buildPortraitJob(latest.current),
         (res, meta, roundTripMs) => {
+          const last = latest.current.portrait;
+          const prev = last?.meta.fixedPoints ? last.res.fixedPoints : [];
           setPortrait({ res, meta, roundTripMs });
+          // With the layer hidden nothing was searched, so the selection is kept for when it is shown again.
+          if (meta.fixedPoints) setSelection((sel) => trackSelection(sel, res.fixedPoints, meta.view, prev));
           setComputeError(null);
         },
         (err) => setComputeError(err instanceof Error ? err.message : String(err)),
@@ -140,23 +170,20 @@ export function useStudio() {
     scheduler.request();
   }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
-  // ------------------------------------------------------------ compile
-
-  /** Compile `lines`; when `template` is given, apply its params, view and ICs. */
   const runCompile = useCallback(
-    async (lines: string[], template?: Template) => {
+    async (lines: string[], format: InputFormat, template?: Template) => {
       const seq = ++compileSeq.current;
       const source = lines.filter((l) => l.trim() !== "").join("\n");
       let res: CompileResponse;
       try {
-        res = await compileSystem({ source, format: "latex" });
+        res = await compileSystem({ source, format });
       } catch (err) {
         if (seq !== compileSeq.current) return;
         setDiagnostics([{ severity: "error", message: `The maths core did not answer: ${String(err)}` }]);
         setCompileOk(false);
         return;
       }
-      if (seq !== compileSeq.current) return; // a newer edit is already compiling
+      if (seq !== compileSeq.current) return;
       setDiagnostics(res.diagnostics);
       setCompileOk(res.ok);
       if (!res.ok || res.systemId === undefined) return;
@@ -164,45 +191,40 @@ export function useStudio() {
       const cur = latest.current;
       const old = cur.compiled;
       const dim = res.states.length;
+      const sourceTemplate = cur.sourceTemplateId ? templateById(cur.sourceTemplateId) : undefined;
 
-      // Parameters: template value, else the current slider value, else the default.
       setParams(
-        res.params.map((p) => {
-          const prev = cur.params.find((q) => q.name === p.name);
-          const value = template?.params[p.name] ?? (template ? undefined : prev?.value) ?? p.default;
-          const range =
-            template?.paramRanges?.[p.name] ??
-            (prev && !template ? [prev.min, prev.max] : defaultParamRange(value));
-          return {
-            name: p.name,
-            latex: p.latex,
-            value,
-            min: Math.min(range[0], value),
-            max: Math.max(range[1], value),
-          };
-        }),
+        res.params.map((p) =>
+          resolveParam(
+            p,
+            cur.params.find((q) => q.name === p.name),
+            old?.params.find((q) => q.name === p.name)?.default,
+            template,
+            sourceTemplate,
+          ),
+        ),
       );
 
       if (template) {
+        setShapeId((n) => n + 1);
         const v = templateView(template, res);
         setViewState(v);
         setHomeView(v);
         setBaseState(new Array(dim).fill(0));
         setFieldTimeState(0);
-        nextColor.current = 0;
-        setIcs(
-          template.initialConditions.map((x0) =>
-            makeIc(
-              Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
-              0,
-            ),
-          ),
-        );
+        const fresh: InitialCondition[] = [];
+        for (const x0 of template.initialConditions) {
+          const ic = makeIc(
+            Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
+            0,
+          );
+          fresh.push({ ...ic, color: leastUsedPaletteIndex(fresh) });
+        }
+        setIcs(fresh);
         setSolverState((s) => ({ ...s, tEnd: template.tEnd }));
         setLayersState((l) => ({
           ...l,
           backward: template.backward ?? true,
-          // Nullclines get busy in projections of 3D flows; start with them off.
           nullclines: dim <= 2,
         }));
         setSelection(null);
@@ -212,13 +234,14 @@ export function useStudio() {
           old.kind === res.kind &&
           old.states.map((s) => s.name).join() === res.states.map((s) => s.name).join();
         if (!sameShape) {
-          const valid =
-            axisValid(cur.view.xAxis, dim) && axisValid(cur.view.yAxis, dim) && old?.kind === res.kind;
-          const v = valid ? cur.view : defaultView(res);
+          setShapeId((n) => n + 1);
+          const oldStates = old?.states ?? [];
+          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states) : null;
+          const v = kept ?? defaultView(res);
           setViewState(v);
           setHomeView(v);
-          setBaseState((b) => Array.from({ length: dim }, (_, i) => b[i] ?? 0));
-          setIcs((list) => adaptInitialConditions(list, old?.states ?? [], res.states));
+          setBaseState((b) => adaptBaseState(b, oldStates, res.states));
+          setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
         }
       }
@@ -229,47 +252,127 @@ export function useStudio() {
 
   const scheduleCompile = useCallback(
     (lines: EquationLine[]) => {
+      const format = latest.current.format;
       window.clearTimeout(compileTimer.current);
       compileTimer.current = window.setTimeout(
-        () => void runCompile(lines.map((l) => l.latex)),
+        () =>
+          void runCompile(
+            lines.map((l) => l.source),
+            format,
+          ),
         COMPILE_DEBOUNCE_MS,
       );
     },
     [runCompile],
   );
 
-  // ------------------------------------------------------------ actions
-
-  const toLines = (latexes: string[]) => latexes.map((latex) => ({ id: nextLineId.current++, latex }));
+  const toLines = (sources: string[]) => sources.map((source) => ({ id: nextLineId.current++, source }));
 
   const loadTemplate = useCallback(
     (t: Template) => {
       window.clearTimeout(compileTimer.current);
-      setEquations(toLines(t.equations));
-      setTemplateId(t.id);
-      void runCompile(t.equations, t);
+      const format = latest.current.format;
+      const lines = templateLines(t, format);
+      const next = toLines(lines);
+      setEquations(next);
+      latest.current = { ...latest.current, equations: next };
+      setConversionNotes({});
+      modeSnapshot.current = null;
+      setSourceTemplateId(t.id);
+      void runCompile(lines, format, t);
     },
     [runCompile],
   );
 
   const newBlank = useCallback(() => {
     loadTemplate(BLANK_TEMPLATE);
-    setTemplateId(null);
+    setSourceTemplateId(null);
   }, [loadTemplate]);
 
   const setEquation = useCallback(
-    (id: number, latex: string) => {
-      const lines = latest.current.equations.map((l) => (l.id === id ? { ...l, latex } : l));
+    (id: number, source: string) => {
+      const lines = latest.current.equations.map((l) => (l.id === id ? { ...l, source } : l));
       setEquations(lines);
-      setTemplateId(null);
+      latest.current = { ...latest.current, equations: lines };
+      setConversionNotes((notes) => {
+        if (!(id in notes)) return notes;
+        const rest = { ...notes };
+        delete rest[id];
+        return rest;
+      });
       scheduleCompile(lines);
     },
     [scheduleCompile],
   );
 
-  /** Add an empty line after `afterId` (or at the end). Returns its id. */
+  /**
+   * Switch every line to the input format `to`. Straight back after a switch
+   * with nothing edited, the lines from before it are restored exactly;
+   * otherwise the core converts them. A line with an error is kept as typed,
+   * with a note; a valid line the core can't convert exactly calls the switch
+   * off (kept as typed, it would mean something else in `to`), with a note on
+   * it. A conversion that comes back after the lines have changed is dropped. Names are kept, so the recompile finds the same
+   * system and keeps the sliders, view and initial conditions.
+   */
+  const setFormat = useCallback(
+    async (to: InputFormat) => {
+      const cur = latest.current;
+      if (to === cur.format || switching.current) return;
+      window.clearTimeout(compileTimer.current);
+      const sent = cur.equations;
+      const plan = planModeSwitch(
+        sent.map((l) => l.source),
+        modeSnapshot.current,
+        to,
+      );
+      let next: string[];
+      const notes: Record<number, string> = {};
+      const noteLines = (list: (string | undefined)[]) =>
+        list.forEach((note, i) => {
+          if (note && sent[i]) notes[sent[i].id] = note;
+        });
+      if ("restore" in plan) {
+        next = plan.restore;
+      } else {
+        switching.current = true;
+        setConverting(true);
+        let outcome: ReturnType<typeof conversionOutcome>;
+        try {
+          const res = await convertSource({ lines: plan.convert, from: cur.format, to });
+          outcome = conversionOutcome(res);
+        } catch (err) {
+          setDiagnostics([{ severity: "error", message: `The maths core did not answer: ${String(err)}` }]);
+          setCompileOk(false);
+          return;
+        } finally {
+          switching.current = false;
+          setConverting(false);
+        }
+        if (latest.current.equations !== sent || outcome.notes.length !== sent.length) return;
+        noteLines(outcome.notes);
+        if (!outcome.switch) {
+          // A valid line would change meaning in `to`: stay, say which, and
+          // compile the lines as they are (the switch cancelled a pending compile).
+          setConversionNotes(notes);
+          void runCompile(sent.map((l) => l.source), cur.format);
+          return;
+        }
+        next = outcome.lines;
+      }
+      const lines = sent.map((l, i) => ({ id: l.id, source: next[i] }));
+      modeSnapshot.current = { from: cur.format, before: sent.map((l) => l.source), after: next };
+      setEquations(lines);
+      setFormatState(to);
+      latest.current = { ...latest.current, equations: lines, format: to };
+      setConversionNotes(notes);
+      saveFormat(to);
+      void runCompile(next, to);
+    },
+    [runCompile],
+  );
+
   const addEquation = useCallback((afterId?: number): number => {
-    const line = { id: nextLineId.current++, latex: "" };
+    const line = { id: nextLineId.current++, source: "" };
     setEquations((list) => {
       const i = afterId === undefined ? list.length - 1 : list.findIndex((l) => l.id === afterId);
       const copy = list.slice();
@@ -283,7 +386,7 @@ export function useStudio() {
     (id: number) => {
       const lines = latest.current.equations.filter((l) => l.id !== id);
       setEquations(lines);
-      setTemplateId(null);
+      latest.current = { ...latest.current, equations: lines };
       scheduleCompile(lines);
     },
     [scheduleCompile],
@@ -306,27 +409,22 @@ export function useStudio() {
   }, []);
 
   const setView = useCallback((v: View) => setViewState(v), []);
-  /** The plot's width / height, so a phase plane can use equal scales (rounded: no churn while resizing). */
   const setPlotAspect = useCallback((aspect: number | null) => {
-    const a = aspect && Number.isFinite(aspect) && aspect > 0 ? Number(aspect.toPrecision(3)) : null;
+    const a = roundAspect(aspect);
     setPlotAspectState((old) => (old === a ? old : a));
   }, []);
-  /** Show or hide one trajectory; a hidden one is not integrated, its start point stays. */
   const setIcHidden = useCallback((id: number, hidden: boolean) => {
     setIcs((list) => list.map((ic) => (ic.id === id ? { ...ic, hidden } : ic)));
   }, []);
   const resetView = useCallback(() => setViewState(latest.current.homeView), []);
 
-  /** Put `axis` on the horizontal or vertical axis (swapping if it is already on the other). */
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
     const v = cur.view;
     const other = which === "x" ? v.yAxis : v.xAxis;
-    const same = (a: AxisRef, b: AxisRef) =>
-      a.kind === b.kind && (a.kind === "time" || (b.kind === "state" && a.index === b.index));
     const rangeFor = (a: AxisRef): [number, number] => {
-      if (same(a, v.xAxis)) return v.xRange;
-      if (same(a, v.yAxis)) return v.yRange;
+      if (sameAxis(a, v.xAxis)) return v.xRange;
+      if (sameAxis(a, v.yAxis)) return v.yRange;
       if (a.kind === "time") return [-0.04 * cur.solver.tEnd, cur.solver.tEnd];
       const ext = stateExtent(cur.portrait?.res, cur.compiled?.states.length ?? 0, a.index);
       if (ext) {
@@ -336,7 +434,7 @@ export function useStudio() {
       return [-5, 5];
     };
     let next: View;
-    if (same(axis, other)) {
+    if (sameAxis(axis, other)) {
       next = { xAxis: v.yAxis, yAxis: v.xAxis, xRange: v.yRange, yRange: v.xRange };
     } else if (which === "x") {
       next = { ...v, xAxis: axis, xRange: rangeFor(axis) };
@@ -357,7 +455,6 @@ export function useStudio() {
 
   const setFieldTime = useCallback((t: number) => setFieldTimeState(t), []);
 
-  /** The full state (and start time) for a point clicked on the canvas. */
   const liftPoint = useCallback((px: number, py: number, base?: InitialCondition) => {
     const cur = latest.current;
     const dim = cur.compiled?.states.length ?? 0;
@@ -376,7 +473,7 @@ export function useStudio() {
     (px: number, py: number): number => {
       const { x0, t0 } = liftPoint(px, py);
       const ic = makeIc(x0, t0);
-      setIcs((list) => [...list, ic]);
+      setIcs((list) => [...list, { ...ic, color: leastUsedPaletteIndex(list) }]);
       setSelection({ kind: "ic", id: ic.id });
       return ic.id;
     },
@@ -422,6 +519,7 @@ export function useStudio() {
       loadTemplate,
       newBlank,
       setEquation,
+      setFormat,
       addEquation,
       removeEquation,
       setParam,
@@ -446,6 +544,7 @@ export function useStudio() {
       loadTemplate,
       newBlank,
       setEquation,
+      setFormat,
       addEquation,
       removeEquation,
       setParam,

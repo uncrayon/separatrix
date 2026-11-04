@@ -1,20 +1,15 @@
-// Number and notation helpers shared by the panels and the canvas.
+import type { AxisRef, Classification, StateInfo, SystemKind } from "../api/types";
 
-import type { AxisRef, Classification, SymbolInfo, SystemKind } from "../api/types";
+export const COMPUTED_ZERO = 1e-12;
 
-/**
- * Format a number for display with `digits` significant digits, dropping
- * trailing zeros ("2.50" → "2.5") and avoiding "-0".
- */
-export function fmt(v: number, digits = 3): string {
+export function fmt(v: number, digits = 3, zeroBelow = 0): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  if (Math.abs(v) < 1e-12) return "0";
+  if (Math.abs(v) < zeroBelow || v === 0) return "0";
   const abs = Math.abs(v);
   if (abs >= 1e5 || abs < 1e-4) {
     const [m, e] = v.toExponential(digits - 1).split("e");
     return `${trimZeros(m)}e${e.replace("+", "")}`;
   }
-  // Fixed notation with `digits` significant digits, at least 0 decimals.
   const decimals = Math.max(0, digits - 1 - Math.floor(Math.log10(abs)));
   return trimZeros(v.toFixed(Math.min(decimals, 10)));
 }
@@ -23,23 +18,13 @@ function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
-/** Like {@link fmt} but as LaTeX (scientific notation as `\times 10^{k}`). */
-export function fmtTex(v: number, digits = 3): string {
-  const s = fmt(v, digits);
+export function fmtTex(v: number, digits = 3, zeroBelow = 0): string {
+  const s = fmt(v, digits, zeroBelow);
   const m = /^(-?[\d.]+)e(-?\d+)$/.exec(s);
   if (m) return `${m[1]}\\times 10^{${m[2]}}`;
   if (s === "∞") return "\\infty";
   if (s === "−∞") return "-\\infty";
   return s;
-}
-
-/** A complex eigenvalue as LaTeX, e.g. `-0.5 + 1.32i`. */
-export function complexTex([re, im]: [number, number], digits = 3): string {
-  if (Math.abs(im) < 1e-12) return fmtTex(re, digits);
-  const sign = im < 0 ? "-" : "+";
-  const reS = Math.abs(re) < 1e-12 ? "" : `${fmtTex(re, digits)} ${sign} `;
-  const imS = `${fmtTex(Math.abs(im), digits)}i`;
-  return reS ? reS + imS : (im < 0 ? "-" : "") + imS;
 }
 
 const GREEK: Record<string, string> = {
@@ -85,70 +70,90 @@ const GREEK: Record<string, string> = {
   Omega: "Ω",
 };
 
-/**
- * Turn short LaTeX (names, dotted names, simple expressions) into readable
- * plain Unicode. Used where typesetting is not possible: diagnostics text,
- * accessible names and canvas tick labels. `\dot{\theta}` → "θ̇".
- */
-export function latexToPlain(s: string): string {
+/** The Greek letters the parser accepts, by command name (`varrho`, `Upsilon`, …). */
+export const GREEK_NAMES: ReadonlySet<string> = new Set(Object.keys(GREEK));
+
+/** LaTeX as plain text, keeping every hyphen as typed. */
+function latexToPlainText(s: string): string {
   let out = s;
-  out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̈`);
-  out = out.replace(/\\dot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlain(a)}̇`);
+  out = out.replace(/\\ddot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlainText(a)}̈`);
+  out = out.replace(/\\dot\{([^{}]*)\}/g, (_, a: string) => `${latexToPlainText(a)}̇`);
   out = out.replace(/\\(?:operatorname|mathrm|text)\{([^{}]*)\}/g, "$1");
   out = out.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)");
   out = out.replace(/\\left|\\right/g, "");
   out = out.replace(/\\cdot/g, "·").replace(/\\times/g, "×");
   out = out.replace(/\\([A-Za-z]+)/g, (m, name: string) => GREEK[name] ?? (name.length > 1 ? name : m));
   out = out.replace(/_\{([^{}]*)\}/g, "_$1").replace(/\^\{([^{}]*)\}/g, "^$1");
-  out = out.replace(/-/g, "−");
   return out;
 }
 
-/**
- * A core diagnostic as the panel shows it: plain maths, and a quoted token in curly quotes
- * ("Missing right-hand side after ‘=’", as in the brand book). Apostrophes ("can't", "x'") stay.
- */
-export function diagnosticText(message: string): string {
-  return latexToPlain(message).replace(/'([^'\s]{1,12})'/g, "‘$1’");
+/** A LaTeX expression (a name, an axis, an equation) as plain text, with true minus signs. */
+export function latexToPlain(s: string): string {
+  return latexToPlainText(s).replace(/-/g, "−");
 }
 
-/** The LaTeX used to label an axis: the user's state name, or t / n. */
-export function axisLatex(axis: AxisRef, states: SymbolInfo[], kind: SystemKind | undefined): string {
+/**
+ * A diagnostic from the core for display. Messages are prose that quote
+ * maths (`\dot{x} = -x`, `'*'`), so LaTeX is spelled out but hyphens stay
+ * hyphens ("right-hand side"). A token in single quotes gets curly quotes;
+ * a prime is not a quote (`x' + y'` stays as it is).
+ */
+export function diagnosticText(message: string): string {
+  return latexToPlainText(message).replace(/(^|[\s(])'([^'\s]{1,12})'(?=$|[\s,.;:)])/g, "$1‘$2’");
+}
+
+export function axisLatex(axis: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {
   if (axis.kind === "time") return kind === "map" ? "n" : "t";
   return states[axis.index]?.latex ?? "?";
 }
 
-/** An axis name as the plot labels it: {@link axisLatex}, with `_n` for a map value plotted against n. */
 export function axisLabelLatex(
   axis: AxisRef,
   other: AxisRef,
-  states: SymbolInfo[],
+  states: StateInfo[],
   kind: SystemKind | undefined,
 ): string {
   const base = axisLatex(axis, states, kind);
-  return kind === "map" && axis.kind === "state" && other.kind === "time" ? `${base}_n` : base;
+  return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
-/** Same as {@link axisLatex}, for a map state on the value axis: `x_n`. */
-export function stateLatexForKind(s: SymbolInfo, kind: SystemKind | undefined): string {
-  return kind === "map" ? `${s.latex}_n` : s.latex;
+/** Where the `{…}` group that ends `latex` opens, or -1. */
+function lastGroupStart(latex: string): number {
+  if (!latex.endsWith("}")) return -1;
+  let depth = 0;
+  for (let i = latex.length - 1; i >= 0; i--) {
+    if (latex[i] === "}") depth++;
+    else if (latex[i] === "{" && --depth === 0) return i;
+  }
+  return -1;
 }
 
-/** Stable comparison of two axis references. */
+/**
+ * `latex` with `index` added to its subscript: `x_{0}`, and `x_{1,0}` for
+ * `x_{1}` (as the core writes a map's `x_{1,n}`), not the double subscript
+ * `x_{1}_0`, which is drawn as x₁₀. A superscript after the subscript stays
+ * after it: `x_{1}^{(4)}` (the core's fourth derivative) is `x_{1,0}^{(4)}`.
+ */
+export function withSubscript(latex: string, index: string): string {
+  const open = lastGroupStart(latex);
+  if (open > 0 && latex[open - 1] === "_") return `${latex.slice(0, -1)},${index}}`;
+  if (open > 0 && latex[open - 1] === "^") {
+    const base = latex.slice(0, open - 1);
+    const sub = lastGroupStart(base);
+    if (sub > 0 && base[sub - 1] === "_") return `${base.slice(0, -1)},${index}}${latex.slice(open - 1)}`;
+  }
+  return `${latex}_{${index}}`;
+}
+
 export function sameAxis(a: AxisRef, b: AxisRef): boolean {
   return a.kind === b.kind && (a.kind === "time" || a.index === (b as { index: number }).index);
 }
 
-/**
- * Classification in Strogatz's words, capitalised for headings (US spelling,
- * as the brand book asks: "Center", "Saddle"). In 1D Strogatz just says
- * "stable" or "unstable" (Ch. 2), and "half-stable" when f′(x*) = 0.
- */
 export function classificationTitle(c: Classification, dim = 2): string {
   if (dim === 1) {
-    if (c === "non-hyperbolic" || c === "non-isolated") return "Half-stable";
-    const stable = c === "sink" || c.startsWith("stable");
-    return stable ? "Stable" : "Unstable";
+    // f′(x*) = 0 decides nothing: x′ = x² is half-stable at 0, x′ = −x³ stable, x′ = x³ unstable.
+    if (c === "sink" || c.startsWith("stable")) return "Stable";
+    if (c === "source" || c.startsWith("unstable")) return "Unstable";
   }
   const words: Record<Classification, string> = {
     saddle: "Saddle",
@@ -170,7 +175,6 @@ export function classificationTitle(c: Classification, dim = 2): string {
   return words[c];
 }
 
-/** One sentence explaining what the classification means for nearby trajectories. */
 export function classificationExplain(c: Classification, kind: SystemKind | undefined, dim = 2): string {
   if (dim === 1) {
     const stable = c === "sink" || c.startsWith("stable");
@@ -232,27 +236,16 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
   }
 }
 
-/** Clamp `v` to `[lo, hi]`. */
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-/**
- * The first-order system for display.
- *
- * When a second-order equation was rewritten, the core names the new state
- * `\dot{θ}` and returns `\dot{θ} = \dot{θ}` for the first row, which reads as
- * a tautology. In that case every left-hand side is written as d/dt of its
- * state instead (Strogatz's x' = y, y' = … with y = θ̇):
- *   dθ/dt = θ̇,   dθ̇/dt = −sin θ.
- * Systems without derived states (and maps) are returned unchanged.
- */
 export function firstOrderDisplay(
   equationsLatex: string[],
-  states: SymbolInfo[],
+  states: StateInfo[],
   kind: SystemKind | undefined,
 ): string[] {
-  const derived = states.some((s) => /^\\dot\{/.test(s.latex));
+  const derived = states.some((s) => s.derived);
   if (kind === "map" || !derived || equationsLatex.length !== states.length) return equationsLatex;
   return equationsLatex.map((eq, i) => {
     const k = eq.indexOf("=");

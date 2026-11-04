@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Whether the right-hand side is a flow (ODE) or an iterated map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum SystemKind {
     /// `dx/dt = f(t, x; p)`.
@@ -45,15 +46,14 @@ pub trait VectorField: Send + Sync {
         fd_param_jacobian(self, t, x, p, k, out);
     }
 
-    /// `true` if `t` (or `n`) appears explicitly on the right-hand side.
+    /// `true` if `t` (or `n`) does not appear explicitly on the right-hand side.
     fn is_autonomous(&self) -> bool {
         true
     }
 }
 
 fn fd_step(v: f64) -> f64 {
-    // Optimal step for central differences ~ eps^(1/3) * scale.
-    6.055_454_452_393_343e-6 * v.abs().max(1.0)
+    f64::EPSILON.cbrt() * v.abs().max(1.0)
 }
 
 /// Central-difference Jacobian `∂f/∂x`, row-major.
@@ -130,7 +130,14 @@ impl FnField {
         kind: SystemKind,
         f: impl Fn(f64, &[f64], &[f64], &mut [f64]) + Send + Sync + 'static,
     ) -> Self {
-        Self { dim, n_params, kind, autonomous: true, f: Box::new(f), jac: None }
+        Self {
+            dim,
+            n_params,
+            kind,
+            autonomous: true,
+            f: Box::new(f),
+            jac: None,
+        }
     }
 
     /// Supply an exact Jacobian (row-major) instead of finite differences.
@@ -179,16 +186,25 @@ mod tests {
 
     #[test]
     fn fd_jacobian_matches_exact() {
-        // Lorenz
-        let f = FnField::new(3, 3, SystemKind::Ode, |_t, x, p, o| {
+        let lorenz = FnField::new(3, 3, SystemKind::Ode, |_t, x, p, o| {
             o[0] = p[0] * (x[1] - x[0]);
             o[1] = x[0] * (p[1] - x[2]) - x[1];
             o[2] = x[0] * x[1] - p[2] * x[2];
         });
         let (x, p) = ([1.0, 2.0, 3.0], [10.0, 28.0, 8.0 / 3.0]);
         let mut j = [0.0; 9];
-        f.jacobian(0.0, &x, &p, &mut j);
-        let exact = [-10.0, 10.0, 0.0, 28.0 - 3.0, -1.0, -1.0, 2.0, 1.0, -8.0 / 3.0];
+        lorenz.jacobian(0.0, &x, &p, &mut j);
+        let exact = [
+            -10.0,
+            10.0,
+            0.0,
+            28.0 - 3.0,
+            -1.0,
+            -1.0,
+            2.0,
+            1.0,
+            -8.0 / 3.0,
+        ];
         for (a, b) in j.iter().zip(exact) {
             assert!((a - b).abs() < 1e-7, "{a} vs {b}");
         }

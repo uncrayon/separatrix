@@ -1,5 +1,3 @@
-// App layout (Figma-like): top bar · system panel | canvas | inspector · status bar.
-
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { PortraitCanvas } from "./canvas/PortraitCanvas";
 import { CanvasToolbar } from "./components/CanvasToolbar";
@@ -13,7 +11,6 @@ import type { Template } from "./templates";
 
 type Theme = "dark" | "light";
 
-// Small per-viewer conveniences; the app works the same without storage.
 const THEME_KEY = "separatrix.theme";
 function readStored(key: string): string | null {
   try {
@@ -26,18 +23,14 @@ function writeStored(key: string, value: string) {
   try {
     localStorage.setItem(key, value);
   } catch {
-    /* storage unavailable: ignore */
   }
 }
 
 export default function App() {
   const { state, actions } = useStudio();
   const [theme, setTheme] = useState<Theme>(() => (readStored(THEME_KEY) === "light" ? "light" : "dark"));
-  // First run: open the gallery so the next step is obvious.
   const [galleryOpen, setGalleryOpen] = useState(true);
-  /** What had focus when the gallery opened, to give it back on close. */
   const opener = useRef<HTMLElement | null>(null);
-  /** Where focus goes once the gallery is gone (after `inert` is lifted). */
   const focusAfterClose = useRef<() => void>(() => {});
 
   useLayoutEffect(() => {
@@ -52,7 +45,6 @@ export default function App() {
     opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setGalleryOpen(true);
   }, []);
-  /** Close the gallery; a loaded system sends focus to the plot, Escape back to the opener. */
   const closeGalleryTo = useCallback((target: "plot" | "opener") => {
     focusAfterClose.current = () => {
       const back = opener.current;
@@ -82,8 +74,6 @@ export default function App() {
 
   return (
     <>
-      {/* `inert` while the gallery is open: no focus, clicks or screen-reader
-          access to what is behind the modal backdrop. */}
       <div className="app" inert={galleryOpen}>
         <TopBar
           state={state}
@@ -103,7 +93,7 @@ export default function App() {
           </main>
           <Inspector state={state} actions={actions} />
         </div>
-        <StatusBar state={state} actions={actions} theme={theme} />
+        <StatusBar state={state} actions={actions} />
       </div>
       {galleryOpen && (
         <TemplateGallery
