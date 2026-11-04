@@ -736,20 +736,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dynamics-studio"
-version = "0.2.0"
-dependencies = [
- "dyn-analysis",
- "dyn-core",
- "dyn-expr",
- "dyn-solve",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "embed-resource"
 version = "3.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2738,6 +2724,20 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 dependencies = [
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "separatrix"
+version = "0.2.0"
+dependencies = [
+ "dyn-analysis",
+ "dyn-core",
+ "dyn-expr",
+ "dyn-solve",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

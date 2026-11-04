@@ -1,8 +1,8 @@
-# Dynamics Studio (working title)
+# Separatrix
 
 A desktop app for exploring dynamical systems, built for students and professors of mathematics, physics and applied science. Type a system the way it is written on the board, and see its phase portrait move as you drag.
 
-> **Status:** rewrite in progress (milestone 0). The previous Python/web version (v0.1.0, PyPI `equation-phase-portrait-tool`) is deprecated and lives in git history.
+> **Status:** rewrite in progress (milestone 1 done: the live phase plane). The previous Python/web version (v0.1.0, PyPI `equation-phase-portrait-tool`) is deprecated and lives in git history.
 
 ## What it will do (v1)
 
@@ -28,7 +28,7 @@ A desktop app for exploring dynamical systems, built for students and professors
 Prerequisites: Rust (stable), Node 22. On Linux also `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev`.
 
 ```bash
-cargo test --workspace --exclude dynamics-studio
+cargo test --workspace --exclude separatrix
 ```
 
 ```bash

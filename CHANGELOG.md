@@ -5,6 +5,7 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 ### Changed
 - Rewrite as a cross-platform desktop app (Tauri 2 + Rust core). No Python, no server.
+- Renamed the product to **Separatrix** (app identifier `io.github.uncrayon.separatrix`).
 - New Cargo workspace: `dyn-core` (shared `VectorField` contract), `dyn-expr`, `dyn-solve`, `dyn-analysis`, and the Tauri shell in `app/`.
 - New CI: Rust tests on Linux, macOS and Windows; release workflow that builds unsigned installers.
 

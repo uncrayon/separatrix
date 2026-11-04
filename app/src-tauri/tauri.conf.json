@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Dynamics Studio",
+  "productName": "Separatrix",
   "version": "0.2.0",
-  "identifier": "io.github.uncrayon.dynamics-studio",
+  "identifier": "io.github.uncrayon.separatrix",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Dynamics Studio",
+        "title": "Separatrix",
         "width": 1440,
         "height": 900,
         "minWidth": 960,

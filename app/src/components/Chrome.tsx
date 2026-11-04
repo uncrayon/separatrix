@@ -19,7 +19,7 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
     <header className="topbar">
       <div className="brand">
         <IconLogo />
-        <span className="brand-name">Dynamics Studio</span>
+        <span className="brand-name">Separatrix</span>
       </div>
       <button type="button" className="btn" onClick={onOpenGallery}>
         <IconGallery size={14} /> Templates

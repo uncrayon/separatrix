@@ -48,7 +48,7 @@ jobs:
         with:
           projectPath: app
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__-dev' }}
-          releaseName: 'Dynamics Studio v__VERSION__'
+          releaseName: 'Separatrix v__VERSION__'
           releaseBody: 'Unsigned build. See the install guide for first-launch steps on each OS.'
           releaseDraft: true
           prerelease: true

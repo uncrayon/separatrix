@@ -13,7 +13,7 @@ import type { Template } from "./templates";
 type Theme = "dark" | "light";
 
 // Small per-viewer conveniences; the app works the same without storage.
-const THEME_KEY = "dynamics-studio.theme";
+const THEME_KEY = "separatrix.theme";
 function readStored(key: string): string | null {
   try {
     return localStorage.getItem(key);

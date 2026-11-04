@@ -1,12 +1,12 @@
 [package]
-name = "dynamics-studio"
+name = "separatrix"
 description = "Desktop app for exploring dynamical systems"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "dynamics_studio_lib"
+name = "separatrix_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
