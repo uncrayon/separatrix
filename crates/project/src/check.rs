@@ -90,9 +90,19 @@ const LAYERS: &[F] = &[
     opt("backward", Ty::Bool),
 ];
 
+const SECTION: &[F] = &[
+    req("kind", Ty::Str),
+    opt("state", Ty::Nullable(&Ty::Str)),
+    opt("value", Ty::Nullable(&Ty::Num)),
+    opt("direction", Ty::Nullable(&Ty::Str)),
+    opt("period", Ty::Nullable(&Ty::Num)),
+    opt("phase", Ty::Nullable(&Ty::Num)),
+];
+
 const VIEW: &[F] = &[
     opt("id", Ty::Str),
     opt("kind", Ty::Nullable(&Ty::Str)),
+    opt("section", Ty::Nullable(&Ty::Obj(SECTION))),
     req("x_axis", Ty::Obj(AXIS)),
     req("y_axis", Ty::Obj(AXIS)),
     req("x_range", Ty::Pair),

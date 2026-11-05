@@ -124,11 +124,18 @@ pub struct ProjectView {
     #[serde(default)]
     pub id: String,
     /// `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
-    /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
+    /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
+    /// for a Poincaré section of a flow (see `section`); absent for the
     /// phase plane and the time series, which the axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
+    /// The section of a `"section"` view. Its crossings are plotted in two
+    /// states (`x_axis`, `y_axis`), or as the return map when `y_axis` is
+    /// `{ "kind": "next", "name": s }` of the state `s` across.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub section: Option<ProjectSection>,
     pub x_axis: ProjectAxis,
     pub y_axis: ProjectAxis,
     /// The user's ranges (not the ones equalized for the plot's aspect).
@@ -138,6 +145,39 @@ pub struct ProjectView {
     pub slice: ProjectSlice,
     #[serde(default)]
     pub layers: ProjectLayers,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// A Poincaré section: `{ "kind": "plane", "state": "z", "value": 27,
+/// "direction": "rising" }` (the plane `z = 27`, crossed upwards; `"falling"`
+/// or `"both"` otherwise) or `{ "kind": "stroboscopic", "period": 6.28…,
+/// "phase": 0 }` (the state at `t = phase + k·period`).
+///
+/// A lenient struct like [`ProjectAxis`], so a section kind from a newer
+/// version is a warning, not an unreadable file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectSection {
+    pub kind: String,
+    /// The plane's state, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub value: Option<f64>,
+    /// `"rising"`, `"falling"` or `"both"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub direction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub period: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub phase: Option<f64>,
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: Map<String, Value>,

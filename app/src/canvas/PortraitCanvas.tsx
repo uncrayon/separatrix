@@ -16,7 +16,18 @@ import {
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { isCobweb, portraitFits, portraitGraph, selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
+import {
+  canAddOnPlot,
+  isCobweb,
+  isReturnMap,
+  isSection,
+  portraitFits,
+  portraitGraph,
+  selectFixedPoint,
+  selectedFixedPointIndex,
+  stateExtent,
+  type View,
+} from "../state/model";
 import { cobwebPx, diagonalSegment, orbitValues, pathsDist2, segDist2 } from "./cobweb";
 import { NumberField, Slider } from "../components/controls";
 import { dec } from "../components/startPoint";
@@ -93,6 +104,10 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
 
   const { compiled, view } = state;
   const cobweb = isCobweb(view);
+  const section = isSection(view);
+  const returnMap = isReturnMap(view);
+  const canAdd = canAddOnPlot(view);
+  const viewSection = sectionKey(view);
   const plotTheme = (): PlotTheme => {
     const probe = probeRef.current;
     const key = `${document.documentElement.dataset.theme ?? theme}:${themeVersion}:${probe ? "probe" : "root"}`;
@@ -165,7 +180,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     // The staircase comes from any portrait of this map (it is the same
     // orbit); the graph of f only from one that was asked for it.
     const graph = valid ? portraitGraph(p.res) : undefined;
-    const trajectories = valid
+    // A section's dots come only from a portrait of the same section (any other is whole orbits).
+    const sameSection = valid && sectionKey(p.meta.view) === viewSection;
+    const trajectories = sameSection
       ? p.res.trajectories.flatMap((out, i) => {
           const meta = p.meta.trajectories[i];
           const color = meta ? colorOf.get(meta.icId) : undefined;
@@ -183,7 +200,8 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       nullclines: sameAxes && state.layers.nullclines ? p.res.nullclines : [],
       fixedPoints: valid && state.layers.fixedPoints ? p.res.fixedPoints : [],
       trajectories,
-      ics: state.ics,
+      // A return map's points are pairs of crossings: no start point sits on it.
+      ics: returnMap ? [] : state.ics,
       selectedIc: state.selection?.kind === "ic" ? state.selection.id : null,
       selectedFp:
         valid && state.layers.fixedPoints
@@ -195,6 +213,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       // An earlier compile's portrait, kept up because this one's could not be computed, is faded too.
       stale: !state.compileOk || (valid && p.meta.systemId !== compiled.systemId && !!state.computeError),
       cobweb: cobweb ? { graph: graph ?? [] } : null,
+      section: section ? { returnMap } : null,
     };
   }, [
     compiled,
@@ -207,7 +226,10 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     state.computeError,
     view.xAxis,
     view.yAxis,
+    viewSection,
     cobweb,
+    section,
+    returnMap,
     hover,
     showEigen,
   ]);
@@ -306,8 +328,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       }
       return best;
     }
-    // A map's orbit off a time axis is drawn as dots only, so only the dots can be hit.
-    const dotsOnly = scene.kind === "map" && scene.xAxis.kind !== "time" && scene.yAxis.kind !== "time";
+    // A map's orbit off a time axis, and a section's crossings, are drawn as dots only, so only the dots can be hit.
+    const dotsOnly =
+      !!scene.section || (scene.kind === "map" && scene.xAxis.kind !== "time" && scene.yAxis.kind !== "time");
     let best: number | null = null;
     let bestD = tol * tol;
     for (const tr of scene.trajectories) {
@@ -400,7 +423,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       } else if (hit.fp !== null) {
         actions.select(selectFixedPoint(scene.fixedPoints[hit.fp].x));
         setAnnounce("Selected fixed point");
-      } else {
+      } else if (canAdd) {
         actions.addIc(cur[0], cur[1]);
         setAnnounce(cobweb ? `Added an orbit at x₀ = ${fmtPlain(cur[0])}` : `Added a trajectory at ${fmtPoint(cur)}`);
       }
@@ -470,7 +493,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       startPan(px, py, false);
       return;
     }
-    if (tool === "add") {
+    if (tool === "add" && canAdd) {
       const id = addAt(px, py);
       drag.current = { mode: "ic", id };
       setDragging("ic");
@@ -529,7 +552,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       actions.select({ kind: "ic", id: traj });
       return;
     }
-    addAt(px, py);
+    if (canAdd) addAt(px, py);
   };
 
   const onDoubleClick = () => {
@@ -574,7 +597,8 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     !compiled.autonomous &&
     view.xAxis.kind !== "time" &&
     view.yAxis.kind !== "time";
-  const hasSlice = hiddenStates.length > 0 || !!showTimeSlice;
+  // A section has no field to slice.
+  const hasSlice = !section && (hiddenStates.length > 0 || !!showTimeSlice);
 
   const axes = axisLines(vp);
   const right = vp.left + vp.width;
@@ -625,7 +649,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           onBlur={() => setKbd(null)}
           tabIndex={0}
           role="application"
-          aria-roledescription={cobweb ? "cobweb plot" : "phase plane"}
+          aria-roledescription={cobweb ? "cobweb plot" : section ? "Poincaré section" : "phase plane"}
           aria-label={ariaLabel}
           aria-describedby="plot-keys"
         />
@@ -634,7 +658,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
         <span id="plot-keys" className="ds-sr">
           {cobweb
             ? "Click, or press Enter, to start an orbit at that x₀. Arrow keys move the cursor along the diagonal, Shift for bigger steps. F and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected orbit."
-            : "Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected trajectory."}
+            : returnMap
+              ? "Click a dot to select its trajectory. Plus and minus zoom, 0 resets the view. Delete removes the selected trajectory."
+              : "Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected trajectory."}
         </span>
         <span className="ds-sr" aria-live="polite" aria-atomic="true">
           {announce}
@@ -891,6 +917,7 @@ function Legend({
     return GLYPH_NAMES[k];
   };
   const isMap = kind === "map";
+  const sectionDots = !!scene?.section;
   const trajs = scene?.trajectories ?? [];
   const hasForward = trajs.some((t) => t.meta.direction === "forward");
   const hasBackward = trajs.some((t) => t.meta.direction === "backward");
@@ -901,7 +928,9 @@ function Legend({
   const help =
     tool === "pan"
       ? "Drag to pan, scroll to zoom, double-click to reset the view."
-      : cobweb
+      : scene?.section?.returnMap
+        ? "Click a dot to select its trajectory, drag the plot to pan, scroll to zoom, double-click to reset."
+        : cobweb
         ? tool === "add"
           ? "Click to start an orbit at that x₀ and drag along the diagonal to adjust it. Scroll to zoom."
           : "Click to start an orbit at that x₀, drag a start point along the diagonal, drag the plot to pan, scroll to zoom, double-click to reset."
@@ -916,7 +945,7 @@ function Legend({
     </svg>
   );
   const data: { key: string; sample: ReactNode; faint?: boolean; text: ReactNode }[] = [
-    ...(hasForward && !isMap ? [{ key: "fwd", sample: forwardSample, text: "Trajectory, forward in time" }] : []),
+    ...(hasForward && !isMap && !sectionDots ? [{ key: "fwd", sample: forwardSample, text: "Trajectory, forward in time" }] : []),
     ...(hasForward && cobweb
       ? [
           {
@@ -945,6 +974,21 @@ function Legend({
                 },
               ]
             : []),
+        ]
+      : []),
+    ...(hasForward && sectionDots
+      ? [
+          {
+            key: "crossings",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="6" cy="8" r="2" />
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="12" cy="8" r="2" />
+                <circle className="ds-phase-mark ds-phase-mark--handle" cx="18" cy="8" r="2" />
+              </svg>
+            ),
+            text: scene?.section?.returnMap ? "A crossing and the next, one dot per pair" : "Orbit, one dot per crossing",
+          },
         ]
       : []),
     ...(hasForward && isMap && !cobweb
@@ -1259,9 +1303,11 @@ function describePlot(
   const r = ([a, b]: [number, number]) => `${num(a)} to ${num(b)}`;
   const span = Math.max(Math.abs(xRange[1] - xRange[0]), Math.abs(yRange[1] - yRange[0]));
   const coord = (v: number) => num(snapNearZero(v, span));
-  const parts = [
-    `${kind === "map" ? "Orbit plot" : "Phase plane"}: ${name(xAxis)} from ${r(xRange)} across, ${name(yAxis)} from ${r(yRange)} up.`,
-  ];
+  const what = scene.section ? "Poincaré section" : kind === "map" ? "Orbit plot" : "Phase plane";
+  const [xName, yName] = scene.section?.returnMap
+    ? [`${name(xAxis)} k`, `${name(yAxis)} k+1`]
+    : [name(xAxis), name(yAxis)];
+  const parts = [`${what}: ${xName} from ${r(xRange)} across, ${yName} from ${r(yRange)} up.`];
   const n = scene.ics.length;
   if (n > 0) {
     const sel = scene.ics.findIndex((ic) => ic.id === scene.selectedIc);
@@ -1288,6 +1334,11 @@ function describePlot(
     parts.push("Eigenvector directions are drawn through the fixed points.");
   }
   return parts.join(" ");
+}
+
+/** Which section a view shows, as a comparable key; "" for a view that is not a section. */
+function sectionKey(v: View): string {
+  return isSection(v) ? JSON.stringify(v.section) : "";
 }
 
 function clampTo(v: number, [a, b]: [number, number]): number {

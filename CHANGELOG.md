@@ -18,14 +18,26 @@ All notable changes to this project are documented in this file.
   `r = 0`, the Sel'kov Hopf values `b = √0.12` and `√0.72`, pendulum energy drift, the Van der Pol
   limit cycle's period `T ≈ 6.66329` and amplitude `max x ≈ 2.00862` at `μ = 1`, measured on a
   Poincaré section) and that every template's section is in the 2nd edition's table of contents.
+- Poincaré section view (Strogatz §8.7): the View control's **Section** shows where a flow's
+  orbits cross a plane `x_i = c` (Increasing, Decreasing or Both), or its state once per forcing
+  period (stroboscopic, period `T` and phase `φ`: samples at `t = φ + kT`), as dots in two chosen
+  states, or as the return map `x_k → x_{k+1}` with the diagonal when both axes are one state.
+  **Skip crossings** hides each orbit's first crossings, and the status bar counts "N crossings,
+  k skipped". A click on a plane section starts an orbit on the plane (its state is the plane's
+  value); a stroboscopic one starts at `t₀ = φ`. Project files save the view as `kind: "section"`
+  with a `section` object (additive; the format stays at version 1).
 - Poincaré sections in the core (Strogatz §8.7): `dyn_solve::section` returns the crossings of a
   hyperplane `x_i = c` (rising, falling or both, located by Brent's method on the dense output) or
   the stroboscopic samples `t_k = t0 + phase + k·T` of a periodically forced flow, skipping a
-  transient of crossings. `compute_portrait` takes an optional `section` and then returns each
+  transient of crossings. Over IPC the stroboscopic `phase` is absolute (`t ≡ phase mod T`), so
+  every orbit is sampled at the same forcing phase whatever its start time. `compute_portrait` takes an optional `section` and then returns each
   flow trajectory as its crossings; `transient` counts the skipped ones. The studio's section view
   builds on this.
 
 ### Changed
+- The View control shows the options of the system's kind: Phase, Series and Section for a flow,
+  Phase, Series and Cobweb for a map (an option the system can't show stays, disabled, with its
+  reason).
 - Rewrite as a cross-platform desktop app (Tauri 2 + Rust core). No Python, no server.
 - Renamed the product to **Separatrix** (app identifier `io.github.uncrayon.separatrix`).
 - New Cargo workspace: `dyn-core` (shared `VectorField` contract), `dyn-expr`, `dyn-solve`, `dyn-analysis`, and the Tauri shell in `app/`.

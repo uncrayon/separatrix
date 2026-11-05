@@ -310,7 +310,7 @@ direction: Direction, } | { "kind": "stroboscopic",
  */
 period: number, 
 /**
- * Offset of the first sample from `t0`.
+ * The sample times modulo `period`, in absolute time (not from `t0`).
  */
 phase: number, };
 
@@ -503,14 +503,31 @@ export type ProjectView = {
 id: string, 
 /**
  * `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
- * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
+ * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
+ * for a Poincaré section of a flow (see `section`); absent for the
  * phase plane and the time series, which the axes tell apart.
  */
-kind?: string, x_axis: ProjectAxis, y_axis: ProjectAxis, 
+kind?: string, 
+/**
+ * The section of a `"section"` view. Its crossings are plotted in two
+ * states (`x_axis`, `y_axis`), or as the return map when `y_axis` is
+ * `{ "kind": "next", "name": s }` of the state `s` across.
+ */
+section?: ProjectSection, x_axis: ProjectAxis, y_axis: ProjectAxis, 
 /**
  * The user's ranges (not the ones equalized for the plot's aspect).
  */
 x_range: [number, number], y_range: [number, number], slice: ProjectSlice, layers: ProjectLayers, };
+
+export type ProjectSection = { kind: string, 
+/**
+ * The plane's state, by name.
+ */
+state?: string, value?: number, 
+/**
+ * `"rising"`, `"falling"` or `"both"`.
+ */
+direction?: string, period?: number, phase?: number, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 

@@ -4,7 +4,7 @@ import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
-import { searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
+import { isReturnMap, searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
@@ -23,6 +23,7 @@ import {
   IconWarning,
 } from "./icons";
 import { diagnosticLine } from "./diagnostics";
+import { sectionCounts } from "./runStatus";
 
 type Theme = "dark" | "light";
 
@@ -330,6 +331,11 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const states = sys?.states ?? [];
   const current = !!p && !!sys && p.meta.systemId === sys.systemId;
   const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+  // A section's portrait counts its crossings.
+  const crossings =
+    current && p.meta.view.kind === "section" && state.view.kind === "section"
+      ? sectionCounts(p.res, state.solver.transient)
+      : null;
 
   const solverGaveUpIcIds = p
     ? p.res.trajectories.flatMap((t, i) =>
@@ -345,8 +351,9 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
-  // A cobweb's axes are x_n and x_{n+1}.
-  const cobwebNames = state.view.kind === "cobweb" && states[0] ? viewAxisLabels(state.view, states, kind) : null;
+  // A cobweb's axes are x_n and x_{n+1}; a return map's x_k and x_{k+1}.
+  const cobwebNames =
+    (state.view.kind === "cobweb" || isReturnMap(state.view)) && states[0] ? viewAxisLabels(state.view, states, kind) : null;
   const xName = cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind);
   const yName = cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind);
   const solver = solverSummary(state.solver, kind);
@@ -462,6 +469,23 @@ export function StatusBar({ state, actions }: StatusBarProps) {
               </span>
             </span>
           )
+        )}
+        {crossings && (
+          <span className="ds-statusbar-group">
+            <span className="ds-statusbar-sep" aria-hidden="true" />
+            <span
+              className="ds-statusbar-item"
+              data-tooltip="Section crossings drawn"
+              data-tooltip-desc={`The first ${crossings.skipped.toLocaleString("en-US")} crossings of each orbit are skipped.`}
+              data-section-count=""
+            >
+              <span className="ds-statusbar-text">
+                <span className="ds-statusbar-num">{crossings.crossings.toLocaleString("en-US")}</span>{" "}
+                {crossings.crossings === 1 ? "crossing" : "crossings"},{" "}
+                <span className="ds-statusbar-num">{crossings.skipped.toLocaleString("en-US")}</span> skipped
+              </span>
+            </span>
+          </span>
         )}
         {nFp !== null && (
           <span className="ds-statusbar-group">

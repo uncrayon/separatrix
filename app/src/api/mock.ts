@@ -23,6 +23,7 @@ import type {
   PortraitRequest,
   PortraitResponse,
   ProjectChooseSaveRequest,
+  SectionSpec,
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
@@ -254,6 +255,23 @@ function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
   return null;
 }
 
+/** The checks `section_fits` makes in service.rs, with the same messages. */
+function sectionError(sys: MockSystem, section: SectionSpec): string | null {
+  const dim = sys.states.length;
+  if (sys.kind === "map") return "A Poincaré section needs a flow; this system is a map.";
+  if (section.kind === "plane") {
+    if (section.state >= dim) return `The section's state is out of range: this system has ${dim} ${dim === 1 ? "state" : "states"}.`;
+    if (!Number.isFinite(section.value)) return "The section's value must be a finite number.";
+  } else {
+    if (!(section.period > 0 && Number.isFinite(section.period))) return "The stroboscopic period must be a positive number.";
+    if (!Number.isFinite(section.phase)) return "The stroboscopic phase must be a finite number.";
+  }
+  return null;
+}
+
+/** MAX_SECTION_POINTS in service.rs. */
+const MAX_SECTION_POINTS = 100_000;
+
 /** MAX_GRAPH_SAMPLES in dyn-analysis. */
 const MAX_GRAPH_SAMPLES = 4096;
 
@@ -346,6 +364,10 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
     const err = cobwebError(sys, req.xAxis);
     if (err) throw err;
   }
+  if (req.section) {
+    const err = sectionError(sys, req.section);
+    if (err) throw err;
+  }
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -398,7 +420,12 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
 
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
   const transient = req.transient ?? 0;
-  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps, transient));
+  const section = sys.kind === "ode" ? req.section : undefined;
+  const trajectories = req.trajectories.map((tr) =>
+    section
+      ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
+      : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
+  );
   const graph =
     req.graphSamples === undefined
       ? undefined
@@ -488,6 +515,83 @@ function solve(
     if (k % every === 0 || k === steps) push(t, x);
   }
   const status = steps < needed ? "maxSteps" : "completed";
+  return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
+}
+
+/** One RK4 step of size h. */
+function rk4(sys: MockSystem, p: number[], t: number, x: number[], h: number): number[] {
+  const k1 = sys.f(t, x, p);
+  const k2 = sys.f(t + h / 2, x.map((v, i) => v + (h / 2) * k1[i]), p);
+  const k3 = sys.f(t + h / 2, x.map((v, i) => v + (h / 2) * k2[i]), p);
+  const k4 = sys.f(t + h, x.map((v, i) => v + h * k3[i]), p);
+  return x.map((v, i) => v + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+}
+
+/**
+ * As `dyn_solve::section` through service.rs: the orbit's crossings of the
+ * section (a plane's located by linear interpolation in a step; a
+ * stroboscopic section's at t ≡ phase mod period), the first `transient`
+ * skipped, at most MAX_SECTION_POINTS after them. Forward in time only.
+ */
+function crossings(
+  sys: MockSystem,
+  p: number[],
+  tr: TrajectoryRequest,
+  maxSteps: number,
+  section: SectionSpec,
+  transient: number,
+): TrajectoryOut {
+  const dim = sys.states.length;
+  const ts: number[] = [];
+  const xs: number[] = [];
+  let seen = 0;
+  const skip = Math.max(0, Math.round(transient));
+  const full = () => seen >= skip + MAX_SECTION_POINTS;
+  const take = (t: number, v: number[]) => {
+    if (seen++ >= skip) {
+      ts.push(t);
+      xs.push(...v);
+    }
+  };
+  const lerp = (a: number[], b: number[], u: number) => a.map((v, i) => v + u * (b[i] - v));
+  const span = tr.t1 - tr.t0;
+  const needed = Math.max(1, Math.ceil(Math.abs(span) / 0.01));
+  const steps = Math.min(needed, Math.max(1, maxSteps));
+  const h = span / needed;
+  let t = tr.t0;
+  let x = tr.x0.slice(0, dim);
+  const g = (v: number[]) => (section.kind === "plane" ? v[section.state] - section.value : 0);
+  let k = section.kind === "stroboscopic" ? Math.ceil((tr.t0 - section.phase) / section.period) : 0;
+  const strobe = (n: number) => (section.kind === "stroboscopic" ? section.phase + n * section.period : NaN);
+  if (section.kind === "stroboscopic" && strobe(k) === t) {
+    take(t, x);
+    k++;
+  }
+  for (let s = 1; s <= steps && !full(); s++) {
+    const next = rk4(sys, p, t, x, h);
+    const tn = tr.t0 + s * h;
+    if (next.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12))
+      return { t: ts, x: xs, status: "blewUp", stats: { accepted: s, rejected: 0, evals: 4 * s } };
+    if (section.kind === "plane") {
+      const [a, b] = [g(x), g(next)];
+      const up = a < 0 && b >= 0;
+      const down = a > 0 && b <= 0;
+      const dir = section.direction;
+      if ((up && dir !== "falling") || (down && dir !== "rising")) {
+        const u = a / (a - b);
+        take(t + u * h, lerp(x, next, u));
+      }
+    } else {
+      while (strobe(k) <= tn && !full()) {
+        const u = (strobe(k) - t) / h;
+        take(strobe(k), lerp(x, next, u));
+        k++;
+      }
+    }
+    t = tn;
+    x = next;
+  }
+  const status = steps < needed && !full() ? "maxSteps" : "completed";
   return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
 }
 

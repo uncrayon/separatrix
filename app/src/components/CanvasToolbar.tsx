@@ -6,13 +6,15 @@ import { MathProse } from "../math/MathProse";
 import { axisLatex, latexToPlain, sameAxis, viewAxisLabels } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
-  VIEW_CHOICES,
   VIEW_CHOICE_LABELS,
   hasNullclineLayer,
   isCobweb,
+  isReturnMap,
+  isSection,
   portraitFits,
   viewChoice,
   viewChoiceAvailability,
+  viewChoicesFor,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
 import { systemNameOf } from "./systemName";
@@ -104,7 +106,8 @@ export function CanvasToolbar({ state, actions }: Props) {
       onClick: actions.resetView,
     },
   ];
-  const layers: IconButtonSpec[] = [
+  // A section plots crossings only: no layer applies.
+  const layers: IconButtonSpec[] = isSection(state.view) ? [] : [
     ...(!isMap
       ? [
           {
@@ -218,10 +221,14 @@ export function CanvasToolbar({ state, actions }: Props) {
       <div className="ds-canvas-toolbar-group toolbar-view" role="group" aria-label="View">
         {view.map(button)}
       </div>
-      <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
-      <div className="ds-canvas-toolbar-group" role="group" aria-label="Layers">
-        {layers.map(button)}
-      </div>
+      {layers.length > 0 && (
+        <>
+          <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
+          <div className="ds-canvas-toolbar-group" role="group" aria-label="Layers">
+            {layers.map(button)}
+          </div>
+        </>
+      )}
       <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
       <AxisPicker
         state={state}
@@ -237,6 +244,14 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
   const sys = state.compiled;
   if (!sys) return null;
   const dim = sys.states.length;
+  const { xAxis: rx } = state.view;
+  if (isReturnMap(state.view) && rx.kind === "state") {
+    // Every crossing of the state, as one square range (the diagonal stays at 45°).
+    const p = state.portrait;
+    const vs = portraitFits(sys, state.shapeId, p) ? p.res.trajectories.flatMap((out) => orbitValues(out, dim, rx.index)) : [];
+    const r = cobwebFit(vs);
+    return r ? { xRange: r, yRange: [r[0], r[1]] } : null;
+  }
   if (isCobweb(state.view)) {
     // The orbits and fixed points, as one square range on both axes (the diagonal stays at 45°).
     const vs: number[] = [];
@@ -312,25 +327,32 @@ function AxisPicker({
   const focusOnOpen = useRef<"current" | "first" | "last">("current");
   const menuId = useId();
 
+  const section = isSection(state.view);
   const options: { key: string; value: AxisRef; latex: string; hint?: string }[] = [
     ...sys.states.map((_, i) => ({
       key: `s${i}`,
       value: { kind: "state", index: i } as AxisRef,
       latex: axisLatex({ kind: "state", index: i }, sys.states, sys.kind),
     })),
-    {
-      key: "time",
-      value: { kind: "time" } as AxisRef,
-      latex: isMap ? "n" : "t",
-      hint: isMap ? "iterate" : "time",
-    },
+    // A section's points are crossings, plotted in states only.
+    ...(section
+      ? []
+      : [
+          {
+            key: "time",
+            value: { kind: "time" } as AxisRef,
+            latex: isMap ? "n" : "t",
+            hint: isMap ? "iterate" : "time",
+          },
+        ]),
   ];
   const cobweb = isCobweb(state.view);
   const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
-  // A cobweb's names spoken: "x n" and "x n+1".
-  const xPlain = cobweb ? `${plain(state.view.xAxis)} n` : plain(state.view.xAxis);
-  const yPlain = cobweb ? `${plain(state.view.yAxis)} n+1` : plain(state.view.yAxis);
+  // A cobweb's names spoken: "x n" and "x n+1"; a return map's "x k" and "x k+1".
+  const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
+  const xPlain = step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
+  const yPlain = step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -399,7 +421,7 @@ function AxisPicker({
         <div className="axes-menu-head caption" id={headId}>
           View
         </div>
-        {VIEW_CHOICES.map((c) => {
+        {viewChoicesFor(sys).map((c) => {
           const checked = c === current;
           const a = avail[c];
           return (
@@ -484,12 +506,16 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={`${cobweb ? "Cobweb" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
+        aria-label={`${cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
         data-tooltip={cobweb ? "Choose the view" : "Choose the view and axes"}
         data-tooltip-desc={
           cobweb
             ? "Phase plane, time series or cobweb."
-            : "Phase plane, time series or cobweb; each state, or time, on either axis."
+            : section
+              ? "Phase plane, time series or section; a state on each axis, or one state on both for the return map."
+              : isMap
+                ? "Phase plane, time series or cobweb; each state, or time, on either axis."
+                : "Phase plane, time series or section; each state, or time, on either axis."
         }
         tabIndex={tabIndex}
         onFocus={onFocus}

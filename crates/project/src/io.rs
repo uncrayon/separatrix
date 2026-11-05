@@ -264,6 +264,13 @@ fn first_non_finite(p: &ProjectFile) -> Option<String> {
         if bad(v.slice.t) {
             return Some(format!("views[{i}].slice.t"));
         }
+        if let Some(s) = &v.section {
+            for (k, x) in [("value", s.value), ("period", s.period), ("phase", s.phase)] {
+                if x.is_some_and(bad) {
+                    return Some(format!("views[{i}].section.{k}"));
+                }
+            }
+        }
     }
     let s = &p.solver;
     for (k, v) in [

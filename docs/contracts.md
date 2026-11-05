@@ -328,7 +328,12 @@ vectors are `crates/export/tests/vectors/cobweb.json`.
 | `kind` | Fields | Meaning |
 | --- | --- | --- |
 | `"plane"` | `state`, `value`, `direction: "rising" \| "falling" \| "both"` | crossings of `x[state] = value` |
-| `"stroboscopic"` | `period`, `phase` | the state at `t_k = t0 + phase + k·period` |
+| `"stroboscopic"` | `period`, `phase` | the state at `t_k = phase + k·period`, for every `t_k` from the trajectory's `t0` to its `t1` |
+
+The IPC `phase` is absolute (`t ≡ phase mod period`); the service passes `phase − t0` to
+`dyn_solve::section`, whose phase counts from `t0`, so orbits started at different times are
+sampled at the same forcing phase. The studio starts a click on a stroboscopic section at
+`t0 = phase`, so the start point is itself a point of the section.
 
 With `section` present, each `PortraitResponse.trajectories[i]` is that orbit's crossings
 (`dyn_solve::section` above) instead of its samples, in the same `TrajectoryOut` shape, and

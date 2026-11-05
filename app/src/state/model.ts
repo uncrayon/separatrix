@@ -2,18 +2,20 @@ import type {
   AxisRef,
   CompileResponse,
   ConvertResponse,
+  Direction,
   FixedPointOut,
   InputFormat,
   Method,
   PortraitRequest,
   PortraitResponse,
+  SectionSpec,
   StateInfo,
   SystemKind,
   TrajectoryRequest,
 } from "../api/types";
 import type { PortraitJob } from "../api/client";
 import type { Template } from "../templates";
-import type { LoadedAxis, ProjectLoad } from "../project/serialize";
+import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -47,29 +49,51 @@ export interface ParamState {
  * How a view draws its two axes. `plane` is the phase plane and the time
  * series (the axes tell them apart); `cobweb` is the cobweb plot of a 1-D
  * map x_{n+1} = f(x_n), whose two axes are both state 0 (x_n across, x_{n+1}
- * up) and whose ranges are kept at equal scales.
+ * up) and whose ranges are kept at equal scales; `section` is a flow's
+ * Poincaré section, its crossings plotted in two states, or as the return
+ * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention).
  */
-export type ViewKind = "plane" | "cobweb";
-
-export interface View {
-  /** Absent = `plane`. */
-  kind?: ViewKind;
+interface ViewBase {
   xAxis: AxisRef;
   yAxis: AxisRef;
   xRange: [number, number];
   yRange: [number, number];
 }
 
+export type SectionView = ViewBase & { kind: "section"; section: SectionSpec };
+/** A view of each kind; a plane view's `kind` may be absent. */
+export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView;
+export type ViewKind = NonNullable<View["kind"]>;
+
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
+export const isSection = (v: View): v is SectionView => v.kind === "section";
+/** A section view of one state on both axes: the return map x_k -> x_{k+1}. */
+export const isReturnMap = (v: View): v is SectionView =>
+  v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
-/** What the View control offers: the phase plane, the time series and the cobweb, in that order for every system. */
-export type ViewChoice = "phase" | "series" | "cobweb";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb"];
+/** Every option of the View control, in the order shown. */
+export type ViewChoice = "phase" | "series" | "cobweb" | "section";
+export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section"];
+
+/**
+ * The View control's options for each kind of system. Five equal segments
+ * (with the 3D view) overflow a 1,024 px inspector in projector mode, so a
+ * flow and a map each show the options of their kind; one their kind can't
+ * show stays, disabled, with its reason.
+ */
+export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
+  ode: ["phase", "series", "section"],
+  map: ["phase", "series", "cobweb"],
+};
+
+export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
+  VIEW_CHOICES_BY_KIND[sys?.kind ?? "ode"];
 
 /** Which of the View control's options `v` is. */
 export function viewChoice(v: View): ViewChoice {
   if (isCobweb(v)) return "cobweb";
+  if (isSection(v)) return "section";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
@@ -100,10 +124,28 @@ export function phasePlaneAvailability(sys: SystemShape | null | undefined, name
     : { ok: false, reason: `A phase plane needs at least 2 states. ${name} has ${dim}.` };
 }
 
+/**
+ * A Poincaré section can be taken of `sys`: a flow. A plane section needs
+ * two states; a stroboscopic one works in any dimension. The map reason is
+ * the core's (`section_fits` in service.rs), with the system's name.
+ */
+export function sectionAvailability(sys: SystemShape | null | undefined, name = "this system"): Availability {
+  return sys && sys.kind !== "map" ? { ok: true } : { ok: false, reason: `A Poincaré section needs a flow; ${name} is a map.` };
+}
+
+/** A plane section x_i = c can be taken of `sys`: it has two states or more. */
+export function planeSectionAvailability(sys: SystemShape | null | undefined, name = "This system"): Availability {
+  const dim = sys?.states.length ?? 0;
+  return dim >= 2
+    ? { ok: true }
+    : { ok: false, reason: `A plane section needs at least 2 states. ${name} has ${dim}; take a stroboscopic section.` };
+}
+
 export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   phase: "Phase plane",
   series: "Time series",
   cobweb: "Cobweb",
+  section: "Poincaré section",
 };
 
 /**
@@ -115,9 +157,10 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   phase: "Phase",
   series: "Series",
   cobweb: "Cobweb",
+  section: "Section",
 };
 
-/** Which of the View control's three options `sys` can show, with the reason for each it can't. */
+/** Which of the View control's options `sys` can show, with the reason for each it can't. */
 export function viewChoiceAvailability(
   sys: SystemShape | null | undefined,
   name?: string,
@@ -126,7 +169,70 @@ export function viewChoiceAvailability(
     phase: phasePlaneAvailability(sys, name),
     series: { ok: true },
     cobweb: cobwebAvailability(sys, name),
+    section: sectionAvailability(sys, name),
   };
+}
+
+/**
+ * The section a flow's Section view opens with: a stroboscopic section of
+ * period 2π and phase 0 for a forced system (or one with a single state),
+ * otherwise the plane x_0 = `middle` crossed rising.
+ */
+export function defaultSection(sys: Pick<CompileResponse, "autonomous" | "states">, middle: number): SectionSpec {
+  return !sys.autonomous || sys.states.length < 2
+    ? { kind: "stroboscopic", period: 2 * Math.PI, phase: 0 }
+    : { kind: "plane", state: 0, value: middle, direction: "rising" };
+}
+
+/**
+ * A section view of `section` across the states of `sys`: the two states
+ * after the plane's (or the first two), or, with one state left, its return
+ * map. `rangeOf` gives each state's range.
+ */
+export function sectionView(
+  sys: Pick<CompileResponse, "states">,
+  section: SectionSpec,
+  rangeOf: (i: number) => [number, number],
+): SectionView {
+  const free = sys.states.map((_, i) => i).filter((i) => section.kind !== "plane" || i !== section.state);
+  const x = free[0] ?? 0;
+  const y = free[1] ?? x;
+  const xr = rangeOf(x);
+  const yr = rangeOf(y);
+  return { kind: "section", section, xAxis: stateAxis(x), yAxis: stateAxis(y), xRange: [xr[0], xr[1]], yRange: [yr[0], yr[1]] };
+}
+
+/**
+ * A range for state `i`: the first of `views` (the one shown, then the
+ * remembered ones) with it on an axis, else its extent in `res` padded,
+ * else [−5, 5]. A held state's extent in a section portrait is one value,
+ * so a degenerate extent doesn't count.
+ */
+export function knownStateRange(
+  i: number,
+  views: readonly (View | undefined)[],
+  res: PortraitResponse | undefined,
+  dim: number,
+): [number, number] {
+  for (const v of views) {
+    if (v?.xAxis.kind === "state" && v.xAxis.index === i) return v.xRange;
+    if (v?.yAxis.kind === "state" && v.yAxis.index === i) return v.yRange;
+  }
+  const ext = stateExtent(res, dim, i);
+  if (!ext || !(ext[1] > ext[0])) return [-5, 5];
+  const pad = Math.max(0.1 * (ext[1] - ext[0]), 0.5);
+  return [ext[0] - pad, ext[1] + pad];
+}
+
+/** `view` with `section`; its axes are picked again when the plane's own state is on one of them. */
+export function withSection(
+  view: SectionView,
+  sys: Pick<CompileResponse, "states">,
+  section: SectionSpec,
+  rangeOf: (i: number) => [number, number],
+): SectionView {
+  const onPlane = (a: AxisRef) => section.kind === "plane" && a.kind === "state" && a.index === section.state;
+  return onPlane(view.xAxis) || onPlane(view.yAxis) ? sectionView(sys, section, rangeOf) : { ...view, section };
 }
 
 /** Graph samples of f a cobweb asks for on screen: at least one per CSS px up to 2,048 px. */
@@ -647,6 +753,14 @@ export function adaptView(
   const xAxis = follow(view.xAxis);
   const yAxis = follow(view.yAxis);
   if (!xAxis || !yAxis) return null;
+  if (isSection(view)) {
+    // The plane's state follows its variable too; a return map keeps one state on both axes.
+    const s = view.section;
+    if (s.kind !== "plane") return { ...view, xAxis, yAxis };
+    const held = follow(stateAxis(s.state));
+    if (held?.kind !== "state" || newStates.length < 2) return null;
+    return { ...view, xAxis, yAxis, section: { ...s, state: held.index } };
+  }
   if (xAxis.kind === "state" && yAxis.kind === "state" && xAxis.index === yAxis.index) return null;
   return { ...view, xAxis, yAxis };
 }
@@ -699,6 +813,8 @@ export function trajectorySpans(
   layers: Layers,
 ): TrajectorySpan[] {
   if (kind === "map") return [mapSpan(ic, solver)];
+  // A section's crossings come from tEnd forward of the start.
+  if (isSection(view)) return phasePlaneSpans(ic, solver.tEnd, false);
   const window = visibleTimeRange(view);
   return window
     ? visibleWindowSpans(window, ic, layers.backward)
@@ -796,13 +912,17 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
   const fixedStep = s.solver.method !== "dopri5";
   const shown = displayRanges(s.view, sys.kind, s.plotAspect);
   const cobweb = isCobweb(s.view);
+  const section = isSection(s.view) ? s.view.section : null;
+  const transient = clampTransient(s.solver.transient, s.solver.tEnd);
   // A map hides the same transient in every view; a cobweb also asks for f's graph.
-  const mapFields: MapRequestFields = isOde
-    ? {}
-    : {
-        ...(cobweb ? { graphSamples: COBWEB_GRAPH_SAMPLES } : {}),
-        transient: clampTransient(s.solver.transient, s.solver.tEnd),
-      };
+  // A section skips its first `transient` crossings.
+  const extra: Pick<PortraitRequest, "graphSamples" | "transient" | "section"> = !isOde
+    ? { ...(cobweb ? { graphSamples: COBWEB_GRAPH_SAMPLES } : {}), transient }
+    : section
+      ? { section, transient }
+      : {};
+  // A section plots crossings only: no field, nullclines or equilibria (they lie off the section).
+  const fixedPoints = s.layers.fixedPoints && !section;
   return {
     body: {
       systemId: sys.systemId,
@@ -813,9 +933,9 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       yRange: shown.yRange,
       baseState: Array.from({ length: dim }, (_, i) => s.baseState[i] ?? 0),
       fieldTime: s.fieldTime,
-      fieldGrid: isOde && s.layers.field && !cobweb ? s.layers.fieldGrid : 0,
-      nullclines: hasNullclineLayer(sys.kind) && s.layers.nullclines && !cobweb,
-      fixedPoints: s.layers.fixedPoints,
+      fieldGrid: isOde && s.layers.field && !cobweb && !section ? s.layers.fieldGrid : 0,
+      nullclines: hasNullclineLayer(sys.kind) && s.layers.nullclines && !cobweb && !section,
+      fixedPoints,
       trajectories,
       solver: {
         method: s.solver.method,
@@ -825,7 +945,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
         maxSteps: s.solver.maxSteps,
       },
       samples: s.solver.samples > 0 ? s.solver.samples : autoSamples(maxSpan),
-      ...mapFields,
+      ...extra,
     },
     meta: {
       systemId: sys.systemId,
@@ -833,7 +953,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       trajectories: metas,
       // The visible spans, as the selection's match tolerance is a fraction of them.
       view: { ...s.view, xRange: shown.xRange, yRange: shown.yRange },
-      fixedPoints: s.layers.fixedPoints,
+      fixedPoints,
     },
   };
 }
@@ -849,7 +969,10 @@ export function clampTransient(t: number, tEnd: number): number {
  * The start point a click at plot point (px, py) gives (from `base`, the
  * point being dragged, else the slice): each axis's state takes the
  * pointer's value. A cobweb's start point is x_0 on the diagonal, so only
- * the horizontal value counts. A map always starts at n = 0.
+ * the horizontal value counts. A map always starts at n = 0. A section's
+ * start point is on the section: the plane's state is its value, and a
+ * stroboscopic start is at t_0 = the phase. (A return map has no click to
+ * add: see {@link canAddOnPlot}.)
  */
 export function liftPlotPoint(
   sys: Pick<CompileResponse, "kind" | "states"> | null,
@@ -870,8 +993,16 @@ export function liftPlotPoint(
   };
   put(view.xAxis, px);
   if (!isCobweb(view)) put(view.yAxis, py);
+  if (isSection(view)) {
+    const s = view.section;
+    if (s.kind === "plane") x0[s.state] = s.value;
+    else t0 = s.phase;
+  }
   return { x0, t0 };
 }
+
+/** A click on the plot can place a start point: everywhere but a return map, whose points are pairs of crossings. */
+export const canAddOnPlot = (view: View): boolean => !isReturnMap(view);
 
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
@@ -912,6 +1043,11 @@ export function switchView(
     return [ext[0] - pad, ext[1] + pad];
   };
   if (choice === "cobweb") return cobwebView(shownRange(0) ?? [-0.1, 1.1]);
+  const rangeOf = (i: number) => shownRange(i) ?? fromExtent(i);
+  if (choice === "section") {
+    const r0 = rangeOf(0);
+    return sectionView(sys, defaultSection(sys, (r0[0] + r0[1]) / 2), rangeOf);
+  }
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -986,7 +1122,7 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v) return null;
+  if (!v || v.kind === "section") return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1001,9 +1137,60 @@ function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | nul
   );
 }
 
+/** The notice when a saved section view can't be shown (`SECTION_MISFIT` in crates/project). */
+export const SECTION_VIEW_WARNING = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
+const VIEW_WARNING = "The saved view doesn't fit this system, so the default view is shown.";
+const DIRECTIONS: readonly string[] = ["rising", "falling", "both"] satisfies Direction[];
+
+/**
+ * A saved section view as `sys` shows it, or the sentence saying why it
+ * can't (the same words `project_read` uses, so the banner says it once):
+ * a section kind this version doesn't know, a plane through a state the
+ * system lacks, or a section that doesn't fit. The axes are two states, or
+ * a state and its next crossing (the return map).
+ */
+function loadSectionView(v: LoadedView, sys: CompileResponse): SectionView | string {
+  const s = v.section;
+  if (!s) return SECTION_VIEW_WARNING;
+  if (s.kind !== "plane" && s.kind !== "stroboscopic")
+    return `The section of the view “${v.id}” is of a kind (“${s.kind}”) this version doesn't know, so the default view is used.`;
+  const index = (name: string | undefined) => sys.states.findIndex((st) => st.name === name);
+  let section: SectionSpec;
+  if (s.kind === "plane") {
+    const state = index(s.state);
+    if (s.state !== undefined && state < 0)
+      return `The section of the view “${v.id}” holds the state ${s.state} fixed, which the system doesn't have, so the default view is used.`;
+    if (state < 0 || s.value === undefined || !s.direction || !DIRECTIONS.includes(s.direction)) return SECTION_VIEW_WARNING;
+    section = { kind: "plane", state, value: s.value, direction: s.direction as Direction };
+  } else {
+    if (s.period === undefined || !(s.period > 0)) return SECTION_VIEW_WARNING;
+    section = { kind: "stroboscopic", period: s.period, phase: s.phase ?? 0 };
+  }
+  if (!sectionAvailability(sys).ok || (section.kind === "plane" && !planeSectionAvailability(sys).ok))
+    return SECTION_VIEW_WARNING;
+  const { xAxis: x, yAxis: y } = v as { xAxis: { kind: string; name?: string }; yAxis: { kind: string; name?: string } };
+  const pair = x.kind === "state" && (y.kind === "state" ? y.name !== x.name : y.kind === "next" && y.name === x.name);
+  if (!pair) return SECTION_VIEW_WARNING;
+  const xi = index(x.name);
+  const yi = index(y.name);
+  if (xi < 0 || yi < 0 || !v.xRange || !v.yRange) return VIEW_WARNING;
+  return {
+    kind: "section",
+    section,
+    xAxis: stateAxis(xi),
+    yAxis: stateAxis(yi),
+    xRange: [v.xRange[0], v.xRange[1]],
+    yRange: [v.yRange[0], v.yRange[1]],
+  };
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
+  if (v?.kind === "section") {
+    const fit = loadSectionView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
   if (!v || !v.xRange || !v.yRange) return null;
   const cobweb = savedCobwebFits(load, sys);
   if (cobweb === false) return null;
@@ -1057,12 +1244,8 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
   let view = projectView(load, sys);
   if (!view) {
     view = defaultView(sys, solver);
-    if (load.view)
-      warnings.push(
-        savedCobwebFits(load, sys) === false
-          ? COBWEB_VIEW_WARNING
-          : "The saved view doesn't fit this system, so the default view is shown.",
-      );
+    if (load.view?.kind === "section") warnings.push(loadSectionView(load.view, sys) as string);
+    else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
   const slice = load.view?.slice ?? {};
   const baseState = sys.states.map((s) => (Number.isFinite(slice[s.name]) ? slice[s.name] : 0));

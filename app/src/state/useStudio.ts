@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AxisRef, CompileResponse, Diagnostic, InputFormat } from "../api/types";
+import type { AxisRef, CompileResponse, Diagnostic, InputFormat, SectionSpec } from "../api/types";
 import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
 import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
@@ -16,6 +16,9 @@ import {
   cobwebAvailability,
   defaultView,
   isCobweb,
+  isSection,
+  knownStateRange,
+  withSection,
   liftPlotPoint,
   switchView,
   newIcColor,
@@ -562,9 +565,12 @@ export function useStudio() {
 
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
-    // Picking an axis gives a plane view (a cobweb's axes are fixed).
+    // Picking an axis gives a plane view (a cobweb's axes are fixed); a
+    // section stays one, and one state on both axes is its return map.
+    const section = isSection(cur.view) ? cur.view : null;
+    if (section && axis.kind === "time") return;
     const { xAxis, yAxis, xRange, yRange } = cur.view;
-    const v: View = { xAxis, yAxis, xRange, yRange };
+    const v: View = section ?? { xAxis, yAxis, xRange, yRange };
     const other = which === "x" ? v.yAxis : v.xAxis;
     const rangeFor = (a: AxisRef): [number, number] => {
       if (sameAxis(a, v.xAxis)) return v.xRange;
@@ -578,13 +584,26 @@ export function useStudio() {
       return [-5, 5];
     };
     let next: View;
-    if (sameAxis(axis, other)) {
+    if (sameAxis(axis, other) && !section) {
       next = { xAxis: v.yAxis, yAxis: v.xAxis, xRange: v.yRange, yRange: v.xRange };
     } else if (which === "x") {
       next = { ...v, xAxis: axis, xRange: rangeFor(axis) };
     } else {
       next = { ...v, yAxis: axis, yRange: rangeFor(axis) };
     }
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
+  /** Takes the section `spec` in the section view (see {@link withSection}). */
+  const setSection = useCallback((spec: SectionSpec) => {
+    const cur = latest.current;
+    const sys = cur.compiled;
+    if (!sys || !isSection(cur.view)) return;
+    const v = cur.view;
+    const mem = viewMemory.current.shapeId === cur.shapeId ? Object.values(viewMemory.current.views) : [];
+    const rangeOf = (i: number) => knownStateRange(i, [v, ...mem], cur.portrait?.res, sys.states.length);
+    const next = withSection(v, sys, spec, rangeOf);
     setViewState(next);
     setHomeView(next);
   }, []);
@@ -680,6 +699,7 @@ export function useStudio() {
       setPlotAspect,
       setAxis,
       setViewKind,
+      setSection,
       setSlice,
       setFieldTime,
       addIc,
@@ -708,6 +728,7 @@ export function useStudio() {
       setPlotAspect,
       setAxis,
       setViewKind,
+      setSection,
       setSlice,
       setFieldTime,
       addIc,

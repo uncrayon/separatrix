@@ -278,12 +278,13 @@ pub enum SectionSpec {
         /// Which crossings count.
         direction: Direction,
     },
-    /// The state at `t_k = t0 + phase + k·period` (a periodically forced
-    /// flow's stroboscopic map), for every `t_k` from `t0` to `t1`.
+    /// The state at `t_k = phase + k·period` (a periodically forced
+    /// flow's stroboscopic map: `t mod period = phase`), for every `t_k`
+    /// from each trajectory's `t0` to its `t1`.
     Stroboscopic {
         /// Forcing period, `> 0`.
         period: f64,
-        /// Offset of the first sample from `t0`.
+        /// The sample times modulo `period`, in absolute time (not from `t0`).
         phase: f64,
     },
 }
@@ -390,8 +391,8 @@ pub struct PortraitResponse {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSlice,
-    ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSection,
+    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -820,6 +821,7 @@ mod bindings {
             ProjectParam::decl(&cfg),
             ProjectInitialCondition::decl(&cfg),
             ProjectView::decl(&cfg),
+            ProjectSection::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),

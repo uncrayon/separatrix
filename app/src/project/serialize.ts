@@ -16,7 +16,9 @@ import type {
   ProjectFile,
   ProjectInitialCondition,
   ProjectParam,
+  ProjectSection,
   ProjectView,
+  SectionSpec,
   SystemKind,
 } from "../api/types";
 import type { EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
@@ -47,10 +49,22 @@ export type LoadedAxis =
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
 export const MAX_TRANSIENT = 1_000_000;
 
+/** A saved Poincaré section as read: the plane's state by name; `kind` may be one this version lacks. */
+export interface LoadedSection {
+  kind: string;
+  state?: string;
+  value?: number;
+  direction?: string;
+  period?: number;
+  phase?: number;
+}
+
 export interface LoadedView {
   id: string;
   /** The saved `kind`; absent for a plane view (phase plane or time series). */
   kind?: string;
+  /** The saved `section` of a section view. */
+  section?: LoadedSection;
   xAxis: LoadedAxis;
   yAxis: LoadedAxis;
   /** Null when the saved range isn't finite with lo < hi. */
@@ -163,6 +177,16 @@ function axisOut(prev: ProjectAxis | undefined, a: AxisRef, states: readonly str
   return out;
 }
 
+/** A section as saved: the plane's state by name. A sub-object whose kind changed is written fresh. */
+function sectionOut(prev: ProjectSection | undefined, s: SectionSpec, states: readonly string[]): ProjectSection {
+  const fresh: ProjectSection =
+    s.kind === "plane"
+      ? { kind: "plane", state: states[s.state], value: s.value, direction: s.direction }
+      : { kind: "stroboscopic", period: s.period, phase: s.phase };
+  if (fresh.state === undefined) delete fresh.state;
+  return prev && isObj(prev) && prev.kind === fresh.kind ? { ...prev, ...fresh } : fresh;
+}
+
 function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<unknown, T> {
   const out = new Map<unknown, T>();
   for (const t of list ?? []) if (isObj(t) && !out.has(key(t))) out.set(key(t), t);
@@ -217,14 +241,18 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const lviews = loaded?.views ?? [];
     const at = primaryViewIndex(lviews);
     const lv: ProjectView | undefined = at >= 0 ? lviews[at] : undefined;
-    // A cobweb's vertical axis is the state one iterate later, x_{n+1}.
+    // A cobweb's vertical axis is the state one iterate later, x_{n+1}; a
+    // return map's (a section with one state on both axes) is the next crossing.
     const cobweb = s.view.kind === "cobweb";
+    const section = s.view.kind === "section" ? s.view.section : null;
+    const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb ? { kind: "cobweb" } : {}),
+      ...(cobweb || section ? { kind: s.view.kind } : {}),
+      ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
-      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, cobweb),
+      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, next),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
       slice: {
@@ -241,8 +269,9 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    // A plane view has no `kind` (a file saved from one is byte-identical to before cobwebs).
-    if (!cobweb) delete primary.kind;
+    // A plane view has no `kind` or `section` (a file saved from one is byte-identical to before cobwebs).
+    if (!cobweb && !section) delete primary.kind;
+    if (!section) delete primary.section;
     views = at >= 0 ? lviews.map((v, k) => (k === at ? primary : v)) : [primary];
 
     const transient = Math.round(s.solver.transient ?? 0);
@@ -289,6 +318,22 @@ export function dirtyKey(s: DocumentState, opts: Omit<SerializeOptions, "exportS
   delete p.export_settings;
   delete p.app_version;
   return JSON.stringify(p);
+}
+
+const sameStateAxes = (a: AxisRef, b: AxisRef) => a.kind === "state" && b.kind === "state" && a.index === b.index;
+
+function loadSection(s: unknown): LoadedSection | undefined {
+  if (!isObj(s)) return undefined;
+  return {
+    kind: str(s.kind) ?? "",
+    ...definedOnly({
+      state: str(s.state),
+      value: num(s.value),
+      direction: str(s.direction),
+      period: num(s.period),
+      phase: num(s.phase),
+    }),
+  };
 }
 
 function loadAxis(a: unknown): LoadedAxis {
@@ -361,9 +406,11 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     }
     const layers: Obj = isObj(v.layers) ? v.layers : {};
     const kind = str(v.kind);
+    const section = loadSection(v.section);
     view = {
       id: str(v.id) || "main",
       ...(kind !== undefined ? { kind } : {}),
+      ...(section ? { section } : {}),
       xAxis: loadAxis(v.x_axis),
       yAxis: loadAxis(v.y_axis),
       xRange: loadRange(v.x_range),

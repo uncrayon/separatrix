@@ -328,7 +328,9 @@ fn section_fits(f: &dyn VectorField, section: &SectionSpec) -> Result<(), String
     Ok(())
 }
 
-fn to_section(spec: SectionSpec) -> dyn_solve::Section {
+/// The core's section for a trajectory from `t0`: its stroboscopic phase
+/// counts from `t0`, the request's from `t = 0`.
+fn to_section(spec: SectionSpec, t0: f64) -> dyn_solve::Section {
     match spec {
         SectionSpec::Plane {
             state,
@@ -339,9 +341,10 @@ fn to_section(spec: SectionSpec) -> dyn_solve::Section {
             value,
             direction,
         },
-        SectionSpec::Stroboscopic { period, phase } => {
-            dyn_solve::Section::Stroboscopic { period, phase }
-        }
+        SectionSpec::Stroboscopic { period, phase } => dyn_solve::Section::Stroboscopic {
+            period,
+            phase: phase - t0,
+        },
     }
 }
 
@@ -452,7 +455,7 @@ fn trajectory(
             &tr.x0,
             tr.t1,
             &to_solver(&req.solver),
-            &to_section(spec),
+            &to_section(spec, tr.t0),
             req.transient.unwrap_or(0),
             MAX_SECTION_POINTS,
         )
@@ -1067,6 +1070,43 @@ mod tests {
             compute_portrait(&sys, &req).unwrap_err(),
             "The section's state is out of range: this system has 1 state."
         );
+    }
+
+    #[test]
+    fn a_stroboscopic_phase_is_absolute_for_every_start_time() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=y\n\\dot{y}=-x");
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 2);
+        req.trajectories = [0.0, 1.0, 0.75]
+            .map(|t0| TrajectoryRequest {
+                x0: vec![1.0, 0.0],
+                t0,
+                t1: t0 + 10.0,
+            })
+            .to_vec();
+        req.section = Some(SectionSpec::Stroboscopic {
+            period: 2.0,
+            phase: 0.75,
+        });
+        let out = compute_portrait(&sys, &req).unwrap();
+        // Samples at t = 0.75 + 2k, from each start on: 0.75 itself only for the orbit that starts there.
+        let firsts: Vec<f64> = out.trajectories.iter().map(|tr| tr.t[0]).collect();
+        assert_eq!(firsts, [0.75, 2.75, 0.75]);
+        let counts: Vec<usize> = out.trajectories.iter().map(|tr| tr.t.len()).collect();
+        assert_eq!(
+            counts,
+            [5, 5, 6],
+            "t1 = 10.75 is a sample of the last orbit"
+        );
+        for tr in &out.trajectories {
+            for &t in &tr.t {
+                assert!(
+                    ((t - 0.75) / 2.0 - ((t - 0.75) / 2.0).round()).abs() < 1e-12,
+                    "{t}"
+                );
+            }
+        }
     }
 
     #[test]

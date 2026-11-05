@@ -47,6 +47,7 @@ export type {
   ProjectOpenRequested,
   ProjectParam,
   ProjectReadRequest,
+  ProjectSection,
   ProjectSlice,
   ProjectSolver,
   ProjectSystem,
