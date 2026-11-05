@@ -1,0 +1,19 @@
+[package]
+name = "separatrix-project"
+description = "The Separatrix project file format (.sepx): schema, versioning, migration, validation and atomic writes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "separatrix_project"
+
+[dependencies]
+serde.workspace = true
+# `float_roundtrip`: parse every f64 exactly, so a second save is byte-identical.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# TypeScript declarations (ts-rs) for the types sent to the UI.
+ts = ["dep:ts-rs"]

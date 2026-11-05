@@ -252,3 +252,45 @@
   fill: var(--plot-fp);
   stroke: none;
 }
+
+/* Cobweb legend samples (the plot draws the same marks in draw.ts drawCobweb). */
+.ds-phase-mark--cobweb {
+  stroke: var(--traj, var(--traj-1));
+  stroke-width: calc(1 * var(--line-scale));
+  stroke-linejoin: miter;
+  stroke-linecap: butt;
+}
+.ds-phase-mark--graph {
+  stroke: var(--plot-fp);
+  stroke-width: calc(1.5 * var(--line-scale));
+}
+.ds-phase-mark--diagonal {
+  stroke: var(--plot-axis);
+  stroke-width: calc(1 * var(--line-scale));
+  stroke-linecap: butt;
+}
+
+.axes-menu-item[aria-disabled="true"] {
+  color: var(--ink-3);
+  cursor: default;
+}
+.axes-menu-item[aria-disabled="true"]:hover {
+  background: none;
+}
+.axes-menu-label {
+  flex: 1;
+  text-align: left;
+}
+/* Why a View choice can't be picked, under its disabled item. */
+.axes-menu-why {
+  max-width: 15rem;
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-1) calc(var(--space-2) * 2);
+  color: var(--ink-2);
+}
+.ds-phase-mark--from {
+  fill: none;
+  stroke: var(--traj, var(--traj-1));
+  stroke-width: calc(1.5 * var(--line-scale));
+  stroke-linejoin: miter;
+}

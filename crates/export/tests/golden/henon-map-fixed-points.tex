@@ -1,0 +1,18 @@
+% Separatrix fixed points: Hénon map
+%   x_{n+1} = y_n + 1 - a*x_n^2
+%   y_{n+1} = b*x_n
+% Parameters: a = 1.4, b = 0.3
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Fixed points of the system with $a = 1.4$ and $b = 0.3$, found in $-1.6 \le x \le 1.6$ and $-0.5 \le y \le 0.5$.}
+\label{tab:henon-map-fixed-points}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Fixed point & Multipliers $\mu$ & $\lvert\mu\rvert$ & Type \\
+\midrule
+$(\num{-1.131}, \num{-0.3394})$ & $\num{3.26}$, $\num{-0.09203}$ & \num{3.26}, \num{0.09203} & Saddle \\
+$(\num{0.6314}, \num{0.1894})$ & $\num{0.1559}$, $\num{-1.924}$ & \num{0.1559}, \num{1.924} & Saddle \\
+\bottomrule
+\end{tabular}
+\end{table}

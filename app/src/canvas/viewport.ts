@@ -1,7 +1,7 @@
 import type { SystemKind } from "../api/types";
-import { equalizeRanges, isFlowPhasePlane, type View } from "../state/model";
+import { equalizeRanges, hasEqualScales, type View } from "../state/model";
 
-export { equalizeRanges, isFlowPhasePlane } from "../state/model";
+export { equalizeRanges, hasEqualScales, isFlowPhasePlane } from "../state/model";
 
 export interface Viewport {
   left: number;
@@ -25,9 +25,9 @@ export function makeViewport(
   return { left: 0, top: 0, width, height, xRange: r.xRange, yRange: r.yRange };
 }
 
-/** The viewport of the main plot: equal scales on a flow's phase plane. */
+/** The viewport of the main plot: equal scales on a flow's phase plane and on a cobweb. */
 export function plotViewport(w: number, h: number, view: View, kind: SystemKind | undefined): Viewport {
-  return makeViewport(w, h, view.xRange, view.yRange, isFlowPhasePlane(view.xAxis, view.yAxis, kind));
+  return makeViewport(w, h, view.xRange, view.yRange, hasEqualScales(view, kind));
 }
 
 export function sx(vp: Viewport, x: number): number {

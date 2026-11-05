@@ -1,18 +1,40 @@
 import type {
   Arrow,
   AxisRef,
+  ChosenSavePath,
   Classification,
+  ClipboardTextRequest,
   CompileRequest,
   CompileResponse,
   ConvertRequest,
   ConvertResponse,
+  CsvFileOut,
+  CsvRequest,
+  CsvResponse,
+  DocumentStateRequest,
+  ExportPortraitRequest,
+  FigureLatexRequest,
+  FigureLatexResponse,
   FixedPointOut,
+  FixedPointsLatexRequest,
   NullclineOut,
+  OpenedProject,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
+  ProjectChooseSaveRequest,
+  ProjectFile,
+  ProjectReadRequest,
+  ProjectWriteRequest,
+  SaveCsvRequest,
+  SavedFiles,
+  SavedProject,
+  SaveFigureRequest,
+  SaveTextRequest,
   StateInfo,
   SystemKind,
+  SystemLatexRequest,
+  SystemLatexResponse,
   TrajectoryOut,
   TrajectoryRequest,
 } from "./types";
@@ -215,12 +237,115 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
   };
 }
 
+/** `compute_portrait`; the request and response are kept in `__sepxMock.lastPortrait` for the e2e tests. */
 export async function mockPortrait(req: PortraitRequest): Promise<PortraitResponse> {
+  const res = await portrait(req);
+  sepxMock().lastPortrait = { req, res };
+  return res;
+}
+
+/** The checks `cobweb_fits` makes in service.rs, with the same messages. */
+function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
+  const dim = sys.states.length;
+  if (sys.kind !== "map") return "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system is a flow.";
+  if (dim !== 1) return `The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system has ${dim} states.`;
+  if (sys.autonomous === false) return "This map changes with n, so f has no single graph to cobweb.";
+  if (xAxis.kind !== "state" || xAxis.index !== 0) return "The cobweb view needs x_n on the horizontal axis.";
+  return null;
+}
+
+/** MAX_GRAPH_SAMPLES in dyn-analysis. */
+const MAX_GRAPH_SAMPLES = 4096;
+
+/**
+ * A simple port of `dyn_analysis::map_graph`: `samples` evenly spaced x (both
+ * ends), split at a non-finite value and where a rise of more than a quarter
+ * of the view has a midpoint that is non-finite or larger than both ends (a
+ * pole), then clipped to the view grown by its height above and below.
+ */
+function mockMapGraph(
+  f: (x: number) => number,
+  [x0, x1]: [number, number],
+  [y0, y1]: [number, number],
+  samples: number,
+): [number, number][][] {
+  const n = Math.min(MAX_GRAPH_SAMPLES, Math.max(2, Math.round(samples)));
+  const span = y1 - y0;
+  const lines: [number, number][][] = [];
+  let line: [number, number][] = [];
+  const cut = () => {
+    if (line.length >= 2) lines.push(line);
+    line = [];
+  };
+  let prev: [number, number] | null = null;
+  for (let i = 0; i < n; i++) {
+    const x = i === n - 1 ? x1 : x0 + (x1 - x0) * (i / (n - 1));
+    const y = f(x);
+    if (!Number.isFinite(y)) {
+      cut();
+      prev = null;
+      continue;
+    }
+    if (prev && Math.abs(y - prev[1]) > 0.25 * span) {
+      const m = f((prev[0] + x) / 2);
+      if (!Number.isFinite(m) || Math.abs(m) > Math.max(Math.abs(y), Math.abs(prev[1]))) cut();
+    }
+    if (!line.length || x > line[line.length - 1][0]) line.push([x, y]);
+    prev = [x, y];
+  }
+  cut();
+  return lines.flatMap((l) => clipToBand(l, y0 - span, y1 + span));
+}
+
+/** Port of `clip_to_band` in dyn-analysis: the parts of a polyline with lo ≤ y ≤ hi, crossings interpolated. */
+function clipToBand(line: [number, number][], lo: number, hi: number): [number, number][][] {
+  const inside = (y: number) => y >= lo && y <= hi;
+  const edge = (y: number) => (y > hi ? hi : lo);
+  const cross = (p: [number, number], q: [number, number], y: number): [number, number] => [
+    p[0] + ((y - p[1]) / (q[1] - p[1])) * (q[0] - p[0]),
+    y,
+  ];
+  const out: [number, number][][] = [];
+  let cur: [number, number][] = [];
+  const push = (pt: [number, number]) => {
+    if (!cur.length || pt[0] > cur[cur.length - 1][0]) cur.push(pt);
+  };
+  const finish = () => {
+    if (cur.length >= 2) out.push(cur);
+    cur = [];
+  };
+  if (line.length && inside(line[0][1])) cur.push(line[0]);
+  for (let k = 1; k < line.length; k++) {
+    const p = line[k - 1];
+    const q = line[k];
+    const [pin, qin] = [inside(p[1]), inside(q[1])];
+    if (pin && qin) push(q);
+    else if (pin) {
+      push(cross(p, q, edge(q[1])));
+      finish();
+    } else if (qin) {
+      push(cross(p, q, edge(p[1])));
+      push(q);
+    } else if (p[1] > hi !== q[1] > hi) {
+      push(cross(p, q, edge(p[1])));
+      push(cross(p, q, edge(q[1])));
+      finish();
+    }
+  }
+  finish();
+  return out;
+}
+
+async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const start = performance.now();
   const sys = byId.get(req.systemId);
   if (!sys) throw new Error(`Unknown system ${req.systemId}`);
   const dim = sys.states.length;
   const p = req.params;
+  if (req.graphSamples !== undefined) {
+    const err = cobwebError(sys, req.xAxis);
+    if (err) throw err;
+  }
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -272,7 +397,12 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   }
 
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
-  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps));
+  const transient = req.transient ?? 0;
+  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps, transient));
+  const graph =
+    req.graphSamples === undefined
+      ? undefined
+      : mockMapGraph((x) => sys.f(0, [x], p)[0], req.xRange, req.yRange, req.graphSamples);
 
   return {
     requestId: req.requestId,
@@ -280,6 +410,7 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
     nullclines,
     fixedPoints,
     trajectories,
+    ...(graph ? { graph } : {}),
     elapsedMs: performance.now() - start,
   };
 }
@@ -287,7 +418,14 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
 /** MAX_ITERATES in app/src-tauri/src/service.rs. */
 const MAX_ITERATES = 1_000_000;
 
-function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: number, maxSteps: number): TrajectoryOut {
+function solve(
+  sys: MockSystem,
+  p: number[],
+  tr: TrajectoryRequest,
+  samples: number,
+  maxSteps: number,
+  transient: number,
+): TrajectoryOut {
   const dim = sys.states.length;
   let x = tr.x0.slice(0, dim);
   const ts: number[] = [];
@@ -299,15 +437,21 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
   const tooBig = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
 
   if (sys.kind === "map") {
-    const n = Math.min(MAX_ITERATES, Math.max(0, Math.round(tr.t1)));
-    push(0, x);
-    for (let k = 0; k < n; k++) {
-      x = sys.f(k, x, p);
-      if (tooBig(x))
-        return { t: ts, x: xs, status: "blewUp", stats: { accepted: k, rejected: 0, evals: k + 1 } };
-      push(k + 1, x);
+    // As `iterate_map`: x_T … x_{T+N}, the first T iterates computed but not returned.
+    const n = Number.isFinite(tr.t1) ? Math.min(MAX_ITERATES, Math.max(0, Math.round(tr.t1))) : 0;
+    const skip = Math.min(Math.max(0, Math.round(transient)), MAX_ITERATES - n);
+    // As the core counts: an evaluation per step tried, an accepted step per finite iterate.
+    const stats = (k: number, evals = k) => ({ accepted: k, rejected: 0, evals });
+    if (!x.every(Number.isFinite)) return { t: [], x: [], status: "nonFinite", stats: stats(0) };
+    if (skip === 0) push(0, x);
+    for (let k = 0; k < skip + n; k++) {
+      const next = sys.f(k, x, p);
+      if (!next.every(Number.isFinite)) return { t: ts, x: xs, status: "nonFinite", stats: stats(k, k + 1) };
+      x = next;
+      if (k + 1 >= skip) push(k + 1, x);
+      if (tooBig(x)) return { t: ts, x: xs, status: "blewUp", stats: stats(k + 1) };
     }
-    return { t: ts, x: xs, status: "completed", stats: { accepted: n, rejected: 0, evals: n } };
+    return { t: ts, x: xs, status: "completed", stats: stats(skip + n) };
   }
 
   const span = tr.t1 - tr.t0;
@@ -728,4 +872,395 @@ function stitch(segs: [[number, number], [number, number]][], tol: number): [num
     out.push(line);
   });
   return out;
+}
+
+// ---------------------------------------------------------------------
+// Project files, exports and the clipboard in the browser preview.
+//
+// There is no file system here: "files" live in memory, in
+// `window.__sepxMock` (which the e2e tests drive), and the dialogs return
+// what it says. Exports return placeholder LaTeX built from the preview's
+// own portrait, so the dialog can be exercised; the real snippets are
+// built in Rust (docs/exports.md).
+// ---------------------------------------------------------------------
+
+/** The browser preview's stand-in for the file system, dialogs and clipboard. */
+export interface SepxMock {
+  /** Project files by path (their text). */
+  files: Map<string, string>;
+  /** What the next Open dialog returns (`null`: cancelled); cleared after use. */
+  nextOpenPath?: string | null;
+  /** What the next Save dialog returns (`null`: cancelled); cleared after use. */
+  nextSavePath?: string | null;
+  /** Paths "passed on the command line", returned once by `launch_ready`. */
+  launchFiles: string[];
+  /** The last text copied. */
+  clipboardText?: string;
+  /** Size of the last image copied, in bytes. */
+  clipboardPngBytes?: number;
+  /** Every export saved, in order. */
+  saved: { name: string; contents: string | Uint8Array }[];
+  /** The last `set_document_state`. */
+  document: DocumentStateRequest;
+  /** The last `compute_portrait` (the canvas's or a gallery thumbnail's; never the export dialog's). */
+  lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
+}
+
+function sepxMock(): SepxMock {
+  const g = globalThis as unknown as { __sepxMock?: SepxMock };
+  if (!g.__sepxMock) {
+    g.__sepxMock = {
+      files: new Map(),
+      launchFiles: [],
+      saved: [],
+      document: { title: "Separatrix", dirty: false },
+    };
+  }
+  return g.__sepxMock;
+}
+
+if (typeof window !== "undefined") sepxMock();
+
+const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+const q = (name: string) => `“${name}”`;
+
+function takeDialog(key: "nextOpenPath" | "nextSavePath", fallback: string | null): string | null {
+  const m = sepxMock();
+  const v = m[key];
+  delete m[key];
+  return v === undefined ? fallback : v;
+}
+
+function withExt(name: string, ext: string): { path: string; appended: boolean } {
+  return name.toLowerCase().endsWith(`.${ext}`) ? { path: name, appended: false } : { path: `${name}.${ext}`, appended: true };
+}
+
+export async function mockProjectChooseOpenPath(): Promise<string | null> {
+  const first = sepxMock().files.keys().next();
+  return takeDialog("nextOpenPath", first.done ? null : first.value);
+}
+
+export async function mockProjectRead(req: ProjectReadRequest): Promise<OpenedProject> {
+  const name = fileName(req.path);
+  const text = sepxMock().files.get(req.path);
+  if (text === undefined) throw `${q(name)} can't be found. It may have been moved or deleted.`;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw `${q(name)} isn't a Separatrix project: it isn't valid JSON.`;
+  }
+  const d = doc as Partial<ProjectFile> | null;
+  if (!d || typeof d !== "object" || d.format !== "separatrix") {
+    throw `${q(name)} isn't a Separatrix project.`;
+  }
+  if ((d.min_reader_version ?? d.format_version ?? 1) > 1) {
+    throw `${q(name)} needs a newer version of Separatrix to open. Update Separatrix, then open it again.`;
+  }
+  const newer = (d.format_version ?? 1) > 1 ? d.format_version : undefined;
+  return {
+    path: req.path,
+    name,
+    project: d as ProjectFile,
+    warnings: newer ? [`${q(name)} was saved in a newer format. It opens, and saving keeps the parts this version doesn't use.`] : [],
+    ...(newer ? { newerFormat: newer } : {}),
+  };
+}
+
+export async function mockProjectChooseSavePath(req: ProjectChooseSaveRequest): Promise<ChosenSavePath | null> {
+  const dir = req.currentPath ? req.currentPath.replace(/[^\\/]*$/, "") : "/mock/";
+  const suggested = dir + withExt(fileName(req.suggestedName) || "untitled", "sepx").path;
+  const chosen = takeDialog("nextSavePath", suggested);
+  if (chosen === null) return null;
+  const { path, appended } = withExt(chosen, "sepx");
+  return { path, appendedExists: appended && sepxMock().files.has(path) };
+}
+
+export async function mockProjectWrite(req: ProjectWriteRequest): Promise<SavedProject> {
+  const name = fileName(req.path);
+  if (!req.path.toLowerCase().endsWith(".sepx")) throw `Projects are saved as .sepx files, not ${q(name)}.`;
+  const p = req.project as Record<string, unknown> | null;
+  if (!p || typeof p !== "object") throw "The project can't be saved: it isn't an object.";
+  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: "0.2.0" };
+  sepxMock().files.set(req.path, JSON.stringify(stamped, null, 2) + "\n");
+  return { path: req.path, name };
+}
+
+export async function mockLaunchReady(): Promise<string[]> {
+  const m = sepxMock();
+  const out = m.launchFiles;
+  m.launchFiles = [];
+  return out;
+}
+
+export async function mockSetDocumentState(req: DocumentStateRequest): Promise<void> {
+  sepxMock().document = { ...req };
+  if (typeof document !== "undefined") document.title = req.title;
+}
+
+/** The browser can't close its own tab; the preview does nothing. */
+export async function mockCloseWindow(): Promise<void> {}
+
+export async function mockComputeExportPortrait(req: ExportPortraitRequest): Promise<PortraitResponse> {
+  return portrait(req.portrait);
+}
+
+const PREVIEW_NOTE = "% Browser preview: placeholder LaTeX. The desktop app writes the real snippet.";
+
+function mockSystemOf(systemId: number): MockSystem {
+  const sys = byId.get(systemId);
+  if (!sys) throw `System ${systemId} is no longer available; edit the equations to recompile.`;
+  return sys;
+}
+
+function mockAlignRows(sys: MockSystem): string[] {
+  return sys.equationsLatex.map((e) => {
+    const k = e.indexOf("=");
+    return k < 0 ? e : `${e.slice(0, k).trim()} &= ${e.slice(k + 1).trim()}`;
+  });
+}
+
+export async function mockExportSystemLatex(req: SystemLatexRequest): Promise<SystemLatexResponse> {
+  const sys = mockSystemOf(req.systemId);
+  const rows = mockAlignRows(sys);
+  const env = req.numbered ? "align" : "align*";
+  const tex = [
+    `% ${req.title}${req.sourceRef ? ` (${req.sourceRef})` : ""}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath}",
+    `\\begin{${env}}`,
+    rows.map((r) => `  ${r}`).join(" \\\\\n"),
+    `\\end{${env}}`,
+    "",
+  ].join("\n");
+  return { tex, previewLatex: `\\begin{aligned}${rows.join("\\\\")}\\end{aligned}` };
+}
+
+export async function mockExportFixedPointsLatex(req: FixedPointsLatexRequest): Promise<string> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  const res = await portrait({
+    ...req.portrait,
+    fixedPoints: true,
+    trajectories: [],
+    fieldGrid: 0,
+    nullclines: false,
+    graphSamples: undefined,
+  });
+  const digits = Math.min(8, Math.max(2, req.digits));
+  const num = (v: number) => `\\num{${Number(v.toPrecision(digits))}}`;
+  const rows = res.fixedPoints.map((fp) => {
+    const point = `$(${fp.x.map(num).join(", ")})$`;
+    const eig = fp.eigenvalues.map(([re, im]) => `$${num(re)}${im ? ` ${im < 0 ? "-" : "+"} ${num(Math.abs(im))}\\,i` : ""}$`).join(", ");
+    return `    ${point} & ${eig} & ${fp.classification} \\\\`;
+  });
+  return [
+    `% ${req.title}: fixed points`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+    "\\begin{table}",
+    "  \\centering",
+    "  \\begin{tabular}{@{}lll@{}}",
+    "    \\toprule",
+    `    Point & Eigenvalues & Type \\\\`,
+    "    \\midrule",
+    ...rows,
+    "    \\bottomrule",
+    "  \\end{tabular}",
+    `  \\caption{Fixed points of the system (${sys.states.length}D).}`,
+    "\\end{table}",
+    "",
+  ].join("\n");
+}
+
+function mockAxisValue(axis: AxisRef, t: number[], x: number[], dim: number, k: number): number {
+  return axis.kind === "time" ? t[k] : x[k * dim + axis.index];
+}
+
+export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<FigureLatexResponse> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  const dim = sys.states.length;
+  const res = await portrait(req.portrait);
+  let points = 0;
+  if (req.portrait.graphSamples !== undefined) {
+    // A cobweb, with the real figure's comment markers (docs/exports.md).
+    const [x0, x1] = req.portrait.xRange;
+    const [y0, y1] = req.portrait.yRange;
+    const pt = (a: number, b: number) => `(${String(a)},${String(b)})`;
+    const plots: string[] = [];
+    const [a, b] = [Math.max(x0, y0), Math.min(x1, y1)];
+    if (a < b) {
+      plots.push("% Diagonal x_{n+1} = x_n", `  \\addplot[no marks] coordinates {${pt(a, a)} ${pt(b, b)}};`);
+      points += 2;
+    }
+    plots.push("% Graph of f");
+    for (const line of res.graph ?? []) {
+      plots.push(`  \\addplot[no marks] coordinates {${line.map(([gx, gy]) => pt(gx, gy)).join(" ")}};`);
+      points += line.length;
+    }
+    res.trajectories.forEach((tr, k) => {
+      const v = tr.x.slice(0, tr.t.length * dim);
+      const cut = v.findIndex((c) => !Number.isFinite(c));
+      const orbit = cut < 0 ? v : v.slice(0, cut);
+      if (!orbit.length) return;
+      const coords = [pt(orbit[0], orbit[0])];
+      for (let i = 1; i < orbit.length; i++) coords.push(pt(orbit[i - 1], orbit[i]), pt(orbit[i], orbit[i]));
+      points += coords.length;
+      plots.push(`% Cobweb of ${req.tags[k]?.icId ?? `ic-${k + 1}`}`);
+      plots.push(`  \\addplot[no marks] coordinates {${coords.join(" ")}};`);
+    });
+    return { tex: mockFigureTex(req, plots), points, thinned: false, notes: [] };
+  }
+  const plots = res.trajectories.map((tr) => {
+    const coords: string[] = [];
+    const step = Math.max(1, Math.floor(tr.t.length / 200));
+    for (let k = 0; k < tr.t.length; k += step) {
+      const a = mockAxisValue(req.portrait.xAxis, tr.t, tr.x, dim, k);
+      const b = mockAxisValue(req.portrait.yAxis, tr.t, tr.x, dim, k);
+      if (Number.isFinite(a) && Number.isFinite(b)) coords.push(`(${String(a)},${String(b)})`);
+    }
+    points += coords.length;
+    return `  \\addplot[no marks] coordinates {${coords.join(" ")}};`;
+  });
+  return { tex: mockFigureTex(req, plots), points, thinned: false, notes: [] };
+}
+
+/** The placeholder figure around `plots`. */
+function mockFigureTex(req: FigureLatexRequest, plots: string[]): string {
+  const [x0, x1] = req.portrait.xRange;
+  const [y0, y1] = req.portrait.yRange;
+  const axis = [
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[width=${req.widthCm}cm, height=${req.heightCm}cm, scale only axis, xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}]`,
+    ...plots,
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+  ];
+  const preamble = "\\usepackage{pgfplots} \\pgfplotsset{compat=1.18}";
+  return [
+    `% ${req.title}: figure`,
+    PREVIEW_NOTE,
+    `% Needs: ${preamble}`,
+    ...(req.standalone
+      ? ["\\documentclass[border=2mm]{standalone}", ...preamble.split(" "), "\\begin{document}", ...axis, "\\end{document}"]
+      : axis),
+    "",
+  ].join("\n");
+}
+
+export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  if (req.tags.length !== req.portrait.trajectories.length) {
+    throw `Expected one tag per trajectory (${req.portrait.trajectories.length}) but got ${req.tags.length}.`;
+  }
+  const dim = sys.states.length;
+  const res = await portrait({ ...req.portrait, fixedPoints: false, fieldGrid: 0, nullclines: false, graphSamples: undefined });
+  const ids = req.icIds.length ? req.icIds : [...new Set(req.tags.map((t) => t.icId))];
+  const slug = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "system";
+  const header = [sys.kind === "map" ? "n" : "t", ...sys.states.map((s) => s.name)];
+  const files: CsvFileOut[] = [];
+  // Numbered as the dialog lists them, by first appearance among the runs (as Rust does).
+  const order = [...new Set(req.tags.map((t) => t.icId))];
+  for (const id of ids) {
+    const run = (backward: boolean) => {
+      const k = req.tags.findIndex((t) => t.icId === id && t.backward === backward);
+      return k < 0 ? null : res.trajectories[k];
+    };
+    const back = run(true);
+    const fwd = run(false);
+    if (!back && !fwd) continue;
+    const rows: string[] = [];
+    const row = (tr: TrajectoryOut, k: number) =>
+      [tr.t[k], ...tr.x.slice(k * dim, (k + 1) * dim)].map((v) => String(v)).join(",");
+    if (back) for (let k = back.t.length - 1; k >= 0; k--) rows.push(row(back, k));
+    if (fwd) for (let k = back && fwd.t.length ? 1 : 0; k < fwd.t.length; k++) rows.push(row(fwd, k));
+    const stem = `${slug(req.title)}-trajectory-${order.indexOf(id) + 1}`;
+    const meta = {
+      format: "separatrix-trajectory",
+      format_version: 1,
+      app_version: "0.2.0",
+      title: req.title,
+      csv: `${stem}.csv`,
+      ic_id: id,
+      system: { kind: sys.kind, input_format: req.format, lines: req.lines },
+      columns: header,
+      ...(sys.kind === "map" ? { transient: Math.max(0, Math.round(req.portrait.transient ?? 0)) } : {}),
+      note: "Browser preview: computed by the preview's own solver.",
+    };
+    files.push({ stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" });
+  }
+  return { files };
+}
+
+function mockSaved(name: string, contents: string | Uint8Array): void {
+  sepxMock().saved.push({ name, contents });
+}
+
+export async function mockSaveFigureLatex(req: SaveFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  const fig = await mockExportFigureLatex(req.figure);
+  mockSaved(name, fig.tex);
+  return { names: [name] };
+}
+
+export async function mockSaveCsv(req: SaveCsvRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "trajectory", "csv").path);
+  if (chosen === null) return null;
+  const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
+  const { files } = await mockExportCsv(req.csv);
+  const names: string[] = [];
+  const prefix = `${req.csv.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "system"}-`;
+  files.forEach((f) => {
+    const s = files.length === 1 ? stem : `${stem}-${f.stem.startsWith(prefix) ? f.stem.slice(prefix.length) : f.stem}`;
+    mockSaved(`${s}.csv`, f.csv);
+    mockSaved(`${s}.meta.json`, f.meta);
+    names.push(`${s}.csv`, `${s}.meta.json`);
+  });
+  return { names };
+}
+
+export async function mockSaveTextFile(req: SaveTextRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "untitled", req.extension).path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), req.extension).path;
+  mockSaved(name, req.contents);
+  return { names: [name] };
+}
+
+export async function mockSavePngFile(png: Uint8Array, suggestedName: string): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(suggestedName) || "figure", "png").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "png").path;
+  mockSaved(name, png);
+  return { names: [name] };
+}
+
+export async function mockClipboardWriteText(req: ClipboardTextRequest): Promise<void> {
+  sepxMock().clipboardText = req.text;
+  try {
+    await navigator.clipboard?.writeText(req.text);
+  } catch {
+    // The preview keeps the text in `__sepxMock` when the page may not copy.
+  }
+}
+
+export async function mockClipboardWritePng(png: Uint8Array): Promise<void> {
+  sepxMock().clipboardPngBytes = png.byteLength;
+  try {
+    const ClipboardItemCtor = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem;
+    if (ClipboardItemCtor && navigator.clipboard?.write) {
+      const blob = new Blob([png.slice().buffer], { type: "image/png" });
+      await navigator.clipboard.write([new ClipboardItemCtor({ "image/png": blob })]);
+    }
+  } catch {
+    // As above: the size is recorded in `__sepxMock`.
+  }
 }

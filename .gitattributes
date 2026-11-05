@@ -1,4 +1,4 @@
-# Generated files are compared byte for byte by tests (convert.rs, ipc.rs),
-# so they must check out with LF on every OS, including Windows.
-*.generated.ts   text eol=lf
-*.generated.json text eol=lf
+# Check out every text file with LF on every OS. Tests compare generated
+# files and golden outputs byte for byte, so a CRLF checkout on Windows
+# would fail them. Binary files (PNG, fonts) are detected and left alone.
+* text=auto eol=lf

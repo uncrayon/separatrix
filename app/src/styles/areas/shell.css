@@ -90,3 +90,43 @@
 html[data-theme="light"] .template-grid {
   grid-template-columns: repeat(auto-fill, minmax(calc(var(--space-10) * 6), 1fr));
 }
+
+/* The document's unsaved-changes dot, after its name. */
+.topbar .doc-dirty {
+  flex: none;
+  color: var(--ink-2);
+  line-height: 1;
+}
+
+/* New, Open…, Save, Save as…: one tight group of icon buttons. */
+.topbar .topbar-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-2);
+  margin-right: var(--space-1);
+  border-right: 1px solid var(--line);
+}
+
+/* Open and save errors, and the notices about an opened file, over the top of the plot. */
+.project-banner-dock {
+  /* Over the plot, below its toolbar (the plot's margin, the toolbar's own
+     offset and height, then a gap), so every toolbar button stays usable. */
+  position: absolute;
+  top: calc(2 * var(--space-3) + var(--control-h) + 2 * var(--space-1) + 2px + var(--space-2));
+  left: calc(2 * var(--space-3));
+  right: calc(2 * var(--space-3));
+  z-index: 30;
+  max-width: 40rem;
+  margin-inline: auto;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+
+/* The same banner in the gallery, under its heading. */
+.gallery-notice {
+  padding: var(--space-3) var(--space-6) 0;
+}

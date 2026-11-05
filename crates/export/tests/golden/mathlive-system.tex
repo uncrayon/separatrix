@@ -1,0 +1,11 @@
+% Separatrix system: MathLive
+%   x' = sigma*(y - x) + e^(-t)*sign(x)
+%   y' = x*(rho - y)
+%   sigma = 10; rho = 28
+% Parameters: sigma = 10, rho = 28
+% Needs: \usepackage{amsmath}
+\begin{align}
+  \dot{x} &= \sigma\left(y-x\right)+\mathrm{e}^{-t}\operatorname{sgn} x, \label{eq:mathlive-x} \\
+  \dot{y} &= x(\rho-y), \label{eq:mathlive-y}
+\end{align}
+where $\sigma = 10$ and $\rho = 28$.

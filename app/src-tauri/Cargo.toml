@@ -20,6 +20,12 @@ dyn-core.workspace = true
 dyn-expr.workspace = true
 dyn-solve.workspace = true
 dyn-analysis.workspace = true
+separatrix-project.workspace = true
+separatrix-export.workspace = true
+# Exact pins: the newest patches are under two weeks old (see docs/contracts.md).
+tauri-plugin-dialog = "=2.8.3"
+tauri-plugin-single-instance = "=2.5.4"
+tauri-plugin-clipboard-manager = "=2.5.0"
 
 [dev-dependencies]
 ts-rs.workspace = true
@@ -28,3 +34,4 @@ dyn-core = { workspace = true, features = ["ts"] }
 dyn-expr = { workspace = true, features = ["ts"] }
 dyn-solve = { workspace = true, features = ["ts"] }
 dyn-analysis = { workspace = true, features = ["ts"] }
+separatrix-project = { workspace = true, features = ["ts"] }

@@ -117,6 +117,55 @@ export function axisLabelLatex(
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
+/**
+ * The axis names of a view in LaTeX, as the canvas, the toolbar and the
+ * exports show them: a cobweb's are x_{n} across and x_{n+1} up, built from
+ * the user's own state LaTeX; any other view's are {@link axisLabelLatex}.
+ */
+export function viewAxisLabels(
+  view: { kind?: string; xAxis: AxisRef; yAxis: AxisRef },
+  states: StateInfo[],
+  kind: SystemKind | undefined,
+): { x: string; y: string } {
+  if (view.kind === "cobweb") {
+    const base = axisLatex(view.xAxis, states, kind);
+    return { x: withSubscript(base, "n"), y: withSubscript(base, "n+1") };
+  }
+  return {
+    x: axisLabelLatex(view.xAxis, view.yAxis, states, kind),
+    y: axisLabelLatex(view.yAxis, view.xAxis, states, kind),
+  };
+}
+
+/** The multiplier λ = f′(x*) of a 1-D map's fixed point: its only eigenvalue. */
+export function mapMultiplier(fp: { eigenvalues: [number, number][] }): number {
+  return fp.eigenvalues[0]?.[0] ?? NaN;
+}
+
+/** A multiplier this close to 0 is λ = 0 (superstable). */
+const SUPERSTABLE_TOL = 1e-12;
+
+/**
+ * Why a 1-D map's fixed point is stable or not, in Strogatz §10.1's words:
+ * |λ| against 1, then what the sign of λ says about nearby orbits. `name`
+ * is the state's plain name (`x`).
+ */
+export function mapStabilityHint(fp: { eigenvalues: [number, number][]; classification: Classification }, name = "x"): string {
+  const lambda = mapMultiplier(fp);
+  const star = `${name}*`;
+  if (fp.classification === "non-isolated")
+    return `f(${name}) = ${name} for every ${name} between the two non-isolated points: ${star} is not isolated.`;
+  if (fp.eigenvalues.length === 0)
+    return `f is not differentiable at ${star} (its slopes on the two sides differ), so there is no λ = f′(${star}) and linearization does not decide.`;
+  const parts: string[] = [];
+  if (fp.classification === "non-hyperbolic") parts.push("|λ| = 1: linearization does not decide.");
+  else if (fp.classification === "sink" || fp.classification.startsWith("stable")) parts.push(`|λ| < 1, so ${star} is stable.`);
+  else parts.push(`|λ| > 1, so ${star} is unstable.`);
+  if (Math.abs(lambda) < SUPERSTABLE_TOL) parts.push("λ = 0: superstable.");
+  else if (lambda < 0) parts.push(`λ < 0: nearby orbits alternate sides of ${star}.`);
+  return parts.join(" ");
+}
+
 /** Where the `{…}` group that ends `latex` opens, or -1. */
 function lastGroupStart(latex: string): number {
   if (!latex.endsWith("}")) return -1;
@@ -179,6 +228,10 @@ export function classificationExplain(c: Classification, kind: SystemKind | unde
   if (dim === 1) {
     const stable = c === "sink" || c.startsWith("stable");
     const unstable = c === "source" || c.startsWith("unstable");
+    if (c === "non-isolated")
+      return kind === "map"
+        ? "f(x) = x for every x between the two non-isolated points: the fixed points are not isolated."
+        : "f(x) = 0 for every x between the two non-isolated points: the fixed points are not isolated.";
     if (kind === "map") {
       if (stable) return "|f′(x*)| < 1: nearby orbits are pulled in.";
       if (unstable) return "|f′(x*)| > 1: nearby orbits are pushed away.";

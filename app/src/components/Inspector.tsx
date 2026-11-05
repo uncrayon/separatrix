@@ -1,19 +1,31 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { AxisRef, FixedPointOut, Method, Status, SystemKind, TrajectoryOut } from "../api/types";
+import type { AxisRef, FixedPointOut, Method, SystemKind, TrajectoryOut } from "../api/types";
 import { Tex } from "../math/Tex";
+import { MathProse } from "../math/MathProse";
 import {
   classificationExplain,
   classificationTitle,
   COMPUTED_ZERO,
   fmt,
   latexToPlain,
+  mapMultiplier,
+  mapStabilityHint,
   sameAxis,
+  viewAxisLabels,
   withSubscript,
 } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
+  COBWEB_FILL_ITERATES,
   DEFAULT_FIXED_STEP,
+  MAX_ITERATES,
   PALETTE_SIZE,
+  VIEW_CHOICES,
+  VIEW_CHOICE_LABELS,
+  VIEW_CHOICE_SHORT,
+  isCobweb,
+  viewChoice,
+  viewChoiceAvailability,
   portraitFits,
   searchedFixedPoints,
   selectFixedPoint,
@@ -21,11 +33,24 @@ import {
   trajectorySpans,
   type InitialCondition,
 } from "../state/model";
-import { Button, IconButton, NumberField, Select, Switch, withMinus, type SelectOption } from "./controls";
+import {
+  Button,
+  IconButton,
+  NumberField,
+  SegmentedControl,
+  Select,
+  Switch,
+  withMinus,
+  type SegmentOption,
+  type SelectOption,
+} from "./controls";
+import { systemNameOf } from "./systemName";
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
 import { dec, startPointParts } from "./startPoint";
+import { landedOnSource, stopText } from "./runStatus";
 import { fixedPointGlyph } from "../canvas/draw";
+import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
 import {
   hasComplexEigenvalue,
@@ -105,7 +130,7 @@ export function Inspector({ state, actions }: Props) {
       ) : (
         <>
           <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
-          <AxesSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
+          <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
           <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
           <FixedPointsSection
             state={state}
@@ -227,10 +252,32 @@ function LayersSection({ state, actions, open, onToggle }: SectionProps) {
 const axisValue = (a: AxisRef) => (a.kind === "time" ? "time" : `s${a.index}`);
 const axisFromValue = (v: string): AxisRef => (v === "time" ? { kind: "time" } : { kind: "state", index: Number(v.slice(1)) });
 
-function AxesSection({ state, actions, open, onToggle }: SectionProps) {
+/** Subscript digits for a caption: x₁₀₀. */
+const subDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
+
+function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const kind = sys.kind;
   const view = state.view;
+  const cobweb = isCobweb(view);
+  const reasonBase = useId();
+  const avail = viewChoiceAvailability(sys, systemNameOf(state));
+  const viewOptions: SegmentOption<(typeof VIEW_CHOICES)[number]>[] = VIEW_CHOICES.map((c) => {
+    const a = avail[c];
+    return {
+      value: c,
+      label: VIEW_CHOICE_SHORT[c],
+      title: VIEW_CHOICE_LABELS[c],
+      ariaLabel: VIEW_CHOICE_LABELS[c],
+      ...(a.ok ? {} : { disabled: true, describedBy: `${reasonBase}-${c}` }),
+    };
+  });
+  // The group is described by every reason too: arrow keys skip the disabled options, so it is
+  // what a screen reader announces on entering the control.
+  const reasonIds = VIEW_CHOICES.filter((c) => !avail[c].ok)
+    .map((c) => `${reasonBase}-${c}`)
+    .join(" ");
+  const names = viewAxisLabels(view, sys.states, kind);
   const options: SelectOption<string>[] = [
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     { value: "time", label: kind === "map" ? "n" : "t" },
@@ -245,43 +292,82 @@ function AxesSection({ state, actions, open, onToggle }: SectionProps) {
   const hId = useId();
   const vId = useId();
   return (
-    <PanelSection title="Axes" open={open} onToggle={onToggle}>
-      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
-        <div className="ds-panel-section-kv-row">
-          <dt className="ds-panel-section-key body">
-            <label className="inspector-key-label" htmlFor={hId}>
-              Horizontal
-            </label>
-          </dt>
-          <dd className="ds-panel-section-value ds-panel-section-value--field">
-            <Select
-              id={hId}
-              size="sm"
-              math
-              value={axisValue(view.xAxis)}
-              options={options}
-              onChange={(v) => actions.setAxis("x", axisFromValue(v))}
-            />
-          </dd>
-        </div>
-        <div className="ds-panel-section-kv-row">
-          <dt className="ds-panel-section-key body">
-            <label className="inspector-key-label" htmlFor={vId}>
-              Vertical
-            </label>
-          </dt>
-          <dd className="ds-panel-section-value ds-panel-section-value--field">
-            <Select
-              id={vId}
-              size="sm"
-              math
-              value={axisValue(view.yAxis)}
-              options={options}
-              onChange={(v) => actions.setAxis("y", axisFromValue(v))}
-            />
-          </dd>
-        </div>
-      </dl>
+    <PanelSection title="View" open={open} onToggle={onToggle}>
+      <div className="inspector-view-control">
+        <SegmentedControl
+          size="sm"
+          fill
+          ariaLabel="View"
+          value={viewChoice(view)}
+          options={viewOptions}
+          onChange={actions.setViewKind}
+          describedBy={reasonIds || undefined}
+        />
+        {VIEW_CHOICES.map((c) => {
+          const a = avail[c];
+          return a.ok ? null : (
+            <p key={c} className="ds-panel-section-hint caption" id={`${reasonBase}-${c}`}>
+              <MathProse text={a.reason} />
+            </p>
+          );
+        })}
+      </div>
+      {cobweb ? (
+        <>
+          <dl className="ds-panel-section-kv">
+            <KvRow label="Horizontal" text>
+              <span className="math">
+                <Tex latex={names.x} />
+              </span>
+            </KvRow>
+            <KvRow label="Vertical" text>
+              <span className="math">
+                <Tex latex={names.y} />
+              </span>
+            </KvRow>
+          </dl>
+          <p className="ds-panel-section-hint caption">
+            Equal scales: the diagonal is at 45°, so a slope steeper than it means |f′| &gt; 1.
+          </p>
+        </>
+      ) : (
+        <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+          <div className="ds-panel-section-kv-row">
+            <dt className="ds-panel-section-key body">
+              <label className="inspector-key-label" htmlFor={hId}>
+                Horizontal
+              </label>
+            </dt>
+            <dd className="ds-panel-section-value ds-panel-section-value--field">
+              <Select
+                id={hId}
+                size="sm"
+                math
+                value={axisValue(view.xAxis)}
+                options={options}
+                onChange={(v) => actions.setAxis("x", axisFromValue(v))}
+              />
+            </dd>
+          </div>
+          <div className="ds-panel-section-kv-row">
+            <dt className="ds-panel-section-key body">
+              <label className="inspector-key-label" htmlFor={vId}>
+                Vertical
+              </label>
+            </dt>
+            <dd className="ds-panel-section-value ds-panel-section-value--field">
+              <Select
+                id={vId}
+                size="sm"
+                math
+                value={axisValue(view.yAxis)}
+                options={options}
+                onChange={(v) => actions.setAxis("y", axisFromValue(v))}
+              />
+            </dd>
+          </div>
+        </dl>
+      )}
       {(sliceStates.length > 0 || timeSlice) && (
         <>
           <h3 className="ds-panel-section-subhead label">Field slice</h3>
@@ -339,26 +425,84 @@ const positive = (v: number) => (v > 0 ? null : "Must be positive");
 /** MAX_SAMPLES in app/src-tauri/src/service.rs: the core takes no more per trajectory. */
 const MAX_SAMPLES = 200_000;
 
+/** The cobweb's orbits still have more than {@link COBWEB_DEDUPE_ITERATES} different segments: a chaotic orbit filling the plot, not a converged cycle. */
+function cobwebFillsIn(state: StudioState): boolean {
+  const p = state.portrait;
+  if (!portraitFits(state.compiled, state.shapeId, p)) return false;
+  const { xRange, yRange } = state.view;
+  const key = `${xRange},${yRange}`;
+  return p.res.trajectories.some((tr) => {
+    const hit = fillCache.get(tr);
+    if (hit?.key === key) return hit.fills;
+    const fills = distinctSegments(orbitValues(tr), xRange, yRange, COBWEB_DEDUPE_ITERATES + 1) > COBWEB_DEDUPE_ITERATES;
+    fillCache.set(tr, { key, fills });
+    return fills;
+  });
+}
+
+const fillCache = new WeakMap<object, { key: string; fills: boolean }>();
+
 function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
   const backHint = useId();
   if (sys.kind === "map") {
+    const n = Math.max(1, Math.round(state.solver.tEnd));
+    const T = state.solver.transient ?? 0;
+    const x = plainName(sys.states[0]?.latex ?? "x");
+    // A 1-D map names its iterates (x₀ … x₁₉₉); a larger one, whose start is (x₀, y₀), counts n.
+    const hidden =
+      sys.states.length > 1
+        ? T === 0
+          ? "No iterates hidden; the orbit is drawn from n = 0."
+          : `Hides n = 0${T === 1 ? "" : T === 2 ? " and 1" : ` … ${(T - 1).toLocaleString("en-US")}`}; the orbit is drawn from n = ${T.toLocaleString("en-US")}.`
+        : T === 0
+          ? `No iterates hidden; the orbit is drawn from ${x}₀.`
+          : `Hides ${x}₀${T === 1 ? "" : T === 2 ? ` and ${x}₁` : ` … ${x}${subDigits(T - 1)}`}; the orbit is drawn from ${x}${subDigits(T)}.`;
+    const fills = isCobweb(state.view) && n > COBWEB_FILL_ITERATES && cobwebFillsIn(state);
     return (
       <PanelSection title="Iteration" id="solver-settings" open={open} onToggle={onToggle}>
         <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
-          <FieldRow label="Iterates" tip="Number of iterates per orbit">
+          <FieldRow label="Iterates" tip="Number of iterates per orbit (and of cobweb steps)">
             <NumberField
               size="sm"
               lead={<Tex latex="N" />}
               value={state.solver.tEnd}
               onCommit={(v) => actions.setSolver({ tEnd: Math.round(v) })}
-              validate={(v) => (v >= 1 ? null : "Must be at least 1")}
+              validate={(v) =>
+                v >= 1 && v <= MAX_ITERATES ? null : `Must be from 1 to ${MAX_ITERATES.toLocaleString("en-US")}`
+              }
               step={10}
+              steppers
               ariaLabel="Number of iterates"
             />
           </FieldRow>
+          <FieldRow label="Transient" tip="Iterates computed but not drawn, so the attractor stands out">
+            <NumberField
+              size="sm"
+              lead={<Tex latex="T" />}
+              value={T}
+              onCommit={(v) => actions.setSolver({ transient: Math.round(v) })}
+              validate={(v) =>
+                Number.isInteger(v) && v >= 0 && v <= MAX_ITERATES - n
+                  ? null
+                  : `Must be a whole number from 0 to ${(MAX_ITERATES - n).toLocaleString("en-US")}`
+              }
+              step={10}
+              steppers
+              format={(v) => String(v)}
+              ariaLabel="Transient iterates, computed but not drawn"
+            />
+          </FieldRow>
         </dl>
+        <p className="ds-panel-section-hint caption" aria-live="polite" data-transient-hint="">
+          {hidden}
+        </p>
+        {fills && (
+          <p className="ds-panel-section-hint caption">
+            Above 10,000 iterates a chaotic cobweb fills in solid; set a transient to hide the early iterates instead.
+          </p>
+        )}
         <p className="ds-panel-section-hint caption">Maps are iterated exactly; there is no step size to choose.</p>
       </PanelSection>
     );
@@ -575,6 +719,20 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
   const found = searchedFixedPoints(sys, p, state.shapeId);
   const fps = found ?? [];
   const sym = sys.kind === "map" ? "μ" : "λ";
+  // A 1-D map's one multiplier is λ = f′(x*), in Strogatz §10.1's notation.
+  const map1 = sys.kind === "map" && dim === 1;
+  const multiplierText = (fp: FixedPointOut) => {
+    const lambda = mapMultiplier(fp);
+    const x = plainName(sys.states[0].latex);
+    // One clause per line at most: "|" may break after it (class BA), so each is kept whole.
+    if (!Number.isFinite(lambda)) return <span className="nowrap">{`f′(${x}*) does not exist`}</span>;
+    return (
+      <>
+        <span className="nowrap">{`λ${NBSP}=${NBSP}f′(${x}*)${NBSP}=${NBSP}${dec(lambda, 3)},`}</span>{" "}
+        <span className="nowrap">{`|λ|${NBSP}=${NBSP}${dec(Math.abs(lambda), 3)}`}</span>
+      </>
+    );
+  };
   const selected = p && fps.length ? selectedFixedPointIndex(state.selection, fps, p.meta.view) : null;
   const coordsText = (fp: FixedPointOut) =>
     dim === 1 ? `${plainName(sys.states[0].latex)}* = ${dec(fp.x[0], 3)}` : `(${fp.x.map((v) => dec(v, 3)).join(", ")})`;
@@ -620,12 +778,18 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
                     <span className="ds-fp-row-text">
                       <span className="ds-fp-class body-strong">{label}</span>
                       <span className="ds-fp-coords numeric">{coords}</span>
-                      <span className="ds-fp-eig numeric-sm">{eigenText(fp, sym)}</span>
+                      <span className="ds-fp-eig numeric-sm">{map1 ? multiplierText(fp) : eigenText(fp, sym)}</span>
                     </span>
                   </button>
                   {isSel && (
                     <div className="ds-fp-detail">
-                      <FpHint fp={fp} kind={sys.kind} dim={dim} />
+                      {map1 ? (
+                        <p className="ds-fp-hint caption">
+                          {withMinus(mapStabilityHint(fp, plainName(sys.states[0].latex)))}
+                        </p>
+                      ) : (
+                        <FpHint fp={fp} kind={sys.kind} dim={dim} />
+                      )}
                       {dim >= 2 && <EigenvectorSwitch fps={fps} index={i} kind={sys.kind} />}
                     </div>
                   )}
@@ -639,13 +803,6 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
     </PanelSection>
   );
 }
-
-const STATUS_WORDS: Record<Exclude<Status, "completed">, { words: string; stopped: boolean }> = {
-  blewUp: { words: "Blew up at", stopped: false },
-  maxSteps: { words: "Step limit at", stopped: true },
-  stepTooSmall: { words: "Step too small at", stopped: true },
-  nonFinite: { words: "NaN at", stopped: true },
-};
 
 interface Run {
   out: TrajectoryOut;
@@ -673,15 +830,14 @@ function RunStatus({ runs, timeName }: { runs: Run[]; timeName: string }) {
   return (
     <>
       {bad.map(({ out, direction }) => {
-        const info = STATUS_WORDS[out.status as Exclude<Status, "completed">];
-        const tEnd = out.t.length ? out.t[out.t.length - 1] : NaN;
+        const info = stopText(out, timeName === "n")!;
         return (
           <span
             key={direction}
             className={cx("ds-traj-status caption", info.stopped && "ds-traj-status--stopped")}
           >
             {info.stopped && <IconWarning />}
-            {info.words} <span className="ds-num">{`${timeName} = ${atTime(tEnd)}`}</span>
+            {info.words} <span className="ds-num">{`${timeName} = ${atTime(info.at)}`}</span>
           </span>
         );
       })}
@@ -762,8 +918,10 @@ function TrajectoriesSection({ state, actions, open, onToggle }: SectionProps) {
             );
             const spans = trajectorySpans(sys.kind, state.view, ic, state.solver, state.layers);
             const ends = spans.flatMap((s) => [s.req.t0, s.req.t1]);
-            const lo = ends.length ? Math.min(...ends) : ic.t0;
-            const hi = ends.length ? Math.max(...ends) : ic.t0;
+            // A map's orbit is drawn from n = T, after the transient.
+            const skip = isMap ? (state.solver.transient ?? 0) : 0;
+            const lo = (ends.length ? Math.min(...ends) : ic.t0) + skip;
+            const hi = (ends.length ? Math.max(...ends) : ic.t0) + skip;
             return (
               <li
                 key={ic.id}
@@ -888,7 +1046,10 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
         const len = out.t.length;
         const tEnd = len ? out.t[len - 1] : NaN;
         const last = len ? out.x.slice((len - 1) * dim, len * dim) : [];
-        const info = out.status === "completed" ? null : STATUS_WORDS[out.status];
+        const info = stopText(out, isMap);
+        const landed = isMap
+          ? landedOnSource(out, dim, state.portrait?.res.fixedPoints ?? [], plainName(sys.states[0]?.latex ?? "x"))
+          : null;
         return (
           <div className="inspector-run" key={direction}>
             <h3 className="ds-panel-section-subhead label">
@@ -898,9 +1059,11 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
               <KvRow label={isMap ? "Iterates" : "Accepted steps"}>{out.stats.accepted.toLocaleString("en-US")}</KvRow>
               {!isMap && <KvRow label="Rejected steps">{out.stats.rejected.toLocaleString("en-US")}</KvRow>}
               <KvRow label="Function evaluations">{out.stats.evals.toLocaleString("en-US")}</KvRow>
-              <KvRow label="Ends at" text>
-                <Tex latex={`${isMap ? "n" : "t"} = ${atTime(tEnd).replace("−", "-")}`} />
-              </KvRow>
+              {len > 0 && (
+                <KvRow label="Ends at" text>
+                  <Tex latex={`${isMap ? "n" : "t"} = ${atTime(tEnd).replace("−", "-")}`} />
+                </KvRow>
+              )}
               {last.length > 0 && (
                 <KvRow label="End state">
                   {last.length === 1 ? short(last[0]) : `(${last.map((v) => short(v)).join(", ")})`}
@@ -913,7 +1076,7 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
                     data-tooltip={out.status === "blewUp" ? "|x| passed 10¹², usually the maths, not the solver" : undefined}
                   >
                     {info.stopped && <IconWarning />}
-                    {info.words} <span className="ds-num">{`${isMap ? "n" : "t"} = ${atTime(tEnd)}`}</span>
+                    {info.words} <span className="ds-num">{`${isMap ? "n" : "t"} = ${atTime(info.at)}`}</span>
                     {out.status === "blewUp" && <span className="ds-sr">: |x| passed 10¹², usually the maths, not the solver</span>}
                   </span>
                 ) : (
@@ -921,6 +1084,14 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
                 )}
               </KvRow>
             </dl>
+            {landed && (
+              <p className="ds-panel-section-hint caption" data-rounding-hint="">
+                From <span className="ds-num">{`n = ${landed.n.toLocaleString("en-US")}`}</span> the orbit sits exactly on
+                the unstable fixed point <span className="ds-num">{landed.at}</span>. That is rounding, not the dynamics: a
+                map that stretches by 2 each step, like the tent map at r = 2, uses up a double&apos;s 53 bits in about 53
+                steps, and the orbit can then land on the fixed point exactly and stay.
+              </p>
+            )}
           </div>
         );
       })}

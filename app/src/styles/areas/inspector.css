@@ -25,3 +25,15 @@
   margin: 0;
   padding: var(--space-4);
 }
+
+/* The View control: full width, its reasons for a disabled view below it. */
+.inspector .inspector-view-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.inspector .nowrap {
+  white-space: nowrap;
+}

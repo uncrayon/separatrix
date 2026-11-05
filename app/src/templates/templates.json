@@ -149,10 +149,10 @@
     "description": "Drag r from 2.8 to 4: period doubling, then chaos.",
     "format": "latex",
     "equations": ["x_{n+1}=rx_n\\left(1-x_n\\right)"],
-    "params": { "r": 3.7 },
+    "params": { "r": 3.2 },
     "paramRanges": { "r": [0, 4] },
-    "view": { "x": "n", "y": "x", "xRange": [-2, 62], "yRange": [-0.05, 1.05] },
-    "initialConditions": [[0.2]],
+    "view": { "kind": "cobweb", "x": "x", "y": "x", "xRange": [-0.05, 1.05], "yRange": [-0.05, 1.05] },
+    "initialConditions": [[0.1]],
     "tEnd": 60
   },
   {

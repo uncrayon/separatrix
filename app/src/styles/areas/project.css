@@ -1,0 +1,56 @@
+/* Project files: the in-page confirm and the open/save banner. */
+
+/* Above every other modal (the gallery, the export dialog), below tooltips. */
+.confirm-backdrop {
+  z-index: 55;
+}
+
+.confirm {
+  width: min(28rem, 100%);
+  gap: var(--space-3);
+  padding: var(--space-5);
+  color: var(--ink);
+}
+.confirm:focus {
+  outline: none;
+}
+
+/* Type from the design system's .title and .body classes. */
+.confirm-title {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+.confirm-message {
+  color: var(--ink-2);
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+/* "Don't save" sits apart from Cancel and Save, on the left. */
+.confirm-actions > .ds-button--ghost:first-child {
+  margin-right: auto;
+}
+
+.project-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.project-banner > .ds-diagnostic-list {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.project-banner .ds-diagnostic-msg {
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,69 @@
+% Separatrix figure: Rabbits vs sheep
+%   x' = x*(3 - x - 2*y)
+%   y' = y*(2 - x - y)
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+% If you \input this file from another folder, put \def\sepxdir{figures/} before it.
+\providecommand{\sepxdir}{}%
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxfield}{HTML}{8A9497}%
+\definecolor{sepxnull1}{HTML}{6D28D9}%
+\definecolor{sepxnull2}{HTML}{BE123C}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxtraj2}{HTML}{D55E00}%
+\definecolor{sepxtraj3}{HTML}{009E73}%
+\definecolor{sepxtraj4}{HTML}{1A1A1A}%
+\definecolor{sepxtraj5}{HTML}{B84F8F}%
+\definecolor{sepxtraj6}{HTML}{B07800}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-0.375, xmax=3.625, ymin=-0.25, ymax=2.75,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0,2}, ytick={0,2}, xticklabels={}, yticklabels={},
+  minor xtick={1,3}, minor ytick={1},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(21.26bp,-42.52bp)$) -- ($(rel axis cs:0,1)+(18.26bp,-42.52bp)$)
+  ($(rel axis cs:0,1)+(134.646bp,-155.906bp)$) -- ($(rel axis cs:0,1)+(134.646bp,-158.906bp)$);
+\addplot[sepxfield, line width=0.75bp, line cap=round, line join=round, quiver={u=\thisrow{u}, v=\thisrow{v}}, -{Straight Barb[angle'=51.4, length=1.2148bp]}] table {\sepxdir rabbits-vs-sheep-field.dat};
+\addplot[sepxnull1, line width=1.125bp, dash pattern=on 4.5bp off 3.75bp, line cap=butt, line join=round] table {\sepxdir rabbits-vs-sheep-nullcline-1.dat};
+\addplot[sepxnull2, line width=1.125bp, dash pattern=on 4.5bp off 3.75bp, line cap=butt, line join=round] table {\sepxdir rabbits-vs-sheep-nullcline-2.dat};
+\addplot[sepxtraj1, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-1-backward.dat};
+\fill[sepxtraj1, opacity=0.5] ($(rel axis cs:0,1)+(34.349bp,-146.425bp)$) -- ($(rel axis cs:0,1)+(30.085bp,-151.436bp)$) -- ($(rel axis cs:0,1)+(27.771bp,-146.557bp)$) -- cycle;
+\addplot[sepxtraj2, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-2-backward.dat};
+\fill[sepxtraj2, opacity=0.5] ($(rel axis cs:0,1)+(181.98bp,-7.761bp)$) -- ($(rel axis cs:0,1)+(185.593bp,-2.262bp)$) -- ($(rel axis cs:0,1)+(188.492bp,-6.818bp)$) -- cycle;
+\addplot[sepxtraj3, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-3-backward.dat};
+\addplot[sepxtraj4, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-4-backward.dat};
+\addplot[sepxtraj5, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-5-backward.dat};
+\fill[sepxtraj5, opacity=0.5] ($(rel axis cs:0,1)+(50.389bp,-127.727bp)$) -- ($(rel axis cs:0,1)+(46.685bp,-133.165bp)$) -- ($(rel axis cs:0,1)+(43.862bp,-128.562bp)$) -- cycle;
+\addplot[sepxtraj6, opacity=0.5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-6-backward.dat};
+\fill[sepxtraj6, opacity=0.5] ($(rel axis cs:0,1)+(130.448bp,-41.036bp)$) -- ($(rel axis cs:0,1)+(133.81bp,-35.38bp)$) -- ($(rel axis cs:0,1)+(136.911bp,-39.801bp)$) -- cycle;
+\addplot[sepxtraj1, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-1-forward.dat};
+\fill[sepxtraj1] ($(rel axis cs:0,1)+(144.382bp,-137.397bp)$) -- ($(rel axis cs:0,1)+(137.814bp,-137.785bp)$) -- ($(rel axis cs:0,1)+(139.735bp,-132.739bp)$) -- cycle;
+\addplot[sepxtraj2, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-2-forward.dat};
+\fill[sepxtraj2] ($(rel axis cs:0,1)+(67.897bp,-85.125bp)$) -- ($(rel axis cs:0,1)+(71.629bp,-79.706bp)$) -- ($(rel axis cs:0,1)+(74.428bp,-84.325bp)$) -- cycle;
+\addplot[sepxtraj3, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-3-forward.dat};
+\fill[sepxtraj3] ($(rel axis cs:0,1)+(24.423bp,-43.785bp)$) -- ($(rel axis cs:0,1)+(23.639bp,-37.252bp)$) -- ($(rel axis cs:0,1)+(28.792bp,-38.865bp)$) -- cycle;
+\addplot[sepxtraj4, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-4-forward.dat};
+\fill[sepxtraj4] ($(rel axis cs:0,1)+(171.096bp,-148.499bp)$) -- ($(rel axis cs:0,1)+(164.564bp,-147.712bp)$) -- ($(rel axis cs:0,1)+(167.353bp,-143.088bp)$) -- cycle;
+\addplot[sepxtraj5, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-5-forward.dat};
+\addplot[sepxtraj6, line width=1.125bp, line cap=round, line join=round] table {\sepxdir rabbits-vs-sheep-ic-6-forward.dat};
+\fill[sepxtraj6] ($(rel axis cs:0,1)+(32.949bp,-59.469bp)$) -- ($(rel axis cs:0,1)+(39.045bp,-61.944bp)$) -- ($(rel axis cs:0,1)+(35.139bp,-65.673bp)$) -- cycle;
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table {\sepxdir rabbits-vs-sheep-fixed-points.dat};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxfp, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{0:0}] table {\sepxdir rabbits-vs-sheep-fixed-points.dat};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxbg, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{1:1}] table {\sepxdir rabbits-vs-sheep-fixed-points.dat};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(134.646bp,-148.781bp)$) {$2$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(14.135bp,-42.52bp)$) {$2$};
+\node[anchor=south east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(14.135bp,-148.781bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-152.906bp)$) {$x$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(27.26bp,-4.5bp)$) {$y$};
+\end{axis}
+\end{tikzpicture}

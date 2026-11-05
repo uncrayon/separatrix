@@ -498,7 +498,11 @@ export interface SegmentOption<T extends string> {
   value: T;
   label: ReactNode;
   title?: string;
+  /** The accessible name when the visible label is a bare glyph (`ẋ`). */
+  ariaLabel?: string;
   disabled?: boolean;
+  /** The id of this option's own reason for being disabled (else the group's `describedBy`). */
+  describedBy?: string;
   icon?: ReactNode;
 }
 
@@ -506,7 +510,10 @@ interface SegmentedProps<T extends string> {
   value: T;
   options: SegmentOption<T>[];
   onChange: (v: T) => void;
-  ariaLabel: string;
+  /** The group's name; with `labelledBy`, a visible label names it instead. */
+  ariaLabel?: string;
+  /** The id of a visible label for the group. */
+  labelledBy?: string;
   size?: "md" | "sm";
   fill?: boolean;
   iconOnly?: boolean;
@@ -520,6 +527,7 @@ export function SegmentedControl<T extends string>({
   options,
   onChange,
   ariaLabel,
+  labelledBy,
   size = "md",
   fill,
   iconOnly,
@@ -567,7 +575,8 @@ export function SegmentedControl<T extends string>({
         className,
       )}
       role="radiogroup"
-      aria-label={ariaLabel}
+      aria-label={labelledBy ? undefined : ariaLabel}
+      aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       aria-disabled={disabled || undefined}
     >
@@ -584,8 +593,8 @@ export function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={checked}
             aria-disabled={o.disabled || undefined}
-            aria-describedby={o.disabled ? describedBy : undefined}
-            aria-label={iconOnly && typeof o.label === "string" ? o.label : undefined}
+            aria-describedby={o.disabled ? (o.describedBy ?? describedBy) : undefined}
+            aria-label={o.ariaLabel ?? (iconOnly && typeof o.label === "string" ? o.label : undefined)}
             disabled={disabled}
             tabIndex={tabbable ? 0 : -1}
             className={cx("ds-segmented-item", iconOnly && "ds-segmented-item--icon")}

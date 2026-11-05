@@ -1,0 +1,51 @@
+{
+  "format": "separatrix-trajectory",
+  "format_version": 1,
+  "app_version": "0.2.0",
+  "title": "Rabbits vs sheep",
+  "csv": "rabbits-vs-sheep-trajectory-1.csv",
+  "ic_id": "ic-1",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=x\\left(3-x-2y\\right)",
+      "\\dot{y}=y\\left(2-x-y\\right)"
+    ]
+  },
+  "params": [],
+  "columns": [
+    "t",
+    "x",
+    "y"
+  ],
+  "x0": [
+    0.3,
+    0.2
+  ],
+  "t0": 0.0,
+  "segments": [
+    {
+      "direction": "backward",
+      "t_range": [
+        -12.0,
+        0.0
+      ],
+      "samples": 2000,
+      "status": "completed"
+    },
+    {
+      "direction": "forward",
+      "t_range": [
+        0.0,
+        12.0
+      ],
+      "samples": 2000,
+      "status": "completed"
+    }
+  ],
+  "notes": [
+    "Rows are in increasing time; the start row appears once.",
+    "The time step can differ between the backward and forward segments."
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=x\\left(3-x-2y\\right)",
+      "\\dot{y}=y\\left(2-x-y\\right)"
+    ],
+    "states": [
+      "x",
+      "y"
+    ],
+    "params": [],
+    "template": "rabbits-vs-sheep"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.3,
+        0.2
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    },
+    {
+      "id": "ic-2",
+      "x0": [
+        2.5,
+        2.4
+      ],
+      "t0": 0.0,
+      "color": 1,
+      "hidden": false
+    },
+    {
+      "id": "ic-3",
+      "x0": [
+        0.2,
+        2.5
+      ],
+      "t0": 0.0,
+      "color": 2,
+      "hidden": false
+    },
+    {
+      "id": "ic-4",
+      "x0": [
+        3.2,
+        0.5
+      ],
+      "t0": 0.0,
+      "color": 3,
+      "hidden": false
+    },
+    {
+      "id":

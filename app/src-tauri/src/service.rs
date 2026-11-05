@@ -215,12 +215,17 @@ pub fn compute_portrait(
         .map(|tr| trajectory(f, p, tr, req))
         .collect();
 
+    let graph = req
+        .graph_samples
+        .map(|samples| dyn_analysis::map_graph(f, p, req.x_range, req.y_range, samples));
+
     Ok(PortraitResponse {
         request_id: req.request_id,
         arrows,
         nullclines,
         fixed_points,
         trajectories,
+        graph,
         elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
     })
 }
@@ -251,6 +256,9 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
             ));
         }
     }
+    if req.graph_samples.is_some() {
+        cobweb_fits(f, req.x_axis)?;
+    }
     for (k, tr) in req.trajectories.iter().enumerate() {
         if tr.x0.len() != dim {
             return Err(format!(
@@ -259,6 +267,30 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
                 tr.x0.len()
             ));
         }
+    }
+    Ok(())
+}
+
+/// The cobweb view (a request with `graphSamples`) needs the graph of one
+/// `f`: a one-dimensional autonomous map, with `x_n` across.
+fn cobweb_fits(f: &dyn VectorField, x_axis: AxisRef) -> Result<(), String> {
+    let dim = f.dim();
+    if f.kind() != SystemKind::Map {
+        return Err(
+            "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system is a flow."
+                .into(),
+        );
+    }
+    if dim != 1 {
+        return Err(format!(
+            "The cobweb view needs a one-dimensional map x_{{n+1}} = f(x_n); this system has {dim} states."
+        ));
+    }
+    if !f.is_autonomous() {
+        return Err("This map changes with n, so f has no single graph to cobweb.".into());
+    }
+    if x_axis != (AxisRef::State { index: 0 }) {
+        return Err("The cobweb view needs x_n on the horizontal axis.".into());
     }
     Ok(())
 }
@@ -356,11 +388,12 @@ fn trajectory(
 ) -> TrajectoryOut {
     let sol = if f.kind() == SystemKind::Map {
         let n = if tr.t1.is_finite() {
-            tr.t1.round().clamp(0.0, MAX_ITERATES as f64)
+            tr.t1.round().clamp(0.0, MAX_ITERATES as f64) as usize
         } else {
-            0.0
+            0
         };
-        dyn_solve::iterate_map(f, p, &tr.x0, n as usize, 0)
+        let transient = req.transient.unwrap_or(0).min(MAX_ITERATES - n);
+        dyn_solve::iterate_map(f, p, &tr.x0, n, transient)
     } else {
         let opts = to_solver(&req.solver);
         let sampling = match req.samples {
@@ -404,6 +437,8 @@ mod tests {
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct TemplateView {
+        #[serde(default)]
+        kind: Option<String>,
         x: String,
         y: String,
         x_range: (f64, f64),
@@ -537,6 +572,8 @@ mod tests {
                 max_steps: 200_000,
             },
             samples: (max_span * 120.0).clamp(400.0, 8000.0).round() as usize,
+            graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
+            transient: None,
         }
     }
 
@@ -720,18 +757,32 @@ mod tests {
     }
 
     #[test]
-    fn logistic_map_iterates_from_x0_on_the_n_axis() {
+    fn logistic_map_opens_as_a_cobweb_from_x0() {
+        let t = template("logistic-map");
+        assert_eq!(t.view.kind.as_deref(), Some("cobweb"));
         let (_, out) = template_portrait("logistic-map");
         let tr = &out.trajectories[0];
         assert_eq!(tr.t.len(), 61);
         assert_eq!(tr.t[0], 0.0);
         assert_eq!(tr.t[60], 60.0);
-        assert_eq!(tr.x[0], 0.2);
-        assert!((tr.x[1] - 3.7 * 0.2 * 0.8).abs() < 1e-15);
+        assert_eq!(tr.x[0], 0.1);
+        assert_eq!(tr.x[1], 3.2 * 0.1 * 0.9);
         assert_eq!(out.fixed_points.len(), 2, "{:?}", out.fixed_points);
-        find_fp(&out, &[0.0]);
-        let fp = find_fp(&out, &[1.0 - 1.0 / 3.7]);
-        assert!(!fp.stable);
+        let origin = find_fp(&out, &[0.0]);
+        let inner = find_fp(&out, &[0.6875]);
+        assert!(!origin.stable && !inner.stable);
+        // The orbit winds out from x* = 0.6875 onto the 2-cycle {0.513, 0.799}.
+        let tail = &tr.x[50..];
+        assert!(
+            tail.iter()
+                .all(|&x| (x - 0.513).abs() < 1e-3 || (x - 0.7995).abs() < 1e-3),
+            "{tail:?}"
+        );
+        let graph = out.graph.as_ref().expect("the cobweb asks for the graph");
+        assert_eq!(graph.len(), 1);
+        assert_eq!(graph[0].len(), 2048);
+        assert_eq!(graph[0][0].0, -0.05);
+        assert_eq!(graph[0][2047].0, 1.05);
     }
 
     #[test]
@@ -769,6 +820,8 @@ mod tests {
                 max_steps: 1000,
             },
             samples: 11,
+            graph_samples: None,
+            transient: None,
         }
     }
 
@@ -923,9 +976,16 @@ mod tests {
 
     /// Every state's equation is `x_i' = 0`, so every Newton start is a
     /// fixed point and the number of points found is the number of starts.
+    /// In 1-D a zero field is one interval of fixed points, reported by its
+    /// two ends, so there `x1'` vanishes at each of the 40 seeds (the cell
+    /// centres of the search box [−1, 1]) and nowhere between.
     fn zero_system_fixed_point_count(dim: usize) -> usize {
         let store = SystemStore::new();
-        let src: Vec<String> = (1..=dim).map(|i| format!("x{i}' = 0")).collect();
+        let src: Vec<String> = if dim == 1 {
+            vec!["x1' = sin(pi*((x1 + 1)*20 - 0.5))".into()]
+        } else {
+            (1..=dim).map(|i| format!("x{i}' = 0")).collect()
+        };
         let res = compile_system(
             &store,
             &CompileRequest {
@@ -965,6 +1025,213 @@ mod tests {
         assert_eq!(seeds_per_axis(10), 2);
     }
 
+    fn compile_map(src: &str) -> (SystemStore, u32) {
+        let store = SystemStore::new();
+        let id = compile_src(&store, src);
+        (store, id)
+    }
+
+    fn cobweb_request(system_id: u32, params: Vec<f64>) -> PortraitRequest {
+        let mut req = simple_request(system_id, 1);
+        req.params = params;
+        req.x_axis = AxisRef::State { index: 0 };
+        req.y_axis = AxisRef::State { index: 0 };
+        req.x_range = (-0.05, 1.05);
+        req.y_range = (-0.05, 1.05);
+        req.field_grid = 0;
+        req.graph_samples = Some(2048);
+        req
+    }
+
+    const LOGISTIC: &str = "x_{n+1}=rx_n\\left(1-x_n\\right)";
+
+    #[test]
+    fn the_cobweb_view_needs_a_one_dimensional_autonomous_map() {
+        let cases = [
+            (
+                "x_{n+1}=y_n+1-ax_n^2\ny_{n+1}=bx_n",
+                2,
+                "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system has 2 states.",
+            ),
+            (
+                "x_{n+1}=\\frac{x_n}{2}+n",
+                0,
+                "This map changes with n, so f has no single graph to cobweb.",
+            ),
+            (
+                "\\dot{x}=-x",
+                0,
+                "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system is a flow.",
+            ),
+        ];
+        for (src, n_params, want) in cases {
+            let (store, id) = compile_map(src);
+            let sys = store.get(id).unwrap();
+            let mut req = cobweb_request(id, vec![1.0; n_params]);
+            req.base_state = vec![0.0; sys.dim()];
+            req.y_axis = AxisRef::State {
+                index: sys.dim() - 1,
+            };
+            assert_eq!(compute_portrait(&sys, &req).unwrap_err(), want, "{src}");
+            // Without the graph, the same request is fine.
+            req.graph_samples = None;
+            assert!(compute_portrait(&sys, &req).is_ok(), "{src}");
+        }
+        let (store, id) = compile_map(LOGISTIC);
+        let sys = store.get(id).unwrap();
+        let mut req = cobweb_request(id, vec![3.2]);
+        req.x_axis = AxisRef::Time;
+        assert_eq!(
+            compute_portrait(&sys, &req).unwrap_err(),
+            "The cobweb view needs x_n on the horizontal axis."
+        );
+    }
+
+    #[test]
+    fn the_graph_comes_back_exactly_when_asked_for() {
+        let (store, id) = compile_map(LOGISTIC);
+        let sys = store.get(id).unwrap();
+        let mut req = cobweb_request(id, vec![3.2]);
+        let out = compute_portrait(&sys, &req).unwrap();
+        let graph = out.graph.as_ref().unwrap();
+        assert_eq!(graph.len(), 1);
+        for &(x, y) in &graph[0] {
+            assert_eq!(y, 3.2 * x * (1.0 - x));
+        }
+        let json = serde_json::to_value(&out).unwrap();
+        assert!(json["graph"][0][0].is_array());
+        // In view nowhere: present and empty.
+        req.y_range = (50.0, 60.0);
+        let out = compute_portrait(&sys, &req).unwrap();
+        assert_eq!(out.graph, Some(vec![]));
+        assert_eq!(
+            serde_json::to_value(&out).unwrap()["graph"],
+            serde_json::json!([])
+        );
+        req.graph_samples = None;
+        let out = compute_portrait(&sys, &req).unwrap();
+        assert!(out.graph.is_none());
+        assert!(serde_json::to_value(&out).unwrap().get("graph").is_none());
+    }
+
+    #[test]
+    fn a_transient_hides_the_first_iterates() {
+        let (store, id) = compile_map(LOGISTIC);
+        let sys = store.get(id).unwrap();
+        let mut req = cobweb_request(id, vec![3.5]);
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![0.1],
+            t0: 0.0,
+            t1: 60.0,
+        }];
+        req.transient = Some(100);
+        let out = compute_portrait(&sys, &req).unwrap();
+        let tr = &out.trajectories[0];
+        assert_eq!(tr.status, Status::Completed);
+        assert_eq!(tr.t.len(), 61);
+        assert_eq!(tr.t[0], 100.0);
+        assert_eq!(tr.t[60], 160.0);
+        let mut x = 0.1;
+        for _ in 0..100 {
+            x = 3.5 * x * (1.0 - x);
+        }
+        assert_eq!(tr.x[0], x);
+        // r = 3.5: the 4-cycle, period doubling.
+        let mut tail: Vec<f64> = tr.x[52..].to_vec();
+        tail.sort_by(f64::total_cmp);
+        tail.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        assert_eq!(tail.len(), 4, "{tail:?}");
+        // The time series of the same map hides the same iterates.
+        req.graph_samples = None;
+        req.x_axis = AxisRef::Time;
+        req.x_range = (0.0, 200.0);
+        assert_eq!(
+            compute_portrait(&sys, &req).unwrap().trajectories[0].t[0],
+            100.0
+        );
+        // Clamped so that transient + n stays within MAX_ITERATES.
+        req.transient = Some(usize::MAX);
+        req.trajectories[0].t1 = 10.0;
+        let tr = &compute_portrait(&sys, &req).unwrap().trajectories[0];
+        assert_eq!(tr.t[0], (MAX_ITERATES - 10) as f64);
+        assert_eq!(*tr.t.last().unwrap(), MAX_ITERATES as f64);
+        // Ignored for flows.
+        let flow = compile_src(&store, "\\dot{x}=-x");
+        let mut req = simple_request(flow, 1);
+        req.x_axis = AxisRef::Time;
+        req.transient = Some(100);
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0],
+            t0: 0.0,
+            t1: 1.0,
+        }];
+        let out = compute_portrait(&store.get(flow).unwrap(), &req).unwrap();
+        assert_eq!(out.trajectories[0].t[0], 0.0);
+    }
+
+    /// `λ = f'(x*)` of a one-dimensional map: its only eigenvalue, from the
+    /// exact (AD) Jacobian.
+    #[test]
+    fn one_dimensional_maps_have_the_multiplier_f_prime() {
+        fn multipliers(src: &str, params: Vec<f64>) -> PortraitResponse {
+            let (store, id) = compile_map(src);
+            let mut req = cobweb_request(id, params);
+            req.fixed_points = true;
+            compute_portrait(&store.get(id).unwrap(), &req).unwrap()
+        }
+        let check = |out: &PortraitResponse, x: f64, lambda: f64, class: Classification| {
+            let fp = find_fp(out, &[x]);
+            assert_eq!(fp.eigenvalues.len(), 1);
+            let (re, im) = fp.eigenvalues[0];
+            assert!(
+                (re - lambda).abs() < 1e-12,
+                "λ = {re} at {x}, want {lambda}"
+            );
+            assert_eq!(im, 0.0);
+            assert_eq!(fp.classification, class, "at {x}");
+            assert_eq!(fp.stable, class == Classification::Sink, "at {x}");
+        };
+        let out = multipliers(LOGISTIC, vec![3.2]);
+        assert_eq!(out.fixed_points.len(), 2);
+        check(&out, 0.0, 3.2, Classification::Source);
+        check(&out, 0.6875, -1.2, Classification::Source);
+        check(
+            &multipliers(LOGISTIC, vec![2.5]),
+            0.6,
+            -0.5,
+            Classification::Sink,
+        );
+        check(
+            &multipliers(LOGISTIC, vec![3.0]),
+            2.0 / 3.0,
+            -1.0,
+            Classification::NonHyperbolic,
+        );
+        check(
+            &multipliers(LOGISTIC, vec![2.0]),
+            0.5,
+            0.0,
+            Classification::Sink,
+        );
+        let tent = "x_{n+1}=\\frac{r}{2}\\left(1-\\left|2x_n-1\\right|\\right)";
+        check(
+            &multipliers(tent, vec![1.5]),
+            0.6,
+            -1.5,
+            Classification::Source,
+        );
+        let sine = multipliers("x_{n+1}=r\\sin\\left(\\pi x_n\\right)", vec![0.7]);
+        let fp = sine
+            .fixed_points
+            .iter()
+            .find(|fp| fp.x[0] > 0.1)
+            .expect("a nonzero fixed point");
+        let x = fp.x[0];
+        assert!((0.7 * (std::f64::consts::PI * x).sin() - x).abs() < 1e-12);
+        let lambda = std::f64::consts::PI * 0.7 * (std::f64::consts::PI * x).cos();
+        assert!((fp.eigenvalues[0].0 - lambda).abs() < 1e-12);
+    }
+
     #[test]
     fn json_matches_the_typescript_contract() {
         let req: PortraitRequest = serde_json::from_value(serde_json::json!({
@@ -980,6 +1247,23 @@ mod tests {
         assert_eq!(req.x_axis, AxisRef::Time);
         assert_eq!(req.y_axis, AxisRef::State { index: 0 });
         assert_eq!(req.solver.h_max, None);
+        assert_eq!(req.graph_samples, None);
+        assert_eq!(req.transient, None);
+        let cobweb: PortraitRequest = serde_json::from_value(serde_json::json!({
+            "requestId": 4, "systemId": 1, "params": [3.2],
+            "xAxis": { "kind": "state", "index": 0 }, "yAxis": { "kind": "state", "index": 0 },
+            "xRange": [-0.05, 1.05], "yRange": [-0.05, 1.05], "baseState": [0], "fieldTime": 0,
+            "fieldGrid": 0, "nullclines": false, "fixedPoints": true,
+            "trajectories": [{ "x0": [0.1], "t0": 0, "t1": 60 }],
+            "solver": { "method": "dopri5", "rtol": 1e-6, "atol": 1e-9, "h": 0, "maxSteps": 200000 },
+            "samples": 400, "graphSamples": 2048, "transient": 200
+        }))
+        .expect("a cobweb request deserializes");
+        assert_eq!(cobweb.graph_samples, Some(2048));
+        assert_eq!(cobweb.transient, Some(200));
+        let back = serde_json::to_value(&cobweb).unwrap();
+        assert_eq!(back["graphSamples"], 2048);
+        assert_eq!(back["transient"], 200);
 
         let store = SystemStore::new();
         let res = compile_system(
@@ -1032,6 +1316,10 @@ mod tests {
         ] {
             assert!(json.get(key).is_some(), "missing {key}");
         }
+        assert!(
+            json.get("graph").is_none(),
+            "no graph unless graphSamples was sent"
+        );
         assert_eq!(json["requestId"], 3);
         assert_eq!(json["fixedPoints"][0]["classification"], "sink");
         assert!(json["fixedPoints"][0]["eigenvalues"][0].is_array());

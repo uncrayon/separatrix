@@ -8,11 +8,50 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import type { InitialCondition, TrajectoryMeta } from "../state/model";
+import { cobwebPx, diagonalSegment, graphPx, orbitValues } from "./cobweb";
 import { eigenDirections } from "./eigenvectors";
 import type { PlotTheme } from "./theme";
 import { niceTicks, sx, sy, tickLabel, type Viewport } from "./viewport";
 
 export type Box = [number, number, number, number];
+
+/**
+ * The part of the 2D canvas API that {@link drawScene} uses. A canvas's
+ * `CanvasRenderingContext2D` is one; `canvas/svgContext.ts` records the same
+ * calls as SVG, so the screen, PNG and SVG exports share one drawing.
+ */
+export interface DrawContext {
+  globalAlpha: number;
+  fillStyle: string | CanvasGradient | CanvasPattern;
+  strokeStyle: string | CanvasGradient | CanvasPattern;
+  lineWidth: number;
+  lineCap: CanvasLineCap;
+  lineJoin: CanvasLineJoin;
+  font: string;
+  textAlign: CanvasTextAlign;
+  textBaseline: CanvasTextBaseline;
+  save(): void;
+  restore(): void;
+  beginPath(): void;
+  closePath(): void;
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  arc(x: number, y: number, r: number, start: number, end: number, counterclockwise?: boolean): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  clip(): void;
+  fill(): void;
+  stroke(): void;
+  fillRect(x: number, y: number, w: number, h: number): void;
+  setLineDash(segments: number[]): void;
+  fillText(text: string, x: number, y: number): void;
+  strokeText(text: string, x: number, y: number): void;
+  measureText(text: string): { width: number };
+}
+
+export interface DrawOptions {
+  /** Fill the whole area with the plot background first (off: a transparent export). */
+  background?: boolean;
+}
 
 export interface SceneTrajectory {
   out: TrajectoryOut;
@@ -38,6 +77,12 @@ export interface Scene {
   eigenvectors: boolean;
   stale: boolean;
   avoid: { labels: Box[]; field: Box[] };
+  /**
+   * A cobweb plot of a 1-D map (both axes state 0): the diagonal, the graph
+   * of f (polylines of `[x, f(x)]`, empty until a portrait with it arrives)
+   * and each orbit as a staircase instead of dots. Absent or null otherwise.
+   */
+  cobweb?: { graph: [number, number][][] } | null;
 }
 
 export type SceneAxes = Pick<Scene, "kind" | "dim" | "xAxis" | "yAxis">;
@@ -89,8 +134,8 @@ export function axisLines(vp: Viewport): { X: number; Y: number; xAxisInView: bo
   const [y0, y1] = vp.yRange;
   const yAxisInView = Math.min(x0, x1) < 0 && Math.max(x0, x1) > 0;
   const xAxisInView = Math.min(y0, y1) < 0 && Math.max(y0, y1) > 0;
-  const X = yAxisInView ? Math.round(sx(vp, 0)) + 0.5 : sx(vp, 0) < vp.left ? vp.left : right;
-  const Y = xAxisInView ? Math.round(sy(vp, 0)) + 0.5 : sy(vp, 0) > bottom ? bottom : vp.top;
+  const X = yAxisInView ? Math.round(sx(vp, 0)) + 0.5 : sx(vp, 0) <= vp.left ? vp.left : right;
+  const Y = xAxisInView ? Math.round(sy(vp, 0)) + 0.5 : sy(vp, 0) >= bottom ? bottom : vp.top;
   return { X, Y, xAxisInView, yAxisInView };
 }
 
@@ -111,16 +156,19 @@ interface Label {
 }
 
 export function drawScene(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   w: number,
   h: number,
   vp: Viewport,
   scene: Scene | null,
   th: PlotTheme,
+  opts: DrawOptions = { background: true },
 ): void {
   ctx.globalAlpha = 1;
-  ctx.fillStyle = th.bg;
-  ctx.fillRect(0, 0, w, h);
+  if (opts.background !== false) {
+    ctx.fillStyle = th.bg;
+    ctx.fillRect(0, 0, w, h);
+  }
 
   ctx.save();
   ctx.beginPath();
@@ -145,7 +193,8 @@ export function drawScene(
   ctx.globalAlpha = fade;
   drawField(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.field]);
   drawNullclines(ctx, vp, scene, th);
-  drawTrajectories(ctx, vp, scene, th, fade);
+  if (scene.cobweb) drawCobweb(ctx, vp, scene, scene.cobweb.graph, th, fade);
+  else drawTrajectories(ctx, vp, scene, th, fade);
   ctx.globalAlpha = fade;
   const eigenLabels = scene.eigenvectors
     ? drawEigenvectors(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.labels])
@@ -171,7 +220,7 @@ export function drawScene(
 }
 
 function drawGrid(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   vp: Viewport,
   ticks: ReturnType<typeof ticksFor>,
   th: PlotTheme,
@@ -214,7 +263,7 @@ const TICK_LABEL_PAD = 3;
 const FP_HALO_R = 7.5;
 
 function drawAxes(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   vp: Viewport,
   ticks: ReturnType<typeof ticksFor>,
   axes: ReturnType<typeof axisLines>,
@@ -252,7 +301,7 @@ function drawAxes(
 const overlaps = (a: Box, b: Box) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 
 function layoutLabels(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   vp: Viewport,
   ticks: ReturnType<typeof ticksFor>,
   axes: ReturnType<typeof axisLines>,
@@ -306,7 +355,7 @@ function layoutLabels(
 }
 
 function makeLabel(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   hgt: number,
   text: string,
   x: number,
@@ -320,7 +369,7 @@ function makeLabel(
   return { text, x, y, align, base, box: [l - 3, t - 3, l + wid + 3, t + hgt + 3] };
 }
 
-function drawLabels(ctx: CanvasRenderingContext2D, labels: Label[], th: PlotTheme) {
+function drawLabels(ctx: DrawContext, labels: Label[], th: PlotTheme) {
   ctx.font = th.tickFont;
   ctx.lineJoin = "round";
   ctx.lineWidth = 3;
@@ -334,7 +383,7 @@ function drawLabels(ctx: CanvasRenderingContext2D, labels: Label[], th: PlotThem
   }
 }
 
-function drawField(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme, clear: Box[]) {
+function drawField(ctx: DrawContext, vp: Viewport, scene: Scene, th: PlotTheme, clear: Box[]) {
   if (!scene.arrows.length || scene.fieldGrid <= 0) return;
   const s = th.lineScale;
   const cell = Math.min(vp.width, vp.height) / scene.fieldGrid;
@@ -371,7 +420,7 @@ function drawField(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th
   ctx.stroke();
 }
 
-function drawNullclines(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme) {
+function drawNullclines(ctx: DrawContext, vp: Viewport, scene: Scene, th: PlotTheme) {
   const s = th.lineScale;
   ctx.lineWidth = 1.5 * s;
   ctx.setLineDash([6 * s, 5 * s]);
@@ -394,7 +443,7 @@ function drawNullclines(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scen
 }
 
 function drawTrajectories(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   vp: Viewport,
   scene: Scene,
   th: PlotTheme,
@@ -466,7 +515,105 @@ function drawTrajectories(
   ctx.globalAlpha = 1;
 }
 
-function strokePolyline(ctx: CanvasRenderingContext2D, pts: Float64Array) {
+/**
+ * A cobweb, in the PhasePlane z-order: the diagonal x_{n+1} = x_n (a thin
+ * reference line in the axis colour, never dashed: dashes are nullclines),
+ * the graph of f (the boldest line, `plot-fp`), then each orbit's staircase
+ * (thin, mitred, no heads or dots; the selected one last and a little
+ * heavier). A run that stopped early gets an × at its last vertex; one
+ * drawn after a transient, an open square where its staircase starts.
+ */
+export function drawCobweb(
+  ctx: DrawContext,
+  vp: Viewport,
+  scene: Scene,
+  graph: readonly (readonly [number, number])[][],
+  th: PlotTheme,
+  fade: number,
+) {
+  const s = th.lineScale;
+  const g = th.glyphScale;
+  ctx.setLineDash([]);
+  const diag = diagonalSegment(vp.xRange, vp.yRange);
+  if (diag) {
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = th.axis;
+    ctx.lineWidth = s;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    ctx.moveTo(sx(vp, diag[0]), sy(vp, diag[1]));
+    ctx.lineTo(sx(vp, diag[2]), sy(vp, diag[3]));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = fade;
+  const lines = graphPx(vp, graph as [number, number][][]);
+  if (lines.length) {
+    ctx.strokeStyle = th.fp;
+    ctx.lineWidth = 1.5 * s;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    for (const pts of lines) tracePolyline(ctx, pts);
+    ctx.stroke();
+  }
+  const ordered = scene.trajectories
+    .filter((t) => t.meta.direction === "forward")
+    .sort((a, b) => Number(scene.selectedIc === a.meta.icId) - Number(scene.selectedIc === b.meta.icId));
+  for (const tr of ordered) {
+    const paths = cobwebPx(vp, orbitValues(tr.out, scene.dim, 0), tr.out);
+    if (paths.length === 0) continue;
+    const color = th.traj[tr.color % th.traj.length];
+    const selected = scene.selectedIc === tr.meta.icId;
+    ctx.globalAlpha = fade;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = (selected ? 1.5 : 1) * s;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    for (const pts of paths) tracePolyline(ctx, pts);
+    ctx.stroke();
+    if (tr.out.t[0] > 0) {
+      // After a transient the staircase starts at (x_T, x_T), away from the
+      // start handle at (x_0, x_0): an open square, on a halo, marks it.
+      const h = 3 * g;
+      const x = paths[0][0];
+      const y = paths[0][1];
+      ctx.lineJoin = "miter";
+      ctx.beginPath();
+      ctx.rect(x - h, y - h, 2 * h, 2 * h);
+      ctx.strokeStyle = th.halo;
+      ctx.lineWidth = 3 * g;
+      ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5 * g;
+      ctx.stroke();
+    }
+    if (tr.out.status !== "completed") {
+      const last = paths[paths.length - 1];
+      const x = last[last.length - 2];
+      const y = last[last.length - 1];
+      const c = 4 * g;
+      ctx.lineWidth = 1.5 * s;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x - c, y - c);
+      ctx.lineTo(x + c, y + c);
+      ctx.moveTo(x + c, y - c);
+      ctx.lineTo(x - c, y + c);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Adds a polyline to the current path (one subpath). */
+function tracePolyline(ctx: DrawContext, pts: Float64Array) {
+  if (pts.length < 4) return;
+  ctx.moveTo(pts[0], pts[1]);
+  for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
+}
+
+function strokePolyline(ctx: DrawContext, pts: Float64Array) {
   ctx.beginPath();
   ctx.moveTo(pts[0], pts[1]);
   for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
@@ -484,8 +631,9 @@ const STRAIGHTNESS_TOL = 0.05;
 /** A head may slide this fraction of its share of the trajectory either way. */
 const HEAD_SLIDE_FRACTION = 1 / 6;
 
-function drawHeads(
-  ctx: CanvasRenderingContext2D,
+/** Places and fills a trajectory's arrow heads (exported for the heads.json parity vectors). */
+export function drawHeads(
+  ctx: DrawContext,
   vp: Viewport,
   pts: Float64Array,
   backward: boolean,
@@ -583,7 +731,7 @@ const LABEL_SIDE_MIN_X = 0.3;
 const LABEL_ANCHOR_THRESHOLD = 0.38;
 
 function drawEigenvectors(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   vp: Viewport,
   scene: Scene,
   th: PlotTheme,
@@ -600,11 +748,17 @@ function drawEigenvectors(
   const bottom = vp.top + vp.height;
   const labels: Label[] = [];
   ctx.font = th.tickFont;
-  const path = new Path2D();
+  // Each entry is a polyline [x0, y0, x1, y1, …], traced twice: halo, then line.
+  const lines: number[][] = [];
   const vee = (x: number, y: number, ux: number, uy: number) => {
-    path.moveTo(x - ux * head - uy * head * spread, y - uy * head + ux * head * spread);
-    path.lineTo(x, y);
-    path.lineTo(x - ux * head + uy * head * spread, y - uy * head - ux * head * spread);
+    lines.push([
+      x - ux * head - uy * head * spread,
+      y - uy * head + ux * head * spread,
+      x,
+      y,
+      x - ux * head + uy * head * spread,
+      y - uy * head - ux * head * spread,
+    ]);
   };
   scene.fixedPoints.forEach((fp, i) => {
     const [cx, cy] = fixedPointPx(vp, scene, fp);
@@ -615,8 +769,7 @@ function drawEigenvectors(
       if (!Number.isFinite(m) || m === 0) continue;
       const ux = dx / m;
       const uy = dy / m;
-      path.moveTo(cx - ux * half, cy - uy * half);
-      path.lineTo(cx + ux * half, cy + uy * half);
+      lines.push([cx - ux * half, cy - uy * half, cx + ux * half, cy + uy * half]);
       for (const sg of [1, -1]) {
         if (e.flow > 0) vee(cx + sg * ux * half, cy + sg * uy * half, sg * ux, sg * uy);
         else if (e.flow < 0) vee(cx + sg * ux * half * 0.5, cy + sg * uy * half * 0.5, -sg * ux, -sg * uy);
@@ -641,20 +794,29 @@ function drawEigenvectors(
       labels.push(lab);
     }
   });
+  const trace = () => {
+    ctx.beginPath();
+    for (const pl of lines) {
+      ctx.moveTo(pl[0], pl[1]);
+      for (let k = 2; k < pl.length; k += 2) ctx.lineTo(pl[k], pl[k + 1]);
+    }
+  };
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.setLineDash([]);
   ctx.strokeStyle = th.halo;
   ctx.lineWidth = s + 3;
-  ctx.stroke(path);
+  trace();
+  ctx.stroke();
   ctx.strokeStyle = th.fp;
   ctx.lineWidth = s;
-  ctx.stroke(path);
+  trace();
+  ctx.stroke();
   return labels;
 }
 
 export function drawFixedPoint(
-  ctx: CanvasRenderingContext2D,
+  ctx: DrawContext,
   x: number,
   y: number,
   kind: FixedPointGlyphKind,
@@ -692,7 +854,7 @@ export function drawFixedPoint(
   ctx.stroke();
 }
 
-function drawHandles(ctx: CanvasRenderingContext2D, vp: Viewport, scene: Scene, th: PlotTheme) {
+function drawHandles(ctx: DrawContext, vp: Viewport, scene: Scene, th: PlotTheme) {
   const g = th.glyphScale;
   let sel: { x: number; y: number; color: string } | null = null;
   for (const ic of scene.ics) {
