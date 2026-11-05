@@ -13,6 +13,7 @@
 //! | CSV and `.meta.json` | [`csv::files`] |
 //! | Curve simplification for exports | [`simplify::simplify_portrait`] |
 //! | Clipboard PNG decoding | [`raster::decode_rgba`] |
+//! | Cobweb geometry (staircase, diagonal) | [`cobweb`] |
 //!
 //! Numbers are written as the UI writes them: [`num::shortest`] is
 //! JavaScript's `String(v)` (CSV, tables), and tick labels are exact ports
@@ -21,6 +22,7 @@
 #![warn(missing_docs)]
 
 pub mod clip;
+pub mod cobweb;
 pub mod csv;
 pub mod heads;
 pub mod latex_figure;

@@ -144,6 +144,8 @@ test("SVG: Save… writes well-formed SVG with text as text; Copy SVG copies it"
         width: doc.documentElement.getAttribute("width"),
         texts: doc.querySelectorAll("text").length,
         tspans: doc.querySelectorAll("text tspan").length,
+        title: doc.querySelector("svg > title")?.textContent ?? null,
+        desc: doc.querySelector("svg > desc")?.textContent ?? null,
         raw: f.contents,
       };
     });
@@ -151,6 +153,9 @@ test("SVG: Save… writes well-formed SVG with text as text; Copy SVG copies it"
     assert.equal(res.error, null);
     assert.equal(res.root, "svg");
     assert.equal(res.width, "8cm");
+    assert.equal(res.title, "Rabbits vs sheep");
+    // The file describes the figure; "Preview:" belongs to the dialog's preview only.
+    assert.match(res.desc, /^Rabbits vs sheep with direction field, nullclines, \d+ trajectories and \d+ fixed points$/);
     assert.ok(res.texts > 6, "tick labels and axis names are text");
     assert.ok(res.tspans >= 2, "maths names as tspans");
     assert.doesNotMatch(res.raw, /baseline-shift|dominant-baseline|<image/);

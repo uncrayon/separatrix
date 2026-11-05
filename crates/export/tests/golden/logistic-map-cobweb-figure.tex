@@ -1,0 +1,170 @@
+% Separatrix figure: Logistic map
+%   x_{n+1} = r*x_n*(1 - x_n)
+% Parameters: r = 3.2
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-0.2333333333333334, xmax=1.2333333333333334, ymin=-0.05, ymax=1.05,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0,0.5,1}, ytick={0,0.5,1}, xticklabels={}, yticklabels={},
+  minor xtick={0.25,0.75}, minor ytick={0.25,0.75},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(36.077bp,-85.039bp)$) -- ($(rel axis cs:0,1)+(33.077bp,-85.039bp)$)
+  ($(rel axis cs:0,1)+(36.077bp,-7.731bp)$) -- ($(rel axis cs:0,1)+(33.077bp,-7.731bp)$)
+  ($(rel axis cs:0,1)+(113.386bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(113.386bp,-165.348bp)$)
+  ($(rel axis cs:0,1)+(190.694bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(190.694bp,-165.348bp)$);
+% Diagonal x_{n+1} = x_n
+\addplot[sepxaxis, line width=0.75bp, line cap=butt] coordinates {(-0.05,-0.05) (1.05,1.05)};
+% Graph of f
+\addplot[sepxfp, line width=1.125bp, line join=round, line cap=round] table[row sep=\\]{
+x y\\
+-0.0477 -0.16\\
+-0.027 -0.0887\\
+-0.0048 -0.0153\\
+0.0182 0.057\\
+0.0411 0.1261\\
+0.064 0.1917\\
+0.0869 0.254\\
+0.1099 0.313\\
+0.1328 0.3685\\
+0.1557 0.4207\\
+0.1787 0.4696\\
+0.2016 0.515\\
+0.2245 0.5571\\
+0.2474 0.5959\\
+0.2704 0.6313\\
+0.2933 0.6633\\
+0.3162 0.6919\\
+0.3391 0.7172\\
+0.3506 0.7286\\
+0.3621 0.7391\\
+0.3735 0.7488\\
+0.385 0.7577\\
+0.3965 0.7657\\
+0.4079 0.7729\\
+0.4194 0.7792\\
+0.4309 0.7847\\
+0.4423 0.7894\\
+0.4538 0.7932\\
+0.4652 0.7961\\
+0.4767 0.7983\\
+0.4882 0.7996\\
+0.4996 0.8\\
+0.5111 0.7996\\
+0.5226 0.7984\\
+0.534 0.7963\\
+0.5455 0.7934\\
+0.557 0.7896\\
+0.5684 0.785\\
+0.5799 0.7796\\
+0.5914 0.7733\\
+0.6028 0.7662\\
+0.6143 0.7582\\
+0.6257 0.7494\\
+0.6372 0.7398\\
+0.6487 0.7293\\
+0.6601 0.7179\\
+0.6831 0.6928\\
+0.706 0.6642\\
+0.7289 0.6323\\
+0.7518 0.597\\
+0.7748 0.5584\\
+0.7977 0.5164\\
+0.8206 0.471\\
+0.8436 0.4223\\
+0.8665 0.3702\\
+0.8894 0.3147\\
+0.9123 0.2559\\
+0.9353 0.1937\\
+0.9582 0.1282\\
+0.9811 0.0593\\
+1.0041 -0.013\\
+1.027 -0.0887\\
+1.0477 -0.16\\
+};
+% Cobweb of ic-1
+\addplot[sepxtraj1, line width=0.75bp, line join=miter] table[row sep=\\]{
+x y\\
+0.1 0.1\\
+0.1 0.288\\
+0.288 0.288\\
+0.288 0.6562\\
+0.6562 0.6562\\
+0.6562 0.7219\\
+0.7219 0.7219\\
+0.7219 0.6424\\
+0.6424 0.6424\\
+0.6424 0.7351\\
+0.7351 0.7351\\
+0.7351 0.6231\\
+0.6231 0.6231\\
+0.6231 0.7515\\
+0.7515 0.7515\\
+0.7515 0.5975\\
+0.5975 0.5975\\
+0.5975 0.7696\\
+0.7696 0.7696\\
+0.7696 0.5675\\
+0.5675 0.5675\\
+0.5675 0.7854\\
+0.7854 0.7854\\
+0.7854 0.5393\\
+0.5393 0.5393\\
+0.5393 0.7951\\
+0.7951 0.7951\\
+0.7951 0.5214\\
+0.5214 0.5214\\
+0.5214 0.7985\\
+0.7985 0.7985\\
+0.7985 0.5148\\
+0.5148 0.5148\\
+0.5148 0.7993\\
+0.7993 0.7993\\
+0.7993 0.5133\\
+0.5133 0.5133\\
+0.5133 0.7994\\
+0.7994 0.7994\\
+0.7994 0.5131\\
+0.5131 0.5131\\
+0.5131 0.7995\\
+0.7995 0.7995\\
+0.7995 0.5131\\
+0.5131 0.5131\\
+nan nan\\
+0.7995 0.7995\\
+0.7995 0.513\\
+0.513 0.513\\
+0.513 0.7995\\
+0.7995 0.7995\\
+};
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table[row sep=\\]{
+x y glyph\\
+0 0 1\\
+0.6875 0.6875 1\\
+};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxbg, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{1:1}] table[row sep=\\]{
+x y glyph\\
+0 0 1\\
+0.6875 0.6875 1\\
+};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(113.386bp,-155.223bp)$) {$0.5$};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(190.694bp,-155.223bp)$) {$1$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-85.039bp)$) {$0.5$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-7.731bp)$) {$1$};
+\node[anchor=south east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-155.223bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-159.348bp)$) {$x_{n}$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(42.077bp,-4.5bp)$) {$x_{n+1}$};
+\end{axis}
+\end{tikzpicture}

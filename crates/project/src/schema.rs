@@ -123,6 +123,12 @@ pub struct ProjectView {
     /// A missing or empty id is repaired by validation.
     #[serde(default)]
     pub id: String,
+    /// `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
+    /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
+    /// phase plane and the time series, which the axes tell apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub kind: Option<String>,
     pub x_axis: ProjectAxis,
     pub y_axis: ProjectAxis,
     /// The user's ranges (not the ones equalized for the plot's aspect).
@@ -137,7 +143,9 @@ pub struct ProjectView {
     pub extra: Map<String, Value>,
 }
 
-/// An axis: `{ "kind": "state", "name": "x" }` or `{ "kind": "time" }`.
+/// An axis: `{ "kind": "state", "name": "x" }`, `{ "kind": "time" }`, or in a
+/// cobweb view `{ "kind": "next", "name": "x" }` (the state one iterate
+/// later, `x_{n+1}`).
 ///
 /// A lenient struct rather than a tagged enum, so an axis kind from a newer
 /// version is kept instead of making the whole file unreadable.
@@ -157,6 +165,15 @@ impl ProjectAxis {
     pub fn state(name: &str) -> Self {
         ProjectAxis {
             kind: "state".into(),
+            name: Some(name.into()),
+            extra: Map::new(),
+        }
+    }
+
+    /// The state `name` one iterate later (a cobweb view's vertical axis).
+    pub fn next(name: &str) -> Self {
+        ProjectAxis {
+            kind: "next".into(),
             name: Some(name.into()),
             extra: Map::new(),
         }
@@ -236,6 +253,12 @@ pub struct ProjectSolver {
     pub max_steps: u32,
     #[serde(default = "default_t_end")]
     pub t_end: f64,
+    /// Map iterates computed but not drawn before each orbit; absent = 0.
+    /// Written only when above 0. Validation clamps it to
+    /// `0..=TRANSIENT_MAX`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub transient: Option<i64>,
     /// Samples per trajectory; 0 means automatic.
     #[serde(default)]
     pub samples: u32,
@@ -253,6 +276,7 @@ impl Default for ProjectSolver {
             h: 0.0,
             max_steps: default_max_steps(),
             t_end: default_t_end(),
+            transient: None,
             samples: 0,
             extra: Map::new(),
         }

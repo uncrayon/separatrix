@@ -19,6 +19,15 @@
 //!   trajectories (backward first, half opacity) with arrow heads where the
 //!   screen puts them ([`crate::heads`]), map iterates (dots, squares above
 //!   2,000), fixed points (halo, then the glyph).
+//! - A cobweb (`Portrait::cobweb`, Strogatz §10.1) draws, in that order, the
+//!   diagonal `x_{n+1} = x_n` (`plot-axis`, 0.75 bp), the graph of `f`
+//!   (`plot-fp`, 1.125 bp), one staircase per orbit ([`crate::cobweb`];
+//!   `traj-k`, 0.75 bp, miter joins, each segment once) and the fixed points
+//!   on the diagonal, under the axis names `x_{n}` and `x_{n+1}`; no map
+//!   dots. After a transient an open square marks where each staircase
+//!   starts, `(x_T, x_T)`. Each of the three gets a comment line (`% Diagonal x_{n+1} =
+//!   x_n`, `% Graph of f`, `% Cobweb of <ic>`), the figure's only per-plot
+//!   comments, and a transient is named in the header.
 //! - Every curve is clipped to the view grown by two field cells, and
 //!   breaks are `nan` rows with `unbounded coords=jump`.
 //! - Data is inline (`table[row sep=\\]{…}`, for Copy) or in `.dat` files
@@ -270,6 +279,16 @@ pub fn axis_latex(axis: Axis, other: Axis, kind: SystemKind, labels: &Labels) ->
             }
         }
     }
+}
+
+/// The axis names of a cobweb plot: `x_{n}` across and `x_{n+1}` up, from
+/// the state's own LaTeX.
+pub fn cobweb_axis_latex(labels: &Labels) -> (String, String) {
+    let base = labels
+        .states
+        .first()
+        .map_or("?".to_string(), |s| s.latex.clone());
+    (with_subscript(&base, "n"), with_subscript(&base, "n+1"))
 }
 
 type BoxPx = [f64; 4];
@@ -701,8 +720,15 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     let (tx, ty) = ticks::for_viewport(w, h, p.x_range, p.y_range);
     let axes = axis_lines(&vp);
     let names = axis_names(&vp, &axes);
-    let xn = axis_latex(p.x_axis, p.y_axis, p.kind, input.labels);
-    let yn = axis_latex(p.y_axis, p.x_axis, p.kind, input.labels);
+    let cobweb = p.cobweb && is_map;
+    let (xn, yn) = if cobweb {
+        cobweb_axis_latex(input.labels)
+    } else {
+        (
+            axis_latex(p.x_axis, p.y_axis, p.kind, input.labels),
+            axis_latex(p.y_axis, p.x_axis, p.kind, input.labels),
+        )
+    };
     let name_boxes = name_boxes(&names, &xn, &yn);
     let labels = layout_labels(
         &vp,
@@ -817,6 +843,52 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         });
     }
 
+    // A cobweb's diagonal and the graph of f, under the staircases.
+    if cobweb {
+        if let Some((a, b)) = crate::cobweb::diagonal(p.x_range, p.y_range) {
+            let pt = |(x, y): (f64, f64)| format!("({},{})", quant.write(0, x), quant.write(1, y));
+            plots.push(Plot {
+                options: String::new(),
+                table: None,
+                curve: None,
+                cloud: None,
+                raw: format!(
+                    "% Diagonal x_{{n+1}} = x_n\n\\addplot[sepxaxis, line width={}, line cap=butt] coordinates {{{} {}}};\n",
+                    bp(1.0),
+                    pt(a),
+                    pt(b)
+                ),
+            });
+        }
+        let mut pieces = Vec::new();
+        for line in &p.graph {
+            let line = &line[..finite_prefix(line)];
+            pieces.extend(clip_polyline(&rect, line));
+        }
+        if !pieces.is_empty() {
+            let fpc = use_color("sepxfp".into(), &pal.fp, &mut colors);
+            plots.push(Plot {
+                options: String::new(),
+                table: None,
+                curve: None,
+                cloud: None,
+                raw: "% Graph of f\n".into(),
+            });
+            let mut t = Table::new(&["x", "y"]);
+            t.push_pieces(&pieces);
+            plots.push(Plot {
+                options: format!(
+                    "{fpc}, line width={}, line join=round, line cap=round",
+                    bp(1.5)
+                ),
+                table: Some(("graph".into(), t)),
+                curve: Some(pieces),
+                cloud: None,
+                raw: String::new(),
+            });
+        }
+    }
+
     // Trajectories, backward first.
     let mut order: Vec<usize> = (0..p.trajectories.len()).collect();
     order.sort_by_key(|&i| usize::from(!p.trajectories[i].tag.backward));
@@ -856,6 +928,68 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         }
         ic_names.push(format!("{stem}-{dir}"));
         let name = format!("{stem}-{dir}");
+
+        if cobweb {
+            // The staircase of the orbit x_T … x_{T+N}, each segment drawn
+            // once (keyed on the figure's rounding), clipped like every curve.
+            let orbit: Vec<f64> = shown.iter().map(|&(a, _)| a).collect();
+            let vertices = crate::cobweb::staircase(&orbit);
+            let key = |(a, b): (f64, f64)| (quant.write(0, a), quant.write(1, b));
+            let pieces: Vec<Vec<(f64, f64)>> = crate::cobweb::drop_retraced(&vertices, key)
+                .iter()
+                .flat_map(|piece| clip_polyline(&rect, piece))
+                .collect();
+            if !pieces.is_empty() {
+                plots.push(Plot {
+                    options: String::new(),
+                    table: None,
+                    curve: None,
+                    cloud: None,
+                    raw: comment(&format!("Cobweb of {}", tr.tag.ic_id)),
+                });
+                let mut t = Table::new(&["x", "y"]);
+                t.push_pieces(&pieces);
+                plots.push(Plot {
+                    options: format!("{color}, line width={}, line join=miter", bp(1.0)),
+                    table: Some((format!("{stem}-cobweb"), t)),
+                    curve: Some(pieces),
+                    cloud: None,
+                    raw: String::new(),
+                });
+            }
+            // After a transient the staircase starts at (x_T, x_T), away
+            // from x_0: an open square on a halo marks it, as on screen.
+            if p.transient > 0 {
+                if let Some(&(a, b)) = vertices.first() {
+                    let (x, y) = (vp.sx(a), vp.sy(b));
+                    if x >= vp.left && x <= vp.right() && y >= vp.top && y <= vp.bottom() {
+                        let halo = use_color("sepxhalo".into(), &pal.halo, &mut colors);
+                        plots.push(Plot {
+                            options: String::new(),
+                            table: None,
+                            curve: None,
+                            cloud: None,
+                            raw: start_mark(&color, &halo, x, y),
+                        });
+                    }
+                }
+            }
+            if tr.status != crate::model::Status::Completed {
+                if let Some(&(a, b)) = vertices.last() {
+                    let (x, y) = (vp.sx(a), vp.sy(b));
+                    if x >= vp.left && x <= vp.right() && y >= vp.top && y <= vp.bottom() {
+                        plots.push(Plot {
+                            options: String::new(),
+                            table: None,
+                            curve: None,
+                            cloud: None,
+                            raw: end_mark(&color, x, y),
+                        });
+                    }
+                }
+            }
+            continue;
+        }
 
         if is_map {
             if time_series && shown.len() >= 2 {
@@ -961,15 +1095,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         if tr.status != crate::model::Status::Completed {
             let (x, y) = px[px.len() - 1];
             if x >= vp.left && x <= vp.right() && y >= vp.top && y <= vp.bottom() {
-                let c = 4.0;
-                raw.push_str(&format!(
-                    "\\draw[{color}, line width={}] {} -- {} {} -- {};\n",
-                    bp(1.5),
-                    at_px(x - c, y - c),
-                    at_px(x + c, y + c),
-                    at_px(x + c, y - c),
-                    at_px(x - c, y + c)
-                ));
+                raw.push_str(&end_mark(&color, x, y));
             }
         }
         if !raw.is_empty() {
@@ -1200,6 +1326,12 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         "Needs: \\usepackage{{amsmath}} \\usepackage{{pgfplots}} \\pgfplotsset{{compat=1.18}} \\usetikzlibrary{{{}}}",
         libs.join(",")
     )));
+    if is_map && p.transient > 0 {
+        tex.push_str(&comment(&format!(
+            "Transient: the first {} iterates are not drawn.",
+            p.transient
+        )));
+    }
     for n in &notes {
         tex.push_str(&comment(n));
     }
@@ -1434,6 +1566,31 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         thinned,
         notes,
     }
+}
+
+/// The `x` at the end of a run that did not complete, at pixel `(x, y)`.
+/// The open square at the start of a staircase drawn after a transient:
+/// half-side 3 px, a 1.5 px stroke on a 3 px halo (draw.ts `drawCobweb`).
+fn start_mark(color: &str, halo: &str, x: f64, y: f64) -> String {
+    let h = 3.0;
+    let square = format!("{} rectangle {}", at_px(x - h, y - h), at_px(x + h, y + h));
+    format!(
+        "\\draw[{halo}, line width={}] {square};\n\\draw[{color}, line width={}] {square};\n",
+        bp(3.0),
+        bp(1.5)
+    )
+}
+
+fn end_mark(color: &str, x: f64, y: f64) -> String {
+    let c = 4.0;
+    format!(
+        "\\draw[{color}, line width={}] {} -- {} {} -- {};\n",
+        bp(1.5),
+        at_px(x - c, y - c),
+        at_px(x + c, y + c),
+        at_px(x + c, y - c),
+        at_px(x - c, y + c)
+    )
 }
 
 const CLAMP: f64 = 1e5;

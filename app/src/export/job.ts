@@ -18,8 +18,19 @@ import type {
   TrajectoryTag,
 } from "../api/types";
 import type { Scene } from "../canvas/draw";
-import { axisLabelLatex } from "../math/format";
-import { buildPortraitJob, type InitialCondition, type StudioSnapshot, type TrajectoryMeta, type View } from "../state/model";
+import { viewAxisLabels } from "../math/format";
+import {
+  COBWEB_GRAPH_SAMPLES,
+  MAX_GRAPH_SAMPLES,
+  buildPortraitJob,
+  isCobweb,
+  portraitGraph,
+  type InitialCondition,
+  type MapRequestFields,
+  type StudioSnapshot,
+  type TrajectoryMeta,
+  type View,
+} from "../state/model";
 
 export const EXPORT_MIN_SAMPLES = 2000;
 export const EXPORT_MAX_SAMPLES = 20000;
@@ -27,6 +38,11 @@ export const EXPORT_MAX_SAMPLES = 20000;
 /** Samples per run for a figure, from the screen's count. */
 export function exportSamples(screen: number): number {
   return Math.min(Math.max(screen, EXPORT_MIN_SAMPLES), EXPORT_MAX_SAMPLES);
+}
+
+/** Graph samples of f for a cobweb figure `widthPx` wide: two per px, from 2,048 to 4,096. */
+export function exportGraphSamples(widthPx: number): number {
+  return Math.min(Math.max(Math.round(2 * widthPx), COBWEB_GRAPH_SAMPLES), MAX_GRAPH_SAMPLES);
 }
 
 /** An initial condition's id in a project file: its `uid`, else `ic-<id>`. */
@@ -53,6 +69,8 @@ export interface FigureJob {
   view: View;
   kind: "ode" | "map";
   dim: number;
+  /** A cobweb plot: the graph of f, the diagonal and the staircases. */
+  cobweb: boolean;
 }
 
 /** The figure's portrait at `widthPx` × `heightPx` with `layers`, or null without a compiled system. */
@@ -74,8 +92,10 @@ export function buildFigureJob(
     const ic = colorOf.get(m.icId);
     return { icId: ic ? icProjectId(ic) : `ic-${m.icId}`, backward: m.direction === "backward", color: ic?.color ?? 0 };
   });
+  const cobweb = isCobweb(s.view);
+  const graph: MapRequestFields = cobweb ? { graphSamples: exportGraphSamples(size.widthPx) } : {};
   return {
-    portrait: { ...job.body, requestId: 0, samples: exportSamples(job.body.samples) },
+    portrait: { ...job.body, requestId: 0, samples: exportSamples(job.body.samples), ...graph },
     tags,
     metas: job.meta.trajectories,
     widthPx: size.widthPx,
@@ -83,6 +103,7 @@ export function buildFigureJob(
     view: job.meta.view,
     kind: sys.kind === "map" ? "map" : "ode",
     dim: sys.states.length,
+    cobweb,
   };
 }
 
@@ -118,6 +139,7 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
     eigenvectors: false,
     stale: false,
     avoid: { labels: [], field: [] },
+    cobweb: job.cobweb ? { graph: portraitGraph(res) ?? [] } : null,
   };
 }
 
@@ -125,10 +147,7 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
 export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   const sys = s.compiled;
   if (!sys || !sys.ok) return null;
-  return {
-    x: axisLabelLatex(s.view.xAxis, s.view.yAxis, sys.states, sys.kind),
-    y: axisLabelLatex(s.view.yAxis, s.view.xAxis, sys.states, sys.kind),
-  };
+  return viewAxisLabels(s.view, sys.states, sys.kind);
 }
 
 /** The screen's own request, with fixed points on (the fixed-point table). */

@@ -242,6 +242,7 @@ fn rabbits_vs_sheep() {
         format: case.template.format,
         title: &case.template.title,
         app_version: "0.2.0",
+        transient: case.portrait.transient,
     });
     assert_eq!(csv_files.len(), 1);
     assert_eq!(csv_files[0].stem, "rabbits-vs-sheep-trajectory-1");
@@ -312,13 +313,23 @@ fn henon_map() {
 
 #[test]
 fn logistic_map_time_series() {
-    let case = case("logistic-map", &Options::default());
+    // The template opens as a cobweb; its time series is n against x.
+    let case = case(
+        "logistic-map",
+        &Options {
+            axes: Some(("n", "x")),
+            view: Some(((-2.0, 62.0), (-0.05, 1.05))),
+            ..Options::default()
+        },
+    );
+    assert!(!case.portrait.cobweb);
     let fig = figure_of(&case, Placement::Inline, Theme::Light, false);
     check_figure("logistic-map-figure", &fig);
     // Dots with a faint line through them; the axis name is x_{n}.
     assert!(fig.tex.contains("opacity=0.4"));
     assert!(fig.tex.contains("mark=*, mark size=1.95bp"));
     assert!(fig.tex.contains("{$x_{n}$}"));
+    assert!(!fig.tex.contains("% Diagonal") && !fig.tex.contains("% Cobweb"));
     let csv_files = csv::files(&CsvInput {
         kind: case.portrait.kind,
         labels: &case.labels,
@@ -328,8 +339,138 @@ fn logistic_map_time_series() {
         format: case.template.format,
         title: &case.template.title,
         app_version: "0.2.0",
+        transient: case.portrait.transient,
     });
-    assert!(csv_files[0].csv.starts_with("n,x\n0,0.2\n1,0.592"));
+    assert!(csv_files[0].csv.starts_with("n,x\n0,0.1\n1,0.288"));
+    assert!(csv_files[0].meta.contains("\"transient\": 0,"));
+}
+
+#[test]
+fn logistic_map_cobweb() {
+    let case = case("logistic-map", &Options::default());
+    assert!(case.portrait.cobweb);
+    assert_eq!(case.portrait.graph.len(), 1);
+    let fig = figure_of(&case, Placement::Inline, Theme::Light, false);
+    check_figure("logistic-map-cobweb-figure", &fig);
+    let tex = &fig.tex;
+    for want in [
+        "% Diagonal x_{n+1} = x_n\n\\addplot[sepxaxis, line width=0.75bp, line cap=butt] coordinates",
+        "% Graph of f\n\\addplot[sepxfp, line width=1.125bp, line join=round, line cap=round]",
+        "% Cobweb of ic-1\n\\addplot[sepxtraj1, line width=0.75bp, line join=miter]",
+        "{$x_{n}$}",
+        "{$x_{n+1}$}",
+    ] {
+        assert!(tex.contains(want), "no {want:?}");
+    }
+    assert!(!tex.contains("mark=*, mark size=1.95bp"), "no map dots");
+    assert!(!tex.contains("Transient"));
+    let external = figure_of(
+        &case,
+        Placement::External {
+            base: "logistic-map".into(),
+        },
+        Theme::Light,
+        false,
+    );
+    check_figure("logistic-map-cobweb-figure-external", &external);
+    let names: Vec<&str> = external.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "logistic-map-graph.dat",
+            "logistic-map-ic-1-cobweb.dat",
+            "logistic-map-fixed-points.dat"
+        ]
+    );
+    assert!(external
+        .tex
+        .contains("table {\\sepxdir logistic-map-graph.dat};"));
+
+    // Strogatz §10.1: λ = f'(x*) and |λ| for a one-dimensional map.
+    let fp = fixed_points_tex(&case, 4);
+    check("logistic-map-fixed-points.tex", &fp);
+    assert_portable("fixed points", &fp);
+    assert!(
+        fp.contains("Fixed point & $\\lambda = f'(x^*)$ & $\\lvert\\lambda\\rvert$ & Type"),
+        "{fp}"
+    );
+    assert!(!fp.contains("\\mu"), "{fp}");
+    assert!(fp.contains("$\\num{-1.2}$"), "{fp}");
+
+    // The same orbit as the time series: the CSV is the orbit, not the staircase.
+    let csv_files = csv::files(&CsvInput {
+        kind: case.portrait.kind,
+        labels: &case.labels,
+        trajectories: &case.portrait.trajectories,
+        ic_ids: &[],
+        lines: &case.template.equations,
+        format: case.template.format,
+        title: &case.template.title,
+        app_version: "0.2.0",
+        transient: 0,
+    });
+    assert!(csv_files[0].csv.starts_with("n,x\n0,0.1\n"));
+    assert_eq!(csv_files[0].csv.lines().count(), 1 + 61);
+}
+
+#[test]
+fn a_cobweb_with_a_transient_starts_at_x_t() {
+    let case = case(
+        "logistic-map",
+        &Options {
+            transient: 200,
+            t_end: Some(1000.0),
+            ..Options::default()
+        },
+    );
+    assert_eq!(case.portrait.trajectories[0].t[0], 200.0);
+    let fig = figure_of(&case, Placement::Inline, Theme::Light, false);
+    assert!(fig
+        .tex
+        .contains("% Transient: the first 200 iterates are not drawn.\n"));
+    // Converged onto the 2-cycle: at most 4 segments for 1,000 iterates.
+    let rest = &fig.tex[fig.tex.find("% Cobweb of ic-1").unwrap()..];
+    let body = &rest[rest.find("]{\n").unwrap() + 3..];
+    let body = &body[..body.find('}').unwrap()];
+    let rows: Vec<&str> = body.lines().skip(1).collect();
+    let breaks = rows.iter().filter(|r| r.starts_with("nan")).count();
+    let segments = rows.len() - breaks - (breaks + 1);
+    assert!(segments <= 4, "{segments} segments:\n{body}");
+    let csv_files = csv::files(&CsvInput {
+        kind: case.portrait.kind,
+        labels: &case.labels,
+        trajectories: &case.portrait.trajectories,
+        ic_ids: &[],
+        lines: &case.template.equations,
+        format: case.template.format,
+        title: &case.template.title,
+        app_version: "0.2.0",
+        transient: 200,
+    });
+    assert!(csv_files[0].csv.starts_with("n,x\n200,"));
+    assert_eq!(csv_files[0].csv.lines().count(), 1 + 1001);
+    assert!(csv_files[0].meta.contains("\"transient\": 200,"));
+}
+
+#[test]
+fn a_chaotic_cobweb_keeps_everything_with_the_lualatex_note() {
+    let case = case(
+        "logistic-map",
+        &Options {
+            params: vec![("r", 4.0)],
+            t_end: Some(5000.0),
+            ..Options::default()
+        },
+    );
+    let fig = figure_of(&case, Placement::Inline, Theme::Light, false);
+    assert!(fig.points > 5000, "{}", fig.points);
+    assert!(!fig.thinned, "a staircase is a curve, never thinned");
+    assert!(
+        fig.notes.iter().any(|n| n.contains("lualatex")),
+        "{:?}",
+        fig.notes
+    );
+    assert!(!fig.tex.contains(".png"), "nothing is rasterised");
 }
 
 #[test]
@@ -614,6 +755,7 @@ fn made_up(id: &str, format: InputFormat, equations: &[&str], x: &str, y: &str) 
         equations: equations.iter().map(|e| e.to_string()).collect(),
         params: Default::default(),
         view: TemplateView {
+            kind: None,
             x: x.into(),
             y: y.into(),
             x_range: (-1.0, 1.0),

@@ -2,9 +2,11 @@
 //!
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
-//! solver settings, the field grid, `x0` lengths. View ranges are only
+//! solver settings (the transient too), the field grid, `x0` lengths. View
+//! ranges, axes and a cobweb view that doesn't fit the system are only
 //! reported: the UI falls back to the default view for a primary view whose
-//! range isn't usable (see [`range_ok`]).
+//! range isn't usable (see [`range_ok`]) or whose cobweb axes are wrong (see
+//! [`cobweb_axes_ok`]).
 
 use std::collections::HashSet;
 
@@ -17,6 +19,28 @@ pub const FIELD_GRID_MIN: u32 = 2;
 pub const FIELD_GRID_MAX: u32 = 200;
 pub const MAX_STEPS_MAX: u32 = 10_000_000;
 pub const SAMPLES_MAX: u32 = 200_000;
+/// The most transient iterates a map may skip (the app's `MAX_ITERATES`).
+pub const TRANSIENT_MAX: i64 = 1_000_000;
+/// The view kind of a cobweb plot.
+pub const COBWEB: &str = "cobweb";
+/// The warning for a saved cobweb view the app can't show; the app gives the
+/// same one when the compiled system turns out not to be a one-dimensional
+/// autonomous map.
+pub const COBWEB_MISFIT: &str =
+    "The saved cobweb view doesn't fit this system, so the default view is shown.";
+
+/// True when `view` has the shape of a cobweb plot: `x_axis` is the state
+/// `s` and `y_axis` is `{ "kind": "next", "name": s }`, for a state the
+/// system has (any, when `states` is empty).
+pub fn cobweb_axes_ok(view: &ProjectView, states: &[String]) -> bool {
+    let (x, y) = (&view.x_axis, &view.y_axis);
+    x.kind == "state"
+        && y.kind == "next"
+        && x.name == y.name
+        && x.name
+            .as_ref()
+            .is_some_and(|n| states.is_empty() || states.iter().any(|s| s == n))
+}
 
 /// True when a view range is usable: finite with `lo < hi`.
 pub fn range_ok(r: &[f64; 2]) -> bool {
@@ -117,6 +141,22 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
         if Some(i) != primary {
             continue;
         }
+        // A view of a kind other than the plane, or with an x_{n+1} axis, must
+        // be a cobweb plot of a one-dimensional map. Whether that map is
+        // autonomous is only known once the app compiles it.
+        let kind = view.kind.as_deref();
+        let cobweb = kind.is_some_and(|k| k != "plane")
+            || [&view.x_axis, &view.y_axis]
+                .iter()
+                .any(|a| a.kind == "next");
+        if cobweb {
+            let one_d_map =
+                states.len() <= 1 && (p.system.kind.is_empty() || p.system.kind == "map");
+            if !(kind == Some(COBWEB) && cobweb_axes_ok(view, states) && one_d_map) {
+                warnings.push(COBWEB_MISFIT.to_string());
+                continue;
+            }
+        }
         for (axis, r) in [("x", &view.x_range), ("y", &view.y_range)] {
             if !range_ok(r) {
                 warnings.push(format!(
@@ -130,6 +170,8 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
         for (name, axis) in [("x", &view.x_axis), ("y", &view.y_axis)] {
             let known = match axis.kind.as_str() {
                 "time" => true,
+                // Checked above, with the view's kind.
+                "next" if cobweb => true,
                 "state" => axis
                     .name
                     .as_ref()
@@ -189,6 +231,16 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
     if !(s.t_end > 0.0 && s.t_end.is_finite()) {
         fix("end time", show(s.t_end), show(default_t_end()));
         s.t_end = default_t_end();
+    }
+    match s.transient {
+        Some(t) if !(0..=TRANSIENT_MAX).contains(&t) => {
+            let now = t.clamp(0, TRANSIENT_MAX);
+            fix("transient", show(t as f64), format!("{now} iterates"));
+            s.transient = (now > 0).then_some(now);
+        }
+        // Written only when above 0.
+        Some(0) => s.transient = None,
+        _ => {}
     }
     if s.samples > SAMPLES_MAX {
         fix(

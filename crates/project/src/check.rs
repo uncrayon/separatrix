@@ -18,6 +18,7 @@ enum Ty {
     Num,
     U32,
     I32,
+    I64,
     /// `"latex"` or `"text"`.
     InputFormat,
     Nullable(&'static Ty),
@@ -91,6 +92,7 @@ const LAYERS: &[F] = &[
 
 const VIEW: &[F] = &[
     opt("id", Ty::Str),
+    opt("kind", Ty::Nullable(&Ty::Str)),
     req("x_axis", Ty::Obj(AXIS)),
     req("y_axis", Ty::Obj(AXIS)),
     req("x_range", Ty::Pair),
@@ -106,6 +108,7 @@ const SOLVER: &[F] = &[
     opt("h", Ty::Num),
     opt("max_steps", Ty::U32),
     opt("t_end", Ty::Num),
+    opt("transient", Ty::Nullable(&Ty::I64)),
     opt("samples", Ty::U32),
 ];
 
@@ -205,6 +208,13 @@ fn check(v: &mut Value, ty: Ty, path: &str) -> Result<(), String> {
         }
         Ty::I32 => {
             if integer_in(v, i128::from(i32::MIN), i128::from(i32::MAX)) {
+                Ok(())
+            } else {
+                wrong("a whole number")
+            }
+        }
+        Ty::I64 => {
+            if integer_in(v, i128::from(i64::MIN), i128::from(i64::MAX)) {
                 Ok(())
             } else {
                 wrong("a whole number")

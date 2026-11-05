@@ -9,8 +9,9 @@ use separatrix_project::{
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 5] = [
+const GOOD: [&str; 6] = [
     "rabbits-vs-sheep.sepx",
+    "cobweb.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -18,7 +19,11 @@ const GOOD: [&str; 5] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 2] = ["rabbits-vs-sheep.sepx", "lorenz-text-mode.sepx"];
+const CANONICAL: [&str; 3] = [
+    "rabbits-vs-sheep.sepx",
+    "lorenz-text-mode.sepx",
+    "cobweb.sepx",
+];
 
 fn open(name: &str) -> Opened {
     parse_named(&fixture(name), name).unwrap_or_else(|e| panic!("{name}: {e}"))
@@ -880,4 +885,143 @@ fn whole_numbers_written_as_floats_open_and_save_as_integers() {
     let mut v = value(&fixture("float-integers.sepx"));
     v["solver"]["samples"] = json!(500.0);
     assert_eq!(from_value_checked(v).unwrap().solver.samples, 500);
+}
+
+// ---------------------------------------------------------------------
+// Cobweb views (`views[].kind`, the `next` axis) and `solver.transient`.
+// ---------------------------------------------------------------------
+
+const COBWEB_MISFIT: &str =
+    "The saved cobweb view doesn't fit this system, so the default view is shown.";
+
+#[test]
+fn a_cobweb_view_and_its_transient_are_read_and_written_back() {
+    let opened = open("cobweb.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let p = &opened.project;
+    let view = &p.views[0];
+    assert_eq!(view.kind.as_deref(), Some("cobweb"));
+    assert_eq!(view.x_axis, ProjectAxis::state("x"));
+    assert_eq!(view.y_axis, ProjectAxis::next("x"));
+    assert_eq!(p.solver.transient, Some(200));
+    let text = to_json(p, APP).unwrap();
+    // `kind` right after `id`, `transient` right after `t_end`.
+    assert!(text.contains("\"id\": \"main\",\n      \"kind\": \"cobweb\",\n      \"x_axis\""));
+    assert!(text.contains("\"t_end\": 60.0,\n    \"transient\": 200,\n    \"samples\": 0"));
+}
+
+#[test]
+fn a_plane_view_writes_no_kind_and_no_zero_transient() {
+    let mut p = open("rabbits-vs-sheep.sepx").project;
+    assert_eq!(p.views[0].kind, None);
+    assert_eq!(p.solver.transient, None);
+    let before = to_json(&p, APP).unwrap();
+    assert!(!before.contains("\"kind\": \"plane\"") && !before.contains("transient"));
+    // An explicit "plane" is the plane view; a transient of 0 is not written.
+    let mut v = value(&before);
+    v["views"][0]["kind"] = json!("plane");
+    v["solver"]["transient"] = json!(0);
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(opened.project.solver.transient, None);
+    p.views[0].kind = None;
+    assert_eq!(to_json(&p, APP).unwrap(), before);
+}
+
+#[test]
+fn a_transient_is_a_whole_number_clamped_to_a_million() {
+    let mut v = value(&fixture("cobweb.sepx"));
+    v["solver"]["transient"] = json!(250.0);
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(opened.project.solver.transient, Some(250));
+    assert!(to_json(&opened.project, APP)
+        .unwrap()
+        .contains("\"transient\": 250,"));
+    for (bad, now, warning) in [
+        (
+            json!(5_000_000),
+            Some(1_000_000),
+            "The solver's transient was 5000000, so it is now 1000000 iterates.",
+        ),
+        (
+            json!(-3),
+            None,
+            "The solver's transient was \u{2212}3, so it is now 0 iterates.",
+        ),
+    ] {
+        v["solver"]["transient"] = bad;
+        let opened = parse(&v.to_string()).unwrap();
+        assert_eq!(opened.project.solver.transient, now);
+        assert_eq!(opened.warnings, [warning]);
+    }
+    v["solver"]["transient"] = json!(2.5);
+    let err = parse(&v.to_string()).unwrap_err().to_string();
+    assert!(
+        err.contains("solver.transient should be a whole number"),
+        "{err}"
+    );
+    v["solver"]["transient"] = Value::Null;
+    assert_eq!(
+        parse(&v.to_string()).unwrap().project.solver.transient,
+        None
+    );
+}
+
+#[test]
+fn a_cobweb_view_that_does_not_fit_falls_back_to_the_default_view() {
+    let base = value(&fixture("cobweb.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    // An older build re-saved it with its own default view and kept `kind`.
+    let kept_kind = warns(&|v| {
+        v["views"][0]["x_axis"] = json!({ "kind": "time" });
+        v["views"][0]["y_axis"] = json!({ "kind": "state", "name": "x" });
+    });
+    assert_eq!(kept_kind, [COBWEB_MISFIT]);
+    // `next` without the kind, or for another state.
+    assert_eq!(
+        warns(&|v| {
+            v["views"][0].as_object_mut().unwrap().remove("kind");
+        }),
+        [COBWEB_MISFIT]
+    );
+    assert_eq!(
+        warns(&|v| v["views"][0]["y_axis"] = json!({ "kind": "next", "name": "y" })),
+        [COBWEB_MISFIT]
+    );
+    // Not a one-dimensional map.
+    assert_eq!(
+        warns(&|v| {
+            v["system"]["states"] = json!(["x", "y"]);
+            v["initial_conditions"][0]["x0"] = json!([0.1, 0.0]);
+        }),
+        [COBWEB_MISFIT]
+    );
+    assert_eq!(
+        warns(&|v| v["system"]["kind"] = json!("ode")),
+        [COBWEB_MISFIT]
+    );
+    // A kind this version doesn't know.
+    assert_eq!(
+        warns(&|v| v["views"][0]["kind"] = json!("bifurcation")),
+        [COBWEB_MISFIT]
+    );
+    // Kept as written either way.
+    let mut v = base.clone();
+    v["views"][0]["kind"] = json!("bifurcation");
+    let opened = parse(&v.to_string()).unwrap();
+    assert_eq!(opened.project.views[0].kind.as_deref(), Some("bifurcation"));
+    assert!(to_json(&opened.project, APP)
+        .unwrap()
+        .contains("\"kind\": \"bifurcation\""));
+    // A cobweb in a second view is not checked (v1 edits the primary only).
+    let mut v = value(&fixture("rabbits-vs-sheep.sepx"));
+    let mut second = base["views"][0].clone();
+    second["id"] = json!("other");
+    v["views"].as_array_mut().unwrap().push(second);
+    assert!(parse(&v.to_string()).unwrap().warnings.is_empty());
 }

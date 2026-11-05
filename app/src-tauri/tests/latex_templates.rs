@@ -43,6 +43,8 @@ struct Template {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct View {
+    #[serde(default)]
+    kind: Option<String>,
     x: String,
     y: String,
     x_range: (f64, f64),
@@ -148,6 +150,9 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
             max_steps: 200_000,
         },
         samples: 2000,
+        // The export dialog's graph: clamp(2 · width px, 2048, 4096).
+        graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
+        transient: None,
     };
     (req, tags)
 }
@@ -295,6 +300,32 @@ fn every_template_exports_latex_that_compiles() {
         }
         assert!(inline.files.is_empty());
         assert!(!external.files.is_empty(), "{}", t.id);
+        if t.view.kind.as_deref() == Some("cobweb") {
+            for want in [
+                "% Diagonal x_{n+1} = x_n\n\\addplot[sepxaxis",
+                "% Graph of f\n\\addplot[sepxfp",
+                "% Cobweb of ic-1\n\\addplot[sepxtraj1",
+                "{$x_{n+1}$}",
+            ] {
+                assert!(
+                    inline.tex.contains(want),
+                    "{}: no {want:?} in\n{}",
+                    t.id,
+                    inline.tex
+                );
+            }
+            let names: Vec<&str> = external.files.iter().map(|f| f.name.as_str()).collect();
+            assert!(
+                names.contains(&format!("{base}-graph.dat").as_str()),
+                "{names:?}"
+            );
+            assert!(
+                names.contains(&format!("{base}-ic-1-cobweb.dat").as_str()),
+                "{names:?}"
+            );
+            let table = fixed.as_deref().unwrap_or_default();
+            assert!(table.contains("$\\lambda = f'(x^*)$"), "{table}");
+        }
 
         if !run_tex {
             continue;

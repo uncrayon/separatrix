@@ -35,7 +35,10 @@ pub use schema::{
     ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSlice,
     ProjectSolver, ProjectSystem, ProjectView,
 };
-pub use validate::{default_param_range, primary_view_index, range_ok};
+pub use validate::{
+    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, COBWEB, COBWEB_MISFIT,
+    TRANSIENT_MAX,
+};
 
 /// The value of the `format` key.
 pub const FORMAT: &str = "separatrix";
@@ -80,6 +83,8 @@ mod bindings {
             assert!(!d.contains("extra"), "{d}");
         }
         assert!(decls[5].contains("name?: string"), "{}", decls[5]);
+        assert!(decls[4].contains("kind?: string"), "{}", decls[4]);
+        assert!(decls[8].contains("transient?: number"), "{}", decls[8]);
         assert!(decls[1].contains("template: string | null"), "{}", decls[1]);
         assert!(
             decls[4].contains("x_range: [number, number]"),

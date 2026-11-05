@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex};
 use dyn_core::{SystemKind, VectorField};
 use dyn_expr::CompiledSystem;
 use separatrix_export::latex_util::{slug, PX_PER_CM};
-use separatrix_export::simplify::{simplify_polyline, simplify_run, EXPORT_TOLERANCE_PX};
+use separatrix_export::simplify::{
+    simplify_polyline, simplify_run, EXPORT_TOLERANCE_PX, GRAPH_TOLERANCE_PX,
+};
 use separatrix_export::{
     latex_figure, latex_fixed_points, latex_system, Labels, Palette, Placement, Viewport,
 };
@@ -75,7 +77,8 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
 
 /// `compute_export_portrait`: [`service::compute_portrait`], then every
 /// curve cut at its first non-finite point and simplified with RDP at
-/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates are only cut).
+/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates are only cut;
+/// the graph of a cobweb's `f` is simplified like the nullclines).
 /// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
@@ -114,6 +117,9 @@ pub fn export_portrait(
         for line in &mut nc.polylines {
             *line = simplify_polyline(&vp, line, EXPORT_TOLERANCE_PX);
         }
+    }
+    for line in out.graph.iter_mut().flatten() {
+        *line = simplify_polyline(&vp, line, GRAPH_TOLERANCE_PX);
     }
     for tr in &mut out.trajectories {
         let (t, x) = simplify_run(
@@ -204,7 +210,31 @@ pub fn to_export_portrait(
                 status: out.status,
             })
             .collect(),
+        cobweb: req.graph_samples.is_some(),
+        graph: res.graph.clone().unwrap_or_default(),
+        transient: if is_map {
+            req.transient
+                .unwrap_or(0)
+                .min(service::MAX_ITERATES.saturating_sub(max_iterates(req)))
+        } else {
+            0
+        },
     })
+}
+
+/// The largest iterate count requested, as `service::trajectory` rounds it.
+fn max_iterates(req: &PortraitRequest) -> usize {
+    req.trajectories
+        .iter()
+        .map(|tr| {
+            if tr.t1.is_finite() {
+                tr.t1.round().clamp(0.0, service::MAX_ITERATES as f64) as usize
+            } else {
+                0
+            }
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// The plot colours of `theme`.
@@ -291,12 +321,14 @@ pub fn fixed_points_latex(
     system: &CompiledSystem,
     req: &FixedPointsLatexRequest,
 ) -> Result<String, String> {
-    // Only the fixed points are needed: skip the field, nullclines and runs.
+    // Only the fixed points are needed: skip the field, nullclines, runs and
+    // a cobweb's graph.
     let mut screen = req.portrait.clone();
     screen.fixed_points = true;
     screen.field_grid = 0;
     screen.nullclines = false;
     screen.trajectories.clear();
+    screen.graph_samples = None;
     let res = service::compute_portrait(system, &screen)?;
     let f: &dyn VectorField = system;
     let portrait = to_export_portrait(system, &screen, &res, &[])?;
@@ -324,6 +356,7 @@ pub fn csv(system: &CompiledSystem, req: &CsvRequest) -> Result<CsvResponse, Str
     runs.fixed_points = false;
     runs.field_grid = 0;
     runs.nullclines = false;
+    runs.graph_samples = None;
     let res = service::compute_portrait(system, &runs)?;
     let portrait = to_export_portrait(system, &runs, &res, &req.tags)?;
     let labels = Labels::from_info(&system.info, &runs.params);
@@ -336,6 +369,7 @@ pub fn csv(system: &CompiledSystem, req: &CsvRequest) -> Result<CsvResponse, Str
         format: req.format,
         title: &req.title,
         app_version: APP_VERSION,
+        transient: portrait.transient,
     });
     Ok(CsvResponse {
         files: files
@@ -496,6 +530,8 @@ mod tests {
                 max_steps: 200_000,
             },
             samples: 4000,
+            graph_samples: None,
+            transient: None,
         }
     }
 
@@ -660,6 +696,135 @@ mod tests {
         // Backward reversed, then forward without repeating t0: 2·4000 − 1 rows.
         assert_eq!(c.files[0].csv.lines().count(), 1 + 2 * 4000 - 1);
         assert!(c.files[0].meta.contains(APP_VERSION));
+    }
+
+    fn logistic() -> (SystemStore, u32, PortraitRequest) {
+        let store = SystemStore::new();
+        let res = service::compile_system(
+            &store,
+            &CompileRequest {
+                source: "x_{n+1}=rx_n\\left(1-x_n\\right)".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        assert!(res.ok);
+        let id = res.system_id.unwrap();
+        let mut req = request(id);
+        req.params = vec![3.5];
+        req.x_axis = AxisRef::State { index: 0 };
+        req.y_axis = AxisRef::State { index: 0 };
+        req.x_range = (-0.05, 1.05);
+        req.y_range = (-0.05, 1.05);
+        req.base_state = vec![0.0];
+        req.field_grid = 0;
+        req.nullclines = false;
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![0.1],
+            t0: 0.0,
+            t1: 60.0,
+        }];
+        req.graph_samples = Some(2048);
+        req.transient = Some(200);
+        (store, id, req)
+    }
+
+    #[test]
+    fn a_cobweb_exports_its_graph_staircase_and_transient() {
+        let (store, id, req) = logistic();
+        let sys = store.get(id).unwrap();
+        let tags = vec![TrajectoryTag {
+            ic_id: "ic-1".into(),
+            backward: false,
+            color: 0,
+        }];
+        // The graph is simplified, more finely than a nullcline (a parabola
+        // needs far fewer than 2048 points at 0.0625 px); the orbit is only cut.
+        let cache = ExportCache::new();
+        let out = export_portrait(
+            &cache,
+            &sys,
+            &ExportPortraitRequest {
+                portrait: req.clone(),
+                width_px: 400.0,
+                height_px: 400.0,
+            },
+        )
+        .unwrap();
+        let graph = out.graph.as_ref().unwrap();
+        assert_eq!(graph.len(), 1);
+        assert!(graph[0].len() < 400, "{}", graph[0].len());
+        assert_eq!(out.trajectories[0].t.len(), 61);
+        assert_eq!(out.trajectories[0].t[0], 200.0);
+        let p = to_export_portrait(&sys, &req, &out, &tags).unwrap();
+        assert!(p.cobweb);
+        assert_eq!(p.transient, 200);
+        assert_eq!(p.graph, *graph);
+
+        let fig = figure_latex(
+            &cache,
+            &sys,
+            &FigureLatexRequest {
+                portrait: req.clone(),
+                tags: tags.clone(),
+                width_cm: 8.0,
+                height_cm: 8.0,
+                theme: ExportTheme::Light,
+                title: "Logistic map".into(),
+                source_ref: None,
+                lines: vec!["x_{n+1}=rx_n\\left(1-x_n\\right)".into()],
+                format: InputFormat::Latex,
+                standalone: false,
+            },
+            Placement::Inline,
+        )
+        .unwrap();
+        for want in [
+            "% Transient: the first 200 iterates are not drawn.",
+            "% Diagonal x_{n+1} = x_n",
+            "% Graph of f",
+            "% Cobweb of ic-1",
+            "{$x_{n+1}$}",
+            // The open square at (x_T, x_T), where the staircase starts.
+            "\\draw[sepxhalo, line width=2.25bp] ($(rel axis cs:0,1)",
+            "rectangle",
+        ] {
+            assert!(fig.tex.contains(want), "no {want:?} in\n{}", fig.tex);
+        }
+
+        let table = fixed_points_latex(
+            &sys,
+            &FixedPointsLatexRequest {
+                portrait: req.clone(),
+                title: "Logistic map".into(),
+                source_ref: None,
+                lines: vec![],
+                format: InputFormat::Latex,
+                digits: 4,
+            },
+        )
+        .unwrap();
+        assert!(table.contains("$\\lambda = f'(x^*)$"), "{table}");
+
+        let files = csv(
+            &sys,
+            &CsvRequest {
+                portrait: req,
+                tags,
+                ic_ids: vec![],
+                lines: vec![],
+                format: InputFormat::Latex,
+                title: "Logistic map".into(),
+            },
+        )
+        .unwrap()
+        .files;
+        assert!(files[0].csv.starts_with("n,x\n200,"), "{}", files[0].csv);
+        assert_eq!(files[0].csv.lines().count(), 1 + 61);
+        assert!(
+            files[0].meta.contains("\"transient\": 200,"),
+            "{}",
+            files[0].meta
+        );
     }
 
     #[test]

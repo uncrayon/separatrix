@@ -13,7 +13,7 @@ text and files.
 | LaTeX fixed points | `latex_fixed_points::table` | booktabs `table` float |
 | LaTeX figure | `latex_figure::figure` | pgfplots; inline data (Copy) or `.dat` files (Save) |
 | CSV + `.meta.json` | `csv::files` | one pair per initial condition |
-| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px |
+| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed) |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
 Every LaTeX snippet starts with comment lines: the title, the equations as
@@ -77,7 +77,8 @@ the system with $a = 3$, found in $-0.25 \le x \le 3.5$ and …" and
 | 2D flow | point, eigenvalues λ, τ, Δ, type |
 | 1D flow | point, λ, type (Stable / Unstable / Non-hyperbolic) |
 | nD flow | point, eigenvalues λ, type |
-| map | point, multipliers μ, \|μ\|, type |
+| 1D map | point, λ = f′(x\*), \|λ\|, type (Strogatz §10.1) |
+| nD map | point, multipliers μ, \|μ\|, type |
 
 A complex pair is written once, `$\num{-0.5} \pm \num{1.32}\,i$` (`$\pm
 \num{2}\,i$` for a center). τ and Δ come from the eigenvalues. Digits: 2 to 8
@@ -139,6 +140,32 @@ and glyph scale are 1, as on screen.
 - Map iterates: `mark=*` of radius 2.6 px (1.3 px above 300 iterates);
   above 2,000, `mark=square*` of half-side 0.75 px, as `fillRect` on screen.
   With time on an axis, a 0.4-opacity line joins them.
+- A cobweb (a one-dimensional map with both axes `x` and the graph of `f`; the
+  request's `graphSamples`) draws, in z-order, the grid and axes, the diagonal
+  `x_{n+1} = x_n` across the view (`sepxaxis`, 0.75 bp, butt caps, inline
+  `coordinates`), the graph of `f` (`sepxfp`, 1.125 bp, round joins and caps,
+  `nan nan` breaks), one staircase per orbit (`sepxtraj<k>`, 0.75 bp, miter
+  joins, no heads; each segment once, keyed on the figure's rounding, so a
+  converged p-cycle is 2p segments; clipped like every curve; an `x` at the
+  last vertex of a run that did not complete, and, after a transient, an open
+  square of half-side 3 px, 1.125 bp on a 2.25 bp `sepxhalo` outline, where it
+  starts at `(x_T, x_T)`), then the fixed points at `(x*, x*)`. No map dots and no time-series line. The axis names are `x_{n}`
+  and `x_{n+1}` (`with_subscript` of the state's own LaTeX). Each of the three
+  plots is preceded by a comment line, the figure's only per-plot comments, for
+  a person editing the `.tex`:
+
+  ```
+  % Diagonal x_{n+1} = x_n
+  \addplot[sepxaxis, line width=0.75bp, line cap=butt] coordinates {(-0.05,-0.05) (1.05,1.05)};
+  % Graph of f
+  \addplot[sepxfp, line width=1.125bp, line join=round, line cap=round] table …;
+  % Cobweb of ic-1
+  \addplot[sepxtraj1, line width=0.75bp, line join=miter] table …;
+  ```
+
+  With a transient `T > 0` the header says `% Transient: the first T iterates
+  are not drawn.` The graph and the staircases are curves for the 5,000-point
+  rule (simplified further, never thinned or rasterised).
 - Every curve is clipped (Liang–Barsky) to the view grown by two field cells
   (cells of 1/20 of the shorter side without a field) before it is written, so
   no coordinate reaches TeX's dimension limit; where a curve leaves and comes
@@ -172,6 +199,8 @@ and glyph scale are 1, as on screen.
   | `<base>-nullcline-<k>.dat` | `x y`, k = equation number from 1 |
   | `<base>-<icid>-forward.dat`, `-backward.dat` | `x y` |
   | `<base>-<icid>-forward-line.dat` | `x y`, a map's line against time |
+  | `<base>-graph.dat` | `x y`, the graph of `f` in a cobweb |
+  | `<base>-<icid>-cobweb.dat` | `x y`, an orbit's staircase |
   | `<base>-fixed-points.dat` | `x y glyph` (0 stable, 1 open, 2 half) |
   | `<base>-points.png` | the map iterates' PNG layer (see below) |
 
@@ -227,6 +256,11 @@ between the two segments (dense output at each run's own samples).
 }
 ```
 
+A map's file also has `"transient": T` after `t0` (the iterates computed but
+not written; its first row is `n = T`), an additive key: the meta
+`format_version` stays 1. The time-series and cobweb views of one map export
+the same file: the staircase is a drawing of the orbit, not new data.
+
 `x0` is in `columns[1..]` order. `status` is the IPC name (`blewUp`, …).
 `stem` is `<title-slug>-trajectory-<k>`, k numbering the trajectories as the export
 dialog lists them ("Trajectory 2" → `rabbits-vs-sheep-trajectory-2.csv`); the initial
@@ -259,6 +293,11 @@ Shared with the TypeScript tests, in `crates/export/tests/vectors/`:
   [{ v, step, label }] }` from `niceTicks`/`tickLabel`.
   `node crates/export/tests/vectors/generate.mjs` rewrites both from
   `app/src/canvas/viewport.ts`.
+- `cobweb.json` (written by `app/src/review/cobweb.test.mjs` from
+  `app/src/canvas/cobweb.ts`): `{ cases: [{ x: [v0, v1, …], xRange, yRange,
+  staircase: [x, y, …], diagonal: [ax, ay, bx, by] | null }] }`. The Rust test
+  checks `cobweb::staircase` and `cobweb::diagonal` against it when the file
+  exists.
 - `heads.json` (written by the UI's tests from `drawHeads` through a recording
   context): `{ cases: [{ pts: [x0, y0, x1, y1, …], vp: [left, top, width,
   height], L, maxHeads, minGap, backward, placed: [x, y, …], triangles:
@@ -269,7 +308,8 @@ Shared with the TypeScript tests, in `crates/export/tests/vectors/`:
 ## Tests
 
 - `cargo test -p separatrix-export`: unit tests, `tests/golden.rs` (rabbits vs
-  sheep, Lorenz over t ≤ 10, the Hénon and logistic maps, a saddle-node, a
+  sheep, Lorenz over t ≤ 10, the Hénon map, the logistic map as a time
+  series and as a cobweb (with its fixed-point table and external files), a saddle-node, a
   linear system with a parameter table, MathLive commands, text mode,
   subscripted states, names that need escaping;
   `UPDATE_GOLDEN=1 cargo test -p separatrix-export --test golden` rewrites

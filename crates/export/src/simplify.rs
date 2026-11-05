@@ -13,6 +13,12 @@ use crate::model::{Axis, Portrait, SystemKind, Viewport};
 /// Tolerance used for every exported curve, in CSS pixels of the figure.
 pub const EXPORT_TOLERANCE_PX: f64 = 0.25;
 
+/// Tolerance for a cobweb's graph of `f`, in CSS pixels of the figure: a
+/// quarter of [`EXPORT_TOLERANCE_PX`], so the boldest curve of the figure
+/// shows no facets when the PDF is zoomed (a parabola's chords are then
+/// half as long).
+pub const GRAPH_TOLERANCE_PX: f64 = EXPORT_TOLERANCE_PX / 4.0;
+
 /// Number of leading points of `pts` before the first non-finite one.
 pub fn finite_prefix(pts: &[(f64, f64)]) -> usize {
     pts.iter()
@@ -116,13 +122,17 @@ pub fn simplify_run(
 }
 
 /// Every curve of `p` cut and simplified at `tol` pixels of a
-/// `width` × `height` figure (what `compute_export_portrait` returns).
+/// `width` × `height` figure (what `compute_export_portrait` returns); the
+/// graph of `f` at a quarter of that, as [`GRAPH_TOLERANCE_PX`].
 pub fn simplify_portrait(p: &mut Portrait, width: f64, height: f64, tol: f64) {
     let vp = Viewport::new(width, height, p.x_range, p.y_range);
     for nc in &mut p.nullclines {
         for line in &mut nc.polylines {
             *line = simplify_polyline(&vp, line, tol);
         }
+    }
+    for line in &mut p.graph {
+        *line = simplify_polyline(&vp, line, tol * GRAPH_TOLERANCE_PX / EXPORT_TOLERANCE_PX);
     }
     for tr in &mut p.trajectories {
         let (t, x) = simplify_run(&vp, p.kind, p.x_axis, p.y_axis, p.dim, &tr.t, &tr.x, tol);

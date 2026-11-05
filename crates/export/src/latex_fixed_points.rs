@@ -1,7 +1,8 @@
 //! The fixed points as a booktabs table: the point, its eigenvalues (a
 //! complex pair written once as `a ± bi`), the trace τ and determinant Δ
-//! for 2D flows, and Strogatz's type. Maps list the multipliers μ and |μ|;
-//! 1D flows list λ = f′(x*) only.
+//! for 2D flows, and Strogatz's type. Maps list the multipliers μ and |μ|,
+//! one-dimensional maps their multiplier λ = f′(x*) and |λ| (Strogatz
+//! §10.1); 1D flows list λ = f′(x*) only.
 
 use dyn_expr::InputFormat;
 
@@ -149,7 +150,18 @@ pub fn table(input: &FixedPointsInput) -> String {
         .collect();
     let mod_scale = column_scale(mods.iter().flatten().copied());
 
-    let (header, spec): (Vec<&str>, &str) = if is_map {
+    let (header, spec): (Vec<&str>, &str) = if is_map && dim == 1 {
+        // Strogatz §10.1: the multiplier of a one-dimensional map is f'(x*).
+        (
+            vec![
+                "Fixed point",
+                "$\\lambda = f'(x^*)$",
+                "$\\lvert\\lambda\\rvert$",
+                "Type",
+            ],
+            "@{}llll@{}",
+        )
+    } else if is_map {
         (
             vec![
                 "Fixed point",

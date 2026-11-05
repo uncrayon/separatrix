@@ -1,12 +1,25 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AxisRef, FixedPointOut, StateInfo, SystemKind } from "../api/types";
 import { Tex } from "../math/Tex";
-import { axisLabelLatex, axisLatex, classificationTitle, COMPUTED_ZERO, fmtTex, latexToPlain, sameAxis } from "../math/format";
+import {
+  axisLatex,
+  classificationTitle,
+  COMPUTED_ZERO,
+  fmtTex,
+  latexToPlain,
+  mapMultiplier,
+  mapStabilityHint,
+  sameAxis,
+  viewAxisLabels,
+  withSubscript,
+} from "../math/format";
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { portraitFits, selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
+import { isCobweb, portraitFits, portraitGraph, selectFixedPoint, selectedFixedPointIndex, stateExtent } from "../state/model";
+import { cobwebPx, diagonalSegment, orbitValues, pathsDist2, segDist2 } from "./cobweb";
 import { NumberField, Slider } from "../components/controls";
+import { dec } from "../components/startPoint";
 import { numberedEigenvalues, useShowEigenvectors, type NumberedEigenvalue } from "./eigen";
 import {
   axisLines,
@@ -79,6 +92,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const showEigen = useShowEigenvectors();
 
   const { compiled, view } = state;
+  const cobweb = isCobweb(view);
   const plotTheme = (): PlotTheme => {
     const probe = probeRef.current;
     const key = `${document.documentElement.dataset.theme ?? theme}:${themeVersion}:${probe ? "probe" : "root"}`;
@@ -148,6 +162,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     const sameAxes =
       valid && sameAxis(p.meta.view.xAxis, view.xAxis) && sameAxis(p.meta.view.yAxis, view.yAxis);
     const colorOf = new Map(state.ics.map((ic) => [ic.id, ic.color]));
+    // The staircase comes from any portrait of this map (it is the same
+    // orbit); the graph of f only from one that was asked for it.
+    const graph = valid ? portraitGraph(p.res) : undefined;
     const trajectories = valid
       ? p.res.trajectories.flatMap((out, i) => {
           const meta = p.meta.trajectories[i];
@@ -177,6 +194,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       eigenvectors: showEigen,
       // An earlier compile's portrait, kept up because this one's could not be computed, is faded too.
       stale: !state.compileOk || (valid && p.meta.systemId !== compiled.systemId && !!state.computeError),
+      cobweb: cobweb ? { graph: graph ?? [] } : null,
     };
   }, [
     compiled,
@@ -189,6 +207,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     state.computeError,
     view.xAxis,
     view.yAxis,
+    cobweb,
     hover,
     showEigen,
   ]);
@@ -274,6 +293,19 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const hitTrajectory = (px: number, py: number): number | null => {
     if (!scene) return null;
     const tol = 5 * glyphScale;
+    if (scene.cobweb) {
+      // A cobweb's orbit is its staircase.
+      let best: number | null = null;
+      let bestD = tol * tol;
+      for (const tr of scene.trajectories) {
+        const d = pathsDist2(px, py, cobwebPx(vp, orbitValues(tr.out, scene.dim, 0), tr.out));
+        if (d < bestD) {
+          bestD = d;
+          best = tr.meta.icId;
+        }
+      }
+      return best;
+    }
     // A map's orbit off a time axis is drawn as dots only, so only the dots can be hit.
     const dotsOnly = scene.kind === "map" && scene.xAxis.kind !== "time" && scene.yAxis.kind !== "time";
     let best: number | null = null;
@@ -316,16 +348,20 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, []);
 
-  const centre = (): [number, number] => [
-    (vp.xRange[0] + vp.xRange[1]) / 2,
-    (vp.yRange[0] + vp.yRange[1]) / 2,
-  ];
+  // A cobweb's keyboard cursor moves along the diagonal, where start points are.
+  const diag = cobweb ? diagonalSegment(vp.xRange, vp.yRange) : null;
+  const centre = (): [number, number] => {
+    const c: [number, number] = [(vp.xRange[0] + vp.xRange[1]) / 2, (vp.yRange[0] + vp.yRange[1]) / 2];
+    if (!diag) return c;
+    const v = clampTo((c[0] + c[1]) / 2, [diag[0], diag[2]]);
+    return [v, v];
+  };
   const inView = ([x, y]: [number, number]) =>
     x >= Math.min(...vp.xRange) &&
     x <= Math.max(...vp.xRange) &&
     y >= Math.min(...vp.yRange) &&
     y <= Math.max(...vp.yRange);
-  const fmtPoint = ([x, y]: [number, number]) => `${fmtPlain(x)}, ${fmtPlain(y)}`;
+  const fmtPoint = ([x, y]: [number, number]) => (cobweb ? fmtPlain(x) : `${fmtPlain(x)}, ${fmtPlain(y)}`);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (!scene || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -340,7 +376,15 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       ArrowDown: [0, -dy],
     };
     const handled = () => e.preventDefault();
-    if (e.key in moves) {
+    if (e.key in moves && diag) {
+      // Along the diagonal: Left and Down decrease, Right and Up increase.
+      handled();
+      const d = (diag[2] - diag[0]) * KEY_STEP * big;
+      const sign = e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 1;
+      const v = clampTo(cur[0] + sign * d, [diag[0], diag[2]]);
+      setKbd([v, v]);
+      setAnnounce(fmtPoint([v, v]));
+    } else if (e.key in moves) {
       handled();
       const [mx, my] = moves[e.key];
       const next: [number, number] = [clampTo(cur[0] + mx, vp.xRange), clampTo(cur[1] + my, vp.yRange)];
@@ -358,7 +402,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
         setAnnounce("Selected fixed point");
       } else {
         actions.addIc(cur[0], cur[1]);
-        setAnnounce(`Added a trajectory at ${fmtPoint(cur)}`);
+        setAnnounce(cobweb ? `Added an orbit at x₀ = ${fmtPlain(cur[0])}` : `Added a trajectory at ${fmtPoint(cur)}`);
       }
     } else if (e.key === "f" || e.key === "F") {
       handled();
@@ -556,8 +600,11 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   };
 
   const ariaLabel = scene
-    ? describePlot(scene, states, kind, vp.xRange, vp.yRange, view.xAxis, view.yAxis)
+    ? scene.cobweb
+      ? describeCobweb(scene, states, vp.xRange, vp.yRange, state.solver.transient)
+      : describePlot(scene, states, kind, vp.xRange, vp.yRange, view.xAxis, view.yAxis)
     : "Phase portrait";
+  const names = viewAxisLabels(view, states, kind);
 
   return (
     <>
@@ -578,16 +625,16 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           onBlur={() => setKbd(null)}
           tabIndex={0}
           role="application"
-          aria-roledescription="phase plane"
+          aria-roledescription={cobweb ? "cobweb plot" : "phase plane"}
           aria-label={ariaLabel}
           aria-describedby="plot-keys"
         />
         {toolbar}
         <span ref={probeRef} className="numeric-sm plot-probe" aria-hidden="true" />
         <span id="plot-keys" className="ds-sr">
-          Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F
-          and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the
-          selected trajectory.
+          {cobweb
+            ? "Click, or press Enter, to start an orbit at that x₀. Arrow keys move the cursor along the diagonal, Shift for bigger steps. F and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected orbit."
+            : "Click, or press Enter, to add a trajectory. Arrow keys move the cursor, Shift for bigger steps. F and Shift+F step through fixed points. Plus and minus zoom, 0 resets the view. Delete removes the selected trajectory."}
         </span>
         <span className="ds-sr" aria-live="polite" aria-atomic="true">
           {announce}
@@ -607,14 +654,14 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
               style={{ right: size.w - right + 8, top: xNameTop }}
               aria-hidden="true"
             >
-              <Tex latex={axisLabelLatex(view.xAxis, view.yAxis, states, kind)} />
+              <Tex latex={names.x} />
             </div>
             <div
               className={"axis-label axis-label-y math" + (yNameRight ? "" : " is-left")}
               style={yNameRight ? { left: yNameX, top: yNameTop } : { right: size.w - yNameX, top: yNameTop }}
               aria-hidden="true"
             >
-              <Tex latex={axisLabelLatex(view.yAxis, view.xAxis, states, kind)} />
+              <Tex latex={names.y} />
             </div>
           </>
         )}
@@ -724,8 +771,10 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           <div className="plot-hint">
             <p className="plot-hint-note caption">
               {tool === "pan"
-                ? "Choose Select or Add trajectory, then click the plot to start a trajectory."
-                : "Click anywhere on the plot to start a trajectory."}
+                ? `Choose Select or Add trajectory, then click the plot to start ${cobweb ? "an orbit" : "a trajectory"}.`
+                : cobweb
+                  ? "Click the plot to start an orbit at that x₀."
+                  : "Click anywhere on the plot to start a trajectory."}
             </p>
           </div>
         )}
@@ -741,7 +790,14 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
           </div>
         )}
       </div>
-      <Legend scene={scene} states={states} equations={compiled?.equationsLatex ?? []} kind={kind} tool={tool} />
+      <Legend
+        scene={scene}
+        states={states}
+        equations={compiled?.equationsLatex ?? []}
+        kind={kind}
+        tool={tool}
+        names={names}
+      />
     </>
   );
 }
@@ -791,6 +847,11 @@ export function FixedPointIcon({ kind }: { kind: FixedPointGlyphKind }) {
 }
 
 const GLYPH_ORDER: FixedPointGlyphKind[] = ["stable", "unstable", "half"];
+const GLYPH_NAMES: Record<FixedPointGlyphKind, string> = {
+  stable: "Stable fixed point",
+  unstable: "Unstable fixed point",
+  half: "Non-hyperbolic fixed point",
+};
 
 function Legend({
   scene,
@@ -798,6 +859,7 @@ function Legend({
   equations,
   kind,
   tool,
+  names,
 }: {
   scene: Omit<Scene, "avoid"> | null;
   states: StateInfo[];
@@ -805,6 +867,8 @@ function Legend({
   equations: string[];
   kind?: SystemKind;
   tool: "select" | "pan" | "add";
+  /** The axis names (LaTeX): a cobweb's x_n and x_{n+1}. */
+  names: { x: string; y: string };
 }) {
   const rateLatex = (i: number) => {
     const eq = equations.length === states.length ? equations[i] : undefined;
@@ -818,27 +882,32 @@ function Legend({
     if (!glyphs.has(k)) glyphs.set(k, new Set());
     glyphs.get(k)!.add(classificationTitle(fp.classification, states.length));
   }
-  const glyphName = (k: FixedPointGlyphKind, names: Set<string>) => {
-    const list = [...names].sort((p, q) => Number(/saddle/i.test(p)) - Number(/saddle/i.test(q)));
+  const cobweb = !!scene?.cobweb;
+  const glyphName = (k: FixedPointGlyphKind, titles: Set<string>) => {
+    if (cobweb) return GLYPH_NAMES[k];
+    const list = [...titles].sort((p, q) => Number(/saddle/i.test(p)) - Number(/saddle/i.test(q)));
     if (list.length === 1) return list[0];
     if (list.length === 2) return `${list[0]} or ${list[1].charAt(0).toLowerCase()}${list[1].slice(1)}`;
-    return k === "stable"
-      ? "Stable fixed point"
-      : k === "unstable"
-        ? "Unstable fixed point"
-        : "Non-hyperbolic fixed point";
+    return GLYPH_NAMES[k];
   };
   const isMap = kind === "map";
   const trajs = scene?.trajectories ?? [];
   const hasForward = trajs.some((t) => t.meta.direction === "forward");
   const hasBackward = trajs.some((t) => t.meta.direction === "backward");
   const hasStarts = (scene?.ics.length ?? 0) > 0;
+  // A transient: the staircases start at x_T, marked by an open square.
+  const transientShown = cobweb && trajs.some((t) => t.meta.direction === "forward" && t.out.t.length > 0 && t.out.t[0] > 0);
+  const stateLatex = states[0]?.latex ?? "x";
   const help =
     tool === "pan"
       ? "Drag to pan, scroll to zoom, double-click to reset the view."
-      : tool === "add"
-        ? "Click to place a start point and drag to adjust it. Scroll to zoom."
-        : "Click to add a trajectory, drag a start point to move it, drag the plot to pan, scroll to zoom, double-click to reset.";
+      : cobweb
+        ? tool === "add"
+          ? "Click to start an orbit at that x₀ and drag along the diagonal to adjust it. Scroll to zoom."
+          : "Click to start an orbit at that x₀, drag a start point along the diagonal, drag the plot to pan, scroll to zoom, double-click to reset."
+        : tool === "add"
+          ? "Click to place a start point and drag to adjust it. Scroll to zoom."
+          : "Click to add a trajectory, drag a start point to move it, drag the plot to pan, scroll to zoom, double-click to reset.";
 
   const forwardSample = (
     <svg viewBox="0 0 24 16" aria-hidden="true">
@@ -848,7 +917,37 @@ function Legend({
   );
   const data: { key: string; sample: ReactNode; faint?: boolean; text: ReactNode }[] = [
     ...(hasForward && !isMap ? [{ key: "fwd", sample: forwardSample, text: "Trajectory, forward in time" }] : []),
-    ...(hasForward && isMap
+    ...(hasForward && cobweb
+      ? [
+          {
+            key: "cobweb",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <path className="ds-phase-mark ds-phase-mark--cobweb" d="M4 13V5H12V10H8V7H11" />
+              </svg>
+            ),
+            text: "Orbit, cobweb",
+          },
+          ...(transientShown
+            ? [
+                {
+                  key: "cobweb-from",
+                  sample: (
+                    <svg viewBox="0 0 24 16" aria-hidden="true">
+                      <rect className="ds-phase-mark ds-phase-mark--from" x="9" y="5" width="6" height="6" />
+                    </svg>
+                  ),
+                  text: (
+                    <span>
+                      Orbit drawn from <Tex latex={withSubscript(stateLatex, "T")} />, after the transient
+                    </span>
+                  ),
+                },
+              ]
+            : []),
+        ]
+      : []),
+    ...(hasForward && isMap && !cobweb
       ? [
           {
             key: "orbit",
@@ -875,7 +974,7 @@ function Legend({
                 <circle className="ds-phase-mark ds-phase-mark--handle" cx="12" cy="8" r="3.5" />
               </svg>
             ),
-            text: "Start point, drag to move",
+            text: cobweb ? "Start point, drag along the diagonal" : "Start point, drag to move",
           },
         ]
       : []),
@@ -911,7 +1010,42 @@ function Legend({
   ]
     .filter((k) => flows.has(k.flow))
     .map((k) => ({ key: `eigen${k.flow}`, sample: eigenSample(k.flow), text: k.text }));
+  const graphShown = (scene?.cobweb?.graph ?? []).some((l) => l.length > 1);
   const background: { key: string; sample: ReactNode; text: ReactNode }[] = [
+    ...(cobweb && graphShown
+      ? [
+          {
+            key: "graph",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <path className="ds-phase-mark ds-phase-mark--graph" d="M2 14Q12 -2 22 14" />
+              </svg>
+            ),
+            text: (
+              <span>
+                Graph <Tex latex={`${names.y} = f(${names.x})`} />
+              </span>
+            ),
+          },
+        ]
+      : []),
+    ...(cobweb
+      ? [
+          {
+            key: "diagonal",
+            sample: (
+              <svg viewBox="0 0 24 16" aria-hidden="true">
+                <path className="ds-phase-mark ds-phase-mark--diagonal" d="M5 14L17 2" />
+              </svg>
+            ),
+            text: (
+              <span>
+                Diagonal <Tex latex={`${names.y} = ${names.x}`} />
+              </span>
+            ),
+          },
+        ]
+      : []),
     ...(scene && scene.arrows.length > 0
       ? [
           {
@@ -997,6 +1131,9 @@ function FixedPointTooltip(props: {
   const values = fp.x.map((v) => fmtTex(v, 3, COMPUTED_ZERO)).join(", ");
   const point = states.length === 1 ? `${names}^* = ${values}` : `(${names}) = (${values})`;
   const sym = kind === "map" ? "\\mu" : "\\lambda";
+  // A 1-D map's one multiplier is λ = f′(x*) (Strogatz §10.1).
+  const map1 = kind === "map" && states.length === 1;
+  const lambda = map1 ? mapMultiplier(fp) : NaN;
   const glyph = fixedPointGlyph(fp.classification, fp.stable);
   const title = classificationTitle(fp.classification, states.length);
   const word = glyph !== "half" && !/stable/i.test(title) ? (fp.stable ? "stable" : "unstable") : null;
@@ -1025,14 +1162,87 @@ function FixedPointTooltip(props: {
       <div className="fp-tooltip-math math">
         <Tex latex={point} />
       </div>
-      {numberedEigenvalues(fp).map((ev, i) => (
-        <div className="fp-tooltip-math math" key={i}>
-          <Tex latex={eigenvalueTex(ev, sym)} />
-        </div>
-      ))}
+      {map1 ? (
+        <>
+          {Number.isFinite(lambda) ? (
+            <>
+              <div className="fp-tooltip-math math">
+                <Tex latex={`\\lambda = f'(${names}^*) = ${texDec(lambda)}`} />
+              </div>
+              <div className="fp-tooltip-math math">
+                <Tex latex={`|\\lambda| = ${texDec(Math.abs(lambda))}`} />
+              </div>
+            </>
+          ) : (
+            <div className="fp-tooltip-math math">
+              <Tex latex={`f'(${names}^*)\\text{ does not exist}`} />
+            </div>
+          )}
+          <p className="ds-tooltip-desc caption">{mapStabilityHint(fp, latexToPlain(states[0].latex)).replace(/-/g, "−")}</p>
+        </>
+      ) : (
+        numberedEigenvalues(fp).map((ev, i) => (
+          <div className="fp-tooltip-math math" key={i}>
+            <Tex latex={eigenvalueTex(ev, sym)} />
+          </div>
+        ))
+      )}
       <p className="ds-tooltip-desc caption">Click for details in the inspector.</p>
     </div>
   );
+}
+
+/** Three decimals, as the inspector's row ("−1.200"), for LaTeX. */
+const texDec = (v: number) => dec(v, 3).replace("−", "-");
+
+/** Unicode subscripts for the digits, signs and n of a cobweb's axis names. */
+const SUB: Record<string, string> = { n: "ₙ", "+": "₊", "-": "₋", "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉" };
+const sub = (text: string) => [...text].map((c) => SUB[c] ?? c).join("");
+
+/**
+ * The cobweb for a screen reader: "Cobweb plot of xₙ₊₁ = f(xₙ): xₙ from 0
+ * to 1 across, xₙ₊₁ from 0 to 1 up. 1 orbit, starting at x₀ = 0.1. Fixed
+ * points: unstable at x* = 0 (λ = 3.2); …" (with ", first T iterates
+ * hidden" after the start when there is a transient).
+ */
+function describeCobweb(
+  scene: Omit<Scene, "avoid">,
+  states: StateInfo[],
+  xRange: [number, number],
+  yRange: [number, number],
+  transient: number,
+): string {
+  const x = latexToPlain(states[0]?.latex ?? "x");
+  const num = (v: number) => fmtPlain(v).replace("-", "−");
+  const r = ([a, b]: [number, number]) => `${num(a)} to ${num(b)}`;
+  const span = Math.max(Math.abs(xRange[1] - xRange[0]), Math.abs(yRange[1] - yRange[0]));
+  const xn = `${x}${sub("n")}`;
+  const xn1 = `${x}${sub("n+1")}`;
+  const parts = [`Cobweb plot of ${xn1} = f(${xn}): ${xn} from ${r(xRange)} across, ${xn1} from ${r(yRange)} up.`];
+  const ics = scene.ics.filter((ic) => ic.x0.length === scene.dim);
+  if (ics.length > 0) {
+    const sel = ics.findIndex((ic) => ic.id === scene.selectedIc);
+    parts.push(
+      `${ics.length} orbit${ics.length === 1 ? "" : "s"}, starting at ${x}${sub("0")} = ${ics.map((ic) => num(ic.x0[0])).join(", ")}` +
+        (transient > 0 ? `, first ${transient.toLocaleString("en-US")} iterate${transient === 1 ? "" : "s"} hidden` : "") +
+        (sel >= 0 ? `; orbit ${sel + 1} is selected.` : "."),
+    );
+  }
+  if (scene.fixedPoints.length > 0) {
+    parts.push(
+      "Fixed points: " +
+        scene.fixedPoints
+          .map((fp) => {
+            const word = fixedPointGlyph(fp.classification, fp.stable) === "half" ? "non-hyperbolic" : fp.stable ? "stable" : "unstable";
+            const lambda = mapMultiplier(fp);
+            const why = Number.isFinite(lambda) ? `λ = ${num(snapNearZero(lambda, 1))}` : "no λ: f is not differentiable there";
+            return `${word} at ${x}* = ${num(snapNearZero(fp.x[0], span))} (${why})`;
+          })
+          .join("; ") +
+        ".",
+    );
+  }
+  return parts.join(" ");
 }
 
 function describePlot(
@@ -1078,16 +1288,6 @@ function describePlot(
     parts.push("Eigenvector directions are drawn through the fixed points.");
   }
   return parts.join(" ");
-}
-
-function segDist2(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
-  const dx = bx - ax;
-  const dy = by - ay;
-  const len2 = dx * dx + dy * dy;
-  const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
-  const x = ax + t * dx - px;
-  const y = ay + t * dy - py;
-  return x * x + y * y;
 }
 
 function clampTo(v: number, [a, b]: [number, number]): number {

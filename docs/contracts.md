@@ -160,6 +160,10 @@ pub fn slope_field(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) -
 pub struct Nullcline { pub state: usize, pub polylines: Vec<Vec<(f64, f64)>> }
 pub fn nullclines(f: &dyn VectorField, p: &[f64], plane: &Plane, grid: usize) -> Vec<Nullcline>;
 
+pub const MAX_GRAPH_SAMPLES: usize = 4096;
+pub fn map_graph(f: &dyn VectorField, p: &[f64], x_range: (f64, f64), y_range: (f64, f64),
+                 samples: usize) -> Vec<Vec<(f64, f64)>>;   // y = f(x) of a 1-D map (cobweb)
+
 pub struct FixedPoint { pub x: Vec<f64>, pub eigenvalues: Vec<(f64, f64)> /* re, im */,
                         pub eigenvectors: Vec<Option<Vec<f64>>>,    // one per eigenvalue
                         pub eigenvectors_im: Vec<Option<Vec<f64>>>, // complex λ only
@@ -198,8 +202,44 @@ Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in t
   semi-axes of the ellipses traced by the linearised orbits `Re(c·e^{λt}·v)` (spirals and
   centres), and span the invariant plane. For a circle the largest component of `v` is made real
   and positive. Sign as for real vectors, by `re`.
-- No linearisation (non-finite Jacobian): `eigenvalues`, `eigenvectors`, `eigenvectorsIm` are all
-  empty. Never NaN.
+- No linearisation (non-finite Jacobian, or a one-dimensional `f` with a kink at the point, such
+  as the tent map's peak or `|x|` at 0, found by one-sided difference quotients that disagree at
+  two step sizes): `eigenvalues`, `eigenvectors`, `eigenvectorsIm` are all empty and the point
+  is `non-hyperbolic`. Never NaN.
+- One dimension: neighbouring points with `g = 0` (to `1e-12`, relative) all the way between
+  them and at least 1/1000 of the box apart lie on an interval of fixed points (`f(x) = x` for
+  the tent map at `r = 1`, `f = 0` for a flow). Each such run is reported as the interval's two
+  ends inside the box, found by bisection, as `non-isolated` points.
+
+`map_graph` is the graph of a one-dimensional map's `f` (at `n = 0`; empty for any other
+system), sampled at `samples` (clamped to 2..=4096) evenly spaced `x` with both ends included.
+Within a polyline `x` strictly increases and stays in `x_range`; a new one starts at every gap:
+
+- a non-finite value: the edge of the domain is found by 12 bisections, so `√x` starts within
+  `cell/4096` of 0;
+- a pole or a jump: an interval is examined when its rise exceeds the threshold
+  `max(JUMP_FACTOR · median rise, Δy/50)`; when its rise exceeds `JUMP_FACTOR · median rise` (or
+  its step is against both neighbours' and larger than theirs) and `f` changes sign across it or
+  its midpoint is larger in magnitude than both ends (a pole in a zoomed-out view, where the
+  samples either side are small); or when it is next to a steep one and its midpoint stands out
+  above both ends by the threshold (an even pole midway between two samples). It is bisected up
+  to 12 levels, the more suspicious half first (the larger rise or, when the midpoint is larger
+  in magnitude than both ends, the half towards the larger end, which follows `1/x²`), then the
+  other. A half is continuous once its rise is below the threshold and has shrunk on two
+  successive halvings (one drop is not enough: a midpoint exactly on a jump, such as
+  `sign(0) = 0`, halves the rise once). A half still rising after 12 levels by more than 1/64 of
+  the interval's rise splits there (a continuous curve's shrinks about 4096-fold; a jump's stays
+  and a pole's grows), as does a non-finite midpoint; the refined points are kept on each side
+  so the curve reaches towards the pole. At most 48 evaluations go to one interval and
+  `12 · samples` to the whole graph.
+
+`y` is then clipped to the band `[y0 − Δy, y1 + Δy]` (`Δy = y1 − y0`), with the curve's ends on
+the band interpolated linearly. `[]` means `f` is undefined or outside the band everywhere in
+view. Cost: `samples` evaluations plus at most 12 per steep interval or domain edge (24 more
+for a non-finite midpoint).
+
+For a one-dimensional map the only multiplier is `λ = f′(x*)`, from the exact Jacobian:
+`fixedPoints[i].eigenvalues[0][0]`, classified by `|λ|` against 1 (Strogatz §10.1).
 
 Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stable/unstable spiral,
 centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
@@ -234,6 +274,36 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,
 in order.
+
+### Cobweb plots and transients
+
+`PortraitRequest` has two optional keys, `PortraitResponse` one (absent keys keep the earlier
+meaning, so older requests are unchanged):
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `graphSamples` (request) | `number?` | Sample the graph `y = f(x)` across `xRange` (`map_graph`, clamped to 2–4096). |
+| `transient` (request) | `number?` | Map iterates computed but not returned before each orbit's `n` (maps only; ignored for flows). Absent = 0; clamped so that `transient + n ≤ 1,000,000`. |
+| `graph` (response) | `[x, f(x)][][]?` | Present exactly when `graphSamples` was sent (possibly `[]`). |
+
+A **cobweb request** is `xAxis = yAxis = { kind: "state", index: 0 }`, `graphSamples` set,
+`fieldGrid: 0`, `nullclines: false`. Then the fixed-point search box is the visible `x` range
+and a fixed point and a start point land on the diagonal at `(x*, x*)` and `(x₀, x₀)`.
+`graphSamples` is refused (the command fails with the message) unless the system is a
+one-dimensional autonomous map with `xAxis` state 0:
+
+- "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system has 2 states."
+- "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system is a flow."
+- "This map changes with n, so f has no single graph to cobweb."
+- "The cobweb view needs x_n on the horizontal axis."
+
+A map's trajectory with transient `T` and `t1 = N` returns `t = [T, T+1, …, T+N]` and
+`x = [x_T … x_{T+N}]` (empty when it blows up during the transient), statuses as before. The
+staircase is drawn from it by the UI (`app/src/canvas/cobweb.ts`) and by the LaTeX export
+(`separatrix_export::cobweb`) with one definition: vertices `(v₀, v₀)`, then
+`(v_{k−1}, v_k), (v_k, v_k)` for `k = 1…m`, cut at the first non-finite value; the diagonal is
+`(a, a)–(b, b)` with `a = max(x0, y0)`, `b = min(x1, y1)`, none when `a ≥ b`. The shared test
+vectors are `crates/export/tests/vectors/cobweb.json`.
 
 `PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
 eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,

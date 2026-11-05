@@ -7,6 +7,9 @@
 //! - `tests/vectors/heads.json`: `drawHeads` (`app/src/canvas/draw.ts`)
 //!   through a recording context, written by the UI's tests; checked when
 //!   present.
+//! - `tests/vectors/cobweb.json`: the cobweb staircase and diagonal
+//!   (`app/src/canvas/cobweb.ts`), written by the UI's tests; checked when
+//!   present.
 
 use std::path::Path;
 
@@ -148,5 +151,41 @@ fn heads_match_draw_heads() {
         if !c["placedAfter"].is_null() {
             assert_eq!(placed, pairs(nums(&c["placedAfter"])), "case {i}: placed");
         }
+    }
+}
+
+/// `cobweb.json` cases (written by the UI's `cobweb.test.mjs` from
+/// `app/src/canvas/cobweb.ts`): `{ x: [v0, v1, …], xRange, yRange,
+/// staircase: [x, y, …], diagonal: [ax, ay, bx, by] | null }`.
+#[test]
+fn cobweb_geometry_matches_the_screen() {
+    use separatrix_export::cobweb;
+    let Some(doc) = vector("cobweb.json") else {
+        eprintln!("tests/vectors/cobweb.json not generated yet: skipping");
+        return;
+    };
+    let nums = |v: &Value| -> Vec<f64> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_f64().unwrap_or(f64::NAN))
+            .collect()
+    };
+    let range = |v: &Value| {
+        let r = nums(v);
+        (r[0], r[1])
+    };
+    let cases = doc["cases"].as_array().unwrap();
+    assert!(!cases.is_empty());
+    for (i, c) in cases.iter().enumerate() {
+        let got: Vec<f64> = cobweb::staircase(&nums(&c["x"]))
+            .into_iter()
+            .flat_map(|(a, b)| [a, b])
+            .collect();
+        assert_eq!(got, nums(&c["staircase"]), "case {i}: staircase");
+        let diagonal = cobweb::diagonal(range(&c["xRange"]), range(&c["yRange"]))
+            .map(|((ax, ay), (bx, by))| vec![ax, ay, bx, by]);
+        let want = (!c["diagonal"].is_null()).then(|| nums(&c["diagonal"]));
+        assert_eq!(diagonal, want, "case {i}: diagonal");
     }
 }

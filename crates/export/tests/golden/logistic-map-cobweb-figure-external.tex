@@ -1,0 +1,46 @@
+% Separatrix figure: Logistic map
+%   x_{n+1} = r*x_n*(1 - x_n)
+% Parameters: r = 3.2
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+% If you \input this file from another folder, put \def\sepxdir{figures/} before it.
+\providecommand{\sepxdir}{}%
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-0.2333333333333334, xmax=1.2333333333333334, ymin=-0.05, ymax=1.05,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0,0.5,1}, ytick={0,0.5,1}, xticklabels={}, yticklabels={},
+  minor xtick={0.25,0.75}, minor ytick={0.25,0.75},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(36.077bp,-85.039bp)$) -- ($(rel axis cs:0,1)+(33.077bp,-85.039bp)$)
+  ($(rel axis cs:0,1)+(36.077bp,-7.731bp)$) -- ($(rel axis cs:0,1)+(33.077bp,-7.731bp)$)
+  ($(rel axis cs:0,1)+(113.386bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(113.386bp,-165.348bp)$)
+  ($(rel axis cs:0,1)+(190.694bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(190.694bp,-165.348bp)$);
+% Diagonal x_{n+1} = x_n
+\addplot[sepxaxis, line width=0.75bp, line cap=butt] coordinates {(-0.05,-0.05) (1.05,1.05)};
+% Graph of f
+\addplot[sepxfp, line width=1.125bp, line join=round, line cap=round] table {\sepxdir logistic-map-graph.dat};
+% Cobweb of ic-1
+\addplot[sepxtraj1, line width=0.75bp, line join=miter] table {\sepxdir logistic-map-ic-1-cobweb.dat};
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table {\sepxdir logistic-map-fixed-points.dat};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxbg, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{1:1}] table {\sepxdir logistic-map-fixed-points.dat};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(113.386bp,-155.223bp)$) {$0.5$};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(190.694bp,-155.223bp)$) {$1$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-85.039bp)$) {$0.5$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-7.731bp)$) {$1$};
+\node[anchor=south east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(28.952bp,-155.223bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-159.348bp)$) {$x_{n}$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(42.077bp,-4.5bp)$) {$x_{n+1}$};
+\end{axis}
+\end{tikzpicture}

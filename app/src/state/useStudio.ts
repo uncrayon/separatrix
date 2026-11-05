@@ -12,11 +12,18 @@ import {
   adaptInitialConditions,
   adaptView,
   buildPortraitJob,
+  clampTransient,
+  cobwebAvailability,
   defaultView,
-  leastUsedPaletteIndex,
+  isCobweb,
+  liftPlotPoint,
+  switchView,
+  newIcColor,
   conversionOutcome,
   planModeSwitch,
   resolveParam,
+  seriesRange,
+  shiftTimeAxes,
   stateExtent,
   templateLines,
   templateView,
@@ -32,6 +39,8 @@ import {
   type SolverSettings,
   type StudioSnapshot,
   type View,
+  type ViewChoice,
+  type ViewMemory,
 } from "./model";
 
 const COMPILE_DEBOUNCE_MS = 160;
@@ -172,6 +181,12 @@ export function useStudio() {
   const pendingLoad = useRef<ProjectLoad | null>(null);
   /** A load was started and no compile has come back since. */
   const loadSettling = useRef(false);
+  /**
+   * The last view of each kind this session (phase plane, time series,
+   * cobweb), so switching back restores it; forgotten when the system's
+   * shape changes. Not saved.
+   */
+  const viewMemory = useRef<{ shapeId: number; views: ViewMemory }>({ shapeId: -1, views: {} });
 
   const makeIc = useCallback((x0: number[], t0: number): Omit<InitialCondition, "color"> => {
     const id = nextIcId.current++;
@@ -279,10 +294,10 @@ export function useStudio() {
             Array.from({ length: dim }, (_, i) => x0[i] ?? 0),
             0,
           );
-          fresh.push({ ...ic, color: leastUsedPaletteIndex(fresh) });
+          fresh.push({ ...ic, color: newIcColor(fresh, v) });
         }
         setIcs(fresh);
-        setSolverState((s) => ({ ...s, tEnd: template.tEnd }));
+        setSolverState((s) => ({ ...s, tEnd: template.tEnd, transient: 0 }));
         setLayersState((l) => ({
           ...l,
           backward: template.backward ?? true,
@@ -297,13 +312,18 @@ export function useStudio() {
         if (!sameShape) {
           setShapeId((n) => n + 1);
           const oldStates = old?.states ?? [];
-          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states) : null;
-          const v = kept ?? defaultView(res);
+          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
+          const v = kept ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
           setBaseState((b) => adaptBaseState(b, oldStates, res.states));
           setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
+        } else if (isCobweb(cur.view) && !cobwebAvailability(res).ok) {
+          // The same map, now changing with n: f has no single graph, so the default view (a time series).
+          const v = defaultView(res, cur.solver);
+          setViewState(v);
+          setHomeView(v);
         }
       }
       setCompiled(res);
@@ -524,14 +544,32 @@ export function useStudio() {
   }, []);
   const resetView = useCallback(() => setViewState(latest.current.homeView), []);
 
+  /**
+   * Shows the phase plane, the time series or the cobweb. The last view of
+   * that kind this session comes back as it was; otherwise one is made from
+   * what is shown now (the same state range, as {@link setAxis} picks ranges).
+   * A kind the system can't show is ignored.
+   */
+  const setViewKind = useCallback((choice: ViewChoice) => {
+    const cur = latest.current;
+    const mem = viewMemory.current;
+    if (mem.shapeId !== cur.shapeId) viewMemory.current = { shapeId: cur.shapeId, views: {} };
+    const next = switchView(choice, cur, viewMemory.current.views);
+    if (!next) return;
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
-    const v = cur.view;
+    // Picking an axis gives a plane view (a cobweb's axes are fixed).
+    const { xAxis, yAxis, xRange, yRange } = cur.view;
+    const v: View = { xAxis, yAxis, xRange, yRange };
     const other = which === "x" ? v.yAxis : v.xAxis;
     const rangeFor = (a: AxisRef): [number, number] => {
       if (sameAxis(a, v.xAxis)) return v.xRange;
       if (sameAxis(a, v.yAxis)) return v.yRange;
-      if (a.kind === "time") return [-0.04 * cur.solver.tEnd, cur.solver.tEnd];
+      if (a.kind === "time") return seriesRange(cur.solver, cur.compiled?.kind);
       const ext = stateExtent(cur.portrait?.res, cur.compiled?.states.length ?? 0, a.index);
       if (ext) {
         const pad = Math.max(0.1 * (ext[1] - ext[0]), 0.5);
@@ -563,23 +601,15 @@ export function useStudio() {
 
   const liftPoint = useCallback((px: number, py: number, base?: InitialCondition) => {
     const cur = latest.current;
-    const dim = cur.compiled?.states.length ?? 0;
-    const x0 = Array.from({ length: dim }, (_, i) => base?.x0[i] ?? cur.baseState[i] ?? 0);
-    let t0 = base?.t0 ?? (cur.compiled?.kind === "map" ? 0 : cur.fieldTime);
-    const put = (a: AxisRef, v: number) => {
-      if (a.kind === "time") t0 = cur.compiled?.kind === "map" ? 0 : v;
-      else x0[a.index] = v;
-    };
-    put(cur.view.xAxis, px);
-    put(cur.view.yAxis, py);
-    return { x0, t0 };
+    return liftPlotPoint(cur.compiled, cur.view, cur.baseState, cur.fieldTime, px, py, base);
   }, []);
 
   const addIc = useCallback(
     (px: number, py: number): number => {
       const { x0, t0 } = liftPoint(px, py);
       const ic = makeIc(x0, t0);
-      setIcs((list) => [...list, { ...ic, color: leastUsedPaletteIndex(list) }]);
+      const view = latest.current.view;
+      setIcs((list) => [...list, { ...ic, color: newIcColor(list, view) }]);
       setSelection({ kind: "ic", id: ic.id });
       return ic.id;
     },
@@ -615,10 +645,23 @@ export function useStudio() {
   }, []);
 
   const setLayers = useCallback((patch: Partial<Layers>) => setLayersState((l) => ({ ...l, ...patch })), []);
-  const setSolver = useCallback(
-    (patch: Partial<SolverSettings>) => setSolverState((s) => ({ ...s, ...patch })),
-    [],
-  );
+  const setSolver = useCallback((patch: Partial<SolverSettings>) => {
+    const cur = latest.current;
+    const merged = { ...cur.solver, ...patch };
+    const next = { ...merged, transient: clampTransient(merged.transient, merged.tEnd) };
+    latest.current = { ...cur, solver: next };
+    setSolverState(next);
+    // A map's orbits start at n = T: a time series follows the transient.
+    if (cur.compiled?.kind === "map") {
+      const dt = next.transient - clampTransient(cur.solver.transient, cur.solver.tEnd);
+      if (dt !== 0) {
+        setViewState((v) => shiftTimeAxes(v, dt));
+        setHomeView((v) => shiftTimeAxes(v, dt));
+        const kept = viewMemory.current.views;
+        if (kept.series) kept.series = shiftTimeAxes(kept.series, dt);
+      }
+    }
+  }, []);
 
   const actions = useMemo(
     () => ({
@@ -636,6 +679,7 @@ export function useStudio() {
       resetView,
       setPlotAspect,
       setAxis,
+      setViewKind,
       setSlice,
       setFieldTime,
       addIc,
@@ -663,6 +707,7 @@ export function useStudio() {
       resetView,
       setPlotAspect,
       setAxis,
+      setViewKind,
       setSlice,
       setFieldTime,
       addIc,

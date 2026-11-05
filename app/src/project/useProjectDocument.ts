@@ -346,7 +346,10 @@ export function useProjectDocument(studio: Studio, opts: ProjectDocumentOptions 
   const banner: Diagnostic[] = useMemo(() => {
     const out = [...messages];
     if (loadWarnings !== dismissedWarnings) {
-      for (const message of loadWarnings) out.push({ severity: "warning", message });
+      // Rust and the studio can both judge a view unfit (a saved cobweb of a
+      // system that isn't a 1-D map) in the same words: say it once.
+      for (const message of loadWarnings)
+        if (!out.some((d) => d.message === message)) out.push({ severity: "warning", message });
     }
     if (state.pendingProject && !state.compileOk) {
       out.push({

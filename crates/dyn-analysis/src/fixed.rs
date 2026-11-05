@@ -70,8 +70,11 @@ pub struct FixedPoint {
 /// box enlarged by 5% per side are dropped, and points closer than `1e-6`
 /// of the box diagonal are merged.
 ///
-/// A whole curve of fixed points (e.g. `x' = 0`) yields one point per seed
-/// that lands on it.
+/// A whole curve of fixed points (e.g. `x' = 0` in the plane) yields one
+/// point per seed that lands on it; in one dimension an interval of fixed
+/// points is reported by its two ends in the box, as
+/// [`Classification::NonIsolated`]. A one-dimensional `f` with a kink at a
+/// fixed point has no linearisation there (no eigenvalues, non-hyperbolic).
 pub fn fixed_points(
     f: &dyn VectorField,
     p: &[f64],
@@ -101,7 +104,6 @@ pub fn fixed_points_with_budget(
     if !f.is_autonomous() || n == 0 || search.len() != n || seeds_per_axis == 0 {
         return Vec::new();
     }
-    let kind = f.kind();
     let mut newton = Newton::new(f, p);
 
     let mut found: Vec<Root> = Vec::new();
@@ -134,26 +136,9 @@ pub fn fixed_points_with_budget(
         }
     }
 
-    let mut jac = vec![0.0; n * n];
     let mut points: Vec<FixedPoint> = found
         .into_iter()
-        .map(|Root { x, .. }| {
-            f.jacobian(0.0, &x, p, &mut jac);
-            let (eigenvalues, classification) = classify_jacobian(kind, n, &jac);
-            let vecs = if eigenvalues.is_empty() {
-                Eigenvectors::default()
-            } else {
-                eigenvectors(kind, n, &jac, &eigenvalues)
-            };
-            FixedPoint {
-                x,
-                eigenvalues,
-                eigenvectors: vecs.re,
-                eigenvectors_im: vecs.im,
-                classification,
-                stable: classification.is_stable(),
-            }
-        })
+        .map(|Root { x, .. }| linearise(f, p, x))
         .collect();
     points.sort_by(|a, b| {
         a.x.iter()
@@ -162,7 +147,136 @@ pub fn fixed_points_with_budget(
             .find(|o| o.is_ne())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    if n == 1 {
+        points = collapse_intervals(points, &newton.g, search[0]);
+    }
     points
+}
+
+/// The fixed point at `x` with its linearisation. Without one (an infinite
+/// slope, or a one-dimensional `f` with a kink at `x`, like the tent map's
+/// peak or `|x|` at 0) it has no eigenvalues and is non-hyperbolic.
+fn linearise(f: &dyn VectorField, p: &[f64], x: Vec<f64>) -> FixedPoint {
+    let (kind, n) = (f.kind(), f.dim());
+    let mut jac = vec![0.0; n * n];
+    f.jacobian(0.0, &x, p, &mut jac);
+    let (eigenvalues, classification) = if n == 1 && has_kink(f, p, x[0]) {
+        (Vec::new(), Classification::NonHyperbolic)
+    } else {
+        classify_jacobian(kind, n, &jac)
+    };
+    let vecs = if eigenvalues.is_empty() {
+        Eigenvectors::default()
+    } else {
+        eigenvectors(kind, n, &jac, &eigenvalues)
+    };
+    FixedPoint {
+        x,
+        eigenvalues,
+        eigenvectors: vecs.re,
+        eigenvectors_im: vecs.im,
+        classification,
+        stable: classification.is_stable(),
+    }
+}
+
+/// One-dimensional `f` is not differentiable at `x`: its one-sided
+/// difference quotients disagree, by the same amount at step `h` and at
+/// `h/16`. A smooth `f`'s disagree by about `f″·h`, which shrinks with `h`;
+/// a kink's stay. (Automatic differentiation gives a kink one slope, or
+/// `sign(0) = 0` for `|u|`: λ = 0 for the tent map's peak, which is not
+/// superstable.)
+fn has_kink(f: &dyn VectorField, p: &[f64], x: f64) -> bool {
+    let mut out = [0.0];
+    let mut at = |v: f64| {
+        f.eval(0.0, &[v], p, &mut out);
+        out[0]
+    };
+    let fx = at(x);
+    let mut gap = |h: f64| {
+        let right = (at(x + h) - fx) / h;
+        let left = (fx - at(x - h)) / h;
+        (right - left).abs() / right.abs().max(left.abs()).max(1.0)
+    };
+    let h = KINK_STEP * x.abs().max(1.0);
+    let (coarse, fine) = (gap(h), gap(h / 16.0));
+    coarse > KINK_TOL && fine > 0.5 * coarse
+}
+
+/// Step of the one-sided difference quotients in [`has_kink`], relative to
+/// `max(1, |x|)`.
+const KINK_STEP: f64 = 1e-6;
+/// Relative disagreement of the one-sided slopes that is a kink.
+const KINK_TOL: f64 = 1e-3;
+/// `|g(x)| ≤ ZERO_TOL · max(1, |x|)` is `g(x) = 0` to rounding, for
+/// [`collapse_intervals`].
+const ZERO_TOL: f64 = 1e-12;
+/// Bisection steps to the end of an interval of fixed points.
+const END_STEPS: usize = 60;
+
+/// One dimension: neighbouring fixed points with `g = 0` (to rounding)
+/// everywhere between them, at least 1/1000 of the box apart, lie on an
+/// interval of fixed points (`f(x) = x` on `[a, b]`, as the tent map's at
+/// `r = 1`, or `f = 0` for a flow), which multi-start Newton reports once
+/// per seed. Each such run is replaced by the interval's two ends inside
+/// `search`, found by bisection and classified
+/// [`Classification::NonIsolated`].
+fn collapse_intervals(
+    points: Vec<FixedPoint>,
+    g: &Residual,
+    (lo, hi): (f64, f64),
+) -> Vec<FixedPoint> {
+    let mut out = [0.0];
+    let mut zero = |x: f64| {
+        g.eval(&[x], &mut out);
+        out[0].abs() <= ZERO_TOL * x.abs().max(1.0)
+    };
+    let flat = |a: f64, b: f64, zero: &mut dyn FnMut(f64) -> bool| {
+        [0.25, 0.5, 0.75].iter().all(|&t| zero(a + t * (b - a)))
+    };
+    let min_width = 1e-3 * (hi - lo);
+    let mut result = Vec::with_capacity(points.len());
+    let mut i = 0;
+    while i < points.len() {
+        let mut j = i;
+        while j + 1 < points.len() && flat(points[j].x[0], points[j + 1].x[0], &mut zero) {
+            j += 1;
+        }
+        let (a, b) = (points[i].x[0], points[j].x[0]);
+        if j == i || b - a < min_width {
+            result.extend(points[i..=j].iter().cloned());
+            i = j + 1;
+            continue;
+        }
+        // Out to where g stops being 0, or the box's edge.
+        let mut end = |inside: f64, edge: f64| {
+            if zero(edge) {
+                return edge;
+            }
+            let (mut fixed, mut not) = (inside, edge);
+            for _ in 0..END_STEPS {
+                let m = 0.5 * (fixed + not);
+                if m == fixed || m == not {
+                    break;
+                }
+                if zero(m) {
+                    fixed = m;
+                } else {
+                    not = m;
+                }
+            }
+            fixed
+        };
+        let (a, b) = (end(a, lo.min(a)), end(b, hi.max(b)));
+        for x in [a, b] {
+            let mut fp = linearise(g.f, g.p, vec![x]);
+            fp.classification = Classification::NonIsolated;
+            fp.stable = false;
+            result.push(fp);
+        }
+        i = j + 1;
+    }
+    result
 }
 
 /// How many Newton starting points [`fixed_points_with_budget`] uses in
@@ -791,7 +905,15 @@ mod tests {
             (12, 2, 1000, 1000),
             (12, 2, 37, 37),
         ] {
-            let f = zero_field(n);
+            // In 1-D a zero field is one interval of fixed points (two
+            // ends): a root at each cell centre counts the starts instead.
+            let f = if n == 1 {
+                FnField::new(1, 0, SystemKind::Ode, move |_t, x, _p, o| {
+                    o[0] = (PI * ((x[0] + 1.0) * per_axis as f64 / 2.0 - 0.5)).sin()
+                })
+            } else {
+                zero_field(n)
+            };
             let fps = fixed_points_with_budget(&f, &[], &vec![(-1.0, 1.0); n], per_axis, budget);
             assert_eq!(
                 fps.len(),
@@ -800,6 +922,11 @@ mod tests {
             );
         }
         assert!(fixed_points_with_budget(&zero_field(2), &[], &[(-1.0, 1.0); 2], 4, 0).is_empty());
+        let line = fixed_points_with_budget(&zero_field(1), &[], &[(-1.0, 1.0)], 40, 1000);
+        assert_eq!(
+            line.iter().map(|fp| fp.x[0]).collect::<Vec<_>>(),
+            vec![-1.0, 1.0]
+        );
         // Without a budget the old limit applies: 2^12 = 4096 grid points.
         assert_eq!(
             fixed_points(&zero_field(12), &[], &[(-1.0, 1.0); 12], 2).len(),
@@ -989,6 +1116,62 @@ mod tests {
         for fp in &fps {
             assert!((fp.x[0] + PI / 2.0).abs() < 1e-6, "{fp:?}");
         }
+    }
+
+    #[test]
+    fn a_fixed_point_on_a_kink_has_no_multiplier() {
+        // The tent map's x* = r/(1 + r) is off its kink at r = 2 (λ = −2);
+        // |x|/2 has its fixed point 0 on the kink.
+        let tent = FnField::new(1, 1, SystemKind::Map, |_t, x, p, o| {
+            o[0] = p[0] / 2.0 * (1.0 - (2.0 * x[0] - 1.0).abs())
+        });
+        let fps = fixed_points(&tent, &[2.0], &[(-0.05, 1.05)], 40);
+        let pts = expect_points(&fps, &[(&[0.0], Source), (&[2.0 / 3.0], Source)], 1e-12);
+        // (A finite-difference Jacobian: FnField has no exact one.)
+        assert!((pts[1].eigenvalues[0].0 + 2.0).abs() < 1e-6, "{pts:?}");
+        let abs = FnField::new(1, 0, SystemKind::Map, |_t, x, _p, o| {
+            o[0] = 0.5 * x[0].abs()
+        });
+        let fps = fixed_points(&abs, &[], &[(-1.0, 1.0)], 20);
+        assert_eq!(fps.len(), 1, "{fps:?}");
+        assert!(fps[0].x[0].abs() < 1e-12);
+        // Both one-sided slopes (±1/2) are inside the unit circle, but there is
+        // no λ = f′(0): not "superstable".
+        assert!(fps[0].eigenvalues.is_empty(), "{fps:?}");
+        assert_eq!(fps[0].classification, NonHyperbolic);
+        // A smooth map with a sharp bend is still differentiable.
+        let sharp = FnField::new(1, 0, SystemKind::Map, |_t, x, _p, o| {
+            o[0] = 0.5 * (x[0] * x[0] + 1e-4).sqrt()
+        });
+        let fps = fixed_points(&sharp, &[], &[(-0.1, 0.1)], 20);
+        assert!(fps.iter().all(|fp| fp.eigenvalues.len() == 1), "{fps:?}");
+    }
+
+    #[test]
+    fn an_interval_of_fixed_points_is_reported_by_its_two_ends() {
+        // The tent map at r = 1 is f(x) = x for every x <= 1/2.
+        let tent = FnField::new(1, 1, SystemKind::Map, |_t, x, p, o| {
+            o[0] = p[0] / 2.0 * (1.0 - (2.0 * x[0] - 1.0).abs())
+        });
+        let fps = fixed_points_with_budget(&tent, &[1.0], &[(-0.05, 1.05)], 40, 4096);
+        assert_eq!(fps.len(), 2, "{fps:?}");
+        assert!(fps
+            .iter()
+            .all(|fp| fp.classification == NonIsolated && !fp.stable));
+        assert_eq!(fps[0].x[0], -0.05, "the box's edge");
+        assert!((fps[1].x[0] - 0.5).abs() < 1e-12, "{:?}", fps[1].x);
+        // |x| is fixed for every x >= 0; 0 is where it ends.
+        let abs = FnField::new(1, 0, SystemKind::Map, |_t, x, _p, o| o[0] = x[0].abs());
+        let fps = fixed_points(&abs, &[], &[(-1.0, 1.0)], 20);
+        assert_eq!(fps.len(), 2, "{fps:?}");
+        assert!(fps[0].x[0].abs() < 1e-12 && fps[1].x[0] == 1.0, "{fps:?}");
+        // Two isolated roots close together stay two points.
+        let two = FnField::new(1, 0, SystemKind::Ode, |_t, x, _p, o| {
+            o[0] = (x[0] - 0.3) * (x[0] - 0.31)
+        });
+        let fps = fixed_points(&two, &[], &[(0.0, 1.0)], 40);
+        assert_eq!(fps.len(), 2);
+        assert!(fps.iter().all(|fp| fp.classification != NonIsolated));
     }
 
     #[test]

@@ -8,6 +8,7 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import type { InitialCondition, TrajectoryMeta } from "../state/model";
+import { cobwebPx, diagonalSegment, graphPx, orbitValues } from "./cobweb";
 import { eigenDirections } from "./eigenvectors";
 import type { PlotTheme } from "./theme";
 import { niceTicks, sx, sy, tickLabel, type Viewport } from "./viewport";
@@ -76,6 +77,12 @@ export interface Scene {
   eigenvectors: boolean;
   stale: boolean;
   avoid: { labels: Box[]; field: Box[] };
+  /**
+   * A cobweb plot of a 1-D map (both axes state 0): the diagonal, the graph
+   * of f (polylines of `[x, f(x)]`, empty until a portrait with it arrives)
+   * and each orbit as a staircase instead of dots. Absent or null otherwise.
+   */
+  cobweb?: { graph: [number, number][][] } | null;
 }
 
 export type SceneAxes = Pick<Scene, "kind" | "dim" | "xAxis" | "yAxis">;
@@ -186,7 +193,8 @@ export function drawScene(
   ctx.globalAlpha = fade;
   drawField(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.field]);
   drawNullclines(ctx, vp, scene, th);
-  drawTrajectories(ctx, vp, scene, th, fade);
+  if (scene.cobweb) drawCobweb(ctx, vp, scene, scene.cobweb.graph, th, fade);
+  else drawTrajectories(ctx, vp, scene, th, fade);
   ctx.globalAlpha = fade;
   const eigenLabels = scene.eigenvectors
     ? drawEigenvectors(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.labels])
@@ -505,6 +513,104 @@ function drawTrajectories(
     }
   }
   ctx.globalAlpha = 1;
+}
+
+/**
+ * A cobweb, in the PhasePlane z-order: the diagonal x_{n+1} = x_n (a thin
+ * reference line in the axis colour, never dashed: dashes are nullclines),
+ * the graph of f (the boldest line, `plot-fp`), then each orbit's staircase
+ * (thin, mitred, no heads or dots; the selected one last and a little
+ * heavier). A run that stopped early gets an × at its last vertex; one
+ * drawn after a transient, an open square where its staircase starts.
+ */
+export function drawCobweb(
+  ctx: DrawContext,
+  vp: Viewport,
+  scene: Scene,
+  graph: readonly (readonly [number, number])[][],
+  th: PlotTheme,
+  fade: number,
+) {
+  const s = th.lineScale;
+  const g = th.glyphScale;
+  ctx.setLineDash([]);
+  const diag = diagonalSegment(vp.xRange, vp.yRange);
+  if (diag) {
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = th.axis;
+    ctx.lineWidth = s;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    ctx.moveTo(sx(vp, diag[0]), sy(vp, diag[1]));
+    ctx.lineTo(sx(vp, diag[2]), sy(vp, diag[3]));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = fade;
+  const lines = graphPx(vp, graph as [number, number][][]);
+  if (lines.length) {
+    ctx.strokeStyle = th.fp;
+    ctx.lineWidth = 1.5 * s;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    for (const pts of lines) tracePolyline(ctx, pts);
+    ctx.stroke();
+  }
+  const ordered = scene.trajectories
+    .filter((t) => t.meta.direction === "forward")
+    .sort((a, b) => Number(scene.selectedIc === a.meta.icId) - Number(scene.selectedIc === b.meta.icId));
+  for (const tr of ordered) {
+    const paths = cobwebPx(vp, orbitValues(tr.out, scene.dim, 0), tr.out);
+    if (paths.length === 0) continue;
+    const color = th.traj[tr.color % th.traj.length];
+    const selected = scene.selectedIc === tr.meta.icId;
+    ctx.globalAlpha = fade;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = (selected ? 1.5 : 1) * s;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    for (const pts of paths) tracePolyline(ctx, pts);
+    ctx.stroke();
+    if (tr.out.t[0] > 0) {
+      // After a transient the staircase starts at (x_T, x_T), away from the
+      // start handle at (x_0, x_0): an open square, on a halo, marks it.
+      const h = 3 * g;
+      const x = paths[0][0];
+      const y = paths[0][1];
+      ctx.lineJoin = "miter";
+      ctx.beginPath();
+      ctx.rect(x - h, y - h, 2 * h, 2 * h);
+      ctx.strokeStyle = th.halo;
+      ctx.lineWidth = 3 * g;
+      ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5 * g;
+      ctx.stroke();
+    }
+    if (tr.out.status !== "completed") {
+      const last = paths[paths.length - 1];
+      const x = last[last.length - 2];
+      const y = last[last.length - 1];
+      const c = 4 * g;
+      ctx.lineWidth = 1.5 * s;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x - c, y - c);
+      ctx.lineTo(x + c, y + c);
+      ctx.moveTo(x + c, y - c);
+      ctx.lineTo(x - c, y + c);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** Adds a polyline to the current path (one subpath). */
+function tracePolyline(ctx: DrawContext, pts: Float64Array) {
+  if (pts.length < 4) return;
+  ctx.moveTo(pts[0], pts[1]);
+  for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]);
 }
 
 function strokePolyline(ctx: DrawContext, pts: Float64Array) {

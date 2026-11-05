@@ -120,6 +120,9 @@ struct Meta<'a> {
     columns: Vec<String>,
     x0: &'a [f64],
     t0: f64,
+    /// Maps only: iterates computed but not written (the first row is `n = T`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transient: Option<usize>,
     segments: Vec<MetaSegment>,
     notes: Vec<&'static str>,
 }
@@ -143,6 +146,8 @@ pub struct CsvInput<'a> {
     pub title: &'a str,
     /// The app's version, for the metadata.
     pub app_version: &'a str,
+    /// Map iterates computed but not written before each orbit (maps only).
+    pub transient: usize,
 }
 
 /// One exported initial condition.
@@ -217,6 +222,13 @@ pub fn meta(
         columns,
         x0: first.map_or(&[][..], |t| t.x0.as_slice()),
         t0: first.map_or(0.0, |t| t.t0),
+        // The orbit's first row is x_T; `input.transient` when it has none.
+        transient: (input.kind == SystemKind::Map).then(|| {
+            first
+                .and_then(|t| t.t.first())
+                .filter(|n| n.is_finite() && **n >= 0.0)
+                .map_or(input.transient, |&n| n as usize)
+        }),
         segments,
         notes,
     };

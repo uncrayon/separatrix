@@ -501,6 +501,8 @@ export interface SegmentOption<T extends string> {
   /** The accessible name when the visible label is a bare glyph (`ẋ`). */
   ariaLabel?: string;
   disabled?: boolean;
+  /** The id of this option's own reason for being disabled (else the group's `describedBy`). */
+  describedBy?: string;
   icon?: ReactNode;
 }
 
@@ -591,7 +593,7 @@ export function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={checked}
             aria-disabled={o.disabled || undefined}
-            aria-describedby={o.disabled ? describedBy : undefined}
+            aria-describedby={o.disabled ? (o.describedBy ?? describedBy) : undefined}
             aria-label={o.ariaLabel ?? (iconOnly && typeof o.label === "string" ? o.label : undefined)}
             disabled={disabled}
             tabIndex={tabbable ? 0 : -1}

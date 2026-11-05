@@ -268,7 +268,19 @@ solver: SolverOptions,
 /**
  * Evenly spaced samples per ODE trajectory (0 = the raw solver steps).
  */
-samples: number, };
+samples: number, 
+/**
+ * Sample the graph `y = f(x)` of a one-dimensional autonomous map across
+ * `x_range` (the cobweb view; both axes are then state 0). Absent = no
+ * graph. Clamped to `2..=MAX_GRAPH_SAMPLES` (4096).
+ */
+graphSamples?: number, 
+/**
+ * Map iterates computed but not returned, before each orbit's `n`
+ * iterates (maps only; ignored for flows). Absent = 0. Clamped so that
+ * `transient + n <= MAX_ITERATES`.
+ */
+transient?: number, };
 
 export type Arrow = { 
 /**
@@ -372,6 +384,14 @@ fixedPoints: Array<FixedPointOut>,
  */
 trajectories: Array<TrajectoryOut>, 
 /**
+ * The graph of `f` (cobweb view): present exactly when `graphSamples`
+ * was sent. Polylines of `[x, f(x)]`, `x` strictly increasing inside
+ * `xRange`, split at every gap (a non-finite value, a pole or a jump)
+ * and clipped to the vertical range grown by its span on each side.
+ * Empty when `f` is undefined or outside that band everywhere in view.
+ */
+graph?: Array<Array<[number, number]>>, 
+/**
  * Wall time spent in Rust, in milliseconds.
  */
 elapsedMs: number, };
@@ -448,7 +468,13 @@ export type ProjectView = {
 /**
  * A missing or empty id is repaired by validation.
  */
-id: string, x_axis: ProjectAxis, y_axis: ProjectAxis, 
+id: string, 
+/**
+ * `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
+ * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
+ * phase plane and the time series, which the axes tell apart.
+ */
+kind?: string, x_axis: ProjectAxis, y_axis: ProjectAxis, 
 /**
  * The user's ranges (not the ones equalized for the plot's aspect).
  */
@@ -469,6 +495,12 @@ export type ProjectSolver = { method: string, rtol: number, atol: number,
  * Fixed step size; 0 means "the method's default".
  */
 h: number, max_steps: number, t_end: number, 
+/**
+ * Map iterates computed but not drawn before each orbit; absent = 0.
+ * Written only when above 0. Validation clamps it to
+ * `0..=TRANSIENT_MAX`.
+ */
+transient?: number, 
 /**
  * Samples per trajectory; 0 means automatic.
  */

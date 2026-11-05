@@ -3,13 +3,26 @@ import { compileSystem, computePortrait } from "../api/client";
 import type { CompileResponse, PortraitResponse, SystemKind } from "../api/types";
 import { fixedPointGlyph } from "../canvas/draw";
 import { readPlotTheme } from "../canvas/theme";
-import { makeViewport, sx, sy, isFlowPhasePlane, type Viewport } from "../canvas/viewport";
-import { DEFAULT_LAYERS, DEFAULT_SOLVER, autoSamples, templateView, trajectorySpans, type View } from "../state/model";
+import { makeViewport, sx, sy, hasEqualScales, type Viewport } from "../canvas/viewport";
+import { cobwebPx, diagonalSegment, graphPx, orbitValues } from "../canvas/cobweb";
+import {
+  DEFAULT_LAYERS,
+  DEFAULT_SOLVER,
+  autoSamples,
+  isCobweb,
+  portraitGraph,
+  templateView,
+  trajectorySpans,
+  type MapRequestFields,
+  type View,
+} from "../state/model";
 import { templateSource, type Template } from "../templates";
 
 const ASPECT = 1.6;
 const STEP = 0.01;
 const THUMB_FIELD_GRID = 13;
+/** Graph samples of f for a cobweb thumbnail. */
+const THUMB_GRAPH_SAMPLES = 256;
 
 interface Thumb {
   kind: SystemKind;
@@ -65,8 +78,9 @@ function computeThumb(t: Template): Promise<Thumb | null> {
         });
       });
       const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
-      const shown = makeViewport(ASPECT * 100, 100, view.xRange, view.yRange, isFlowPhasePlane(view.xAxis, view.yAxis, kind));
+      const shown = makeViewport(ASPECT * 100, 100, view.xRange, view.yRange, hasEqualScales(view, kind));
       const planar = kind === "ode" && dim <= 2;
+      const cobweb: MapRequestFields = isCobweb(view) ? { graphSamples: THUMB_GRAPH_SAMPLES, transient: 0 } : {};
       const res = await computePortrait({
         requestId: nextRequestId++,
         systemId: sys.systemId,
@@ -79,10 +93,11 @@ function computeThumb(t: Template): Promise<Thumb | null> {
         fieldTime: 0,
         fieldGrid: planar ? THUMB_FIELD_GRID : 0,
         nullclines: false,
-        fixedPoints: planar && dim === 2,
+        fixedPoints: (planar && dim === 2) || isCobweb(view),
         trajectories,
         solver: { method: "rk4", rtol: solver.rtol, atol: solver.atol, h: STEP, maxSteps: solver.maxSteps },
         samples: autoSamples(maxSpan),
+        ...cobweb,
       });
       return { kind, dim, view, res, icOf };
     })().catch(() => {
@@ -109,7 +124,7 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
   const th = readPlotTheme();
   const s = th.lineScale;
   const { view, res, kind, dim, icOf } = thumb;
-  const vp: Viewport = makeViewport(w, h, view.xRange, view.yRange, isFlowPhasePlane(view.xAxis, view.yAxis, kind));
+  const vp: Viewport = makeViewport(w, h, view.xRange, view.yRange, hasEqualScales(view, kind));
 
   ctx.fillStyle = th.bg;
   ctx.fillRect(0, 0, w, h);
@@ -152,6 +167,11 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
     ctx.stroke();
   }
 
+  if (isCobweb(view)) {
+    drawCobwebThumb(ctx, vp, thumb, th);
+    return;
+  }
+
   const at = (axis: View["xAxis"], tr: PortraitResponse["trajectories"][number], k: number) =>
     axis.kind === "time" ? tr.t[k] : tr.x[k * dim + axis.index];
   const isMap = kind === "map";
@@ -192,25 +212,74 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
     const px = sx(vp, fp.x[0]);
     const py = sy(vp, fp.x[1]);
     if (px < 0 || px > w || py < 0 || py > h) continue;
-    const glyph = fixedPointGlyph(fp.classification, fp.stable);
-    const r = 2.75;
-    ctx.fillStyle = th.halo;
+    drawThumbFixedPoint(ctx, px, py, fixedPointGlyph(fp.classification, fp.stable), th);
+  }
+}
+
+/** A fixed-point glyph at thumbnail size: halo, then the body (filled, open or half). */
+function drawThumbFixedPoint(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  glyph: ReturnType<typeof fixedPointGlyph>,
+  th: ReturnType<typeof readPlotTheme>,
+) {
+  const r = 2.75;
+  ctx.fillStyle = th.halo;
+  ctx.beginPath();
+  ctx.arc(px, py, r + 1.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = th.fp;
+  ctx.fillStyle = th.fp;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(px, py, r, 0, Math.PI * 2);
+  if (glyph === "stable") ctx.fill();
+  ctx.stroke();
+  if (glyph === "half") {
     ctx.beginPath();
-    ctx.arc(px, py, r + 1.5, 0, Math.PI * 2);
+    ctx.arc(px, py, r, Math.PI / 2, (Math.PI * 3) / 2);
+    ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = th.fp;
-    ctx.fillStyle = th.fp;
-    ctx.lineWidth = 1;
+  }
+}
+
+/** A cobweb thumbnail: the diagonal, the graph of f and each orbit's staircase (canvas/cobweb.ts). */
+function drawCobwebThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thumb, th: ReturnType<typeof readPlotTheme>) {
+  const s = th.lineScale;
+  const trace = (paths: Float64Array[]) => {
     ctx.beginPath();
-    ctx.arc(px, py, r, 0, Math.PI * 2);
-    if (glyph === "stable") ctx.fill();
-    ctx.stroke();
-    if (glyph === "half") {
-      ctx.beginPath();
-      ctx.arc(px, py, r, Math.PI / 2, (Math.PI * 3) / 2);
-      ctx.closePath();
-      ctx.fill();
+    for (const p of paths) {
+      ctx.moveTo(p[0], p[1]);
+      for (let k = 2; k < p.length; k += 2) ctx.lineTo(p[k], p[k + 1]);
     }
+    ctx.stroke();
+  };
+  const d = diagonalSegment(vp.xRange, vp.yRange);
+  if (d) {
+    ctx.strokeStyle = th.axis;
+    ctx.lineWidth = 0.75 * s;
+    ctx.lineCap = "butt";
+    trace([Float64Array.of(sx(vp, d[0]), sy(vp, d[1]), sx(vp, d[2]), sy(vp, d[3]))]);
+  }
+  ctx.strokeStyle = th.fp;
+  ctx.lineWidth = 1.25 * s;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  trace(graphPx(vp, portraitGraph(thumb.res) ?? []));
+  thumb.res.trajectories.forEach((tr, i) => {
+    ctx.strokeStyle = th.traj[(thumb.icOf[i] ?? i) % th.traj.length];
+    ctx.lineWidth = 0.75 * s;
+    ctx.lineJoin = "miter";
+    ctx.lineCap = "butt";
+    trace(cobwebPx(vp, orbitValues(tr, thumb.dim, 0)));
+  });
+  // The fixed points on the diagonal, at (x*, x*).
+  for (const fp of thumb.res.fixedPoints) {
+    const px = sx(vp, fp.x[0]);
+    const py = sy(vp, fp.x[0]);
+    if (px < 0 || px > vp.left + vp.width || py < 0 || py > vp.top + vp.height) continue;
+    drawThumbFixedPoint(ctx, px, py, fixedPointGlyph(fp.classification, fp.stable), th);
   }
 }
 

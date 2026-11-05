@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } 
 import { isTauri } from "../api/client";
 import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
-import { axisLabelLatex, fmt } from "../math/format";
+import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
 import { searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
@@ -345,8 +345,10 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
-  const xName = axisName(state.view.xAxis, state.view.yAxis, states, kind);
-  const yName = axisName(state.view.yAxis, state.view.xAxis, states, kind);
+  // A cobweb's axes are x_n and x_{n+1}.
+  const cobwebNames = state.view.kind === "cobweb" && states[0] ? viewAxisLabels(state.view, states, kind) : null;
+  const xName = cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind);
+  const yName = cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind);
   const solver = solverSummary(state.solver, kind);
   const t = p ? timing(p.res.elapsedMs) : null;
   const timingDesc = p

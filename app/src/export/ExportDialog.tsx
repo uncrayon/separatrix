@@ -6,7 +6,7 @@ import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "..
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
 import { axisLatex, classificationTitle, fmt, latexToPlain } from "../math/format";
-import { hasNullclineLayer, systemTitle } from "../state/model";
+import { hasNullclineLayer, isCobweb, systemTitle } from "../state/model";
 import type { StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import {
@@ -215,8 +215,8 @@ function FixedPointsPreview({
       <thead>
         <tr>
           <th scope="col">Fixed point</th>
-          <th scope="col">{map ? "Multipliers μ" : dim === 1 ? "λ" : "Eigenvalues λ"}</th>
-          {map && <th scope="col">|μ|</th>}
+          <th scope="col">{map ? (dim === 1 ? "λ = f′(x*)" : "Multipliers μ") : dim === 1 ? "λ" : "Eigenvalues λ"}</th>
+          {map && <th scope="col">{dim === 1 ? "|λ|" : "|μ|"}</th>}
           {plane && <th scope="col">τ</th>}
           {plane && <th scope="col">Δ</th>}
           <th scope="col">Type</th>
@@ -280,6 +280,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
 
   const sys = state.compiled && state.compiled.ok ? state.compiled : null;
   const kind = sys?.kind;
+  // A cobweb's figure has no field or nullclines to offer: only Fixed points.
+  const cobweb = !!sys && isCobweb(state.view);
   const compiles = !!sys && state.compileOk;
   const reasons = {
     field: kind === "map" ? "none: a map" : null,
@@ -519,7 +521,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         transparent: opts.transparent,
         fonts: EXPORT_FONTS,
         title: name,
-        desc: previewLabel,
+        desc: figureDesc,
       },
       canvasMeasure(probe),
     );
@@ -691,10 +693,14 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const layerWords = [
     layers.field && "direction field",
     layers.nullclines && "nullclines",
-    trajectories(trajectoriesShown),
+    cobweb && "the graph of f",
+    cobweb && "the diagonal",
+    cobweb ? plural(trajectoriesShown, "orbit") : trajectories(trajectoriesShown),
     layers.fixedPoints && plural(scene?.fixedPoints.length ?? 0, "fixed point"),
   ].filter(Boolean) as string[];
-  const previewLabel = `Preview: ${name} with ${layerWords.slice(0, -1).join(", ")}${layerWords.length > 1 ? " and " : ""}${layerWords[layerWords.length - 1]}`;
+  // What the figure shows: the SVG's <desc>, and the preview's label after "Preview: ".
+  const figureDesc = `${name} with ${layerWords.slice(0, -1).join(", ")}${layerWords.length > 1 ? " and " : ""}${layerWords[layerWords.length - 1]}`;
+  const previewLabel = `Preview: ${figureDesc}`;
   const axisPlain = (i: 0 | 1) => {
     if (!sys) return "";
     const a = i === 0 ? state.view.xAxis : state.view.yAxis;
@@ -702,7 +708,9 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   };
   const timeView = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   const viewWords = sys
-    ? `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
+    ? cobweb
+      ? `cobweb of ${axisPlain(0)}`
+      : `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
     : "no plot yet";
   const sizeCaption =
     format === "png" ? (
@@ -717,7 +725,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         <span className="ds-num">
           {withMinus(fmt(opts.widthCm, 3))} × {withMinus(fmt(opts.heightCm, 3))}
         </span>{" "}
-        cm, {trajectories(trajectoriesShown)}
+        cm, {cobweb ? plural(trajectoriesShown, "orbit") : trajectories(trajectoriesShown)}
       </span>
     );
 
@@ -832,18 +840,22 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const includeGroup = (
     <fieldset className="ds-export-group">
       <legend className="ds-export-label">Include</legend>
-      <Check
-        checked={opts.field}
-        reason={reasons.field}
-        label="Include direction field"
-        onChange={(v) => update({ field: v })}
-      />
-      <Check
-        checked={opts.nullclines}
-        reason={reasons.nullclines}
-        label="Include nullclines"
-        onChange={(v) => update({ nullclines: v })}
-      />
+      {!cobweb && (
+        <>
+          <Check
+            checked={opts.field}
+            reason={reasons.field}
+            label="Include direction field"
+            onChange={(v) => update({ field: v })}
+          />
+          <Check
+            checked={opts.nullclines}
+            reason={reasons.nullclines}
+            label="Include nullclines"
+            onChange={(v) => update({ nullclines: v })}
+          />
+        </>
+      )}
       <Check
         checked={opts.fixedPoints}
         reason={reasons.fixedPoints}

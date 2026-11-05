@@ -186,6 +186,18 @@ pub struct Portrait {
     pub fixed_points: Vec<FixedPoint>,
     /// Trajectories, any order (backward runs are drawn first).
     pub trajectories: Vec<Trajectory>,
+    /// A cobweb plot of a one-dimensional map (both axes are state 0): each
+    /// map trajectory is drawn as a staircase, with the diagonal and the
+    /// graph of `f` (see [`crate::cobweb`]).
+    #[serde(default)]
+    pub cobweb: bool,
+    /// The graph of `f` in a cobweb plot: polylines of `(x, f(x))`.
+    #[serde(default)]
+    pub graph: Vec<Vec<(f64, f64)>>,
+    /// Map iterates computed but not drawn before each orbit (its first
+    /// sample is `x_T`).
+    #[serde(default)]
+    pub transient: usize,
 }
 
 /// A state's names.

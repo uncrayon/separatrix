@@ -3,6 +3,17 @@
 All notable changes to this project are documented in this file.
 
 ## [Unreleased]
+### Added
+- Cobweb plots for one-dimensional maps (Strogatz §10.1): the graph of `f` (split at poles,
+  jumps and the edges of its domain), the diagonal `x_{n+1} = x_n` and each orbit's staircase,
+  with the fixed points on the diagonal and their multipliers `λ = f′(x*)`. The logistic map
+  template opens as a cobweb (`r = 3.2`, `x₀ = 0.1`: the orbit winds out from the unstable
+  `x* = 0.6875` onto the 2-cycle). A **transient** skips the first iterates of every orbit, in
+  the cobweb and the time series. Exports: the LaTeX figure draws the cobweb (`% Diagonal`,
+  `% Graph of f`, `% Cobweb of <ic>`), a one-dimensional map's fixed-point table lists
+  `λ = f′(x*)` and `|λ|`, and the CSV metadata records the transient. Project files keep the
+  view's `kind` and the solver's `transient` (additive keys; the format stays at version 1).
+
 ### Changed
 - Rewrite as a cross-platform desktop app (Tauri 2 + Rust core). No Python, no server.
 - Renamed the product to **Separatrix** (app identifier `io.github.uncrayon.separatrix`).
@@ -18,6 +29,10 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- A one-dimensional fixed point on a kink of `f` (the tent map's peak at `r = 1`, `|x|` at 0)
+  has no multiplier and is non-hyperbolic, instead of λ = 0 "superstable"; an interval of fixed
+  points (`f(x) = x` on `[a, b]`) is reported by its two ends as non-isolated instead of once per
+  Newton seed.
 - The Nullclines toggle is shown whenever nullclines are drawn, including time-series views of
   2-D and larger systems.
 - Diagnostics keep the hyphens of their prose ("right-hand side") instead of turning them into

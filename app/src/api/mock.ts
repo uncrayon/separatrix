@@ -237,12 +237,115 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
   };
 }
 
+/** `compute_portrait`; the request and response are kept in `__sepxMock.lastPortrait` for the e2e tests. */
 export async function mockPortrait(req: PortraitRequest): Promise<PortraitResponse> {
+  const res = await portrait(req);
+  sepxMock().lastPortrait = { req, res };
+  return res;
+}
+
+/** The checks `cobweb_fits` makes in service.rs, with the same messages. */
+function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
+  const dim = sys.states.length;
+  if (sys.kind !== "map") return "The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system is a flow.";
+  if (dim !== 1) return `The cobweb view needs a one-dimensional map x_{n+1} = f(x_n); this system has ${dim} states.`;
+  if (sys.autonomous === false) return "This map changes with n, so f has no single graph to cobweb.";
+  if (xAxis.kind !== "state" || xAxis.index !== 0) return "The cobweb view needs x_n on the horizontal axis.";
+  return null;
+}
+
+/** MAX_GRAPH_SAMPLES in dyn-analysis. */
+const MAX_GRAPH_SAMPLES = 4096;
+
+/**
+ * A simple port of `dyn_analysis::map_graph`: `samples` evenly spaced x (both
+ * ends), split at a non-finite value and where a rise of more than a quarter
+ * of the view has a midpoint that is non-finite or larger than both ends (a
+ * pole), then clipped to the view grown by its height above and below.
+ */
+function mockMapGraph(
+  f: (x: number) => number,
+  [x0, x1]: [number, number],
+  [y0, y1]: [number, number],
+  samples: number,
+): [number, number][][] {
+  const n = Math.min(MAX_GRAPH_SAMPLES, Math.max(2, Math.round(samples)));
+  const span = y1 - y0;
+  const lines: [number, number][][] = [];
+  let line: [number, number][] = [];
+  const cut = () => {
+    if (line.length >= 2) lines.push(line);
+    line = [];
+  };
+  let prev: [number, number] | null = null;
+  for (let i = 0; i < n; i++) {
+    const x = i === n - 1 ? x1 : x0 + (x1 - x0) * (i / (n - 1));
+    const y = f(x);
+    if (!Number.isFinite(y)) {
+      cut();
+      prev = null;
+      continue;
+    }
+    if (prev && Math.abs(y - prev[1]) > 0.25 * span) {
+      const m = f((prev[0] + x) / 2);
+      if (!Number.isFinite(m) || Math.abs(m) > Math.max(Math.abs(y), Math.abs(prev[1]))) cut();
+    }
+    if (!line.length || x > line[line.length - 1][0]) line.push([x, y]);
+    prev = [x, y];
+  }
+  cut();
+  return lines.flatMap((l) => clipToBand(l, y0 - span, y1 + span));
+}
+
+/** Port of `clip_to_band` in dyn-analysis: the parts of a polyline with lo ≤ y ≤ hi, crossings interpolated. */
+function clipToBand(line: [number, number][], lo: number, hi: number): [number, number][][] {
+  const inside = (y: number) => y >= lo && y <= hi;
+  const edge = (y: number) => (y > hi ? hi : lo);
+  const cross = (p: [number, number], q: [number, number], y: number): [number, number] => [
+    p[0] + ((y - p[1]) / (q[1] - p[1])) * (q[0] - p[0]),
+    y,
+  ];
+  const out: [number, number][][] = [];
+  let cur: [number, number][] = [];
+  const push = (pt: [number, number]) => {
+    if (!cur.length || pt[0] > cur[cur.length - 1][0]) cur.push(pt);
+  };
+  const finish = () => {
+    if (cur.length >= 2) out.push(cur);
+    cur = [];
+  };
+  if (line.length && inside(line[0][1])) cur.push(line[0]);
+  for (let k = 1; k < line.length; k++) {
+    const p = line[k - 1];
+    const q = line[k];
+    const [pin, qin] = [inside(p[1]), inside(q[1])];
+    if (pin && qin) push(q);
+    else if (pin) {
+      push(cross(p, q, edge(q[1])));
+      finish();
+    } else if (qin) {
+      push(cross(p, q, edge(p[1])));
+      push(q);
+    } else if (p[1] > hi !== q[1] > hi) {
+      push(cross(p, q, edge(p[1])));
+      push(cross(p, q, edge(q[1])));
+      finish();
+    }
+  }
+  finish();
+  return out;
+}
+
+async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const start = performance.now();
   const sys = byId.get(req.systemId);
   if (!sys) throw new Error(`Unknown system ${req.systemId}`);
   const dim = sys.states.length;
   const p = req.params;
+  if (req.graphSamples !== undefined) {
+    const err = cobwebError(sys, req.xAxis);
+    if (err) throw err;
+  }
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -294,7 +397,12 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   }
 
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
-  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps));
+  const transient = req.transient ?? 0;
+  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps, transient));
+  const graph =
+    req.graphSamples === undefined
+      ? undefined
+      : mockMapGraph((x) => sys.f(0, [x], p)[0], req.xRange, req.yRange, req.graphSamples);
 
   return {
     requestId: req.requestId,
@@ -302,6 +410,7 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
     nullclines,
     fixedPoints,
     trajectories,
+    ...(graph ? { graph } : {}),
     elapsedMs: performance.now() - start,
   };
 }
@@ -309,7 +418,14 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
 /** MAX_ITERATES in app/src-tauri/src/service.rs. */
 const MAX_ITERATES = 1_000_000;
 
-function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: number, maxSteps: number): TrajectoryOut {
+function solve(
+  sys: MockSystem,
+  p: number[],
+  tr: TrajectoryRequest,
+  samples: number,
+  maxSteps: number,
+  transient: number,
+): TrajectoryOut {
   const dim = sys.states.length;
   let x = tr.x0.slice(0, dim);
   const ts: number[] = [];
@@ -321,15 +437,21 @@ function solve(sys: MockSystem, p: number[], tr: TrajectoryRequest, samples: num
   const tooBig = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
 
   if (sys.kind === "map") {
-    const n = Math.min(MAX_ITERATES, Math.max(0, Math.round(tr.t1)));
-    push(0, x);
-    for (let k = 0; k < n; k++) {
-      x = sys.f(k, x, p);
-      if (tooBig(x))
-        return { t: ts, x: xs, status: "blewUp", stats: { accepted: k, rejected: 0, evals: k + 1 } };
-      push(k + 1, x);
+    // As `iterate_map`: x_T … x_{T+N}, the first T iterates computed but not returned.
+    const n = Number.isFinite(tr.t1) ? Math.min(MAX_ITERATES, Math.max(0, Math.round(tr.t1))) : 0;
+    const skip = Math.min(Math.max(0, Math.round(transient)), MAX_ITERATES - n);
+    // As the core counts: an evaluation per step tried, an accepted step per finite iterate.
+    const stats = (k: number, evals = k) => ({ accepted: k, rejected: 0, evals });
+    if (!x.every(Number.isFinite)) return { t: [], x: [], status: "nonFinite", stats: stats(0) };
+    if (skip === 0) push(0, x);
+    for (let k = 0; k < skip + n; k++) {
+      const next = sys.f(k, x, p);
+      if (!next.every(Number.isFinite)) return { t: ts, x: xs, status: "nonFinite", stats: stats(k, k + 1) };
+      x = next;
+      if (k + 1 >= skip) push(k + 1, x);
+      if (tooBig(x)) return { t: ts, x: xs, status: "blewUp", stats: stats(k + 1) };
     }
-    return { t: ts, x: xs, status: "completed", stats: { accepted: n, rejected: 0, evals: n } };
+    return { t: ts, x: xs, status: "completed", stats: stats(skip + n) };
   }
 
   const span = tr.t1 - tr.t0;
@@ -780,6 +902,8 @@ export interface SepxMock {
   saved: { name: string; contents: string | Uint8Array }[];
   /** The last `set_document_state`. */
   document: DocumentStateRequest;
+  /** The last `compute_portrait` (the canvas's or a gallery thumbnail's; never the export dialog's). */
+  lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
 }
 
 function sepxMock(): SepxMock {
@@ -878,7 +1002,7 @@ export async function mockSetDocumentState(req: DocumentStateRequest): Promise<v
 export async function mockCloseWindow(): Promise<void> {}
 
 export async function mockComputeExportPortrait(req: ExportPortraitRequest): Promise<PortraitResponse> {
-  return mockPortrait(req.portrait);
+  return portrait(req.portrait);
 }
 
 const PREVIEW_NOTE = "% Browser preview: placeholder LaTeX. The desktop app writes the real snippet.";
@@ -914,7 +1038,14 @@ export async function mockExportSystemLatex(req: SystemLatexRequest): Promise<Sy
 
 export async function mockExportFixedPointsLatex(req: FixedPointsLatexRequest): Promise<string> {
   const sys = mockSystemOf(req.portrait.systemId);
-  const res = await mockPortrait({ ...req.portrait, fixedPoints: true, trajectories: [], fieldGrid: 0, nullclines: false });
+  const res = await portrait({
+    ...req.portrait,
+    fixedPoints: true,
+    trajectories: [],
+    fieldGrid: 0,
+    nullclines: false,
+    graphSamples: undefined,
+  });
   const digits = Math.min(8, Math.max(2, req.digits));
   const num = (v: number) => `\\num{${Number(v.toPrecision(digits))}}`;
   const rows = res.fixedPoints.map((fp) => {
@@ -948,8 +1079,37 @@ function mockAxisValue(axis: AxisRef, t: number[], x: number[], dim: number, k: 
 export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<FigureLatexResponse> {
   const sys = mockSystemOf(req.portrait.systemId);
   const dim = sys.states.length;
-  const res = await mockPortrait(req.portrait);
+  const res = await portrait(req.portrait);
   let points = 0;
+  if (req.portrait.graphSamples !== undefined) {
+    // A cobweb, with the real figure's comment markers (docs/exports.md).
+    const [x0, x1] = req.portrait.xRange;
+    const [y0, y1] = req.portrait.yRange;
+    const pt = (a: number, b: number) => `(${String(a)},${String(b)})`;
+    const plots: string[] = [];
+    const [a, b] = [Math.max(x0, y0), Math.min(x1, y1)];
+    if (a < b) {
+      plots.push("% Diagonal x_{n+1} = x_n", `  \\addplot[no marks] coordinates {${pt(a, a)} ${pt(b, b)}};`);
+      points += 2;
+    }
+    plots.push("% Graph of f");
+    for (const line of res.graph ?? []) {
+      plots.push(`  \\addplot[no marks] coordinates {${line.map(([gx, gy]) => pt(gx, gy)).join(" ")}};`);
+      points += line.length;
+    }
+    res.trajectories.forEach((tr, k) => {
+      const v = tr.x.slice(0, tr.t.length * dim);
+      const cut = v.findIndex((c) => !Number.isFinite(c));
+      const orbit = cut < 0 ? v : v.slice(0, cut);
+      if (!orbit.length) return;
+      const coords = [pt(orbit[0], orbit[0])];
+      for (let i = 1; i < orbit.length; i++) coords.push(pt(orbit[i - 1], orbit[i]), pt(orbit[i], orbit[i]));
+      points += coords.length;
+      plots.push(`% Cobweb of ${req.tags[k]?.icId ?? `ic-${k + 1}`}`);
+      plots.push(`  \\addplot[no marks] coordinates {${coords.join(" ")}};`);
+    });
+    return { tex: mockFigureTex(req, plots), points, thinned: false, notes: [] };
+  }
   const plots = res.trajectories.map((tr) => {
     const coords: string[] = [];
     const step = Math.max(1, Math.floor(tr.t.length / 200));
@@ -961,6 +1121,11 @@ export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<Fi
     points += coords.length;
     return `  \\addplot[no marks] coordinates {${coords.join(" ")}};`;
   });
+  return { tex: mockFigureTex(req, plots), points, thinned: false, notes: [] };
+}
+
+/** The placeholder figure around `plots`. */
+function mockFigureTex(req: FigureLatexRequest, plots: string[]): string {
   const [x0, x1] = req.portrait.xRange;
   const [y0, y1] = req.portrait.yRange;
   const axis = [
@@ -971,7 +1136,7 @@ export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<Fi
     "\\end{tikzpicture}",
   ];
   const preamble = "\\usepackage{pgfplots} \\pgfplotsset{compat=1.18}";
-  const tex = [
+  return [
     `% ${req.title}: figure`,
     PREVIEW_NOTE,
     `% Needs: ${preamble}`,
@@ -980,7 +1145,6 @@ export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<Fi
       : axis),
     "",
   ].join("\n");
-  return { tex, points, thinned: false, notes: [] };
 }
 
 export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
@@ -989,7 +1153,7 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
     throw `Expected one tag per trajectory (${req.portrait.trajectories.length}) but got ${req.tags.length}.`;
   }
   const dim = sys.states.length;
-  const res = await mockPortrait({ ...req.portrait, fixedPoints: false, fieldGrid: 0, nullclines: false });
+  const res = await portrait({ ...req.portrait, fixedPoints: false, fieldGrid: 0, nullclines: false, graphSamples: undefined });
   const ids = req.icIds.length ? req.icIds : [...new Set(req.tags.map((t) => t.icId))];
   const slug = (s: string) =>
     s
@@ -1023,6 +1187,7 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
       ic_id: id,
       system: { kind: sys.kind, input_format: req.format, lines: req.lines },
       columns: header,
+      ...(sys.kind === "map" ? { transient: Math.max(0, Math.round(req.portrait.transient ?? 0)) } : {}),
       note: "Browser preview: computed by the preview's own solver.",
     };
     files.push({ stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" });

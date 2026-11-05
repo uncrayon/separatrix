@@ -75,7 +75,7 @@ from the `project_read` and `project_write` commands.
 | `initial_conditions[]` | object | no | `id`, `x0` (one number per state; required), `t0` (default 0), `color` (palette index 0–6, default 0), `hidden` (default false). |
 | `views[]` | object | no | See below. |
 | `analyses` | array | no | Reserved: v1 keeps the entries verbatim. |
-| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end`, `samples` (0 = automatic). Every key has a default. |
+| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end` (for a map, the number of iterates N, shared by its time series and cobweb), `transient` (maps: iterates computed but not drawn before each orbit; absent = 0, written only when above 0, after `t_end`), `samples` (0 = automatic). Every key has a default. |
 | `export_settings` | any | no | The export dialog's options for this file; opaque to the format. |
 
 ### Views
@@ -83,10 +83,32 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` | Axes are stored by state name, never by index. |
+| `kind` | `"plane"` \| `"cobweb"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, after `id`. |
+| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` | Axes are stored by state name, never by index. `next` is the state one iterate later, `x_{n+1}`: only the `y_axis` of a cobweb view, whose `x_axis` is `{ "kind": "state" }` of the same state. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
+
+A cobweb view (Strogatz §10.1) of the logistic map:
+
+```json
+{
+  "id": "main",
+  "kind": "cobweb",
+  "x_axis": { "kind": "state", "name": "x" },
+  "y_axis": { "kind": "next", "name": "x" },
+  "x_range": [-0.05, 1.05],
+  "y_range": [-0.05, 1.05],
+  "…": "slice and layers as in any view"
+}
+```
+
+`kind` and `transient` are additive: a file without them reads exactly as before, a file
+saved from a plane view is byte for byte what this build wrote before cobwebs, and
+`format_version` and `min_reader_version` stay 1 (no migration step). An older 0.2.0 build that
+opens a cobweb file sees the axis kind `next` ("an axis kind this version doesn't know"),
+shows its default view and keeps `kind` and `transient` as unknown keys; it misreads nothing,
+so `min_reader_version` is not raised (the rule below).
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -157,7 +179,7 @@ number from 1 to 4294967295, a missing `system`, `system.lines` or `system.input
 other than `"latex"` or `"text"`, and values of the wrong JSON type. Every message names the
 file, says what is wrong and what to do. A whole number written as a float (`21.0`, `1e5`, as
 Python's `json` or a spreadsheet exporter writes it) is accepted where an integer belongs
-(`color`, `field_grid`, `max_steps`, `samples`, the versions) and saved as an integer.
+(`color`, `field_grid`, `max_steps`, `samples`, `transient`, the versions) and saved as an integer.
 
 Everything else is repaired on open, with one warning per repair:
 
@@ -168,6 +190,8 @@ Everything else is repaired on open, with one warning per repair:
 | `color` outside 0–6 | Taken mod 7. |
 | `x0` with the wrong number of values | Padded with 0 or truncated to `system.states` (only when `states` is present). |
 | `field_grid` outside 2–200 | Clamped. |
+| `transient` outside 0–1,000,000 | Clamped (a whole number written as a float, `200.0`, is accepted; `0` is dropped). |
+| A primary view of `kind` `"cobweb"` whose axes are not state `s` across and `next` `s` up, a `next` axis outside a cobweb, a kind this version doesn't know, or a cobweb for a system that is not a one-dimensional map (`states`, `system.kind`) | "The saved cobweb view doesn't fit this system, so the default view is shown." The app gives the same warning when the compiled system turns out not to be a one-dimensional autonomous map. The view is kept as written. |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |

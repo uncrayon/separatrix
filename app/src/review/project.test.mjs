@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_LAYERS,
@@ -30,6 +30,7 @@ import textLines from "../templates/templates.text.generated.json" with { type: 
 
 const FIXTURES = new URL("../../../crates/project/tests/fixtures/", import.meta.url);
 const fixture = (name) => JSON.parse(readFileSync(fileURLToPath(new URL(name, FIXTURES)), "utf8"));
+const existsFixture = (name) => existsSync(fileURLToPath(new URL(name, FIXTURES)));
 
 const st = (name, latex = name) => ({ name, latex, derived: false });
 
@@ -41,8 +42,9 @@ const st = (name, latex = name) => ({ name, latex, derived: false });
 function fakeCompile(t) {
   const map = t.equations.some((e) => e.includes("_{n+1}"));
   const named = [t.view.x, t.view.y].filter((n) => n !== "t" && n !== "n");
-  const dim = Math.max(named.length, ...t.initialConditions.map((x0) => x0.length), 1);
+  // A cobweb names its one state on both axes.
   const states = [...new Set(named)];
+  const dim = Math.max(states.length, ...t.initialConditions.map((x0) => x0.length), 1);
   while (states.length < dim) states.push(`q${states.length}`);
   return {
     ok: true,
@@ -385,7 +387,11 @@ test("a document that never had a file writes complete sections", () => {
     "solver",
   ]);
   assert.equal(out.system.kind, "map");
-  assert.deepEqual(out.views[0].x_axis, { kind: "time" });
+  // The logistic map opens as its cobweb: x_n across, x_{n+1} (the next iterate) up.
+  assert.deepEqual(Object.keys(out.views[0]).slice(0, 4), ["id", "kind", "x_axis", "y_axis"]);
+  assert.equal(out.views[0].kind, "cobweb");
+  assert.deepEqual(out.views[0].x_axis, { kind: "state", name: "x" });
+  assert.deepEqual(out.views[0].y_axis, { kind: "next", name: "x" });
   assert.equal(out.app_version, "0.2.0");
 });
 
@@ -460,4 +466,141 @@ test("platform: Cmd on macOS", () => {
   assert.equal(isMacPlatform({ platform: "Win32" }), false);
   assert.equal(isMacPlatform({ platform: "", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" }), true);
   assert.equal(isMacPlatform(undefined), false);
+});
+
+// --- cobweb views (docs/project-format.md: views[].kind, the "next" axis, solver.transient) ---
+
+const mapSys = (states = ["x"], autonomous = true) => ({
+  ok: true,
+  systemId: 1,
+  kind: "map",
+  hamiltonian: false,
+  autonomous,
+  states: states.map((n) => st(n)),
+  params: [{ name: "r", latex: "r", default: 3.2 }],
+  equationsLatex: [],
+  diagnostics: [],
+});
+
+function cobwebDoc() {
+  const t = templates.find((x) => x.id === "logistic-map");
+  const sys = mapSys();
+  const s = { ...templateState(t, "latex", sys), solver: { ...DEFAULT_SOLVER, tEnd: 60, transient: 200 } };
+  return { s, sys, doc: JSON.parse(JSON.stringify(projectFromState(s, { appVersion: "0.2.0" }))) };
+}
+
+test("a cobweb document writes kind after id, the next-iterate axis, and the transient after t_end", () => {
+  const { doc } = cobwebDoc();
+  const v = doc.views[0];
+  assert.deepEqual(Object.keys(v).slice(0, 4), ["id", "kind", "x_axis", "y_axis"]);
+  assert.equal(v.kind, "cobweb");
+  assert.deepEqual(v.x_axis, { kind: "state", name: "x" });
+  assert.deepEqual(v.y_axis, { kind: "next", name: "x" });
+  assert.deepEqual(v.x_range, [-0.05, 1.05]);
+  const keys = Object.keys(doc.solver);
+  assert.equal(doc.solver.transient, 200);
+  assert.equal(keys.indexOf("transient"), keys.indexOf("t_end") + 1);
+});
+
+test("a plane document is written as before: no kind, no transient", () => {
+  const doc = fixture("rabbits-vs-sheep.sepx");
+  const { state } = openFixture(doc);
+  const out = JSON.parse(JSON.stringify(projectFromState(state, { loaded: doc })));
+  assert.ok(!("kind" in out.views[0]));
+  assert.ok(!("transient" in out.solver));
+  assert.deepEqual(Object.keys(out.views[0]), Object.keys(doc.views[0]));
+  assert.deepEqual(Object.keys(out.solver), Object.keys(doc.solver));
+  // A view that was a cobweb and is now a time series drops kind and the next axis.
+  const { s, doc: cdoc } = cobwebDoc();
+  const series = { ...s, view: { xAxis: { kind: "time" }, yAxis: { kind: "state", index: 0 }, xRange: [0, 60], yRange: [0, 1] }, solver: { ...s.solver, transient: 0 } };
+  const back = projectFromState(series, { loaded: cdoc });
+  assert.ok(!("kind" in back.views[0]));
+  assert.deepEqual(back.views[0].y_axis, { kind: "state", name: "x" });
+  assert.deepEqual(back.views[0].x_axis, { kind: "time" });
+  assert.ok(!("transient" in back.solver));
+});
+
+test("a cobweb document reopens as the same cobweb, transient included, and saves again unchanged", () => {
+  const { s, sys, doc } = cobwebDoc();
+  const load = stateFromProject(doc);
+  assert.equal(load.view.kind, "cobweb");
+  assert.deepEqual(load.view.yAxis, { kind: "next", name: "x" });
+  assert.equal(load.solver.transient, 200);
+  const a = applyProjectLoad(load, sys, () => 1);
+  assert.deepEqual(a.warnings, []);
+  assert.deepEqual(a.view, s.view);
+  assert.equal(a.solver.transient, 200);
+  const again = projectFromState({ ...s, view: a.view, solver: a.solver }, { loaded: doc, appVersion: "0.2.0" });
+  assert.equal(JSON.stringify(again), JSON.stringify(doc));
+});
+
+test("the cobweb fixture (crates/project) opens as a cobweb", { skip: !existsFixture("cobweb.sepx") && "no fixture yet" }, () => {
+  const doc = fixture("cobweb.sepx");
+  const sys = mapSys(doc.system.states);
+  const a = applyProjectLoad(stateFromProject(doc), sys, () => 1);
+  assert.deepEqual(a.warnings, []);
+  assert.equal(a.view.kind, "cobweb");
+  assert.deepEqual(a.view.xAxis, { kind: "state", index: 0 });
+  assert.deepEqual(a.view.yAxis, { kind: "state", index: 0 });
+});
+
+test("a saved cobweb that doesn't fit the system, or an unknown kind, gives the default view with a notice", () => {
+  const { doc } = cobwebDoc();
+  const cases = [
+    { sys: mapSys(["x", "y"]), change: () => {} },
+    { sys: mapSys(["x"], false), change: () => {} },
+    { sys: { ...mapSys(), kind: "ode" }, change: () => {} },
+    // An older build re-saved it with time axes but kept `kind`.
+    { sys: mapSys(), change: (d) => (d.views[0].x_axis = { kind: "time" }) },
+    { sys: mapSys(), change: (d) => (d.views[0].y_axis = { kind: "state", name: "x" }) },
+    { sys: mapSys(), change: (d) => (d.views[0].y_axis = { kind: "next", name: "q" }) },
+    { sys: mapSys(), change: (d) => (d.views[0].kind = "bifurcation") },
+  ];
+  for (const c of cases) {
+    const d = structuredClone(doc);
+    c.change(d);
+    const a = applyProjectLoad(stateFromProject(d), c.sys, () => 1);
+    // The default view for the file's solver: a 1-D map's time series starts at its transient.
+    assert.deepEqual(a.view, defaultView(c.sys, a.solver));
+    if (c.sys.kind === "map" && c.sys.states.length === 1 && !c.sys.autonomous) {
+      assert.equal(a.solver.transient, 200);
+      assert.deepEqual(a.view.xRange, [200, 250], "n from the transient on");
+    }
+    assert.deepEqual(a.warnings, ["The saved cobweb view doesn't fit this system, so the default view is shown."]);
+  }
+  // A plane view naming the next-iterate axis gets the sentence project_read
+  // gives it (docs/project-format.md), so the banner says it once.
+  const d = structuredClone(doc);
+  delete d.views[0].kind;
+  const a = applyProjectLoad(stateFromProject(d), mapSys(), () => 1);
+  assert.deepEqual(a.view, defaultView(mapSys()));
+  assert.deepEqual(a.warnings, ["The saved cobweb view doesn't fit this system, so the default view is shown."]);
+  // A plane view of an axis the system lacks keeps the general sentence.
+  const e = structuredClone(doc);
+  delete e.views[0].kind;
+  e.views[0].x_axis = { kind: "state", name: "q" };
+  e.views[0].y_axis = { kind: "state", name: "x" };
+  const b = applyProjectLoad(stateFromProject(e), mapSys(), () => 1);
+  assert.deepEqual(b.warnings, ["The saved view doesn't fit this system, so the default view is shown."]);
+});
+
+test("the transient: a whole float is read as a whole number; out of range it is clamped", () => {
+  const { doc } = cobwebDoc();
+  for (const [saved, read] of [
+    [200.0, 200],
+    [12.4, 12],
+    [-3, 0],
+    [5e6, 1_000_000],
+  ]) {
+    const d = structuredClone(doc);
+    d.solver.transient = saved;
+    assert.equal(stateFromProject(d).solver.transient, read);
+  }
+  const d = structuredClone(doc);
+  delete d.solver.transient;
+  assert.equal(stateFromProject(d).solver.transient, undefined);
+  assert.equal(applyProjectLoad(stateFromProject(d), mapSys(), () => 1).solver.transient, 0);
+  // With N iterates after it, transient + N stays within the core's limit.
+  d.solver.transient = 1_000_000;
+  assert.equal(applyProjectLoad(stateFromProject(d), mapSys(), () => 1).solver.transient, 1_000_000 - 60);
 });

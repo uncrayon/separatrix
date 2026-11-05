@@ -22,6 +22,8 @@ export interface Template {
   params: Record<string, number>;
   paramRanges?: Record<string, [number, number]>;
   view: {
+    /** `cobweb` opens a 1-D map as its cobweb plot (`x` and `y` both name its state); absent, a plane view. */
+    kind?: "cobweb";
     x: string;
     y: string;
     xRange: [number, number];

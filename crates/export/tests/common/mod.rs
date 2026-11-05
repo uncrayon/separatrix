@@ -37,6 +37,10 @@ pub struct Template {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateView {
+    /// `"cobweb"` for a cobweb plot; absent for the phase plane and the
+    /// time series.
+    #[serde(default)]
+    pub kind: Option<String>,
     pub x: String,
     pub y: String,
     pub x_range: (f64, f64),
@@ -95,6 +99,12 @@ pub struct Options {
     pub backward: bool,
     /// The view's ranges as they are, instead of the template's (equalised).
     pub view: Option<((f64, f64), (f64, f64))>,
+    /// Other axes than the template's (and then not a cobweb): `("n", "x")`.
+    pub axes: Option<(&'static str, &'static str)>,
+    /// Map iterates computed but not drawn.
+    pub transient: usize,
+    /// Parameter values instead of the template's.
+    pub params: Vec<(&'static str, f64)>,
 }
 
 impl Default for Options {
@@ -107,6 +117,9 @@ impl Default for Options {
             t_end: None,
             backward: true,
             view: None,
+            axes: None,
+            transient: 0,
+            params: Vec::new(),
         }
     }
 }
@@ -138,12 +151,23 @@ pub fn case_of(t: Template, o: &Options) -> Case {
     let params: Vec<f64> = info
         .params
         .iter()
-        .map(|p| t.params.get(&p.name).copied().unwrap_or(p.default))
+        .map(|p| {
+            o.params
+                .iter()
+                .find(|(n, _)| *n == p.name)
+                .map(|&(_, v)| v)
+                .or_else(|| t.params.get(&p.name).copied())
+                .unwrap_or(p.default)
+        })
         .collect();
-    let x_axis = resolve_axis(&t.view.x, &names, kind);
-    let y_axis = resolve_axis(&t.view.y, &names, kind);
+    let (xa, ya) = o.axes.unwrap_or((&t.view.x, &t.view.y));
+    let x_axis = resolve_axis(xa, &names, kind);
+    let y_axis = resolve_axis(ya, &names, kind);
+    let cobweb =
+        o.axes.is_none() && t.view.kind.as_deref() == Some("cobweb") && kind == SystemKind::Map;
     let aspect = o.width_cm / o.height_cm;
-    let phase_plane = kind == SystemKind::Ode
+    // Equal scales in the phase plane and the cobweb (`displayRanges`).
+    let phase_plane = (kind == SystemKind::Ode || cobweb)
         && matches!(x_axis, Axis::State { .. })
         && matches!(y_axis, Axis::State { .. });
     let (x_range, y_range) = if let Some(v) = o.view {
@@ -246,7 +270,7 @@ pub fn case_of(t: Template, o: &Options) -> Case {
         };
         if is_map {
             let n = t_end.round() as usize;
-            let sol = dyn_solve::iterate_map(f, &params, x0, n, 0);
+            let sol = dyn_solve::iterate_map(f, &params, x0, n, o.transient);
             trajectories.push(Trajectory {
                 tag: tag(false),
                 x0: x0.clone(),
@@ -297,6 +321,16 @@ pub fn case_of(t: Template, o: &Options) -> Case {
         nullclines,
         fixed_points,
         trajectories,
+        cobweb,
+        // The export dialog's samples: clamp(2 · width px, 2048, 4096).
+        graph: if cobweb {
+            let px = o.width_cm * 96.0 / 2.54;
+            let samples = (2.0 * px).clamp(2048.0, 4096.0) as usize;
+            dyn_analysis::map_graph(f, &params, x_range, y_range, samples)
+        } else {
+            Vec::new()
+        },
+        transient: if is_map { o.transient } else { 0 },
     };
     let labels = Labels::from_info(info, &params);
     Case {

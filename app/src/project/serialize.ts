@@ -34,11 +34,23 @@ const METHOD_NAMES: Record<Method, string> = {
   dopri5: "Dormand–Prince 5(4)",
 };
 
-/** A saved axis, by name. `unknown` is a kind this version can't show (a v2 parameter axis). */
-export type LoadedAxis = { kind: "time" } | { kind: "state"; name: string } | { kind: "unknown"; kindName: string };
+/**
+ * A saved axis, by name. `next` is the state one iterate later (a cobweb's
+ * x_{n+1}); `unknown` is a kind this version can't show (a v2 parameter axis).
+ */
+export type LoadedAxis =
+  | { kind: "time" }
+  | { kind: "state"; name: string }
+  | { kind: "next"; name: string }
+  | { kind: "unknown"; kindName: string };
+
+/** The most transient iterates a file may ask for (validate.rs clamps to this too). */
+export const MAX_TRANSIENT = 1_000_000;
 
 export interface LoadedView {
   id: string;
+  /** The saved `kind`; absent for a plane view (phase plane or time series). */
+  kind?: string;
   xAxis: LoadedAxis;
   yAxis: LoadedAxis;
   /** Null when the saved range isn't finite with lo < hi. */
@@ -140,9 +152,10 @@ function uniqueIds(ids: string[]): string[] {
   });
 }
 
-function axisOut(prev: ProjectAxis | undefined, a: AxisRef, states: readonly string[]): ProjectAxis {
-  const fresh: ProjectAxis = a.kind === "time" ? { kind: "time" } : { kind: "state", name: states[a.index] };
-  if (fresh.kind === "state" && fresh.name === undefined) delete fresh.name;
+function axisOut(prev: ProjectAxis | undefined, a: AxisRef, states: readonly string[], next = false): ProjectAxis {
+  const fresh: ProjectAxis =
+    a.kind === "time" ? { kind: "time" } : { kind: next ? "next" : "state", name: states[a.index] };
+  if (fresh.kind !== "time" && fresh.name === undefined) delete fresh.name;
   // A sub-object whose kind changed is written fresh: no stale `name` on a time axis.
   if (!prev || prev.kind !== fresh.kind) return fresh;
   const out: ProjectAxis = { ...prev, ...fresh };
@@ -203,12 +216,15 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
 
     const lviews = loaded?.views ?? [];
     const at = primaryViewIndex(lviews);
-    const lv = at >= 0 ? lviews[at] : undefined;
+    const lv: ProjectView | undefined = at >= 0 ? lviews[at] : undefined;
+    // A cobweb's vertical axis is the state one iterate later, x_{n+1}.
+    const cobweb = s.view.kind === "cobweb";
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
+      ...(cobweb ? { kind: "cobweb" } : {}),
       x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
-      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states),
+      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, cobweb),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
       slice: {
@@ -225,9 +241,12 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
+    // A plane view has no `kind` (a file saved from one is byte-identical to before cobwebs).
+    if (!cobweb) delete primary.kind;
     views = at >= 0 ? lviews.map((v, k) => (k === at ? primary : v)) : [primary];
 
-    solver = {
+    const transient = Math.round(s.solver.transient ?? 0);
+    const sv: ProjectFile["solver"] = {
       ...loaded?.solver,
       method: s.solver.method,
       rtol: s.solver.rtol,
@@ -235,8 +254,12 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
       h: s.solver.h,
       max_steps: s.solver.maxSteps,
       t_end: s.solver.tEnd,
+      ...(transient > 0 ? { transient } : {}),
       samples: s.solver.samples,
     };
+    // Written only when some iterates are hidden.
+    if (!(transient > 0)) delete sv.transient;
+    solver = sv;
   }
 
   const out: ProjectFile & Obj = {
@@ -272,6 +295,7 @@ function loadAxis(a: unknown): LoadedAxis {
   const kind = isObj(a) ? str(a.kind) : undefined;
   if (kind === "time") return { kind: "time" };
   if (kind === "state" && isObj(a) && typeof a.name === "string") return { kind: "state", name: a.name };
+  if (kind === "next" && isObj(a) && typeof a.name === "string") return { kind: "next", name: a.name };
   return { kind: "unknown", kindName: kind ?? "" };
 }
 
@@ -279,6 +303,13 @@ function loadRange(r: unknown): [number, number] | null {
   if (!Array.isArray(r) || r.length !== 2) return null;
   const [lo, hi] = [num(r[0]), num(r[1])];
   return lo !== undefined && hi !== undefined && lo < hi ? [lo, hi] : null;
+}
+
+/** A saved transient: a whole number (a whole float such as 200.0 too) clamped to 0–{@link MAX_TRANSIENT}. */
+function wholeTransient(v: unknown): number | undefined {
+  const n = num(v);
+  if (n === undefined) return undefined;
+  return Math.min(MAX_TRANSIENT, Math.max(0, Math.round(n)));
 }
 
 function definedOnly<T extends Obj>(o: T): Partial<T> {
@@ -329,8 +360,10 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
       if (n !== undefined) slice[name] = n;
     }
     const layers: Obj = isObj(v.layers) ? v.layers : {};
+    const kind = str(v.kind);
     view = {
       id: str(v.id) || "main",
+      ...(kind !== undefined ? { kind } : {}),
       xAxis: loadAxis(v.x_axis),
       yAxis: loadAxis(v.y_axis),
       xRange: loadRange(v.x_range),
@@ -366,6 +399,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     maxSteps: num(sv.max_steps),
     tEnd: num(sv.t_end),
     samples: num(sv.samples),
+    transient: wholeTransient(sv.transient),
   }) as Partial<SolverSettings>;
 
   return {

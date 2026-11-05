@@ -1,10 +1,21 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AxisRef } from "../api/types";
 import { fitRanges } from "../canvas/viewport";
 import { Tex } from "../math/Tex";
-import { axisLabelLatex, axisLatex, latexToPlain, sameAxis } from "../math/format";
+import { MathProse } from "../math/MathProse";
+import { axisLatex, latexToPlain, sameAxis, viewAxisLabels } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { hasNullclineLayer, portraitFits } from "../state/model";
+import {
+  VIEW_CHOICES,
+  VIEW_CHOICE_LABELS,
+  hasNullclineLayer,
+  isCobweb,
+  portraitFits,
+  viewChoice,
+  viewChoiceAvailability,
+} from "../state/model";
+import { cobwebFit, orbitValues } from "../canvas/cobweb";
+import { systemNameOf } from "./systemName";
 import {
   IconCheck,
   IconChevronDown,
@@ -194,6 +205,9 @@ export function CanvasToolbar({ state, actions }: Props) {
         {TOOLS.map((t) =>
           button({
             ...t,
+            ...(t.key === "add" && isCobweb(state.view)
+              ? { label: "Add orbit", tip: "Add orbit (click the plot to start an orbit at that x₀)" }
+              : {}),
             tool: true,
             pressed: tool === t.key,
             onClick: () => setCanvasTool(t.key),
@@ -223,6 +237,18 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
   const sys = state.compiled;
   if (!sys) return null;
   const dim = sys.states.length;
+  if (isCobweb(state.view)) {
+    // The orbits and fixed points, as one square range on both axes (the diagonal stays at 45°).
+    const vs: number[] = [];
+    const p = state.portrait;
+    for (const ic of state.ics) if (ic.x0.length === dim && !ic.hidden) vs.push(ic.x0[0]);
+    if (portraitFits(sys, state.shapeId, p)) {
+      if (state.layers.fixedPoints) for (const fp of p.res.fixedPoints) vs.push(fp.x[0]);
+      for (const out of p.res.trajectories) vs.push(...orbitValues(out, dim, 0));
+    }
+    const r = cobwebFit(vs);
+    return r ? { xRange: r, yRange: [r[0], r[1]] } : null;
+  }
   const { xAxis, yAxis } = state.view;
   const xs: number[] = [];
   const ys: number[] = [];
@@ -299,17 +325,24 @@ function AxisPicker({
       hint: isMap ? "iterate" : "time",
     },
   ];
-  const xLatex = axisLabelLatex(state.view.xAxis, state.view.yAxis, sys.states, sys.kind);
-  const yLatex = axisLabelLatex(state.view.yAxis, state.view.xAxis, sys.states, sys.kind);
-  const xPlain = latexToPlain(axisLatex(state.view.xAxis, sys.states, sys.kind));
-  const yPlain = latexToPlain(axisLatex(state.view.yAxis, sys.states, sys.kind));
+  const cobweb = isCobweb(state.view);
+  const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
+  const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
+  // A cobweb's names spoken: "x n" and "x n+1".
+  const xPlain = cobweb ? `${plain(state.view.xAxis)} n` : plain(state.view.xAxis);
+  const yPlain = cobweb ? `${plain(state.view.yAxis)} n+1` : plain(state.view.yAxis);
+  const avail = viewChoiceAvailability(sys, systemNameOf(state));
+  const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
 
   useEffect(() => {
     if (!open) return;
     const all = menuItems(menuRef.current);
     const where = focusOnOpen.current;
-    const current = all.findIndex((el) => el.getAttribute("aria-checked") === "true");
+    // The current horizontal axis (the View group's choice in a cobweb, which has no axis groups).
+    const checked = (el: HTMLButtonElement) => el.getAttribute("aria-checked") === "true";
+    const onAxis = all.findIndex((el) => checked(el) && el.dataset.viewChoice === undefined);
+    const current = onAxis >= 0 ? onAxis : all.findIndex(checked);
     all[where === "first" ? 0 : where === "last" ? all.length - 1 : Math.max(0, current)]?.focus();
     const close = (e: PointerEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
@@ -357,6 +390,49 @@ function AxisPicker({
         setOpen(false);
         break;
     }
+  };
+
+  const viewGroup = () => {
+    const headId = `${menuId}-view`;
+    return (
+      <div role="group" aria-labelledby={headId} className="axes-menu-group">
+        <div className="axes-menu-head caption" id={headId}>
+          View
+        </div>
+        {VIEW_CHOICES.map((c) => {
+          const checked = c === current;
+          const a = avail[c];
+          return (
+            <Fragment key={c}>
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={checked}
+                aria-disabled={!a.ok || undefined}
+                aria-describedby={a.ok ? undefined : `${menuId}-why-${c}`}
+                tabIndex={-1}
+                className="axes-menu-item"
+                data-view-choice={c}
+                onClick={() => {
+                  if (!a.ok) return;
+                  actions.setViewKind(c);
+                  closeAndReturn();
+                }}
+              >
+                <span className="axes-menu-label">{VIEW_CHOICE_LABELS[c]}</span>
+                {checked && <IconCheck className="axes-menu-check" />}
+              </button>
+              {/* Why it can't be picked, under it (and read through aria-describedby). */}
+              {!a.ok && (
+                <p className="axes-menu-why caption" id={`${menuId}-why-${c}`}>
+                  <MathProse text={a.reason} />
+                </p>
+              )}
+            </Fragment>
+          );
+        })}
+      </div>
+    );
   };
 
   const group = (which: "x" | "y") => {
@@ -408,9 +484,13 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={`Axes: ${xPlain} horizontal, ${yPlain} vertical`}
-        data-tooltip="Choose the axes"
-        data-tooltip-desc="Each state, or time, on either axis."
+        aria-label={`${cobweb ? "Cobweb" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
+        data-tooltip={cobweb ? "Choose the view" : "Choose the view and axes"}
+        data-tooltip-desc={
+          cobweb
+            ? "Phase plane, time series or cobweb."
+            : "Phase plane, time series or cobweb; each state, or time, on either axis."
+        }
         tabIndex={tabIndex}
         onFocus={onFocus}
         onClick={() => (open ? setOpen(false) : openWith("current"))}
@@ -442,14 +522,20 @@ function AxisPicker({
         <div
           role="menu"
           id={menuId}
-          aria-label="Axes"
+          aria-label="View and axes"
           className="axes-menu"
           ref={menuRef}
           onKeyDown={onMenuKey}
         >
-          {group("x")}
-          <div role="separator" className="axes-menu-sep" />
-          {group("y")}
+          {viewGroup()}
+          {!cobweb && (
+            <>
+              <div role="separator" className="axes-menu-sep" />
+              {group("x")}
+              <div role="separator" className="axes-menu-sep" />
+              {group("y")}
+            </>
+          )}
         </div>
       )}
     </div>

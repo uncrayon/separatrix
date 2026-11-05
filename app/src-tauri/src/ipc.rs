@@ -240,6 +240,18 @@ pub struct PortraitRequest {
     pub solver: SolverOptions,
     /// Evenly spaced samples per ODE trajectory (0 = the raw solver steps).
     pub samples: usize,
+    /// Sample the graph `y = f(x)` of a one-dimensional autonomous map across
+    /// `x_range` (the cobweb view; both axes are then state 0). Absent = no
+    /// graph. Clamped to `2..=MAX_GRAPH_SAMPLES` (4096).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph_samples: Option<usize>,
+    /// Map iterates computed but not returned, before each orbit's `n`
+    /// iterates (maps only; ignored for flows). Absent = 0. Clamped so that
+    /// `transient + n <= MAX_ITERATES`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub transient: Option<usize>,
 }
 
 /// One arrow of the direction field.
@@ -325,6 +337,14 @@ pub struct PortraitResponse {
     pub fixed_points: Vec<FixedPointOut>,
     /// One entry per requested trajectory, in request order.
     pub trajectories: Vec<TrajectoryOut>,
+    /// The graph of `f` (cobweb view): present exactly when `graphSamples`
+    /// was sent. Polylines of `[x, f(x)]`, `x` strictly increasing inside
+    /// `xRange`, split at every gap (a non-finite value, a pole or a jump)
+    /// and clipped to the vertical range grown by its span on each side.
+    /// Empty when `f` is undefined or outside that band everywhere in view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub graph: Option<Vec<Vec<(f64, f64)>>>,
     /// Wall time spent in Rust, in milliseconds.
     pub elapsed_ms: f64,
 }
