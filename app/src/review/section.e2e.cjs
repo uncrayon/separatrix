@@ -172,3 +172,41 @@ test("a click starts an orbit on the section; the return map pairs crossings and
     await browser.close();
   }
 });
+
+test("export: a section's SVG is one dot per crossing, without field or nullcline options, and says crossings", async () => {
+  const { browser, page } = await open();
+  try {
+    await lorenzZ27(page);
+    await page.getByRole("button", { name: /^Export/ }).first().click();
+    await page.waitForSelector(".export-dialog[role=dialog]");
+    const d = page.locator(".export-dialog");
+    await d.getByRole("radio", { name: "SVG", exact: true }).click();
+    assert.equal(await d.getByRole("checkbox", { name: /direction field/ }).count(), 0);
+    assert.equal(await d.getByRole("checkbox", { name: /nullclines/ }).count(), 0);
+    assert.match(await d.getByText(/Include fixed points/).innerText(), /none: a Poincaré section shows only the crossings/);
+    assert.match(await page.locator(".ds-export-sub").innerText(), /^Lorenz equations, Poincaré section x–y, as you see it now$/);
+    await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled);
+    await page.waitForTimeout(800);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 1);
+    const { desc, dots } = await page.evaluate(() => {
+      const doc = new DOMParser().parseFromString(window.__sepxMock.saved[0].contents, "image/svg+xml");
+      const dots = {};
+      for (const p of doc.querySelectorAll("path[fill]")) {
+        const arcs = (p.getAttribute("d").match(/A/g) ?? []).length / 2;
+        if (arcs) dots[p.getAttribute("fill").toLowerCase()] = (dots[p.getAttribute("fill").toLowerCase()] ?? 0) + arcs;
+      }
+      for (const r of doc.querySelectorAll("rect[fill]")) {
+        const f = r.getAttribute("fill").toLowerCase();
+        if (f !== "#ffffff") dots[f] = (dots[f] ?? 0) + 1;
+      }
+      return { desc: doc.querySelector("svg > desc")?.textContent ?? null, dots };
+    });
+    const crossings = (await last(page)).res.trajectories.map((t) => t.t.length);
+    const total = crossings.reduce((a, b) => a + b, 0);
+    assert.match(desc, new RegExp(`^Lorenz equations with ${total.toLocaleString("en-US").replace(",", ",?")} crossings$`));
+    assert.deepEqual(Object.values(dots).sort((a, b) => a - b), [...crossings].sort((a, b) => a - b), "one dot per crossing, per orbit");
+  } finally {
+    await browser.close();
+  }
+});

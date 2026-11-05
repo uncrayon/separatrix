@@ -166,6 +166,26 @@ and glyph scale are 1, as on screen.
   With a transient `T > 0` the header says `% Transient: the first T iterates
   are not drawn.` The graph and the staircases are curves for the 5,000-point
   rule (simplified further, never thinned or rasterised).
+- Sections. A Poincaré section of a flow (the request's `section`, carried
+  into `Portrait::section`) draws each orbit's crossings with the map
+  iterates' dot and square rule, preceded by `% Section of <ic>`. No field,
+  nullclines, fixed points or arrow heads. Crossings are points: the export
+  portrait only cuts them, never simplifies them, and for the 5,000-point rule
+  they are rasterised (Save) or thinned (Copy) as map iterates are. With both
+  axes one state the figure is the return map: the pairs `(x_k, x_{k+1})` of
+  successive crossings under `% Return map of <ic>`, over the diagonal
+  `% Diagonal x_{k+1} = x_k` (drawn as a cobweb's), with the axis names
+  `x_{k}` and `x_{k+1}`. The header names the section and the skipped
+  crossings:
+
+  ```
+  % Section: plane z = 27 (increasing).
+  % Skipped crossings: the first 10 of each orbit are not drawn.
+  ```
+
+  A stroboscopic section reads `% Section: stroboscopic, period 6.283185307179586, phase 0.`
+  (the phase in absolute time, as the IPC has it). SVG and PNG draw the same
+  scene through `draw.ts` (one disc, or above 2,000 one square, per crossing).
 - Every curve is clipped (Liang–Barsky) to the view grown by two field cells
   (cells of 1/20 of the shorter side without a field) before it is written, so
   no coordinate reaches TeX's dimension limit; where a curve leaves and comes
@@ -202,7 +222,7 @@ and glyph scale are 1, as on screen.
   | `<base>-graph.dat` | `x y`, the graph of `f` in a cobweb |
   | `<base>-<icid>-cobweb.dat` | `x y`, an orbit's staircase |
   | `<base>-fixed-points.dat` | `x y glyph` (0 stable, 1 open, 2 half) |
-  | `<base>-points.png` | the map iterates' PNG layer (see below) |
+  | `<base>-points.png` | the map iterates' or crossings' PNG layer (see below) |
 
   `<base>` is a slug of the name the user saved (`latex_figure::file_base`).
 
@@ -211,7 +231,7 @@ and glyph scale are 1, as on screen.
 1. Count the data rows.
 2. Simplify the curves again at 0.5, then 1, then 2 px (the error stays within
    the sum of the tolerances) until the figure fits.
-3. Then the map iterates: Save draws them all into `<base>-points.png`
+3. Then the map iterates (or a section's crossings): Save draws them all into `<base>-points.png`
    (`raster.rs`, 300 dpi, transparent, discs or squares by the screen rule,
    `pHYs` set), included with `\addplot graphics[xmin=…,xmax=…,ymin=…,ymax=…]
    {\sepxdir <base>-points.png};` under vector axes. Copy keeps every k-th
@@ -260,6 +280,18 @@ A map's file also has `"transient": T` after `t0` (the iterates computed but
 not written; its first row is `n = T`), an additive key: the meta
 `format_version` stays 1. The time-series and cobweb views of one map export
 the same file: the staircase is a drawing of the orbit, not new data.
+
+Sections. In a Poincaré section view each row is a crossing (`t` and every
+state at the located crossing time), in increasing time, and the start point
+is not a row. The export dialog has no samples field for it. The metadata
+adds, after `t0`, `"section": "plane z = 27 (increasing)"` (or
+`"stroboscopic, period T, phase φ"`) and `"skipped_crossings": k`, the
+crossings computed but not written before the first row; both additive. A
+return map exports the same file as the section in two states. A plane
+crossing's held state is the plane's value to the event location's accuracy:
+Brent's method stops when the time bracket is within `1e-12·max(|t|, 1)`, so
+`|z − 27|` grows with `t` (up to about `3·10⁻⁸` on the Lorenz attractor by
+`t = 500`).
 
 `x0` is in `columns[1..]` order. `status` is the IPC name (`blewUp`, …).
 `stem` is `<title-slug>-trajectory-<k>`, k numbering the trajectories as the export

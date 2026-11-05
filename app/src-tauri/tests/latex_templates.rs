@@ -14,9 +14,10 @@ use separatrix_export::latex_figure::file_base;
 use separatrix_export::Placement;
 use separatrix_lib::export_service::{self, ExportCache};
 use separatrix_lib::ipc::{
-    AxisRef, CompileRequest, CompileResponse, ExportTheme, FigureLatexRequest,
-    FixedPointsLatexRequest, InputFormat, Method, Notation, PortraitRequest, Severity,
-    SolverOptions, SystemKind, SystemLatexRequest, TrajectoryRequest, TrajectoryTag,
+    AxisRef, CompileRequest, CompileResponse, CsvRequest, Direction, ExportTheme,
+    FigureLatexRequest, FixedPointsLatexRequest, InputFormat, Method, Notation, PortraitRequest,
+    SectionSpec, Severity, SolverOptions, SystemKind, SystemLatexRequest, TrajectoryRequest,
+    TrajectoryTag,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -352,6 +353,119 @@ fn every_template_exports_latex_that_compiles() {
             preamble(&snippets)
         );
         std::fs::write(dir.join("main.tex"), doc).unwrap();
+        pdflatex(&dir, "main.tex");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// The Lorenz template's section z = 27, crossed upward, through the export
+/// commands: the figure names it and compiles, and the CSV is its crossings.
+#[test]
+fn a_lorenz_section_exports_its_crossings() {
+    let templates: Vec<Template> = serde_json::from_str(TEMPLATES_JSON).expect("templates.json");
+    let t = templates.iter().find(|t| t.id == "lorenz").unwrap();
+    let store = SystemStore::new();
+    let res = service::compile_system(
+        &store,
+        &CompileRequest {
+            source: t.equations.join("\n"),
+            format: t.format,
+        },
+    );
+    let system = store.get(res.system_id.unwrap()).unwrap();
+    let (mut portrait, tags) = request(t, &res);
+    portrait.x_axis = AxisRef::State { index: 0 };
+    portrait.y_axis = AxisRef::State { index: 1 };
+    portrait.x_range = (-25.0, 25.0);
+    portrait.y_range = (-25.0, 25.0);
+    portrait.field_grid = 0;
+    portrait.nullclines = false;
+    portrait.fixed_points = false;
+    portrait.trajectories[0].t1 = 500.0;
+    portrait.section = Some(SectionSpec::Plane {
+        state: 2,
+        value: 27.0,
+        direction: Direction::Rising,
+    });
+    let csv = |transient: usize| {
+        let mut p = portrait.clone();
+        p.transient = Some(transient);
+        export_service::csv(
+            &system,
+            &CsvRequest {
+                portrait: p,
+                tags: tags.clone(),
+                ic_ids: vec![],
+                lines: t.equations.clone(),
+                format: t.format,
+                title: t.title.clone(),
+            },
+        )
+        .unwrap()
+        .files
+        .remove(0)
+    };
+    let rows = |csv: &str| -> Vec<Vec<f64>> {
+        csv.lines()
+            .skip(1)
+            .map(|l| l.split(',').map(|c| c.parse().unwrap()).collect())
+            .collect()
+    };
+    let skipped = csv(10);
+    let all = rows(&csv(0).csv);
+    let kept = rows(&skipped.csv);
+    assert!(skipped.csv.starts_with("t,x,y,z\n"));
+    assert!(kept.len() > 300, "{} crossings", kept.len());
+    let worst = kept.iter().map(|r| (r[3] - 27.0).abs()).fold(0.0, f64::max);
+    eprintln!(
+        "lorenz section: {} crossings, max |z - 27| = {worst:e}",
+        kept.len()
+    );
+    assert!(
+        worst < 1e-6,
+        "every crossing is on the plane within rtol: {worst:e}"
+    );
+    assert_eq!(kept[0], all[10], "the first row is the eleventh crossing");
+    assert_eq!(kept.len() + 10, all.len());
+    assert!(
+        kept.iter().any(|r| r[1] > 0.0) && kept.iter().any(|r| r[1] < 0.0),
+        "both wings"
+    );
+    let meta: serde_json::Value = serde_json::from_str(&skipped.meta).unwrap();
+    assert_eq!(meta["section"], "plane z = 27 (increasing)");
+    assert_eq!(meta["skipped_crossings"], 10);
+
+    portrait.transient = Some(10);
+    let cache = ExportCache::new();
+    let fig = FigureLatexRequest {
+        portrait,
+        tags,
+        width_cm: 8.0,
+        height_cm: 8.0,
+        theme: ExportTheme::Light,
+        title: t.title.clone(),
+        source_ref: t.chapter.clone(),
+        lines: t.equations.clone(),
+        format: t.format,
+        standalone: true,
+    };
+    let out = export_service::figure_latex(&cache, &system, &fig, Placement::Inline).unwrap();
+    for want in [
+        "% Section: plane z = 27 (increasing).\n",
+        "% Skipped crossings: the first 10 of each orbit are not drawn.\n",
+        "% Section of ic-1\n\\addplot[sepxtraj1, only marks, mark=*, mark size=0.975bp",
+    ] {
+        assert!(out.tex.contains(want), "no {want:?} in\n{}", out.tex);
+    }
+    // Every crossing in view is a dot: none is simplified away.
+    let shown = kept
+        .iter()
+        .filter(|r| r[1].abs() <= 25.0 && r[2].abs() <= 25.0)
+        .count();
+    assert_eq!(out.points, shown);
+    if have_pdflatex() {
+        let dir = scratch("lorenz-section");
+        std::fs::write(dir.join("main.tex"), &out.tex).unwrap();
         pdflatex(&dir, "main.tex");
         let _ = std::fs::remove_dir_all(&dir);
     }

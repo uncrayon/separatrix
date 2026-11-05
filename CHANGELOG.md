@@ -26,6 +26,14 @@ All notable changes to this project are documented in this file.
   k skipped". A click on a plane section starts an orbit on the plane (its state is the plane's
   value); a stroboscopic one starts at `t₀ = φ`. Project files save the view as `kind: "section"`
   with a `section` object (additive; the format stays at version 1).
+- Exports of a section view: CSV writes each orbit's crossings (`t` and every state), and its
+  metadata adds `"section": "plane z = 27 (increasing)"` (or `"stroboscopic, period T, phase φ"`)
+  and `"skipped_crossings"`. The LaTeX figure draws the crossings as dots by the map rule
+  (`% Section of <ic>`; rasterised or thinned past 5,000 points), a return map as pairs over the
+  diagonal (`% Return map of <ic>`, axis names `x_{k}` and `x_{k+1}`), and names the section and
+  the skipped crossings in its header. SVG and PNG draw the section as the screen does. The
+  dialog hides the field and nullcline options, says why there are no fixed points, and counts
+  crossings.
 - Poincaré sections in the core (Strogatz §8.7): `dyn_solve::section` returns the crossings of a
   hyperplane `x_i = c` (rising, falling or both, located by Brent's method on the dense output) or
   the stroboscopic samples `t_k = t0 + phase + k·T` of a periodically forced flow, skipping a

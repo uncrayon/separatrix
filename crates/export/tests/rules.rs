@@ -8,8 +8,8 @@ use dyn_expr::InputFormat;
 use separatrix_export::csv::{self, CsvInput};
 use separatrix_export::latex_figure::{figure, FigureInput, Placement, MAX_POINTS};
 use separatrix_export::{
-    Arrow, Axis, Classification, FixedPoint, Labels, ParamValue, Portrait, StateName, Status,
-    SystemKind, Theme, Trajectory, TrajectoryTag,
+    Arrow, Axis, Classification, Direction, FixedPoint, Labels, ParamValue, Portrait, SectionSpec,
+    StateName, Status, SystemKind, Theme, Trajectory, TrajectoryTag,
 };
 
 fn labels(names: &[&str]) -> Labels {
@@ -60,6 +60,7 @@ fn plane(trajectories: Vec<Trajectory>) -> Portrait {
         cobweb: false,
         graph: vec![],
         transient: 0,
+        section: None,
     }
 }
 
@@ -76,6 +77,7 @@ fn csv_of(trs: &[Trajectory], names: &[&str]) -> Vec<csv::CsvFile> {
         title: "Test: CSV",
         app_version: "0.2.0",
         transient: 0,
+        section: None,
     })
 }
 
@@ -375,6 +377,7 @@ fn cobweb(orbit: &[f64], status: Status) -> Portrait {
             })
             .collect()],
         transient: 0,
+        section: None,
     }
 }
 
@@ -490,4 +493,117 @@ fn a_transient_is_named_in_the_header() {
         .contains("% Transient: the first 200 iterates are not drawn.\n"));
     p.transient = 0;
     assert!(!cobweb_figure(&p).tex.contains("Transient"));
+}
+
+/// A plane section y = 0 (decreasing) whose orbit crosses at `xs`.
+fn section_of(xs: &[f64], return_map: bool) -> Portrait {
+    let n = xs.len();
+    let mut p = plane(vec![run(
+        "ic-1",
+        false,
+        (0..n).map(|k| k as f64).collect(),
+        xs.iter().flat_map(|&x| [x, 0.0]).collect(),
+        Status::Completed,
+    )]);
+    p.x_range = (0.0, 10.0);
+    p.y_range = if return_map { (0.0, 10.0) } else { (-1.0, 1.0) };
+    if return_map {
+        p.y_axis = Axis::State { index: 0 };
+    }
+    p.section = Some(SectionSpec::Plane {
+        state: 1,
+        value: 0.0,
+        direction: Direction::Falling,
+    });
+    p
+}
+
+#[test]
+fn a_return_map_plots_successive_crossings_over_the_diagonal() {
+    let out = figure_of(&section_of(&[1.0, 2.0, 4.0, 8.0], true), Placement::Inline);
+    let tex = &out.tex;
+    assert!(
+        tex.contains("% Section: plane y = 0 (decreasing).\n"),
+        "{tex}"
+    );
+    assert!(
+        tex.contains("% Diagonal x_{k+1} = x_k\n\\addplot[sepxaxis"),
+        "{tex}"
+    );
+    assert!(
+        tex.contains("{$x_{k}$}") && tex.contains("{$x_{k+1}$}"),
+        "{tex}"
+    );
+    let rest = &tex[tex
+        .find("% Return map of ic-1\n")
+        .expect("a return map comment")..];
+    let body = &rest[rest.find("]{\n").unwrap() + 3..];
+    let rows: Vec<&str> = body[..body.find('}').unwrap()].lines().skip(1).collect();
+    assert_eq!(rows, ["1 2\\\\", "2 4\\\\", "4 8\\\\"]);
+    assert!(!tex.contains("Skipped crossings"), "none skipped");
+
+    let plain = figure_of(&section_of(&[1.0, 2.0, 4.0, 8.0], false), Placement::Inline);
+    assert!(plain.tex.contains("% Section of ic-1\n"));
+    assert!(!plain.tex.contains("% Diagonal") && !plain.tex.contains("\\fill[sepxtraj3]"));
+}
+
+#[test]
+fn many_crossings_are_rasterised_or_thinned_like_map_iterates() {
+    let xs: Vec<f64> = (0..6000).map(|k| f64::from(k) / 600.0).collect();
+    let p = section_of(&xs, false);
+    let inline = figure_of(&p, Placement::Inline);
+    assert!(inline.thinned && inline.points <= MAX_POINTS);
+    assert!(inline.tex.contains("mark=square*"), "squares above 2,000");
+    assert!(
+        inline.tex.contains("% One crossing in 2 is kept"),
+        "{}",
+        inline.tex
+    );
+    assert!(inline
+        .tex
+        .contains("% Thinned: some crossings were left out"));
+    let saved = figure_of(
+        &p,
+        Placement::External {
+            base: "section".into(),
+        },
+    );
+    assert!(!saved.thinned);
+    assert!(saved.files.iter().any(|f| f.name == "section-points.png"));
+    assert!(saved
+        .tex
+        .contains("% The crossings (6000 points) are drawn as a 300-dpi PNG layer"));
+}
+
+#[test]
+fn a_stroboscopic_section_is_named_in_the_csv_metadata() {
+    let tr = run(
+        "ic-1",
+        false,
+        vec![0.5, 6.5],
+        vec![1.0, 2.0, 3.0, 4.0],
+        Status::Completed,
+    );
+    let l = labels(&["x", "y"]);
+    let lines = vec!["\\dot{x}=y".to_string()];
+    let files = csv::files(&CsvInput {
+        kind: SystemKind::Ode,
+        labels: &l,
+        trajectories: &[tr],
+        ic_ids: &[],
+        lines: &lines,
+        format: InputFormat::Latex,
+        title: "Forced",
+        app_version: "0.2.0",
+        transient: 3,
+        section: Some(SectionSpec::Stroboscopic {
+            period: 6.0,
+            phase: 0.5,
+        }),
+    });
+    assert_eq!(files[0].csv, "t,x,y\n0.5,1,2\n6.5,3,4\n");
+    let meta: serde_json::Value = serde_json::from_str(&files[0].meta).unwrap();
+    assert_eq!(meta["section"], "stroboscopic, period 6, phase 0.5");
+    assert_eq!(meta["skipped_crossings"], 3);
+    assert!(meta.get("transient").is_none());
 }

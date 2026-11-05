@@ -663,6 +663,51 @@ test("exportScene: no selection, hover, handles, eigenvectors or fade", () => {
   assert.deepEqual(scene.trajectories.map((t) => t.color), [2, 2, 4, 4]);
 });
 
+test("a section's export: crossings as dots, one SVG circle per crossing, a return map pairs them over the diagonal", () => {
+  const plane = { kind: "plane", state: 1, value: 0, direction: "falling" };
+  const view = (yIndex) => ({
+    kind: "section",
+    section: plane,
+    xAxis: { kind: "state", index: 0 },
+    yAxis: { kind: "state", index: yIndex },
+    xRange: [0, 10],
+    yRange: [0, 10],
+  });
+  const all = { field: true, nullclines: true, fixedPoints: true };
+  const crossings = (xs) => ({ t: xs.map((_, k) => k), x: xs.flatMap((v) => [v, 0]), status: "completed" });
+  const svgOf = (yIndex, xs) => {
+    const s = snapshot({ view: view(yIndex), ics: [{ id: 1, x0: [5, 0], t0: 0, color: 2 }], solver: { ...DEFAULT_SOLVER, transient: 3 } });
+    const job = buildFigureJob(s, { widthPx: 400, heightPx: 400 }, all);
+    const res = { requestId: 0, arrows: [], nullclines: [], fixedPoints: [], trajectories: [crossings(xs)], stats: {} };
+    const scene = exportScene(job, res, s.ics);
+    const svg = figureSvg({ widthPx: 400, heightPx: 400, xRange: job.portrait.xRange, yRange: job.portrait.yRange, scene, theme: light, names: { x: "x", y: "y" }, transparent: false }, measure);
+    return { job, scene, svg };
+  };
+  const dotsIn = (svg) => {
+    const fill = light.traj[2];
+    const paths = [...svg.matchAll(new RegExp(`<path d="([^"]*)" fill="${fill}"`, "g"))].map((m) => m[1]);
+    const rects = [...svg.matchAll(new RegExp(`<rect [^>]*fill="${fill}"`, "g"))].length;
+    return paths.reduce((n, d) => n + (d.match(/A/g) ?? []).length / 2, 0) + rects;
+  };
+
+  const ret = svgOf(0, [1, 2, 4, 8]);
+  assert.deepEqual(ret.job.section, { returnMap: true });
+  assert.deepEqual(ret.job.portrait.section, plane);
+  assert.equal(ret.job.portrait.transient, 3, "skipped crossings ride along");
+  assert.equal(ret.job.portrait.fieldGrid, 0, "no field on a section");
+  assert.equal(ret.job.portrait.nullclines, false);
+  assert.equal(ret.job.portrait.fixedPoints, false);
+  assert.deepEqual(ret.scene.section, { returnMap: true });
+  assert.equal(dotsIn(ret.svg), 3, "pairs (1,2), (2,4), (4,8)");
+  assertWellFormedXml(ret.svg);
+
+  const sec = svgOf(1, [1, 2, 4, 8]);
+  assert.deepEqual(sec.scene.section, { returnMap: false });
+  assert.equal(dotsIn(sec.svg), 4, "one dot per crossing");
+  const many = svgOf(1, Array.from({ length: 2500 }, (_, k) => k / 250));
+  assert.equal(dotsIn(many.svg), 2500, "squares above 2,000, one each");
+});
+
 test("buildCsvRequest: the screen's runs, the CSV's own samples, the chosen initial conditions", () => {
   const req = buildCsvRequest(snapshot(), { icIds: ["ic-from-file", "gone"], samples: 1234 }, { lines: ["a"], format: "latex", title: "T" });
   assert.equal(req.portrait.samples, 1234);

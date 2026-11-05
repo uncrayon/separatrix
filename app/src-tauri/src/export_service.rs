@@ -21,7 +21,7 @@ use separatrix_export::{
 use crate::ipc::{
     AxisRef, CsvFileOut, CsvRequest, CsvResponse, ExportPortraitRequest, ExportTheme,
     FigureLatexRequest, FixedPointsLatexRequest, Notation, PortraitRequest, PortraitResponse,
-    SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
+    SectionSpec, SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
 };
 use crate::service;
 
@@ -77,8 +77,9 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
 
 /// `compute_export_portrait`: [`service::compute_portrait`], then every
 /// curve cut at its first non-finite point and simplified with RDP at
-/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates are only cut;
-/// the graph of a cobweb's `f` is simplified like the nullclines).
+/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates and a section's
+/// crossings are only cut; the graph of a cobweb's `f` is simplified like
+/// the nullclines).
 /// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
@@ -121,10 +122,16 @@ pub fn export_portrait(
     for line in out.graph.iter_mut().flatten() {
         *line = simplify_polyline(&vp, line, GRAPH_TOLERANCE_PX);
     }
+    // A section's crossings are points, as a map's iterates are.
+    let kind = if req.portrait.section.is_some() {
+        SystemKind::Map
+    } else {
+        f.kind()
+    };
     for tr in &mut out.trajectories {
         let (t, x) = simplify_run(
             &vp,
-            f.kind(),
+            kind,
             to_axis(req.portrait.x_axis),
             to_axis(req.portrait.y_axis),
             f.dim(),
@@ -216,10 +223,30 @@ pub fn to_export_portrait(
             req.transient
                 .unwrap_or(0)
                 .min(service::MAX_ITERATES.saturating_sub(max_iterates(req)))
+        } else if req.section.is_some() {
+            req.transient.unwrap_or(0)
         } else {
             0
         },
+        section: req.section.filter(|_| !is_map).map(to_section),
     })
+}
+
+fn to_section(s: SectionSpec) -> separatrix_export::SectionSpec {
+    match s {
+        SectionSpec::Plane {
+            state,
+            value,
+            direction,
+        } => separatrix_export::SectionSpec::Plane {
+            state,
+            value,
+            direction,
+        },
+        SectionSpec::Stroboscopic { period, phase } => {
+            separatrix_export::SectionSpec::Stroboscopic { period, phase }
+        }
+    }
 }
 
 /// The largest iterate count requested, as `service::trajectory` rounds it.
@@ -370,6 +397,7 @@ pub fn csv(system: &CompiledSystem, req: &CsvRequest) -> Result<CsvResponse, Str
         title: &req.title,
         app_version: APP_VERSION,
         transient: portrait.transient,
+        section: portrait.section,
     });
     Ok(CsvResponse {
         files: files

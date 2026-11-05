@@ -24,6 +24,8 @@ import {
   MAX_GRAPH_SAMPLES,
   buildPortraitJob,
   isCobweb,
+  isReturnMap,
+  isSection,
   portraitGraph,
   type InitialCondition,
   type MapRequestFields,
@@ -71,6 +73,8 @@ export interface FigureJob {
   dim: number;
   /** A cobweb plot: the graph of f, the diagonal and the staircases. */
   cobweb: boolean;
+  /** A Poincaré section: each run is its crossings, drawn as dots (a return map pairs them over the diagonal). */
+  section: { returnMap: boolean } | null;
 }
 
 /** The figure's portrait at `widthPx` × `heightPx` with `layers`, or null without a compiled system. */
@@ -104,6 +108,7 @@ export function buildFigureJob(
     kind: sys.kind === "map" ? "map" : "ode",
     dim: sys.states.length,
     cobweb,
+    section: isSection(s.view) ? { returnMap: isReturnMap(s.view) } : null,
   };
 }
 
@@ -140,6 +145,7 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
     stale: false,
     avoid: { labels: [], field: [] },
     cobweb: job.cobweb ? { graph: portraitGraph(res) ?? [] } : null,
+    section: job.section,
   };
 }
 
