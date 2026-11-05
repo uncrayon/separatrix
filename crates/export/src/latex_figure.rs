@@ -780,7 +780,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         for a in &p.arrows {
             let dx = a.u * sxu;
             let dy = -a.v * syu;
-            let m = dx.hypot(dy);
+            let m = crate::geom::len(dx, dy);
             if !m.is_finite() || m < 1e-12 {
                 continue;
             }

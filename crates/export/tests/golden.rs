@@ -38,6 +38,11 @@ fn check(name: &str, text: &str) {
         )
     });
     if want != text {
+        assert!(
+            want.replace("\r\n", "\n") != text.replace("\r\n", "\n"),
+            "{name} matches the golden except for line endings: the golden was checked out \
+             with CRLF; .gitattributes must keep it LF"
+        );
         let line = want
             .lines()
             .zip(text.lines())

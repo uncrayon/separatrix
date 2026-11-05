@@ -91,7 +91,7 @@ pub fn place(
     for k in 1..n {
         let (x, y) = pts[k];
         if x >= vp.left && x <= right && y >= vp.top && y <= bottom {
-            total += (x - pts[k - 1].0).hypot(y - pts[k - 1].1);
+            total += crate::geom::len(x - pts[k - 1].0, y - pts[k - 1].1);
         }
         acc[k] = total;
     }
@@ -163,12 +163,12 @@ pub fn place(
             continue;
         }
         let mut j = k - 1;
-        while j > 0 && (x - pts[j].0).hypot(y - pts[j].1) < 1.0 {
+        while j > 0 && crate::geom::len(x - pts[j].0, y - pts[j].1) < 1.0 {
             j -= 1;
         }
         let dx = x - pts[j].0;
         let dy = y - pts[j].1;
-        let m = dx.hypot(dy);
+        let m = crate::geom::len(dx, dy);
         if m == 0.0 {
             continue;
         }

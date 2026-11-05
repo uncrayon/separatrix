@@ -83,7 +83,7 @@ pub fn render_rgba(w: f64, h: f64, dpi: f64, layers: &[Dots]) -> (Vec<u8>, u32, 
                         let oy = ((cy + r).min(fy + 0.5) - (cy - r).max(fy - 0.5)).max(0.0);
                         ox * oy
                     } else {
-                        let d = (fx - cx).hypot(fy - cy);
+                        let d = crate::geom::len(fx - cx, fy - cy);
                         (r + 0.5 - d).clamp(0.0, 1.0)
                     };
                     let i = (py as usize * iw as usize + px as usize) * 4;

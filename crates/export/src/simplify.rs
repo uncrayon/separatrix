@@ -35,7 +35,7 @@ fn segment_distance(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
     } else {
         0.0
     };
-    (p.0 - a.0 - t * dx).hypot(p.1 - a.1 - t * dy)
+    crate::geom::len(p.0 - a.0 - t * dx, p.1 - a.1 - t * dy)
 }
 
 /// Indices of the points Ramer–Douglas–Peucker keeps at tolerance `tol`

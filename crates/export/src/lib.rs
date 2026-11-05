@@ -24,6 +24,7 @@
 pub mod clip;
 pub mod cobweb;
 pub mod csv;
+mod geom;
 pub mod heads;
 pub mod latex_figure;
 pub mod latex_fixed_points;
