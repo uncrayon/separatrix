@@ -24,6 +24,7 @@ pub struct Event {
 /// "Rising" means `g` goes from negative to non-negative *in the direction
 /// of integration* (so, backwards in time when integrating backwards).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum Direction {
     /// `g` goes from `< 0` to `>= 0`.

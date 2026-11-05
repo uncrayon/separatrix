@@ -532,6 +532,7 @@ mod tests {
             samples: 4000,
             graph_samples: None,
             transient: None,
+            section: None,
         }
     }
 

@@ -24,6 +24,8 @@ rejected: number,
  */
 evals: number, };
 
+export type Direction = "rising" | "falling" | "both";
+
 export type Classification = "saddle" | "stable node" | "unstable node" | "stable spiral" | "unstable spiral" | "center" | "stable star" | "unstable star" | "stable degenerate node" | "unstable degenerate node" | "non-isolated" | "sink" | "source" | "saddle (n-D)" | "non-hyperbolic";
 
 export type CompileRequest = { 
@@ -276,11 +278,41 @@ samples: number,
  */
 graphSamples?: number, 
 /**
- * Map iterates computed but not returned, before each orbit's `n`
- * iterates (maps only; ignored for flows). Absent = 0. Clamped so that
- * `transient + n <= MAX_ITERATES`.
+ * Iterates computed but not returned at the start of each orbit:
+ * map iterates before the orbit's `n` (clamped so that
+ * `transient + n <= MAX_ITERATES`), or, for a flow with a `section`,
+ * crossings of the section (iterates of the Poincaré map). Ignored for
+ * a flow without one. Absent = 0.
  */
-transient?: number, };
+transient?: number, 
+/**
+ * A Poincaré section of a flow: each trajectory in the response is then
+ * the orbit's crossings of it (at most `MAX_SECTION_POINTS` after the
+ * transient), not its samples. Absent = whole trajectories.
+ */
+section?: SectionSpec, };
+
+export type SectionSpec = { "kind": "plane", 
+/**
+ * Index of the state held fixed.
+ */
+state: number, 
+/**
+ * Where the plane cuts that state's axis.
+ */
+value: number, 
+/**
+ * Which crossings count.
+ */
+direction: Direction, } | { "kind": "stroboscopic", 
+/**
+ * Forcing period, `> 0`.
+ */
+period: number, 
+/**
+ * Offset of the first sample from `t0`.
+ */
+phase: number, };
 
 export type Arrow = { 
 /**

@@ -153,6 +153,7 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
         // The export dialog's graph: clamp(2 · width px, 2048, 4096).
         graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
         transient: None,
+        section: None,
     };
     (req, tags)
 }

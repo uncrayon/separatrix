@@ -15,8 +15,15 @@ All notable changes to this project are documented in this file.
   view's `kind` and the solver's `transient` (additive keys; the format stays at version 1).
 - Strogatz validation suite (`scripts/strogatz-gate.sh`): checks the chapter 2–8 templates
   against the book's own results (fixed points and their classification, the saddle-node at
-  `r = 0`, the Sel'kov Hopf values `b = √0.12` and `√0.72`, pendulum energy drift) and that every
-  template's section is in the 2nd edition's table of contents.
+  `r = 0`, the Sel'kov Hopf values `b = √0.12` and `√0.72`, pendulum energy drift, the Van der Pol
+  limit cycle's period `T ≈ 6.66329` and amplitude `max x ≈ 2.00862` at `μ = 1`, measured on a
+  Poincaré section) and that every template's section is in the 2nd edition's table of contents.
+- Poincaré sections in the core (Strogatz §8.7): `dyn_solve::section` returns the crossings of a
+  hyperplane `x_i = c` (rising, falling or both, located by Brent's method on the dense output) or
+  the stroboscopic samples `t_k = t0 + phase + k·T` of a periodically forced flow, skipping a
+  transient of crossings. `compute_portrait` takes an optional `section` and then returns each
+  flow trajectory as its crossings; `transient` counts the skipped ones. The studio's section view
+  builds on this.
 
 ### Changed
 - Rewrite as a cross-platform desktop app (Tauri 2 + Rust core). No Python, no server.

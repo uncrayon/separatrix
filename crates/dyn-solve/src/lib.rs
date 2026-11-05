@@ -8,6 +8,8 @@
 //! * [`integrate_with_events`] does the same and also reports when given
 //!   functions `g(t, x)` cross zero (used for Poincaré sections, turning
 //!   points, ...).
+//! * [`section()`] returns only the points where a flow meets a Poincaré
+//!   section: a hyperplane `x_i = c`, or the stroboscopic times `t mod T`.
 //! * [`iterate_map`] iterates `x_{n+1} = f(n, x_n; p)`.
 //! * [`Stepper`] is the building block underneath: it advances the solution
 //!   one step at a time and can interpolate inside the last step. Use it
@@ -40,10 +42,12 @@ use serde::{Deserialize, Serialize};
 mod events;
 mod map;
 mod sampling;
+mod section;
 mod stepper;
 
 pub use events::{Direction, Event, EventFn, EventHit};
 pub use map::iterate_map;
+pub use section::{section, Section};
 pub use stepper::{StepOutcome, Stepper};
 
 use events::EventTracker;

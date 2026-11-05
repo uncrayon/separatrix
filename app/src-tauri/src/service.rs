@@ -10,7 +10,7 @@ use dyn_solve::Sampling;
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
     ConvertedLineOut, Diagnostic, FixedPointOut, NullclineOut, ParamInfo, PortraitRequest,
-    PortraitResponse, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
+    PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -20,6 +20,7 @@ pub const NULLCLINE_CELLS_PER_SIDE: usize = 160;
 pub const MAX_FIELD_GRID: usize = 200;
 pub const MAX_SAMPLES: usize = 200_000;
 pub const MAX_ITERATES: usize = 1_000_000;
+pub const MAX_SECTION_POINTS: usize = 100_000;
 
 #[derive(Default)]
 pub struct SystemStore {
@@ -259,6 +260,9 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
     if req.graph_samples.is_some() {
         cobweb_fits(f, req.x_axis)?;
     }
+    if let Some(section) = &req.section {
+        section_fits(f, section)?;
+    }
     for (k, tr) in req.trajectories.iter().enumerate() {
         if tr.x0.len() != dim {
             return Err(format!(
@@ -293,6 +297,52 @@ fn cobweb_fits(f: &dyn VectorField, x_axis: AxisRef) -> Result<(), String> {
         return Err("The cobweb view needs x_n on the horizontal axis.".into());
     }
     Ok(())
+}
+
+fn section_fits(f: &dyn VectorField, section: &SectionSpec) -> Result<(), String> {
+    if f.kind() == SystemKind::Map {
+        return Err("A Poincaré section needs a flow; this system is a map.".into());
+    }
+    match *section {
+        SectionSpec::Plane { state, value, .. } => {
+            let dim = f.dim();
+            if state >= dim {
+                let states = if dim == 1 { "state" } else { "states" };
+                return Err(format!(
+                    "The section's state is out of range: this system has {dim} {states}."
+                ));
+            }
+            if !value.is_finite() {
+                return Err("The section's value must be a finite number.".into());
+            }
+        }
+        SectionSpec::Stroboscopic { period, phase } => {
+            if !(period > 0.0 && period.is_finite()) {
+                return Err("The stroboscopic period must be a positive number.".into());
+            }
+            if !phase.is_finite() {
+                return Err("The stroboscopic phase must be a finite number.".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn to_section(spec: SectionSpec) -> dyn_solve::Section {
+    match spec {
+        SectionSpec::Plane {
+            state,
+            value,
+            direction,
+        } => dyn_solve::Section::Plane {
+            state,
+            value,
+            direction,
+        },
+        SectionSpec::Stroboscopic { period, phase } => {
+            dyn_solve::Section::Stroboscopic { period, phase }
+        }
+    }
 }
 
 fn to_axis(a: AxisRef) -> Axis {
@@ -394,6 +444,18 @@ fn trajectory(
         };
         let transient = req.transient.unwrap_or(0).min(MAX_ITERATES - n);
         dyn_solve::iterate_map(f, p, &tr.x0, n, transient)
+    } else if let Some(spec) = req.section {
+        dyn_solve::section(
+            f,
+            p,
+            tr.t0,
+            &tr.x0,
+            tr.t1,
+            &to_solver(&req.solver),
+            &to_section(spec),
+            req.transient.unwrap_or(0),
+            MAX_SECTION_POINTS,
+        )
     } else {
         let opts = to_solver(&req.solver);
         let sampling = match req.samples {
@@ -574,6 +636,7 @@ mod tests {
             samples: (max_span * 120.0).clamp(400.0, 8000.0).round() as usize,
             graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
             transient: None,
+            section: None,
         }
     }
 
@@ -822,6 +885,7 @@ mod tests {
             samples: 11,
             graph_samples: None,
             transient: None,
+            section: None,
         }
     }
 
@@ -935,6 +999,173 @@ mod tests {
             .contains("Starting point 1"));
         req.trajectories.clear();
         assert!(compute_portrait(&sys, &req).is_ok());
+    }
+
+    const Y_FALLING: SectionSpec = SectionSpec::Plane {
+        state: 1,
+        value: 0.0,
+        direction: dyn_solve::Direction::Falling,
+    };
+
+    #[test]
+    fn bad_sections_get_readable_errors() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=y\n\\dot{y}=-x");
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 2);
+        let err = |req: &PortraitRequest| compute_portrait(&sys, req).unwrap_err();
+        req.section = Some(SectionSpec::Plane {
+            state: 2,
+            value: 0.0,
+            direction: dyn_solve::Direction::Rising,
+        });
+        assert_eq!(
+            err(&req),
+            "The section's state is out of range: this system has 2 states."
+        );
+        req.section = Some(SectionSpec::Plane {
+            state: 0,
+            value: f64::INFINITY,
+            direction: dyn_solve::Direction::Rising,
+        });
+        assert_eq!(err(&req), "The section's value must be a finite number.");
+        for period in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            req.section = Some(SectionSpec::Stroboscopic { period, phase: 0.0 });
+            assert_eq!(
+                err(&req),
+                "The stroboscopic period must be a positive number.",
+                "period {period}"
+            );
+        }
+        req.section = Some(SectionSpec::Stroboscopic {
+            period: 1.0,
+            phase: f64::NAN,
+        });
+        assert_eq!(err(&req), "The stroboscopic phase must be a finite number.");
+        req.section = Some(Y_FALLING);
+        assert!(compute_portrait(&sys, &req).is_ok());
+
+        let (store, map) = compile_map(LOGISTIC);
+        let sys = store.get(map).unwrap();
+        let mut req = simple_request(map, 1);
+        req.params = vec![3.2];
+        req.section = Some(SectionSpec::Stroboscopic {
+            period: 1.0,
+            phase: 0.0,
+        });
+        assert_eq!(
+            compute_portrait(&sys, &req).unwrap_err(),
+            "A Poincaré section needs a flow; this system is a map."
+        );
+
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=-x");
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 1);
+        req.section = Some(Y_FALLING);
+        assert_eq!(
+            compute_portrait(&sys, &req).unwrap_err(),
+            "The section's state is out of range: this system has 1 state."
+        );
+    }
+
+    #[test]
+    fn a_section_returns_the_crossings_after_the_transient() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=y\n\\dot{y}=-x");
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 2);
+        req.solver.method = Method::Dopri5;
+        req.solver.rtol = 1e-10;
+        req.solver.atol = 1e-12;
+        req.solver.max_steps = 100_000;
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![0.0, 1.0],
+            t0: 0.0,
+            t1: 10.0 * std::f64::consts::TAU,
+        }];
+        req.section = Some(Y_FALLING);
+        req.transient = Some(3);
+        let out = compute_portrait(&sys, &req).unwrap();
+        let tr = &out.trajectories[0];
+        assert_eq!(tr.status, Status::Completed);
+        assert_eq!(tr.t.len(), 7, "10 falling crossings at x = 1, 3 skipped");
+        for (k, (&t, x)) in tr.t.iter().zip(tr.x.chunks(2)).enumerate() {
+            let want = std::f64::consts::FRAC_PI_2 + (k + 3) as f64 * std::f64::consts::TAU;
+            assert!((t - want).abs() < 1e-8, "{t} vs {want}");
+            assert!((x[0] - 1.0).abs() < 1e-8 && x[1].abs() < 1e-8, "{x:?}");
+        }
+    }
+
+    /// `cargo test --release -p separatrix -- --ignored --nocapture section_costs`
+    #[test]
+    #[ignore = "timing; run in release"]
+    fn section_costs_about_as_much_as_plain_integration() {
+        const RUNS: usize = 5;
+        let store = SystemStore::new();
+        let id = compile_src(
+            &store,
+            "\\dot{x}=10\\left(y-x\\right)\n\\dot{y}=28x-y-xz\n\\dot{z}=xy-\\frac{8}{3}z",
+        );
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 3);
+        req.field_grid = 0;
+        req.solver = SolverOptions {
+            method: Method::Dopri5,
+            rtol: 1e-6,
+            atol: 1e-9,
+            h: 0.0,
+            h_max: None,
+            max_steps: 1_000_000,
+        };
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![0.0, 1.0, 0.0],
+            t0: 0.0,
+            t1: 1000.0,
+        }];
+        req.samples = 20_000;
+        let mut sectioned = req.clone();
+        sectioned.section = Some(SectionSpec::Plane {
+            state: 2,
+            value: 27.0,
+            direction: dyn_solve::Direction::Rising,
+        });
+        let (mut plain_ms, mut section_ms) = (Vec::new(), Vec::new());
+        let (mut plain_out, mut section_out) = (None, None);
+        for _ in 0..RUNS {
+            let out = compute_portrait(&sys, &req).unwrap();
+            plain_ms.push(out.elapsed_ms);
+            plain_out = Some(out);
+            let out = compute_portrait(&sys, &sectioned).unwrap();
+            section_ms.push(out.elapsed_ms);
+            section_out = Some(out);
+        }
+        let (plain, section) = (plain_out.unwrap(), section_out.unwrap());
+        let (p, s) = (&plain.trajectories[0], &section.trajectories[0]);
+        assert_eq!((p.status, s.status), (Status::Completed, Status::Completed));
+        let median = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        let spread = |v: &[f64]| format!("{:.1}–{:.1}", v[0], v[v.len() - 1]);
+        let (pm, sm) = (median(&mut plain_ms), median(&mut section_ms));
+        println!(
+            "{RUNS} interleaved runs each. plain: median {pm:.1} ms ({} ms), {} points, {} evals, {} steps",
+            spread(&plain_ms),
+            p.t.len(),
+            p.stats.evals,
+            p.stats.accepted
+        );
+        println!(
+            "section z = 27 rising: median {sm:.1} ms ({} ms), {} crossings, {} evals, {} steps; ratio {:.3}",
+            spread(&section_ms),
+            s.t.len(),
+            s.stats.evals,
+            s.stats.accepted,
+            sm / pm
+        );
+        assert!(sm <= 1.3 * pm, "section {sm:.1} ms vs plain {pm:.1} ms");
+        assert!(sm < 250.0, "section {sm:.1} ms");
     }
 
     #[test]

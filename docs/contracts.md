@@ -137,7 +137,23 @@ pub struct Event { pub g: Box<dyn Fn(f64, &[f64]) -> f64 + Send + Sync>, pub dir
 pub enum Direction { Rising, Falling, Both }
 pub struct EventHit { pub event: usize, pub t: f64, pub x: Vec<f64>, pub rising: bool }
 pub fn integrate_with_events(..., events: &[Event]) -> (Solution, Vec<EventHit>);
+
+pub enum Section { Plane { state: usize, value: f64, direction: Direction },
+                   Stroboscopic { period: f64, phase: f64 } }
+pub fn section(f: &dyn VectorField, p: &[f64], t0: f64, x0: &[f64], t1: f64,
+               opts: &SolverOptions, section: &Section, skip: usize, max_points: usize) -> Solution;
 ```
+
+`section` returns only the points where the orbit meets a Poincaré section: `t` holds the crossing
+times and `x` the crossing states, row-major. A `Plane` crossing is a sign change of
+`g = x[state] − value` in `direction`, judged in the direction of integration (so backwards in time
+when `t1 < t0`), located by Brent's method on the dense output as for events; starting on the plane
+is not a crossing. A `Stroboscopic` sample is the dense output at `t_k = (t0 + phase) + k·period`
+for every integer `k` with `t_k` between `t0` and `t1` inclusive, computed with one multiply and one
+add and no library function, so the same samples are kept on every OS. The first `skip` crossings
+are dropped. The run stops at `skip + max_points` crossings (`Completed`), at `t1`, or for any
+reason `integrate` stops, with the same `status` and `stats`; the last computed point is never
+appended.
 
 Blow-up: stop with `BlewUp` when any |x_i| > 1e12 (configurable later), and also for blow-ups too
 fast to reach that in double precision: Dopri5's step size collapsing while |x| grows (`x' = x^3`),
@@ -255,7 +271,7 @@ dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_S
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
 every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputFormat`, `Severity`,
-`Method`, `Status`, `Stats`, `Classification`, derived behind each crate's `ts` feature), into
+`Method`, `Status`, `Stats`, `Direction`, `Classification`, derived behind each crate's `ts` feature), into
 `app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale.
@@ -283,7 +299,7 @@ meaning, so older requests are unchanged):
 | Key | Type | Meaning |
 | --- | --- | --- |
 | `graphSamples` (request) | `number?` | Sample the graph `y = f(x)` across `xRange` (`map_graph`, clamped to 2–4096). |
-| `transient` (request) | `number?` | Map iterates computed but not returned before each orbit's `n` (maps only; ignored for flows). Absent = 0; clamped so that `transient + n ≤ 1,000,000`. |
+| `transient` (request) | `number?` | Map iterates computed but not returned before each orbit's `n`. Absent = 0; clamped so that `transient + n ≤ 1,000,000`. For a flow it counts skipped section crossings (see Poincaré sections below) and is ignored without a `section`. |
 | `graph` (response) | `[x, f(x)][][]?` | Present exactly when `graphSamples` was sent (possibly `[]`). |
 
 A **cobweb request** is `xAxis = yAxis = { kind: "state", index: 0 }`, `graphSamples` set,
@@ -304,6 +320,28 @@ staircase is drawn from it by the UI (`app/src/canvas/cobweb.ts`) and by the LaT
 `(v_{k−1}, v_k), (v_k, v_k)` for `k = 1…m`, cut at the first non-finite value; the diagonal is
 `(a, a)–(b, b)` with `a = max(x0, y0)`, `b = min(x1, y1)`, none when `a ≥ b`. The shared test
 vectors are `crates/export/tests/vectors/cobweb.json`.
+
+### Poincaré sections
+
+`PortraitRequest.section` (`SectionSpec?`) asks for a Poincaré section of every flow trajectory:
+
+| `kind` | Fields | Meaning |
+| --- | --- | --- |
+| `"plane"` | `state`, `value`, `direction: "rising" \| "falling" \| "both"` | crossings of `x[state] = value` |
+| `"stroboscopic"` | `period`, `phase` | the state at `t_k = t0 + phase + k·period` |
+
+With `section` present, each `PortraitResponse.trajectories[i]` is that orbit's crossings
+(`dyn_solve::section` above) instead of its samples, in the same `TrajectoryOut` shape, and
+`samples` is not used. `transient` then counts the crossings skipped before the first returned one
+(the iterates of the Poincaré map, as for maps), and at most `MAX_SECTION_POINTS` (100,000)
+crossings follow it. The other layers (field, nullclines, fixed points) are computed as usual.
+`section` is refused with one of these messages:
+
+- "A Poincaré section needs a flow; this system is a map."
+- "The section's state is out of range: this system has 2 states."
+- "The section's value must be a finite number."
+- "The stroboscopic period must be a positive number."
+- "The stroboscopic phase must be a finite number."
 
 `PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
 eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,

@@ -17,8 +17,9 @@ use std::sync::Arc;
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
 use separatrix_lib::ipc::{
-    AxisRef, Classification, CompileRequest, CompileResponse, FixedPointOut, InputFormat, Method,
-    PortraitRequest, Severity, SolverOptions, Status,
+    AxisRef, Classification, CompileRequest, CompileResponse, Direction, FixedPointOut,
+    InputFormat, Method, PortraitRequest, SectionSpec, Severity, SolverOptions, Status,
+    TrajectoryOut, TrajectoryRequest,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -145,6 +146,31 @@ enum Claim {
         atol: f64,
         bound: Option<f64>,
     },
+    /// Successive crossing times of `run`'s section are all within `tol` of
+    /// the period `book`.
+    Period {
+        run: SectionRun,
+        book: f64,
+        tol: f64,
+    },
+    /// `x[state]` at every crossing of `run`'s section is within `tol` of
+    /// `book`.
+    Amplitude {
+        run: SectionRun,
+        state: usize,
+        book: f64,
+        tol: f64,
+    },
+}
+
+/// One orbit's Poincaré section, computed by `compute_portrait` with DOPRI5
+/// at rtol 1e−6, atol 1e−9: the crossings after the first `skip`.
+struct SectionRun {
+    params: &'static [(&'static str, f64)],
+    x0: &'static [f64],
+    t_end: f64,
+    section: SectionSpec,
+    skip: usize,
 }
 
 enum Observable {
@@ -165,6 +191,20 @@ const PENDULUM_POINTS: &[(&[f64], Classification)] = &[
     (&[2.0 * PI, 0.0], Classification::Centre),
     (&[-2.0 * PI, 0.0], Classification::Centre),
 ];
+
+/// Van der Pol at μ = 1 from near the origin, cut where `y = ẋ` falls
+/// through 0: the maximum of `x` on each turn of the limit cycle.
+const VAN_DER_POL_TURNS: SectionRun = SectionRun {
+    params: &[("mu", 1.0)],
+    x0: &[0.1, 0.0],
+    t_end: 200.0,
+    section: SectionSpec::Plane {
+        state: 1,
+        value: 0.0,
+        direction: Direction::Falling,
+    },
+    skip: 10,
+};
 
 const CHECKS: &[Check] = &[
     Check {
@@ -344,6 +384,27 @@ const CHECKS: &[Check] = &[
         },
     },
     Check {
+        template: "van-der-pol",
+        section: "7.1",
+        book: "μ = 1: limit cycle period T = 6.66329",
+        claim: Claim::Period {
+            run: VAN_DER_POL_TURNS,
+            book: 6.663_286_859,
+            tol: 1e-3,
+        },
+    },
+    Check {
+        template: "van-der-pol",
+        section: "7.1",
+        book: "μ = 1: limit cycle amplitude max x = 2.00862",
+        claim: Claim::Amplitude {
+            run: VAN_DER_POL_TURNS,
+            state: 0,
+            book: 2.008_619_8,
+            tol: 1e-3,
+        },
+    },
+    Check {
         template: "selkov-glycolysis",
         section: "7.3",
         book: "a = 0.08, b = 0.6: x* = b, y* = b/(a+b²), unstable",
@@ -485,29 +546,21 @@ impl<'a> Lab<'a> {
         AxisRef::State { index }
     }
 
-    /// The fixed points `compute_portrait` reports in the template's view,
-    /// or in `search` (one interval per state) when given.
-    fn fixed_points(&self, params: Vec<f64>, search: Option<&[(f64, f64)]>) -> Vec<FixedPointOut> {
-        let dim = self.res.states.len();
-        let x_axis = self.axis(&self.template.view.x);
-        let y_axis = self.axis(&self.template.view.y);
-        let range = |axis: AxisRef, view: (f64, f64)| match (axis, search) {
-            (AxisRef::State { index }, Some(s)) => s[index],
-            _ => view,
-        };
-        let req = PortraitRequest {
+    /// A request in the template's view that computes nothing yet.
+    fn request(&self, params: Vec<f64>) -> PortraitRequest {
+        PortraitRequest {
             request_id: 1,
             system_id: self.res.system_id.unwrap(),
             params,
-            x_axis,
-            y_axis,
-            x_range: range(x_axis, self.template.view.x_range),
-            y_range: range(y_axis, self.template.view.y_range),
-            base_state: vec![0.0; dim],
+            x_axis: self.axis(&self.template.view.x),
+            y_axis: self.axis(&self.template.view.y),
+            x_range: self.template.view.x_range,
+            y_range: self.template.view.y_range,
+            base_state: vec![0.0; self.res.states.len()],
             field_time: 0.0,
             field_grid: 0,
             nullclines: false,
-            fixed_points: true,
+            fixed_points: false,
             trajectories: Vec::new(),
             solver: SolverOptions {
                 method: Method::Dopri5,
@@ -520,11 +573,59 @@ impl<'a> Lab<'a> {
             samples: 0,
             graph_samples: None,
             transient: None,
+            section: None,
+        }
+    }
+
+    /// The fixed points `compute_portrait` reports in the template's view,
+    /// or in `search` (one interval per state) when given.
+    fn fixed_points(&self, params: Vec<f64>, search: Option<&[(f64, f64)]>) -> Vec<FixedPointOut> {
+        let mut req = self.request(params);
+        let range = |axis: AxisRef, view: (f64, f64)| match (axis, search) {
+            (AxisRef::State { index }, Some(s)) => s[index],
+            _ => view,
         };
+        req.x_range = range(req.x_axis, req.x_range);
+        req.y_range = range(req.y_axis, req.y_range);
+        req.fixed_points = true;
         service::compute_portrait(&self.system, &req)
             .unwrap_or_else(|e| panic!("{}: {e}", self.template.id))
             .fixed_points
     }
+
+    /// The crossings of `run`'s section that `compute_portrait` returns.
+    fn section(&self, run: &SectionRun) -> TrajectoryOut {
+        let mut req = self.request(self.params(run.params));
+        req.trajectories = vec![TrajectoryRequest {
+            x0: run.x0.to_vec(),
+            t0: 0.0,
+            t1: run.t_end,
+        }];
+        req.section = Some(run.section);
+        req.transient = Some(run.skip);
+        let mut out = service::compute_portrait(&self.system, &req)
+            .unwrap_or_else(|e| panic!("{}: {e}", self.template.id));
+        out.trajectories.remove(0)
+    }
+}
+
+/// `(book, measured, delta, tol, pass)` of values that should all be `book`:
+/// the measured column is their mean, the delta the worst of them.
+fn all_near(
+    values: &[f64],
+    status: Status,
+    book: f64,
+    tol: f64,
+) -> (String, String, f64, f64, Verdict) {
+    let delta = values.iter().map(|v| (v - book).abs()).fold(0.0, f64::max);
+    let measured = if values.is_empty() {
+        format!("no crossings, {status:?}")
+    } else {
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        format!("{mean:.6} over {}", values.len())
+    };
+    let ok = status == Status::Completed && values.len() >= 2 && delta <= tol;
+    (format!("{book:.6}"), measured, delta, tol, verdict(ok))
 }
 
 fn distance(a: &[f64], b: &[f64]) -> f64 {
@@ -648,6 +749,22 @@ fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
                 *tol,
                 verdict(delta <= *tol),
             )
+        }
+        Claim::Period { run, book, tol } => {
+            let sol = lab.section(run);
+            let periods: Vec<f64> = sol.t.windows(2).map(|w| w[1] - w[0]).collect();
+            all_near(&periods, sol.status, *book, *tol)
+        }
+        Claim::Amplitude {
+            run,
+            state,
+            book,
+            tol,
+        } => {
+            let sol = lab.section(run);
+            let dim = lab.res.states.len();
+            let values: Vec<f64> = sol.x.chunks(dim).map(|x| x[*state]).collect();
+            all_near(&values, sol.status, *book, *tol)
         }
         Claim::EnergyDrift {
             params,

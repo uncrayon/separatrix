@@ -20,7 +20,7 @@ A desktop app for exploring dynamical systems, built for students and professors
 | --- | --- |
 | `crates/dyn-core` | The `VectorField` trait every solver and analysis uses |
 | `crates/dyn-expr` | Equation parsing, inference (states, parameters, ODE or map), evaluation and exact Jacobians |
-| `crates/dyn-solve` | Integrators (Euler, RK4, Dormand–Prince, …), map iteration, events |
+| `crates/dyn-solve` | Integrators (Euler, RK4, Dormand–Prince, …), map iteration, events, Poincaré sections |
 | `crates/dyn-analysis` | Fixed points, stability, slope fields, nullclines, the graph of a 1-D map's f, and later chaos and continuation |
 | `app/` | Tauri shell (`src-tauri/`) and the React + TypeScript interface (`src/`) |
 
