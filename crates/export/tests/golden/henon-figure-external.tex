@@ -1,0 +1,37 @@
+% Separatrix figure: Hénon map
+%   x_{n+1} = y_n + 1 - a*x_n^2
+%   y_{n+1} = b*x_n
+% Parameters: a = 1.4, b = 0.3
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+% The map iterates (10001 points) are drawn as a 300-dpi PNG layer under vector axes.
+% If you \input this file from another folder, put \def\sepxdir{figures/} before it.
+\providecommand{\sepxdir}{}%
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-1.6, xmax=1.6, ymin=-0.5, ymax=0.5,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0}, ytick={-0.5,0,0.5}, xticklabels={}, yticklabels={},
+  minor xtick={-1,1}, minor ytick={-0.25,0.25},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(113.386bp,-170.079bp)$) -- ($(rel axis cs:0,1)+(110.386bp,-170.079bp)$)
+  ($(rel axis cs:0,1)+(113.386bp,0bp)$) -- ($(rel axis cs:0,1)+(110.386bp,0bp)$);
+\addplot graphics[xmin=-1.6, xmax=1.6, ymin=-0.5, ymax=0.5] {\sepxdir henon-points.png};
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table {\sepxdir henon-fixed-points.dat};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxbg, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{1:1}] table {\sepxdir henon-fixed-points.dat};
+\node[anchor=north east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(106.261bp,-92.164bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-82.039bp)$) {$x$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(119.386bp,-4.5bp)$) {$y$};
+\end{axis}
+\end{tikzpicture}

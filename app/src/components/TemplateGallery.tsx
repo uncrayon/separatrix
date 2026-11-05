@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Tex } from "../math/Tex";
 import { TEMPLATES, strogatzRef, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
@@ -10,6 +10,8 @@ interface Props {
   onBlank: () => void;
   onClose: () => void;
   canClose: boolean;
+  /** Shown under the heading: why a file passed at launch didn't open, say. */
+  notice?: ReactNode;
 }
 
 function tabbables(root: HTMLElement): HTMLElement[] {
@@ -43,7 +45,7 @@ function TemplateTags({ template }: { template: Template }) {
   );
 }
 
-export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
+export function TemplateGallery({ onPick, onBlank, onClose, canClose, notice }: Props) {
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
@@ -108,6 +110,7 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose }: Props) {
             </button>
           )}
         </header>
+        {notice && <div className="gallery-notice">{notice}</div>}
         <div className="gallery-grid">
           <ul className="ds-template-grid template-grid" aria-label="Templates">
             {TEMPLATES.map((t) => {

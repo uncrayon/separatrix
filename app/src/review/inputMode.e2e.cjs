@@ -82,7 +82,12 @@ test("the input mode is remembered, and a template opens in it", async () => {
     await pick(page, "Van der Pol");
     await setMode(page, "Text");
     await openGallery(page);
-    await pick(page, "Lorenz");
+    // The switch changed what a save would write (the input format and the
+    // lines), so picking another template asks first.
+    await page.locator(".gallery .card", { hasText: "Lorenz" }).first().click();
+    await page.locator(".confirm").getByRole("button", { name: "Don't save" }).click();
+    await page.waitForSelector(".gallery", { state: "detached" });
+    await page.waitForTimeout(500);
     const lorenz = TEMPLATES.find((t) => t.id === "lorenz");
     assert.deepEqual(await textInputs(page), TEXT.lorenz);
     assert.equal(await page.locator(".panel-left math-field").count(), 0);

@@ -1,0 +1,9 @@
+{
+  "format": "dynx",
+  "format_version": 1,
+  "system": {
+    "equations": [
+      "x' = x"
+    ]
+  }
+}

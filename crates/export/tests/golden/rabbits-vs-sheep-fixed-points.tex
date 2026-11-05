@@ -1,0 +1,19 @@
+% Separatrix fixed points: Rabbits vs sheep
+%   x' = x*(3 - x - 2*y)
+%   y' = y*(2 - x - y)
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Fixed points of the system, found in $-0.375 \le x \le 3.625$ and $-0.25 \le y \le 2.75$.}
+\label{tab:rabbits-vs-sheep-fixed-points}
+\begin{tabular}{@{}llrrl@{}}
+\toprule
+Fixed point & Eigenvalues $\lambda$ & $\tau$ & $\Delta$ & Type \\
+\midrule
+$(\num{0}, \num{0})$ & $\num{3}$, $\num{2}$ & \num{5} & \num{6} & Unstable node \\
+$(\num{0}, \num{2})$ & $\num{-1}$, $\num{-2}$ & \num{-3} & \num{2} & Stable node \\
+$(\num{1}, \num{1})$ & $\num{0.4142}$, $\num{-2.414}$ & \num{-2} & \num{-1} & Saddle \\
+$(\num{3}, \num{0})$ & $\num{-1}$, $\num{-3}$ & \num{-4} & \num{3} & Stable node \\
+\bottomrule
+\end{tabular}
+\end{table}

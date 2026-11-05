@@ -1,18 +1,40 @@
 import type {
   Arrow,
   AxisRef,
+  ChosenSavePath,
   Classification,
+  ClipboardTextRequest,
   CompileRequest,
   CompileResponse,
   ConvertRequest,
   ConvertResponse,
+  CsvFileOut,
+  CsvRequest,
+  CsvResponse,
+  DocumentStateRequest,
+  ExportPortraitRequest,
+  FigureLatexRequest,
+  FigureLatexResponse,
   FixedPointOut,
+  FixedPointsLatexRequest,
   NullclineOut,
+  OpenedProject,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
+  ProjectChooseSaveRequest,
+  ProjectFile,
+  ProjectReadRequest,
+  ProjectWriteRequest,
+  SaveCsvRequest,
+  SavedFiles,
+  SavedProject,
+  SaveFigureRequest,
+  SaveTextRequest,
   StateInfo,
   SystemKind,
+  SystemLatexRequest,
+  SystemLatexResponse,
   TrajectoryOut,
   TrajectoryRequest,
 } from "./types";
@@ -728,4 +750,352 @@ function stitch(segs: [[number, number], [number, number]][], tol: number): [num
     out.push(line);
   });
   return out;
+}
+
+// ---------------------------------------------------------------------
+// Project files, exports and the clipboard in the browser preview.
+//
+// There is no file system here: "files" live in memory, in
+// `window.__sepxMock` (which the e2e tests drive), and the dialogs return
+// what it says. Exports return placeholder LaTeX built from the preview's
+// own portrait, so the dialog can be exercised; the real snippets are
+// built in Rust (docs/exports.md).
+// ---------------------------------------------------------------------
+
+/** The browser preview's stand-in for the file system, dialogs and clipboard. */
+export interface SepxMock {
+  /** Project files by path (their text). */
+  files: Map<string, string>;
+  /** What the next Open dialog returns (`null`: cancelled); cleared after use. */
+  nextOpenPath?: string | null;
+  /** What the next Save dialog returns (`null`: cancelled); cleared after use. */
+  nextSavePath?: string | null;
+  /** Paths "passed on the command line", returned once by `launch_ready`. */
+  launchFiles: string[];
+  /** The last text copied. */
+  clipboardText?: string;
+  /** Size of the last image copied, in bytes. */
+  clipboardPngBytes?: number;
+  /** Every export saved, in order. */
+  saved: { name: string; contents: string | Uint8Array }[];
+  /** The last `set_document_state`. */
+  document: DocumentStateRequest;
+}
+
+function sepxMock(): SepxMock {
+  const g = globalThis as unknown as { __sepxMock?: SepxMock };
+  if (!g.__sepxMock) {
+    g.__sepxMock = {
+      files: new Map(),
+      launchFiles: [],
+      saved: [],
+      document: { title: "Separatrix", dirty: false },
+    };
+  }
+  return g.__sepxMock;
+}
+
+if (typeof window !== "undefined") sepxMock();
+
+const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
+const q = (name: string) => `“${name}”`;
+
+function takeDialog(key: "nextOpenPath" | "nextSavePath", fallback: string | null): string | null {
+  const m = sepxMock();
+  const v = m[key];
+  delete m[key];
+  return v === undefined ? fallback : v;
+}
+
+function withExt(name: string, ext: string): { path: string; appended: boolean } {
+  return name.toLowerCase().endsWith(`.${ext}`) ? { path: name, appended: false } : { path: `${name}.${ext}`, appended: true };
+}
+
+export async function mockProjectChooseOpenPath(): Promise<string | null> {
+  const first = sepxMock().files.keys().next();
+  return takeDialog("nextOpenPath", first.done ? null : first.value);
+}
+
+export async function mockProjectRead(req: ProjectReadRequest): Promise<OpenedProject> {
+  const name = fileName(req.path);
+  const text = sepxMock().files.get(req.path);
+  if (text === undefined) throw `${q(name)} can't be found. It may have been moved or deleted.`;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw `${q(name)} isn't a Separatrix project: it isn't valid JSON.`;
+  }
+  const d = doc as Partial<ProjectFile> | null;
+  if (!d || typeof d !== "object" || d.format !== "separatrix") {
+    throw `${q(name)} isn't a Separatrix project.`;
+  }
+  if ((d.min_reader_version ?? d.format_version ?? 1) > 1) {
+    throw `${q(name)} needs a newer version of Separatrix to open. Update Separatrix, then open it again.`;
+  }
+  const newer = (d.format_version ?? 1) > 1 ? d.format_version : undefined;
+  return {
+    path: req.path,
+    name,
+    project: d as ProjectFile,
+    warnings: newer ? [`${q(name)} was saved in a newer format. It opens, and saving keeps the parts this version doesn't use.`] : [],
+    ...(newer ? { newerFormat: newer } : {}),
+  };
+}
+
+export async function mockProjectChooseSavePath(req: ProjectChooseSaveRequest): Promise<ChosenSavePath | null> {
+  const dir = req.currentPath ? req.currentPath.replace(/[^\\/]*$/, "") : "/mock/";
+  const suggested = dir + withExt(fileName(req.suggestedName) || "untitled", "sepx").path;
+  const chosen = takeDialog("nextSavePath", suggested);
+  if (chosen === null) return null;
+  const { path, appended } = withExt(chosen, "sepx");
+  return { path, appendedExists: appended && sepxMock().files.has(path) };
+}
+
+export async function mockProjectWrite(req: ProjectWriteRequest): Promise<SavedProject> {
+  const name = fileName(req.path);
+  if (!req.path.toLowerCase().endsWith(".sepx")) throw `Projects are saved as .sepx files, not ${q(name)}.`;
+  const p = req.project as Record<string, unknown> | null;
+  if (!p || typeof p !== "object") throw "The project can't be saved: it isn't an object.";
+  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: "0.2.0" };
+  sepxMock().files.set(req.path, JSON.stringify(stamped, null, 2) + "\n");
+  return { path: req.path, name };
+}
+
+export async function mockLaunchReady(): Promise<string[]> {
+  const m = sepxMock();
+  const out = m.launchFiles;
+  m.launchFiles = [];
+  return out;
+}
+
+export async function mockSetDocumentState(req: DocumentStateRequest): Promise<void> {
+  sepxMock().document = { ...req };
+  if (typeof document !== "undefined") document.title = req.title;
+}
+
+/** The browser can't close its own tab; the preview does nothing. */
+export async function mockCloseWindow(): Promise<void> {}
+
+export async function mockComputeExportPortrait(req: ExportPortraitRequest): Promise<PortraitResponse> {
+  return mockPortrait(req.portrait);
+}
+
+const PREVIEW_NOTE = "% Browser preview: placeholder LaTeX. The desktop app writes the real snippet.";
+
+function mockSystemOf(systemId: number): MockSystem {
+  const sys = byId.get(systemId);
+  if (!sys) throw `System ${systemId} is no longer available; edit the equations to recompile.`;
+  return sys;
+}
+
+function mockAlignRows(sys: MockSystem): string[] {
+  return sys.equationsLatex.map((e) => {
+    const k = e.indexOf("=");
+    return k < 0 ? e : `${e.slice(0, k).trim()} &= ${e.slice(k + 1).trim()}`;
+  });
+}
+
+export async function mockExportSystemLatex(req: SystemLatexRequest): Promise<SystemLatexResponse> {
+  const sys = mockSystemOf(req.systemId);
+  const rows = mockAlignRows(sys);
+  const env = req.numbered ? "align" : "align*";
+  const tex = [
+    `% ${req.title}${req.sourceRef ? ` (${req.sourceRef})` : ""}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath}",
+    `\\begin{${env}}`,
+    rows.map((r) => `  ${r}`).join(" \\\\\n"),
+    `\\end{${env}}`,
+    "",
+  ].join("\n");
+  return { tex, previewLatex: `\\begin{aligned}${rows.join("\\\\")}\\end{aligned}` };
+}
+
+export async function mockExportFixedPointsLatex(req: FixedPointsLatexRequest): Promise<string> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  const res = await mockPortrait({ ...req.portrait, fixedPoints: true, trajectories: [], fieldGrid: 0, nullclines: false });
+  const digits = Math.min(8, Math.max(2, req.digits));
+  const num = (v: number) => `\\num{${Number(v.toPrecision(digits))}}`;
+  const rows = res.fixedPoints.map((fp) => {
+    const point = `$(${fp.x.map(num).join(", ")})$`;
+    const eig = fp.eigenvalues.map(([re, im]) => `$${num(re)}${im ? ` ${im < 0 ? "-" : "+"} ${num(Math.abs(im))}\\,i` : ""}$`).join(", ");
+    return `    ${point} & ${eig} & ${fp.classification} \\\\`;
+  });
+  return [
+    `% ${req.title}: fixed points`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+    "\\begin{table}",
+    "  \\centering",
+    "  \\begin{tabular}{@{}lll@{}}",
+    "    \\toprule",
+    `    Point & Eigenvalues & Type \\\\`,
+    "    \\midrule",
+    ...rows,
+    "    \\bottomrule",
+    "  \\end{tabular}",
+    `  \\caption{Fixed points of the system (${sys.states.length}D).}`,
+    "\\end{table}",
+    "",
+  ].join("\n");
+}
+
+function mockAxisValue(axis: AxisRef, t: number[], x: number[], dim: number, k: number): number {
+  return axis.kind === "time" ? t[k] : x[k * dim + axis.index];
+}
+
+export async function mockExportFigureLatex(req: FigureLatexRequest): Promise<FigureLatexResponse> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  const dim = sys.states.length;
+  const res = await mockPortrait(req.portrait);
+  let points = 0;
+  const plots = res.trajectories.map((tr) => {
+    const coords: string[] = [];
+    const step = Math.max(1, Math.floor(tr.t.length / 200));
+    for (let k = 0; k < tr.t.length; k += step) {
+      const a = mockAxisValue(req.portrait.xAxis, tr.t, tr.x, dim, k);
+      const b = mockAxisValue(req.portrait.yAxis, tr.t, tr.x, dim, k);
+      if (Number.isFinite(a) && Number.isFinite(b)) coords.push(`(${String(a)},${String(b)})`);
+    }
+    points += coords.length;
+    return `  \\addplot[no marks] coordinates {${coords.join(" ")}};`;
+  });
+  const [x0, x1] = req.portrait.xRange;
+  const [y0, y1] = req.portrait.yRange;
+  const axis = [
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[width=${req.widthCm}cm, height=${req.heightCm}cm, scale only axis, xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}]`,
+    ...plots,
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+  ];
+  const preamble = "\\usepackage{pgfplots} \\pgfplotsset{compat=1.18}";
+  const tex = [
+    `% ${req.title}: figure`,
+    PREVIEW_NOTE,
+    `% Needs: ${preamble}`,
+    ...(req.standalone
+      ? ["\\documentclass[border=2mm]{standalone}", ...preamble.split(" "), "\\begin{document}", ...axis, "\\end{document}"]
+      : axis),
+    "",
+  ].join("\n");
+  return { tex, points, thinned: false, notes: [] };
+}
+
+export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
+  const sys = mockSystemOf(req.portrait.systemId);
+  if (req.tags.length !== req.portrait.trajectories.length) {
+    throw `Expected one tag per trajectory (${req.portrait.trajectories.length}) but got ${req.tags.length}.`;
+  }
+  const dim = sys.states.length;
+  const res = await mockPortrait({ ...req.portrait, fixedPoints: false, fieldGrid: 0, nullclines: false });
+  const ids = req.icIds.length ? req.icIds : [...new Set(req.tags.map((t) => t.icId))];
+  const slug = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "system";
+  const header = [sys.kind === "map" ? "n" : "t", ...sys.states.map((s) => s.name)];
+  const files: CsvFileOut[] = [];
+  // Numbered as the dialog lists them, by first appearance among the runs (as Rust does).
+  const order = [...new Set(req.tags.map((t) => t.icId))];
+  for (const id of ids) {
+    const run = (backward: boolean) => {
+      const k = req.tags.findIndex((t) => t.icId === id && t.backward === backward);
+      return k < 0 ? null : res.trajectories[k];
+    };
+    const back = run(true);
+    const fwd = run(false);
+    if (!back && !fwd) continue;
+    const rows: string[] = [];
+    const row = (tr: TrajectoryOut, k: number) =>
+      [tr.t[k], ...tr.x.slice(k * dim, (k + 1) * dim)].map((v) => String(v)).join(",");
+    if (back) for (let k = back.t.length - 1; k >= 0; k--) rows.push(row(back, k));
+    if (fwd) for (let k = back && fwd.t.length ? 1 : 0; k < fwd.t.length; k++) rows.push(row(fwd, k));
+    const stem = `${slug(req.title)}-trajectory-${order.indexOf(id) + 1}`;
+    const meta = {
+      format: "separatrix-trajectory",
+      format_version: 1,
+      app_version: "0.2.0",
+      title: req.title,
+      csv: `${stem}.csv`,
+      ic_id: id,
+      system: { kind: sys.kind, input_format: req.format, lines: req.lines },
+      columns: header,
+      note: "Browser preview: computed by the preview's own solver.",
+    };
+    files.push({ stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" });
+  }
+  return { files };
+}
+
+function mockSaved(name: string, contents: string | Uint8Array): void {
+  sepxMock().saved.push({ name, contents });
+}
+
+export async function mockSaveFigureLatex(req: SaveFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  const fig = await mockExportFigureLatex(req.figure);
+  mockSaved(name, fig.tex);
+  return { names: [name] };
+}
+
+export async function mockSaveCsv(req: SaveCsvRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "trajectory", "csv").path);
+  if (chosen === null) return null;
+  const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
+  const { files } = await mockExportCsv(req.csv);
+  const names: string[] = [];
+  const prefix = `${req.csv.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "system"}-`;
+  files.forEach((f) => {
+    const s = files.length === 1 ? stem : `${stem}-${f.stem.startsWith(prefix) ? f.stem.slice(prefix.length) : f.stem}`;
+    mockSaved(`${s}.csv`, f.csv);
+    mockSaved(`${s}.meta.json`, f.meta);
+    names.push(`${s}.csv`, `${s}.meta.json`);
+  });
+  return { names };
+}
+
+export async function mockSaveTextFile(req: SaveTextRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "untitled", req.extension).path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), req.extension).path;
+  mockSaved(name, req.contents);
+  return { names: [name] };
+}
+
+export async function mockSavePngFile(png: Uint8Array, suggestedName: string): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(suggestedName) || "figure", "png").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "png").path;
+  mockSaved(name, png);
+  return { names: [name] };
+}
+
+export async function mockClipboardWriteText(req: ClipboardTextRequest): Promise<void> {
+  sepxMock().clipboardText = req.text;
+  try {
+    await navigator.clipboard?.writeText(req.text);
+  } catch {
+    // The preview keeps the text in `__sepxMock` when the page may not copy.
+  }
+}
+
+export async function mockClipboardWritePng(png: Uint8Array): Promise<void> {
+  sepxMock().clipboardPngBytes = png.byteLength;
+  try {
+    const ClipboardItemCtor = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem;
+    if (ClipboardItemCtor && navigator.clipboard?.write) {
+      const blob = new Blob([png.slice().buffer], { type: "image/png" });
+      await navigator.clipboard.write([new ClipboardItemCtor({ "image/png": blob })]);
+    }
+  } catch {
+    // As above: the size is recorded in `__sepxMock`.
+  }
 }

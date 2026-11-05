@@ -12,6 +12,11 @@
 //! [`InputFormat`] (`"latex"`/`"text"`), [`Severity`], [`Method`]
 //! (`"dopri5"`, ...), [`Status`] (`"blewUp"`, ...), [`Stats`] and
 //! [`Classification`] (`"stable spiral"`, ...).
+//!
+//! The project file types ([`ProjectFile`] and its parts) come from
+//! `separatrix-project` (its `ts` feature) and keep the file's snake_case
+//! keys on the wire: the one documented exception to camelCase, so the UI
+//! edits exactly what is saved (docs/project-format.md).
 
 use serde::{Deserialize, Serialize};
 
@@ -324,6 +329,397 @@ pub struct PortraitResponse {
     pub elapsed_ms: f64,
 }
 
+// ---------------------------------------------------------------------
+// Project files (`.sepx`). The project itself is `ProjectFile` from
+// `separatrix-project`, whose keys are snake_case on the wire (the one
+// documented exception to camelCase; see docs/project-format.md).
+// ---------------------------------------------------------------------
+
+pub use separatrix_project::{
+    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSlice,
+    ProjectSolver, ProjectSystem, ProjectView,
+};
+
+/// Request of `project_read`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectReadRequest {
+    /// A path from `project_choose_open_path`, `launch_ready` or
+    /// `project-open-requested`; any other path is refused.
+    pub path: String,
+}
+
+/// Response of `project_read`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OpenedProject {
+    /// The path that was read.
+    pub path: String,
+    /// Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+    pub name: String,
+    /// The project, repaired where it could be (see `warnings`).
+    pub project: ProjectFile,
+    /// One sentence per repair or notice, for the UI's banner.
+    pub warnings: Vec<String>,
+    /// The format version the file was migrated from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub migrated_from: Option<u32>,
+    /// The file's (newer, still readable) format version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub newer_format: Option<u32>,
+}
+
+/// Request of `project_choose_save_path`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectChooseSaveRequest {
+    /// File name offered in the dialog (`.sepx` is added when missing).
+    pub suggested_name: String,
+    /// The document's current path; the dialog opens in its folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub current_path: Option<String>,
+}
+
+/// Response of `project_choose_save_path` (`null` when cancelled).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ChosenSavePath {
+    /// Where to save, always ending in `.sepx`.
+    pub path: String,
+    /// `.sepx` was added to the chosen name and that file already exists:
+    /// the native dialog never asked about it, so the UI asks
+    /// "“x.sepx” already exists. Replace it?".
+    pub appended_exists: bool,
+}
+
+/// Request of `project_write`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWriteRequest {
+    /// A granted `.sepx` path.
+    pub path: String,
+    /// The project as the UI built it (checked with path-precise messages
+    /// before anything is written).
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub project: serde_json::Value,
+}
+
+/// Response of `project_write`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SavedProject {
+    /// The path written.
+    pub path: String,
+    /// Its file name.
+    pub name: String,
+}
+
+/// Request of `set_document_state`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentStateRequest {
+    /// Window title, e.g. `"● rabbits-vs-sheep — Separatrix"`.
+    pub title: String,
+    /// Unsaved changes: closing the window asks first.
+    pub dirty: bool,
+}
+
+/// Payload of the `project-open-requested` event (a file from the OS: a
+/// double-click, a second instance or a drop on the window).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOpenRequested {
+    /// A granted path, for `project_read`.
+    pub path: String,
+}
+
+/// Payload of the `close-requested` event: the window's close was stopped
+/// because the document is dirty; the UI confirms, then calls
+/// `close_window`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CloseRequested {}
+
+// ---------------------------------------------------------------------
+// Exports (docs/exports.md)
+// ---------------------------------------------------------------------
+
+/// Request of `compute_export_portrait`: the screen's request at the
+/// figure's size (ranges already equalized for its aspect).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExportPortraitRequest {
+    /// What to compute.
+    pub portrait: PortraitRequest,
+    /// Figure width in CSS px (the simplification tolerance is in these).
+    pub width_px: f64,
+    /// Figure height in CSS px.
+    pub height_px: f64,
+}
+
+/// Which initial condition a requested trajectory belongs to; one per entry
+/// of `PortraitRequest::trajectories`, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct TrajectoryTag {
+    /// The initial condition's project id (`"ic-3"`).
+    pub ic_id: String,
+    /// Integrated backward in time.
+    pub backward: bool,
+    /// Palette index (taken mod 7).
+    pub color: u8,
+}
+
+/// Colour theme of an exported figure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum ExportTheme {
+    /// Projector (whiteboard): the default for exports.
+    Light,
+    /// Chalkboard.
+    Dark,
+}
+
+/// How derivatives are written in the LaTeX system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum Notation {
+    /// `\dot{x}` (Strogatz).
+    Dot,
+    /// `x'`.
+    Prime,
+    /// `\frac{dx}{dt}`.
+    Leibniz,
+}
+
+/// Request of `export_figure_latex` (and the `figure` of
+/// `save_figure_latex`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FigureLatexRequest {
+    /// The portrait at the figure's aspect.
+    pub portrait: PortraitRequest,
+    /// One tag per requested trajectory.
+    pub tags: Vec<TrajectoryTag>,
+    /// Plot width in cm.
+    pub width_cm: f64,
+    /// Plot height in cm.
+    pub height_cm: f64,
+    /// Palette.
+    pub theme: ExportTheme,
+    /// The system's title (comments, file names).
+    pub title: String,
+    /// Where the system comes from, e.g. "Strogatz §6.4".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// Response of `export_figure_latex` (inline data, for Copy).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FigureLatexResponse {
+    /// The snippet.
+    pub tex: String,
+    /// Data rows written.
+    pub points: usize,
+    /// Map iterates were thinned to stay under 5,000 points.
+    pub thinned: bool,
+    /// What the user should know, one sentence each.
+    pub notes: Vec<String>,
+}
+
+/// Request of `save_figure_latex`: the `.tex` and its `.dat` (and `.png`)
+/// files, written next to each other.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFigureRequest {
+    /// The figure.
+    pub figure: FigureLatexRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// Response of the `save_*` export commands (`null` when cancelled).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SavedFiles {
+    /// The file names written (no folders), the main file first.
+    pub names: Vec<String>,
+}
+
+/// Request of `export_system_latex`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SystemLatexRequest {
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// The lines as typed.
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+    /// Parameter values, in `CompileResponse::params` order.
+    pub params: Vec<f64>,
+    /// Left-hand-side notation.
+    pub notation: Notation,
+    /// `align` with labels, or `align*`.
+    pub numbered: bool,
+    /// The system's title (labels, comments).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+}
+
+/// Response of `export_system_latex`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SystemLatexResponse {
+    /// The snippet.
+    pub tex: String,
+    /// The normalized equations as one `aligned` block, for the dialog's
+    /// typeset preview (never the raw file text).
+    pub preview_latex: String,
+}
+
+/// Request of `export_fixed_points_latex`: the screen's portrait request
+/// (its fixed points are recomputed with the same search box).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct FixedPointsLatexRequest {
+    /// The screen's request.
+    pub portrait: PortraitRequest,
+    /// The system's title (caption, label).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+    /// Significant digits, 2 to 8.
+    pub digits: usize,
+}
+
+/// Request of `export_csv` (and the `csv` of `save_csv`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CsvRequest {
+    /// The trajectories to write (its `samples` is the CSV's own).
+    pub portrait: PortraitRequest,
+    /// One tag per requested trajectory.
+    pub tags: Vec<TrajectoryTag>,
+    /// Which initial conditions to write, in order; empty for all.
+    pub ic_ids: Vec<String>,
+    /// The lines as typed (metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+    /// The system's title (file names).
+    pub title: String,
+}
+
+/// One initial condition's CSV and metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CsvFileOut {
+    /// `<stem>.csv` and `<stem>.meta.json`.
+    pub stem: String,
+    /// The CSV (RFC 4180 with LF line endings).
+    pub csv: String,
+    /// The `.meta.json` contents.
+    pub meta: String,
+}
+
+/// Response of `export_csv`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CsvResponse {
+    /// One entry per initial condition.
+    pub files: Vec<CsvFileOut>,
+}
+
+/// Request of `save_csv`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCsvRequest {
+    /// What to write.
+    pub csv: CsvRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// The kinds of text file `save_text_file` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "lowercase")]
+pub enum TextExtension {
+    /// LaTeX.
+    Tex,
+    /// SVG.
+    Svg,
+    /// CSV.
+    Csv,
+}
+
+/// Request of `save_text_file`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveTextRequest {
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+    /// The file type (dialog filter, and the extension added when missing).
+    pub extension: TextExtension,
+    /// The contents (UTF-8).
+    pub contents: String,
+}
+
+/// Request of `clipboard_write_text`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardTextRequest {
+    /// The text to copy.
+    pub text: String,
+}
+
 #[cfg(test)]
 mod bindings {
     use std::path::Path;
@@ -363,6 +759,42 @@ mod bindings {
             FixedPointOut::decl(&cfg),
             TrajectoryOut::decl(&cfg),
             PortraitResponse::decl(&cfg),
+            ProjectFile::decl(&cfg),
+            ProjectSystem::decl(&cfg),
+            ProjectParam::decl(&cfg),
+            ProjectInitialCondition::decl(&cfg),
+            ProjectView::decl(&cfg),
+            ProjectAxis::decl(&cfg),
+            ProjectSlice::decl(&cfg),
+            ProjectLayers::decl(&cfg),
+            ProjectSolver::decl(&cfg),
+            ProjectReadRequest::decl(&cfg),
+            OpenedProject::decl(&cfg),
+            ProjectChooseSaveRequest::decl(&cfg),
+            ChosenSavePath::decl(&cfg),
+            ProjectWriteRequest::decl(&cfg),
+            SavedProject::decl(&cfg),
+            DocumentStateRequest::decl(&cfg),
+            ProjectOpenRequested::decl(&cfg),
+            CloseRequested::decl(&cfg),
+            ExportPortraitRequest::decl(&cfg),
+            TrajectoryTag::decl(&cfg),
+            ExportTheme::decl(&cfg),
+            Notation::decl(&cfg),
+            FigureLatexRequest::decl(&cfg),
+            FigureLatexResponse::decl(&cfg),
+            SaveFigureRequest::decl(&cfg),
+            SavedFiles::decl(&cfg),
+            SystemLatexRequest::decl(&cfg),
+            SystemLatexResponse::decl(&cfg),
+            FixedPointsLatexRequest::decl(&cfg),
+            CsvRequest::decl(&cfg),
+            CsvFileOut::decl(&cfg),
+            CsvResponse::decl(&cfg),
+            SaveCsvRequest::decl(&cfg),
+            TextExtension::decl(&cfg),
+            SaveTextRequest::decl(&cfg),
+            ClipboardTextRequest::decl(&cfg),
         ];
         let mut out = format!(
             "// Generated from app/src-tauri/src/ipc.rs by `{UPDATE}=1 cargo test -p separatrix \

@@ -1,0 +1,172 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=x\\left(3-x-2y\\right)",
+      "\\dot{y}=y\\left(2-x-y\\right)"
+    ],
+    "states": [
+      "x",
+      "y"
+    ],
+    "params": [
+      {
+        "id": "k",
+        "value": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "unit": "per year",
+        "step": 0.01
+      }
+    ],
+    "template": "rabbits-vs-sheep",
+    "notes": "Strogatz §6.4, competition"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.3,
+        0.2
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false,
+      "label": "near the origin"
+    },
+    {
+      "id": "ic-2",
+      "x0": [
+        2.5,
+        2.4
+      ],
+      "t0": 0.0,
+      "color": 1,
+      "hidden": false,
+      "style": {
+        "width": 2,
+        "dash": [
+          1,
+          2
+        ]
+      }
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "x_axis": {
+        "kind": "state",
+        "name": "x",
+        "scale": "linear"
+      },
+      "y_axis": {
+        "kind": "state",
+        "name": "y"
+      },
+      "x_range": [
+        -0.25,
+        3.5
+      ],
+      "y_range": [
+        -0.25,
+        2.75
+      ],
+      "slice": {
+        "states": {},
+        "t": 0.0,
+        "r": 1.5
+      },
+      "layers": {
+        "field": true,
+        "field_grid": 21,
+        "nullclines": true,
+        "fixed_points": true,
+        "backward": true,
+        "cobweb": false,
+        "field_style": "arrows"
+      },
+      "title": "Phase plane"
+    },
+    {
+      "id": "bifurcation",
+      "x_axis": {
+        "kind": "parameter",
+        "name": "k",
+        "param": "params.k"
+      },
+      "y_axis": {
+        "kind": "state",
+        "name": "x"
+      },
+      "x_range": [
+        0.0,
+        1.0
+      ],
+      "y_range": [
+        0.0,
+        3.0
+      ],
+      "kind": "bifurcation",
+      "branches": [
+        {
+          "stable": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "analyses": [
+    {
+      "kind": "lyapunov",
+      "id": "lyap-1",
+      "settings": {
+        "n": 1000
+      }
+    }
+  ],
+  "solver": {
+    "method": "rosenbrock23",
+    "rtol": 1e-06,
+    "atol": 1e-09,
+    "h": 0.0,
+    "max_steps": 200000,
+    "t_end": 12.0,
+    "samples": 0,
+    "events": [
+      {
+        "when": "x = 0"
+      }
+    ]
+  },
+  "zz_top_level": {
+    "zeta": 1,
+    "alpha": [
+      3,
+      {
+        "y": true,
+        "b": null
+      }
+    ]
+  },
+  "assignment": null,
+  "export_settings": {
+    "svg": {
+      "theme": "light"
+    }
+  }
+}

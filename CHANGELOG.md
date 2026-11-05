@@ -27,6 +27,12 @@ All notable changes to this project are documented in this file.
 - The fixed-point search never uses more than 1000 Newton seeds, in any dimension (10D and up used 2^d).
 - The UI's IPC types are the ts-rs bindings generated from Rust (`types.ts` re-exports them); states carry `derived` for those introduced by order reduction.
 
+### Known limitations
+- macOS: quitting from the Dock, through AppleScript or by logging out or shutting down skips the
+  unsaved-changes question (tao doesn't implement `applicationShouldTerminate:`); Cmd+Q and the
+  app menu's Quit do ask. Windows logoff and shutdown don't ask either. See
+  docs/project-format.md, "Known limitations".
+
 ### Removed
 - Python backend (FastAPI, SciPy/Numba solvers, job queue, SQLite), the web frontend and the PyPI packaging. The `equation-phase-portrait-tool` package on PyPI is deprecated; v0.1.0 remains in git history.
 

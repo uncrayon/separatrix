@@ -1,0 +1,9 @@
+{
+  "format": "separatrix",
+  "format_version": 3,
+  "min_reader_version": 3,
+  "app_version": "0.5.0",
+  "workspace": {
+    "documents": []
+  }
+}

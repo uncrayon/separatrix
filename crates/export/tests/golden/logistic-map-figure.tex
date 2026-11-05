@@ -1,0 +1,174 @@
+% Separatrix figure: Logistic map
+%   x_{n+1} = r*x_n*(1 - x_n)
+% Parameters: r = 3.7
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-2, xmax=62, ymin=-0.05, ymax=1.05,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0,20,40,60}, ytick={0,0.5,1}, xticklabels={}, yticklabels={},
+  minor xtick={10,30,50}, minor ytick={0.25,0.75},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(7.087bp,-85.039bp)$) -- ($(rel axis cs:0,1)+(4.087bp,-85.039bp)$)
+  ($(rel axis cs:0,1)+(7.087bp,-7.731bp)$) -- ($(rel axis cs:0,1)+(4.087bp,-7.731bp)$)
+  ($(rel axis cs:0,1)+(77.953bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(77.953bp,-165.348bp)$)
+  ($(rel axis cs:0,1)+(148.819bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(148.819bp,-165.348bp)$)
+  ($(rel axis cs:0,1)+(219.685bp,-162.348bp)$) -- ($(rel axis cs:0,1)+(219.685bp,-165.348bp)$);
+\addplot[sepxtraj1, opacity=0.4, line width=0.75bp, line join=round] table[row sep=\\]{
+x y\\
+0 0.2\\
+1 0.592\\
+2 0.8937\\
+3 0.3516\\
+4 0.8435\\
+5 0.4885\\
+6 0.9245\\
+7 0.2582\\
+8 0.7087\\
+9 0.7638\\
+10 0.6674\\
+11 0.8213\\
+12 0.5431\\
+13 0.9181\\
+14 0.2782\\
+15 0.7429\\
+16 0.7067\\
+17 0.7669\\
+18 0.6614\\
+19 0.8286\\
+20 0.5254\\
+21 0.9226\\
+22 0.2642\\
+23 0.7192\\
+24 0.7472\\
+25 0.6989\\
+26 0.7786\\
+27 0.6379\\
+28 0.8547\\
+29 0.4596\\
+30 0.919\\
+31 0.2756\\
+32 0.7386\\
+33 0.7143\\
+34 0.755\\
+35 0.6844\\
+36 0.7992\\
+37 0.5938\\
+38 0.8924\\
+39 0.3552\\
+40 0.8474\\
+41 0.4784\\
+42 0.9233\\
+43 0.2621\\
+44 0.7156\\
+45 0.7531\\
+46 0.688\\
+47 0.7942\\
+48 0.6048\\
+49 0.8843\\
+50 0.3784\\
+51 0.8703\\
+52 0.4176\\
+53 0.8999\\
+54 0.3334\\
+55 0.8222\\
+56 0.5408\\
+57 0.9188\\
+58 0.2759\\
+59 0.7392\\
+60 0.7133\\
+};
+\addplot[sepxtraj1, only marks, mark=*, mark size=1.95bp, mark options={draw opacity=0, fill=sepxtraj1}] table[row sep=\\]{
+x y\\
+0 0.2\\
+1 0.592\\
+2 0.8937\\
+3 0.3516\\
+4 0.8435\\
+5 0.4885\\
+6 0.9245\\
+7 0.2582\\
+8 0.7087\\
+9 0.7638\\
+10 0.6674\\
+11 0.8213\\
+12 0.5431\\
+13 0.9181\\
+14 0.2782\\
+15 0.7429\\
+16 0.7067\\
+17 0.7669\\
+18 0.6614\\
+19 0.8286\\
+20 0.5254\\
+21 0.9226\\
+22 0.2642\\
+23 0.7192\\
+24 0.7472\\
+25 0.6989\\
+26 0.7786\\
+27 0.6379\\
+28 0.8547\\
+29 0.4596\\
+30 0.919\\
+31 0.2756\\
+32 0.7386\\
+33 0.7143\\
+34 0.755\\
+35 0.6844\\
+36 0.7992\\
+37 0.5938\\
+38 0.8924\\
+39 0.3552\\
+40 0.8474\\
+41 0.4784\\
+42 0.9233\\
+43 0.2621\\
+44 0.7156\\
+45 0.7531\\
+46 0.688\\
+47 0.7942\\
+48 0.6048\\
+49 0.8843\\
+50 0.3784\\
+51 0.8703\\
+52 0.4176\\
+53 0.8999\\
+54 0.3334\\
+55 0.8222\\
+56 0.5408\\
+57 0.9188\\
+58 0.2759\\
+59 0.7392\\
+60 0.7133\\
+};
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table[row sep=\\]{
+x y glyph\\
+0.54 0 1\\
+0.54 0.7297 1\\
+};
+\addplot[only marks, sepxfp, mark=*, mark options={fill=sepxbg, draw=sepxfp}, mark size=3.75bp, line width=1.125bp, restrict expr to domain={\thisrow{glyph}}{1:1}] table[row sep=\\]{
+x y glyph\\
+0.54 0 1\\
+0.54 0.7297 1\\
+};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(77.953bp,-155.223bp)$) {$20$};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(148.819bp,-155.223bp)$) {$40$};
+\node[anchor=west, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(14.212bp,-85.039bp)$) {$0.5$};
+\node[anchor=south west, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(14.212bp,-155.223bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-159.348bp)$) {$n$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(13.087bp,-4.5bp)$) {$x_{n}$};
+\end{axis}
+\end{tikzpicture}

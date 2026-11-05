@@ -150,7 +150,10 @@ pub fn classify(kind: SystemKind, eigenvalues: &[(f64, f64)]) -> Classification 
         (SystemKind::Ode, [(a, b), (c, d)]) => {
             let tau = a + c;
             let delta = a * c - b * d;
-            classify_2d(tau, delta, false)
+            // Eigenvalues carry errors relative to the largest: Δ ≈ 0 is
+            // judged against the scale squared.
+            let s = scale_2d(tau, delta);
+            classify_2d(tau, delta, false, s * s)
         }
         (SystemKind::Ode, ev) => classify_flow_nd(ev),
         (SystemKind::Map, ev) => classify_map(ev),
@@ -184,7 +187,12 @@ pub fn classify_jacobian(
         let tau = jac[0] + jac[3];
         let delta = jac[0] * jac[3] - jac[1] * jac[2];
         let scalar = is_scalar_2d(jac, repeat_resolution_2d(tau, delta));
-        classify_2d(tau, delta, scalar)
+        // Δ computed from the entries is as accurate as its two products: a
+        // stiff saddle with eigenvalues 2.5e-4 and -1.2e7 has a Δ far from 0
+        // although it is tiny next to τ².
+        let s = scale_2d(tau, delta);
+        let products = (jac[0] * jac[3]).abs() + (jac[1] * jac[2]).abs();
+        classify_2d(tau, delta, scalar, (s * s).min(products))
     } else {
         classify(kind, &ev)
     };
@@ -210,13 +218,15 @@ pub(crate) fn is_repeated_2d(tau: f64, delta: f64) -> bool {
     (tau * tau - 4.0 * delta).abs() <= REL_TOL * s * s
 }
 
-fn classify_2d(tau: f64, delta: f64, scalar: bool) -> Classification {
+/// `delta_scale`: what Δ's rounding error is relative to; Δ within
+/// `REL_TOL` of it counts as 0.
+fn classify_2d(tau: f64, delta: f64, scalar: bool, delta_scale: f64) -> Classification {
     use Classification::*;
     if !tau.is_finite() || !delta.is_finite() {
         return NonHyperbolic;
     }
     let s = scale_2d(tau, delta);
-    if s == 0.0 || delta.abs() <= REL_TOL * s * s {
+    if s == 0.0 || delta.abs() <= REL_TOL * delta_scale {
         return NonIsolated;
     }
     if delta < 0.0 {
@@ -311,6 +321,15 @@ mod tests {
         assert_eq!(ode2([-1.0, 1e-14, 0.0, -1.0 + 1e-14]), StableStar);
         assert_eq!(ode2([1e-13, 1.0, 0.0, 0.0]), NonIsolated);
         assert_eq!(ode2([-1.0, 0.0, 0.0, -1.01]), StableNode);
+        // A stiff saddle: Δ = -3088 is tiny next to τ² but far from 0.
+        let stiff = [1.5e-7, 2.5e6, 0.001234567, 12345678.9];
+        assert_eq!(ode2(stiff), Saddle);
+        let ev = classify_jacobian(SystemKind::Ode, 2, &stiff).0;
+        assert_eq!(
+            classify(SystemKind::Ode, &ev),
+            NonIsolated,
+            "eigenvalues alone can't tell"
+        );
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub mod ad;
 mod ast;
 mod diag;
 mod latex;
+mod outline;
 mod parser;
 mod program;
 mod sema;
@@ -52,6 +53,7 @@ mod token;
 use serde::{Deserialize, Serialize};
 
 pub use diag::{Diagnostic, Severity};
+pub use outline::{outline, portable_latex, EquationOutline, LatexPart, OutlineRole};
 #[doc(hidden)]
 pub use program::SMALL_PROGRAM;
 pub use source::{convert, ConvertedLine};

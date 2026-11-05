@@ -12,6 +12,7 @@ import type {
 } from "../api/types";
 import type { PortraitJob } from "../api/client";
 import type { Template } from "../templates";
+import type { LoadedAxis, ProjectLoad } from "../project/serialize";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -21,6 +22,12 @@ export interface EquationLine {
 
 export interface InitialCondition {
   id: number;
+  /**
+   * The id it has in a project file (`initial_conditions[].id`), stable across
+   * saves. Optional so start points built outside the studio (thumbnails,
+   * tests) need none; such a point is saved as `ic-<id>`.
+   */
+  uid?: string;
   x0: number[];
   t0: number;
   color: number;
@@ -668,4 +675,87 @@ export function stateExtent(
     }
   }
   return lo <= hi ? [lo, hi] : null;
+}
+
+/** What a project load sets once its system has compiled (see {@link applyProjectLoad}). */
+export interface AppliedProject {
+  params: ParamState[];
+  ics: InitialCondition[];
+  view: View;
+  baseState: number[];
+  fieldTime: number;
+  layers: Layers;
+  solver: SolverSettings;
+  /** Sentences for the open banner, about what could not be used as saved. */
+  warnings: string[];
+}
+
+/** The state a saved axis names in `sys`, or null when it names none (another kind, or a variable it lacks). */
+function loadedAxis(a: LoadedAxis, sys: CompileResponse): AxisRef | null {
+  if (a.kind === "time") return TIME_AXIS;
+  if (a.kind !== "state") return null;
+  const i = sys.states.findIndex((s) => s.name === a.name);
+  return i >= 0 ? stateAxis(i) : null;
+}
+
+/** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
+export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
+  const v = load.view;
+  if (!v || !v.xRange || !v.yRange) return null;
+  const xAxis = loadedAxis(v.xAxis, sys);
+  const yAxis = loadedAxis(v.yAxis, sys);
+  if (!xAxis || !yAxis) return null;
+  const same = xAxis.kind === "time" ? yAxis.kind === "time" : yAxis.kind === "state" && yAxis.index === xAxis.index;
+  if (same) return null;
+  return { xAxis, yAxis, xRange: [v.xRange[0], v.xRange[1]], yRange: [v.yRange[0], v.yRange[1]] };
+}
+
+/**
+ * The studio state a project file describes, for the system its lines
+ * compiled to. Everything is matched by name: a parameter by its id, a
+ * start point's coordinates through the file's `system.states` (as
+ * {@link adaptInitialConditions} does after a recompile), slice values by
+ * state name. A parameter the file lacks gets its default; a view that
+ * doesn't fit the system (or has a bad range) gives way to
+ * {@link defaultView}. `newIcId` numbers the start points.
+ */
+export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcId: () => number): AppliedProject {
+  const warnings: string[] = [];
+  const params = sys.params.map((p) => {
+    const saved = load.params.find((q) => q.name === p.name);
+    if (!saved) return resolveParam(p, undefined, undefined, undefined, undefined);
+    const value = saved.value;
+    const ok = Number.isFinite(saved.min) && Number.isFinite(saved.max) && saved.min < saved.max;
+    const [lo, hi] = ok ? [saved.min, saved.max] : defaultParamRange(value);
+    return { name: p.name, latex: p.latex, value, min: Math.min(lo, value), max: Math.max(hi, value) };
+  });
+
+  // The file's states, in the order its x0 arrays were written; without
+  // them (a hand-written file), the compiled order.
+  const fileStates: StateInfo[] = (load.states.length ? load.states : sys.states.map((s) => s.name)).map((name) => ({
+    name,
+    latex: name,
+    derived: false,
+  }));
+  const ics: InitialCondition[] = load.ics.map((ic) => ({
+    id: newIcId(),
+    uid: ic.uid,
+    x0: adaptBaseState(ic.x0, fileStates, sys.states),
+    t0: ic.t0,
+    color: ((Math.round(ic.color) % PALETTE_SIZE) + PALETTE_SIZE) % PALETTE_SIZE,
+    ...(ic.hidden ? { hidden: true } : {}),
+  }));
+
+  let view = projectView(load, sys);
+  if (!view) {
+    view = defaultView(sys);
+    if (load.view) warnings.push("The saved view doesn't fit this system, so the default view is shown.");
+  }
+  const slice = load.view?.slice ?? {};
+  const baseState = sys.states.map((s) => (Number.isFinite(slice[s.name]) ? slice[s.name] : 0));
+  const t = load.view?.t;
+  const fieldTime = t !== undefined && Number.isFinite(t) ? t : 0;
+  const layers: Layers = { ...DEFAULT_LAYERS, ...load.view?.layers };
+  const solver: SolverSettings = { ...DEFAULT_SOLVER, ...(sys.kind === "map" ? { tEnd: 50 } : {}), ...load.solver };
+  return { params, ics, view, baseState, fieldTime, layers, solver, warnings };
 }

@@ -240,3 +240,37 @@ export const IconLogo = ({ className, ...rest }: IconProps) => (
     <circle cx="10" cy="10" r="1.3" fill="var(--accent)" stroke="none" />
   </svg>
 );
+
+/** A blank page with a folded corner: New. */
+export const IconNewDoc = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 1.75h5.25L12.5 5v8.25a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1Z" />
+    <path d="M9 1.75V5.25h3.5" />
+  </Svg>
+);
+
+/** An open folder: Open…. */
+export const IconOpen = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M1.75 12.5V3.75a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1V6.5" />
+    <path d="M1.75 12.5l1.9-5.2a1 1 0 0 1 .94-.65h9.16a.75.75 0 0 1 .7 1l-1.75 4.6a1 1 0 0 1-.94.65H2.75a1 1 0 0 1-1-1Z" />
+  </Svg>
+);
+
+/** A floppy disk: Save. */
+export const IconSave = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.75 1.75h8.5l3 3v8.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1Z" />
+    <path d="M4.75 1.75v3.5h5.5v-3.5" />
+    <rect x="4.25" y="8.75" width="7.5" height="5.5" rx="0.5" />
+  </Svg>
+);
+
+/** A floppy disk with a pencil: Save as…. */
+export const IconSaveAs = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.25 14.25h-5.5a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1h8.5l3 3v2" />
+    <path d="M4.75 1.75v3.5h5.5v-3.5" />
+    <path d="M10 14.5l.4-1.9 3.35-3.35a1 1 0 0 1 1.5 1.5L11.9 14.1Z" />
+  </Svg>
+);

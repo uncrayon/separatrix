@@ -375,3 +375,452 @@ trajectories: Array<TrajectoryOut>,
  * Wall time spent in Rust, in milliseconds.
  */
 elapsedMs: number, };
+
+export type ProjectFile = { 
+/**
+ * Always `"separatrix"`.
+ */
+format: string, 
+/**
+ * The schema version the file was written in.
+ */
+format_version: number, 
+/**
+ * The oldest schema version that can read the file.
+ */
+min_reader_version: number, 
+/**
+ * The Separatrix version that saved the file (informational).
+ */
+app_version: string, system: ProjectSystem, initial_conditions: Array<ProjectInitialCondition>, views: Array<ProjectView>, 
+/**
+ * Reserved; v1 keeps the entries verbatim.
+ */
+analyses: unknown[], solver: ProjectSolver, 
+/**
+ * Owned by the export dialog; opaque to Rust.
+ */
+export_settings?: unknown, };
+
+export type ProjectSystem = { 
+/**
+ * `"ode"`, `"map"`, … Informational: recomputed on open.
+ */
+kind: string, 
+/**
+ * `"latex"` or `"text"`.
+ */
+input_format: string, 
+/**
+ * The source of truth: every line exactly as typed, blank lines included.
+ */
+lines: Array<string>, 
+/**
+ * State names, in the order `x0` arrays are written in.
+ */
+states: Array<string>, params: Array<ProjectParam>, 
+/**
+ * The template the system came from; `null` for untitled work.
+ */
+template: string | null, };
+
+export type ProjectParam = { id: string, value: number, 
+/**
+ * A missing bound reads as NaN and is repaired by validation.
+ */
+min: number, max: number, };
+
+export type ProjectInitialCondition = { 
+/**
+ * A missing or empty id is repaired by validation.
+ */
+id: string, 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x0: Array<number>, t0: number, 
+/**
+ * Index into the trajectory palette (normalized mod 7).
+ */
+color: number, hidden: boolean, };
+
+export type ProjectView = { 
+/**
+ * A missing or empty id is repaired by validation.
+ */
+id: string, x_axis: ProjectAxis, y_axis: ProjectAxis, 
+/**
+ * The user's ranges (not the ones equalized for the plot's aspect).
+ */
+x_range: [number, number], y_range: [number, number], slice: ProjectSlice, layers: ProjectLayers, };
+
+export type ProjectAxis = { kind: string, name?: string, };
+
+export type ProjectSlice = { states: { [key in string]: number }, t: number, };
+
+export type ProjectLayers = { field: boolean, 
+/**
+ * Arrows per side, clamped to 2..=200.
+ */
+field_grid: number, nullclines: boolean, fixed_points: boolean, backward: boolean, };
+
+export type ProjectSolver = { method: string, rtol: number, atol: number, 
+/**
+ * Fixed step size; 0 means "the method's default".
+ */
+h: number, max_steps: number, t_end: number, 
+/**
+ * Samples per trajectory; 0 means automatic.
+ */
+samples: number, };
+
+export type ProjectReadRequest = { 
+/**
+ * A path from `project_choose_open_path`, `launch_ready` or
+ * `project-open-requested`; any other path is refused.
+ */
+path: string, };
+
+export type OpenedProject = { 
+/**
+ * The path that was read.
+ */
+path: string, 
+/**
+ * Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+ */
+name: string, 
+/**
+ * The project, repaired where it could be (see `warnings`).
+ */
+project: ProjectFile, 
+/**
+ * One sentence per repair or notice, for the UI's banner.
+ */
+warnings: Array<string>, 
+/**
+ * The format version the file was migrated from.
+ */
+migratedFrom?: number, 
+/**
+ * The file's (newer, still readable) format version.
+ */
+newerFormat?: number, };
+
+export type ProjectChooseSaveRequest = { 
+/**
+ * File name offered in the dialog (`.sepx` is added when missing).
+ */
+suggestedName: string, 
+/**
+ * The document's current path; the dialog opens in its folder.
+ */
+currentPath?: string, };
+
+export type ChosenSavePath = { 
+/**
+ * Where to save, always ending in `.sepx`.
+ */
+path: string, 
+/**
+ * `.sepx` was added to the chosen name and that file already exists:
+ * the native dialog never asked about it, so the UI asks
+ * "“x.sepx” already exists. Replace it?".
+ */
+appendedExists: boolean, };
+
+export type ProjectWriteRequest = { 
+/**
+ * A granted `.sepx` path.
+ */
+path: string, 
+/**
+ * The project as the UI built it (checked with path-precise messages
+ * before anything is written).
+ */
+project: unknown, };
+
+export type SavedProject = { 
+/**
+ * The path written.
+ */
+path: string, 
+/**
+ * Its file name.
+ */
+name: string, };
+
+export type DocumentStateRequest = { 
+/**
+ * Window title, e.g. `"● rabbits-vs-sheep — Separatrix"`.
+ */
+title: string, 
+/**
+ * Unsaved changes: closing the window asks first.
+ */
+dirty: boolean, };
+
+export type ProjectOpenRequested = { 
+/**
+ * A granted path, for `project_read`.
+ */
+path: string, };
+
+export type CloseRequested = Record<symbol, never>;
+
+export type ExportPortraitRequest = { 
+/**
+ * What to compute.
+ */
+portrait: PortraitRequest, 
+/**
+ * Figure width in CSS px (the simplification tolerance is in these).
+ */
+widthPx: number, 
+/**
+ * Figure height in CSS px.
+ */
+heightPx: number, };
+
+export type TrajectoryTag = { 
+/**
+ * The initial condition's project id (`"ic-3"`).
+ */
+icId: string, 
+/**
+ * Integrated backward in time.
+ */
+backward: boolean, 
+/**
+ * Palette index (taken mod 7).
+ */
+color: number, };
+
+export type ExportTheme = "light" | "dark";
+
+export type Notation = "dot" | "prime" | "leibniz";
+
+export type FigureLatexRequest = { 
+/**
+ * The portrait at the figure's aspect.
+ */
+portrait: PortraitRequest, 
+/**
+ * One tag per requested trajectory.
+ */
+tags: Array<TrajectoryTag>, 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * The system's title (comments, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from, e.g. "Strogatz §6.4".
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type FigureLatexResponse = { 
+/**
+ * The snippet.
+ */
+tex: string, 
+/**
+ * Data rows written.
+ */
+points: number, 
+/**
+ * Map iterates were thinned to stay under 5,000 points.
+ */
+thinned: boolean, 
+/**
+ * What the user should know, one sentence each.
+ */
+notes: Array<string>, };
+
+export type SaveFigureRequest = { 
+/**
+ * The figure.
+ */
+figure: FigureLatexRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
+export type SavedFiles = { 
+/**
+ * The file names written (no folders), the main file first.
+ */
+names: Array<string>, };
+
+export type SystemLatexRequest = { 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * The lines as typed.
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, 
+/**
+ * Parameter values, in `CompileResponse::params` order.
+ */
+params: Array<number>, 
+/**
+ * Left-hand-side notation.
+ */
+notation: Notation, 
+/**
+ * `align` with labels, or `align*`.
+ */
+numbered: boolean, 
+/**
+ * The system's title (labels, comments).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, };
+
+export type SystemLatexResponse = { 
+/**
+ * The snippet.
+ */
+tex: string, 
+/**
+ * The normalized equations as one `aligned` block, for the dialog's
+ * typeset preview (never the raw file text).
+ */
+previewLatex: string, };
+
+export type FixedPointsLatexRequest = { 
+/**
+ * The screen's request.
+ */
+portrait: PortraitRequest, 
+/**
+ * The system's title (caption, label).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, 
+/**
+ * Significant digits, 2 to 8.
+ */
+digits: number, };
+
+export type CsvRequest = { 
+/**
+ * The trajectories to write (its `samples` is the CSV's own).
+ */
+portrait: PortraitRequest, 
+/**
+ * One tag per requested trajectory.
+ */
+tags: Array<TrajectoryTag>, 
+/**
+ * Which initial conditions to write, in order; empty for all.
+ */
+icIds: Array<string>, 
+/**
+ * The lines as typed (metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, 
+/**
+ * The system's title (file names).
+ */
+title: string, };
+
+export type CsvFileOut = { 
+/**
+ * `<stem>.csv` and `<stem>.meta.json`.
+ */
+stem: string, 
+/**
+ * The CSV (RFC 4180 with LF line endings).
+ */
+csv: string, 
+/**
+ * The `.meta.json` contents.
+ */
+meta: string, };
+
+export type CsvResponse = { 
+/**
+ * One entry per initial condition.
+ */
+files: Array<CsvFileOut>, };
+
+export type SaveCsvRequest = { 
+/**
+ * What to write.
+ */
+csv: CsvRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
+export type TextExtension = "tex" | "svg" | "csv";
+
+export type SaveTextRequest = { 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, 
+/**
+ * The file type (dialog filter, and the extension added when missing).
+ */
+extension: TextExtension, 
+/**
+ * The contents (UTF-8).
+ */
+contents: string, };
+
+export type ClipboardTextRequest = { 
+/**
+ * The text to copy.
+ */
+text: string, };

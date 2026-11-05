@@ -3,10 +3,12 @@ import type { AxisRef, CompileResponse, Diagnostic, InputFormat } from "../api/t
 import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
 import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
+import type { ProjectLoad } from "../project/serialize";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
   adaptBaseState,
+  applyProjectLoad,
   adaptInitialConditions,
   adaptView,
   buildPortraitJob,
@@ -69,6 +71,26 @@ export interface StudioState extends StudioSnapshot {
   portrait: PortraitState | null;
   sourceTemplateId: string | null;
   computeError: string | null;
+  /**
+   * A project file was opened whose lines haven't compiled yet: its
+   * parameters, start points, view and solver are applied by the first
+   * compile that succeeds (after the user fixes a line), and until then a
+   * save writes them exactly as read (project/serialize.ts).
+   */
+  pendingProject: ProjectLoad | null;
+  /**
+   * Counts the loads that have settled: a template, Blank or a project file
+   * whose first compile came back (successful or not, so a load left
+   * pending counts). Dirty tracking takes its baseline when it changes.
+   */
+  docEpoch: number;
+  /**
+   * Counts the view changes the plot made by itself ({@link
+   * StudioActions.autoAdjustView}), which leave a clean document clean.
+   */
+  autoAdjustCount: number;
+  /** Notices from the last project load, for the open banner. */
+  loadWarnings: string[];
 }
 
 export type Studio = ReturnType<typeof useStudio>;
@@ -105,6 +127,10 @@ export function useStudio() {
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
   const [shapeId, setShapeId] = useState(0);
+  const [pendingProject, setPendingProject] = useState<ProjectLoad | null>(null);
+  const [docEpoch, setDocEpoch] = useState(0);
+  const [autoAdjustCount, setAutoAdjustCount] = useState(0);
+  const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
 
   const state: StudioState = {
     format,
@@ -128,6 +154,10 @@ export function useStudio() {
     computeError,
     plotAspect,
     shapeId,
+    pendingProject,
+    docEpoch,
+    autoAdjustCount,
+    loadWarnings,
   };
   const latest = useRef(state);
   latest.current = state;
@@ -138,15 +168,15 @@ export function useStudio() {
   const compileTimer = useRef<number | undefined>(undefined);
   const modeSnapshot = useRef<ModeSnapshot | null>(null);
   const switching = useRef(false);
+  /** The project load waiting for its lines to compile (mirrors `pendingProject`). */
+  const pendingLoad = useRef<ProjectLoad | null>(null);
+  /** A load was started and no compile has come back since. */
+  const loadSettling = useRef(false);
 
-  const makeIc = useCallback(
-    (x0: number[], t0: number): Omit<InitialCondition, "color"> => ({
-      id: nextIcId.current++,
-      x0,
-      t0,
-    }),
-    [],
-  );
+  const makeIc = useCallback((x0: number[], t0: number): Omit<InitialCondition, "color"> => {
+    const id = nextIcId.current++;
+    return { id, uid: `ic-${id}`, x0, t0 };
+  }, []);
 
   const scheduler = useMemo(
     () =>
@@ -174,6 +204,14 @@ export function useStudio() {
     async (lines: string[], format: InputFormat, template?: Template) => {
       const seq = ++compileSeq.current;
       const source = lines.filter((l) => l.trim() !== "").join("\n");
+      // A load (template, Blank, project file) has settled once a compile
+      // after it is back, whatever it says (a file that doesn't compile
+      // stays pending); a compile that supersedes the load's own settles it.
+      const settle = () => {
+        if (!loadSettling.current) return;
+        loadSettling.current = false;
+        setDocEpoch((n) => n + 1);
+      };
       let res: CompileResponse;
       try {
         res = await compileSystem({ source, format });
@@ -181,31 +219,54 @@ export function useStudio() {
         if (seq !== compileSeq.current) return;
         setDiagnostics([{ severity: "error", message: `The maths core did not answer: ${String(err)}` }]);
         setCompileOk(false);
+        settle();
         return;
       }
       if (seq !== compileSeq.current) return;
       setDiagnostics(res.diagnostics);
       setCompileOk(res.ok);
-      if (!res.ok || res.systemId === undefined) return;
+      if (!res.ok || res.systemId === undefined) {
+        settle();
+        return;
+      }
 
       const cur = latest.current;
       const old = cur.compiled;
       const dim = res.states.length;
       const sourceTemplate = cur.sourceTemplateId ? templateById(cur.sourceTemplateId) : undefined;
 
-      setParams(
-        res.params.map((p) =>
-          resolveParam(
-            p,
-            cur.params.find((q) => q.name === p.name),
-            old?.params.find((q) => q.name === p.name)?.default,
-            template,
-            sourceTemplate,
+      const load = template ? null : pendingLoad.current;
+      if (!load) {
+        setParams(
+          res.params.map((p) =>
+            resolveParam(
+              p,
+              cur.params.find((q) => q.name === p.name),
+              old?.params.find((q) => q.name === p.name)?.default,
+              template,
+              sourceTemplate,
+            ),
           ),
-        ),
-      );
+        );
+      }
 
-      if (template) {
+      if (load) {
+        // The project file's state, now that its lines compiled.
+        pendingLoad.current = null;
+        setPendingProject(null);
+        const applied = applyProjectLoad(load, res, () => nextIcId.current++);
+        setShapeId((n) => n + 1);
+        setParams(applied.params);
+        setViewState(applied.view);
+        setHomeView(applied.view);
+        setBaseState(applied.baseState);
+        setFieldTimeState(applied.fieldTime);
+        setIcs(applied.ics);
+        setLayersState(applied.layers);
+        setSolverState(applied.solver);
+        setSelection(null);
+        if (applied.warnings.length) setLoadWarnings((w) => [...w, ...applied.warnings]);
+      } else if (template) {
         setShapeId((n) => n + 1);
         const v = templateView(template, res);
         setViewState(v);
@@ -246,6 +307,7 @@ export function useStudio() {
         }
       }
       setCompiled(res);
+      settle();
     },
     [makeIc],
   );
@@ -271,6 +333,10 @@ export function useStudio() {
   const loadTemplate = useCallback(
     (t: Template) => {
       window.clearTimeout(compileTimer.current);
+      pendingLoad.current = null;
+      setPendingProject(null);
+      setLoadWarnings([]);
+      loadSettling.current = true;
       const format = latest.current.format;
       const lines = templateLines(t, format);
       const next = toLines(lines);
@@ -288,6 +354,38 @@ export function useStudio() {
     loadTemplate(BLANK_TEMPLATE);
     setSourceTemplateId(null);
   }, [loadTemplate]);
+
+  /**
+   * Opens a project file (from {@link stateFromProject}): its lines, input
+   * format and template id now; everything else once the lines compile. If
+   * they don't, the load waits in `pendingProject` for the first compile
+   * that succeeds, so fixing the line brings the file's start points back.
+   */
+  const loadProject = useCallback(
+    (load: ProjectLoad) => {
+      window.clearTimeout(compileTimer.current);
+      const next = toLines(load.lines.length ? load.lines : [""]);
+      setEquations(next);
+      setFormatState(load.format);
+      saveFormat(load.format);
+      latest.current = { ...latest.current, equations: next, format: load.format };
+      setConversionNotes({});
+      modeSnapshot.current = null;
+      setSourceTemplateId(load.templateId);
+      setSelection(null);
+      setLoadWarnings(load.warnings);
+      // New start points are numbered past the file's own `ic-<n>` ids.
+      for (const ic of load.ics) {
+        const m = /^ic-(\d+)$/.exec(ic.uid);
+        if (m) nextIcId.current = Math.max(nextIcId.current, Number(m[1]) + 1);
+      }
+      pendingLoad.current = load;
+      setPendingProject(load);
+      loadSettling.current = true;
+      void runCompile(load.lines, load.format);
+    },
+    [runCompile],
+  );
 
   const setEquation = useCallback(
     (id: number, source: string) => {
@@ -409,6 +507,14 @@ export function useStudio() {
   }, []);
 
   const setView = useCallback((v: View) => setViewState(v), []);
+  /**
+   * A view change the plot makes by itself (making room under the toolbar),
+   * not the user: it leaves a clean document clean.
+   */
+  const autoAdjustView = useCallback((v: View) => {
+    setViewState(v);
+    setAutoAdjustCount((n) => n + 1);
+  }, []);
   const setPlotAspect = useCallback((aspect: number | null) => {
     const a = roundAspect(aspect);
     setPlotAspectState((old) => (old === a ? old : a));
@@ -518,6 +624,7 @@ export function useStudio() {
     () => ({
       loadTemplate,
       newBlank,
+      loadProject,
       setEquation,
       setFormat,
       addEquation,
@@ -525,6 +632,7 @@ export function useStudio() {
       setParam,
       setParamRange,
       setView,
+      autoAdjustView,
       resetView,
       setPlotAspect,
       setAxis,
@@ -543,6 +651,7 @@ export function useStudio() {
     [
       loadTemplate,
       newBlank,
+      loadProject,
       setEquation,
       setFormat,
       addEquation,
@@ -550,6 +659,7 @@ export function useStudio() {
       setParam,
       setParamRange,
       setView,
+      autoAdjustView,
       resetView,
       setPlotAspect,
       setAxis,

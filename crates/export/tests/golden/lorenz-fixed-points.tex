@@ -1,0 +1,20 @@
+% Separatrix fixed points: Lorenz equations
+%   x' = sigma*(y - x)
+%   y' = r*x - y - x*z
+%   z' = x*y - b*z
+% Parameters: sigma = 10, r = 28, b = 2.6666666666666665
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Fixed points of the system with $\sigma = 10$, $r = 28$ and $b = 2.66667$, found in $-44 \le x \le 44$, $-44 \le y \le 44$ and $-2 \le z \le 64$.}
+\label{tab:lorenz-equations-fixed-points}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Fixed point & Eigenvalues $\lambda$ & Type \\
+\midrule
+$(\num{-8.485}, \num{-8.485}, \num{27})$ & $\num{-13.85}$, $\num{0.09396} \pm \num{10.19}\,i$ & Saddle \\
+$(\num{0}, \num{0}, \num{0})$ & $\num{-22.83}$, $\num{11.83}$, $\num{-2.667}$ & Saddle \\
+$(\num{8.485}, \num{8.485}, \num{27})$ & $\num{-13.85}$, $\num{0.09396} \pm \num{10.19}\,i$ & Saddle \\
+\bottomrule
+\end{tabular}
+\end{table}

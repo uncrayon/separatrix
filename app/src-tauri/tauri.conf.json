@@ -20,7 +20,10 @@
         "minHeight": 640
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://localhost:1420 ipc: http://ipc.localhost"
+    }
   },
   "bundle": {
     "active": true,
@@ -34,7 +37,36 @@
     ],
     "category": "Education",
     "shortDescription": "Explore dynamical systems: phase portraits, chaos and bifurcations",
+    "fileAssociations": [
+      {
+        "ext": ["sepx"],
+        "name": "Separatrix project",
+        "description": "Separatrix project",
+        "role": "Editor",
+        "rank": "Owner",
+        "mimeType": "application/x-separatrix-project",
+        "contentTypes": ["io.github.uncrayon.separatrix.project"],
+        "exportedType": {
+          "identifier": "io.github.uncrayon.separatrix.project",
+          "conformsTo": ["public.json", "public.data"]
+        }
+      }
+    ],
     "macOS": { "signingIdentity": "-" },
-    "windows": { "nsis": { "installMode": "currentUser" } }
+    "windows": { "nsis": { "installMode": "currentUser" } },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/separatrix.desktop.hbs",
+        "files": {
+          "/usr/share/mime/packages/io.github.uncrayon.separatrix.xml": "linux/separatrix-mime.xml"
+        }
+      },
+      "rpm": {
+        "desktopTemplate": "linux/separatrix.desktop.hbs",
+        "files": {
+          "/usr/share/mime/packages/io.github.uncrayon.separatrix.xml": "linux/separatrix-mime.xml"
+        }
+      }
+    }
   }
 }

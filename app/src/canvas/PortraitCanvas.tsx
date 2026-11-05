@@ -212,7 +212,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       const f = (target - vp.top) / H;
       top = Math.max(top, (y - f * y0) / (1 - f));
     }
-    if (top > y1 + 1e-9 * Math.abs(y1 - y0)) actions.setView({ ...view, xRange: vp.xRange, yRange: [y0, top] });
+    if (top > y1 + 1e-9 * Math.abs(y1 - y0)) actions.autoAdjustView({ ...view, xRange: vp.xRange, yRange: [y0, top] });
   }, [scene, toolbarBox, size.w, vp, glyphScale, view, state.homeView, actions]);
 
   // Every input of the last paint (the canvas holds its own size). A render

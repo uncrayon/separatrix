@@ -1,0 +1,122 @@
+/* Export dialog: the app's placement of the design system's ExportDialog
+   (ds-export-*). Only what the DS leaves to the app is here. */
+
+.export-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  /* Anchored at the top: switching Content doesn't move the header and the
+     format control under the pointer. */
+  align-items: flex-start;
+}
+
+/* A tall figure would make a very tall well: cap its height and keep its aspect.
+   The cap follows the window's height, so at 1024 × 768 (projector size
+   included) a few lines of the snippet show above the footer. */
+.export-preview-well {
+  --export-max-h: min(22rem, 28vh);
+  width: min(100%, calc(var(--export-max-h) * var(--export-ratio, 1.25)));
+  margin-inline: auto;
+}
+
+/* Transparent exports show a checkerboard behind the figure. */
+.export-preview-well.is-transparent {
+  background-color: var(--sunken);
+  background-image:
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%),
+    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%);
+  background-size: 12px 12px;
+  background-position:
+    0 0,
+    6px 6px;
+}
+
+/* The Equations preview: the typeset system on the plot paper. */
+.export-equations {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 9rem;
+  padding: var(--space-4);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--ink);
+}
+.export-equations[aria-busy="true"] { opacity: 0.6; }
+
+/* Hints with no checkbox to indent under. */
+.export-hint-flush { padding-left: 0; }
+
+/* A copy button's label and, hidden, its other label ("Copied"): the button
+   is as wide as the longer one and doesn't change size. */
+.export-swap {
+  display: inline-flex;
+  flex-direction: column;
+}
+.export-swap::after {
+  content: attr(data-alt);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+/* Fixed points: the table as it will be written, on the plot paper. */
+.export-fp-preview {
+  max-height: min(16rem, 30vh);
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  color: var(--ink);
+}
+.export-fp-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.export-fp-table th {
+  color: var(--ink-2);
+  font-weight: 400;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.export-fp-table th,
+.export-fp-table td {
+  padding: var(--space-1) var(--space-2);
+  vertical-align: top;
+}
+.export-fp-table tbody tr:first-child td {
+  padding-top: var(--space-2);
+}
+
+/* CSV: trajectories and samples side by side, no preview. */
+.export-csv-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--space-10) * 6);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .ds-export-split,
+  .export-csv-options { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A short window (1024 × 768, projector type included): less margin round
+   the dialog, and the long option hints are said (aria-describedby) rather
+   than shown, so a few lines of the snippet show above the footer. */
+@media (max-height: 820px) {
+  .ds-export-scrim.export-scrim {
+    padding-block: var(--space-4);
+  }
+  .export-dialog .export-hint-tight {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

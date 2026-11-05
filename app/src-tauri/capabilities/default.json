@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window",
+  "description": "Permissions for the main window. Every plugin (dialog, clipboard, single instance) is used from Rust only, so no plugin command and no fs permission is exposed to the webview.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }

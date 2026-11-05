@@ -1,0 +1,22 @@
+[package]
+name = "separatrix-export"
+description = "Exports of a phase portrait: LaTeX (system, fixed points, pgfplots figure), CSV and the PNG point layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "separatrix_export"
+
+[dependencies]
+dyn-core.workspace = true
+dyn-expr.workspace = true
+dyn-analysis.workspace = true
+dyn-solve.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+png = "=0.18.1"
+
+[dev-dependencies]
+# Exact float parsing for the shared test vectors (JavaScript writes the shortest form).
+serde_json = { workspace = true, features = ["float_roundtrip"] }

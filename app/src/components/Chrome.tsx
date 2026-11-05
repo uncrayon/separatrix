@@ -7,7 +7,21 @@ import { Tex } from "../math/Tex";
 import { searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
-import { IconCheck, IconError, IconGallery, IconLogo, IconMoon, IconProjector, IconWarning } from "./icons";
+import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
+import {
+  IconCheck,
+  IconError,
+  IconExport,
+  IconGallery,
+  IconLogo,
+  IconMoon,
+  IconNewDoc,
+  IconOpen,
+  IconProjector,
+  IconSave,
+  IconSaveAs,
+  IconWarning,
+} from "./icons";
 import { diagnosticLine } from "./diagnostics";
 
 type Theme = "dark" | "light";
@@ -25,14 +39,51 @@ const minus = (s: string) => s.replace(/-/g, "−");
 
 const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
-interface TopBarProps {
+/** The open document as the top bar shows it (from useProjectDocument). */
+export interface TopBarDocument {
+  /** The file's stem once it has one, otherwise the system's title. */
+  name: string;
+  /** The document has a file (opened or saved). */
+  hasFile: boolean;
+  /** Unsaved changes. */
+  dirty: boolean;
+}
+
+/** The document actions; each may ask first (in-page) when there are unsaved changes. */
+export interface TopBarActions {
+  onNew: () => void;
+  onOpen: () => void;
+  onSave: () => void;
+  onSaveAs: () => void;
+  onExport: () => void;
+  /** Export… is unavailable (nothing compiled yet). */
+  exportDisabled?: boolean;
+}
+
+interface TopBarProps extends TopBarActions {
   state: StudioState;
+  doc: TopBarDocument;
   theme: Theme;
   onToggleTheme: () => void;
   onOpenGallery: () => void;
 }
 
-export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarProps) {
+const MAC = isMacPlatform(typeof navigator === "undefined" ? undefined : navigator);
+const keys = (letter: string, shift = false) => shortcutLabel(letter, { mac: MAC, shift });
+
+export function TopBar({
+  state,
+  doc,
+  theme,
+  onToggleTheme,
+  onOpenGallery,
+  onNew,
+  onOpen,
+  onSave,
+  onSaveAs,
+  onExport,
+  exportDisabled,
+}: TopBarProps) {
   const tpl = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
   const title = systemTitle(
     tpl,
@@ -40,6 +91,8 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
     state.format,
   );
   const projector = theme === "light";
+  // New has a shortcut in the desktop app only: the browser keeps Ctrl+N for a new window.
+  const newTip = isTauri() ? `New system (${keys("n")})` : "New system";
   return (
     <header className="topbar">
       <div className="brand">
@@ -47,14 +100,71 @@ export function TopBar({ state, theme, onToggleTheme, onOpenGallery }: TopBarPro
         <span className="title brand-name">Separatrix</span>
       </div>
       <div className="doc-title" aria-live="polite">
-        {(tpl || state.compiled) && <span className="body-strong doc-name">{title.name}</span>}
-        {title.edited && <span className="ds-template-card-tag doc-edited">Edited</span>}
+        {(tpl || state.compiled || doc.hasFile) && (
+          <span className="body-strong doc-name">{doc.name}</span>
+        )}
+        {doc.dirty && (
+          <>
+            <span className="caption doc-dirty" aria-hidden="true" data-tooltip="Unsaved changes">
+              ●
+            </span>
+            <span className="ds-sr">Unsaved changes</span>
+          </>
+        )}
+        {!doc.hasFile && title.edited && <span className="ds-template-card-tag doc-edited">Edited</span>}
         {tpl && strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
       </div>
       <div className="topbar-actions">
+        <div className="topbar-file" role="group" aria-label="File">
+          <button type="button" className="ds-icon-button" aria-label="New system" data-tip={newTip} onClick={onNew} {...tipDismiss}>
+            <IconNewDoc />
+          </button>
+          <button
+            type="button"
+            className="ds-icon-button"
+            aria-label="Open…"
+            data-tip={`Open a project (${keys("o")})`}
+            onClick={onOpen}
+            {...tipDismiss}
+          >
+            <IconOpen />
+          </button>
+          <button
+            type="button"
+            className="ds-icon-button"
+            aria-label="Save"
+            data-tip={`Save (${keys("s")})`}
+            onClick={onSave}
+            {...tipDismiss}
+          >
+            <IconSave />
+          </button>
+          <button
+            type="button"
+            className="ds-icon-button"
+            aria-label="Save as…"
+            data-tip={`Save as… (${keys("s", true)})`}
+            onClick={onSaveAs}
+            {...tipDismiss}
+          >
+            <IconSaveAs />
+          </button>
+        </div>
         <button type="button" className="ds-button" onClick={onOpenGallery}>
           <IconGallery />
           <span>Templates…</span>
+        </button>
+        <button
+          type="button"
+          className="ds-button"
+          onClick={onExport}
+          disabled={exportDisabled}
+          aria-keyshortcuts={MAC ? "Meta+E" : "Control+E"}
+          data-tooltip={`Export (${keys("e")})`}
+          data-tooltip-desc="The figure as LaTeX, SVG or PNG, the equations, or the data as CSV."
+        >
+          <IconExport />
+          <span>Export…</span>
         </button>
         <button
           type="button"
