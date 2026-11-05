@@ -8,6 +8,9 @@
 // physical size), so a pasted 2× image appears at twice the size: the
 // dialog says so.
 
+import type { SpaceFigure } from "../canvas/space";
+import type { PlotTheme } from "../canvas/theme";
+
 export const PNG_MAX_PIXELS = 4096 * 4096;
 
 export interface PngRaster {
@@ -140,4 +143,20 @@ export async function renderPng(
   if (!blob) throw new Error("The PNG image couldn't be encoded. Try a smaller size or scale, or use SVG instead.");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   return physical ? withPhys(bytes, 96 * raster.scale) : bytes;
+}
+
+/**
+ * The PNG drawing of a 3D figure at `scale` (three.js offscreen, or 2D lines
+ * without WebGL). three.js comes with the 3D view's own chunk, loaded here.
+ */
+export async function spacePngDraw(
+  fig: SpaceFigure,
+  w: number,
+  h: number,
+  scale: number,
+  th: PlotTheme,
+  background: boolean,
+): Promise<(ctx: CanvasRenderingContext2D) => void> {
+  const { renderSpaceFigure } = await import("../canvas/SpaceCanvas");
+  return (ctx) => renderSpaceFigure(ctx, w, h, scale, fig, th, background);
 }

@@ -31,10 +31,12 @@ import {
   DEFAULT_CAMERA,
   drawSpaceLines,
   drawSpaceOverlay,
+  spaceNames,
   threeCamera,
   trajectoryBoxCoords,
   trajectoryWidth,
   type Camera,
+  type SpaceFigure,
   type SpaceTrajectory,
 } from "./space";
 import { readPlotTheme, type PlotTheme } from "./theme";
@@ -111,7 +113,23 @@ function thinned(q: Float64Array, max: number): Float32Array {
   return out;
 }
 
-function setCamera(gl: Gl, c: Camera, w: number, h: number) {
+/** A trajectory as a wide line in its traj-n colour, from its box coordinates `q`, on a w × h plot. */
+function wideLine(q: Float64Array, tr: SpaceTrajectory, th: PlotTheme, w: number, h: number) {
+  const geometry = new LineGeometry();
+  geometry.setPositions(Float32Array.from(q));
+  const material = new LineMaterial({
+    color: th.traj[tr.color % th.traj.length],
+    linewidth: trajectoryWidth(tr, th),
+    transparent: tr.backward,
+    opacity: tr.backward ? 0.5 : 1,
+  });
+  material.resolution.set(Math.max(1, w), Math.max(1, h));
+  const line = new Line2(geometry, material);
+  line.renderOrder = tr.selected ? 2 : tr.backward ? 0 : 1;
+  return { line, disposables: [geometry, material] };
+}
+
+function setCamera(gl: Pick<Gl, "camera">, c: Camera, w: number, h: number) {
   const t = threeCamera(c, w, h);
   const cam = gl.camera;
   cam.position.set(...t.position);
@@ -125,6 +143,70 @@ function setCamera(gl: Gl, c: Camera, w: number, h: number) {
   cam.far = t.far;
   cam.updateProjectionMatrix();
   cam.updateMatrixWorld();
+}
+
+/**
+ * A 3D figure for a PNG: three.js draws the lines offscreen at `scale`
+ * pixels per CSS px, the image is drawn into `ctx` (already scaled to CSS
+ * px), and the overlay goes on top. Without WebGL the lines are drawn in 2D
+ * through the same projection.
+ */
+export function renderSpaceFigure(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  scale: number,
+  fig: SpaceFigure,
+  th: PlotTheme,
+  background = true,
+): void {
+  if (background) {
+    ctx.fillStyle = th.bg;
+    ctx.fillRect(0, 0, w, h);
+  }
+  if (!drawWebGlLines(ctx, w, h, scale, fig, th)) drawSpaceLines(ctx, fig.view, w, h, fig.trajectories, fig.marks.dim, th);
+  drawSpaceOverlay(ctx, fig.view, w, h, fig.marks, th);
+}
+
+/** Draws the trajectories with WebGL on a transparent canvas of w·scale × h·scale pixels, then into `ctx`; false without WebGL. */
+function drawWebGlLines(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  scale: number,
+  fig: SpaceFigure,
+  th: PlotTheme,
+): boolean {
+  const canvas = document.createElement("canvas");
+  let renderer: WebGLRenderer;
+  try {
+    renderer = new WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+  } catch {
+    return false;
+  }
+  const disposables: { dispose(): void }[] = [];
+  try {
+    renderer.setPixelRatio(scale);
+    renderer.setSize(w, h, false);
+    renderer.setClearColor(th.bg, 0);
+    const scene = new Scene();
+    for (const tr of fig.trajectories) {
+      const q = trajectoryBoxCoords(fig.view, tr.out, fig.marks.dim);
+      if (q.length < 6) continue;
+      const made = wideLine(q, tr, th, w, h);
+      scene.add(made.line);
+      disposables.push(...made.disposables);
+    }
+    const camera = new OrthographicCamera();
+    setCamera({ camera }, fig.view.camera, w, h);
+    renderer.render(scene, camera);
+    ctx.drawImage(canvas, 0, 0, w, h);
+    return true;
+  } finally {
+    for (const d of disposables) d.dispose();
+    renderer.dispose();
+    renderer.forceContextLoss();
+  }
 }
 
 export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
@@ -197,9 +279,7 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
           })
         : [];
     const fixedPoints = valid && state.layers.fixedPoints ? p.res.fixedPoints : [];
-    const names = [view.xAxis, view.yAxis, view.zAxis].map((a) =>
-      a.kind === "state" ? (compiled?.states[a.index]?.latex ?? "x") : "t",
-    ) as [string, string, string];
+    const names = spaceNames(view, compiled?.states ?? []);
     return {
       trajectories,
       overlay: {
@@ -223,27 +303,17 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
       const q = trajectoryBoxCoords(view, tr.out, dim);
       if (q.length < 6) continue;
       const color = th.traj[tr.color % th.traj.length];
-      const order = tr.selected ? 2 : tr.backward ? 0 : 1;
-      const geometry = new LineGeometry();
-      geometry.setPositions(Float32Array.from(q));
-      const material = new LineMaterial({
-        color,
-        linewidth: trajectoryWidth(tr, th),
-        transparent: tr.backward,
-        opacity: tr.backward ? 0.5 : 1,
-      });
-      material.resolution.set(Math.max(1, size.w), Math.max(1, size.h));
-      const wide = new Line2(geometry, material);
+      const { line: wide, disposables } = wideLine(q, tr, th, size.w, size.h);
       const thinGeometry = new BufferGeometry();
       thinGeometry.setAttribute("position", new BufferAttribute(thinned(q, turning), 3));
       const thinMaterial: Material = new LineBasicMaterial({ color, transparent: tr.backward, opacity: tr.backward ? 0.5 : 1 });
       const thin = new Line(thinGeometry, thinMaterial);
-      wide.renderOrder = thin.renderOrder = order;
+      thin.renderOrder = wide.renderOrder;
       thin.visible = false;
       gl.scene.add(wide, thin);
       gl.wide.push(wide);
       gl.thin.push(thin);
-      gl.disposables.push(geometry, material, thinGeometry, thinMaterial);
+      gl.disposables.push(...disposables, thinGeometry, thinMaterial);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl, marks.trajectories, boxKey, th, size.w, size.h, dim]);

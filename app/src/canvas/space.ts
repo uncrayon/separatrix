@@ -18,7 +18,7 @@
 import type { FixedPointOut, TrajectoryOut } from "../api/types";
 import type { Camera, InitialCondition, SpaceView } from "../state/model";
 import { drawFixedPoint, fixedPointGlyph, type DrawContext } from "./draw";
-import { DEFAULT_FIGURE_FONTS } from "./figure";
+import { DEFAULT_FIGURE_FONTS, type FigureFonts } from "./figure";
 import { drawMath, layoutMath, mathRuns } from "./mathText";
 import type { PlotTheme } from "./theme";
 import { niceTicks, tickLabel } from "./viewport";
@@ -197,6 +197,24 @@ export interface SpaceMarks {
   ics: readonly InitialCondition[];
   selectedFp?: number | null;
   selectedIc?: number | null;
+  /** The axis names' font; the screen's by default. */
+  fonts?: FigureFonts;
+}
+
+/** The three axis names of a 3D view, in LaTeX. */
+export function spaceNames(
+  v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">,
+  states: readonly { latex: string }[],
+): [string, string, string] {
+  const name = (a: SpaceView["xAxis"]) => (a.kind === "state" ? (states[a.index]?.latex ?? "x") : "t");
+  return [name(v.xAxis), name(v.yAxis), name(v.zAxis)];
+}
+
+/** What a 3D figure draws: the box seen from its camera, the trajectories and the overlay's marks. */
+export interface SpaceFigure {
+  view: SpaceBox;
+  trajectories: readonly SpaceTrajectory[];
+  marks: SpaceMarks;
 }
 
 /** The 12 edges of the box: for each axis k, the four edges along it, by the other two coordinates. */
@@ -236,6 +254,48 @@ const TICK = 4;
 const LABEL_GAP = 12;
 const NAME_GAP = 34;
 
+/** Axis k's label edge on screen, and the unit direction its ticks, labels and name point (away from the box centre). */
+function axisLayout(f: SpaceFrame, k: number) {
+  const [lo, hi] = labelEdge(f, k);
+  const p0 = projectBox(f, lo);
+  const p1 = projectBox(f, hi);
+  const centre = projectBox(f, [0, 0, 0]);
+  const mx = (p0[0] + p1[0]) / 2;
+  const my = (p0[1] + p1[1]) / 2;
+  let ox = mx - centre[0];
+  let oy = my - centre[1];
+  const len = Math.hypot(ox, oy);
+  [ox, oy] = len > 1 ? [ox / len, oy / len] : [0, 1];
+  return { p0, p1, mx, my, ox, oy };
+}
+
+/** Room kept between an axis name's or an end tick label's centre and the figure's edge, px. */
+const FIT_MARGIN = 12;
+
+/**
+ * The camera zoomed out, if need be, so the axis names and the tick labels
+ * at the ends of their edges lie inside a w × h figure: they sit a fixed
+ * number of px outside the box, which scales with the figure, so a small
+ * figure would cut them off.
+ */
+export function fitCamera(v: SpaceBox, w: number, h: number, glyphScale = 1): Camera {
+  const tick = TICK * glyphScale;
+  const inside = ([x, y]: [number, number]) =>
+    x >= FIT_MARGIN && x <= w - FIT_MARGIN && y >= FIT_MARGIN && y <= h - FIT_MARGIN;
+  let c = v.camera;
+  for (let i = 0; i < 40; i++) {
+    const f = spaceFrame(c, w, h);
+    const fits = [0, 1, 2].every((k) => {
+      const { p0, p1, mx, my, ox, oy } = axisLayout(f, k);
+      const out = (x: number, y: number, gap: number): [number, number] => [x + ox * (tick + gap), y + oy * (tick + gap)];
+      return inside(out(mx, my, NAME_GAP)) && inside(out(p0[0], p0[1], LABEL_GAP)) && inside(out(p1[0], p1[1], LABEL_GAP));
+    });
+    if (fits) return c;
+    c = { ...c, zoom: c.zoom * 0.95 };
+  }
+  return c;
+}
+
 /**
  * The axis box with its edges, ticks and tick labels, the three axis names,
  * the fixed points (Strogatz's glyphs, farthest first) and the start points.
@@ -251,7 +311,6 @@ export function drawSpaceOverlay(
 ): void {
   const f = spaceFrame(v.camera, w, h);
   const ranges = [v.xRange, v.yRange, v.zRange];
-  const centre = projectBox(f, [0, 0, 0]);
   ctx.globalAlpha = 1;
   ctx.setLineDash([]);
   ctx.lineCap = "butt";
@@ -270,15 +329,7 @@ export function drawSpaceOverlay(
 
   const tick = TICK * th.glyphScale;
   for (let k = 0; k < 3; k++) {
-    const [lo, hi] = labelEdge(f, k);
-    const p0 = projectBox(f, lo);
-    const p1 = projectBox(f, hi);
-    const mx = (p0[0] + p1[0]) / 2;
-    const my = (p0[1] + p1[1]) / 2;
-    let ox = mx - centre[0];
-    let oy = my - centre[1];
-    const len = Math.hypot(ox, oy);
-    [ox, oy] = len > 1 ? [ox / len, oy / len] : [0, 1];
+    const { p0, p1, mx, my, ox, oy } = axisLayout(f, k);
 
     ctx.strokeStyle = th.axis;
     ctx.lineWidth = th.lineScale;
@@ -315,7 +366,7 @@ export function drawSpaceOverlay(
       ctx.fillText(text, lx, ly);
     }
 
-    const fonts = DEFAULT_FIGURE_FONTS;
+    const fonts = marks.fonts ?? DEFAULT_FIGURE_FONTS;
     const layout = layoutMath(ctx, mathRuns(marks.names[k]), fonts.mathFamily, fonts.mathSize);
     const nx = mx + ox * (tick + NAME_GAP);
     const ny = my + oy * (tick + NAME_GAP);
@@ -353,4 +404,25 @@ export function drawSpaceOverlay(
     ctx.fill();
     ctx.stroke();
   }
+}
+
+/**
+ * A 3D figure drawn in 2D, on a canvas or the SVG recorder: the background
+ * (unless `background` is false), the projected lines and the overlay. It is
+ * the 3D view without WebGL, the SVG export and the export preview.
+ */
+export function drawSpaceFigure(
+  ctx: DrawContext,
+  w: number,
+  h: number,
+  fig: SpaceFigure,
+  th: PlotTheme,
+  background = true,
+): void {
+  if (background) {
+    ctx.fillStyle = th.bg;
+    ctx.fillRect(0, 0, w, h);
+  }
+  drawSpaceLines(ctx, fig.view, w, h, fig.trajectories, fig.marks.dim, th);
+  drawSpaceOverlay(ctx, fig.view, w, h, fig.marks, th);
 }

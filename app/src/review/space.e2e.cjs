@@ -1,7 +1,8 @@
 // The 3D view in the browser preview (mocked core): Lorenz in WebGL turns
 // under a drag and labels its axes, the Canvas2D fallback when WebGL is
-// unavailable, the reason Van der Pol has no 3D view, and the time a frame
-// of dragging takes with 8 trajectories of 20,000 samples.
+// unavailable, the reason Van der Pol has no 3D view, the time a frame of
+// dragging takes with 8 trajectories of 20,000 samples, and the 3D view's
+// PNG export (with and without WebGL) and its refused LaTeX figure.
 // CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");
@@ -163,6 +164,105 @@ test("without WebGL the 3D view says so and draws the lines on the 2D canvas", a
     assert.ok(traj.drawn > 5000, `${traj.drawn} px off the background`);
     const filled = await page.evaluate(() => window.__filled);
     for (const name of ["x", "y", "z"]) assert.ok(filled.includes(name), `axis name ${name} drawn`);
+  } finally {
+    await browser.close();
+  }
+});
+
+const REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
+/** Saves the 3D view as a PNG through the export dialog; its size, pHYs and how much of it is not background. */
+async function exportPng(page) {
+  await page.getByRole("button", { name: /^Export/ }).first().click();
+  await page.waitForSelector(".export-dialog[role=dialog]");
+  const d = page.locator(".export-dialog");
+  await d.getByRole("radio", { name: "PNG", exact: true }).click();
+  assert.equal(await d.getByRole("checkbox", { name: /direction field/ }).count(), 0, "no field in 3D");
+  assert.equal(await d.getByRole("checkbox", { name: /nullclines/ }).count(), 0);
+  assert.match(await page.locator(".ds-export-sub").innerText(), /^Lorenz equations, 3D view of x, y and z, as you see it now$/);
+  await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled, null, { timeout: 15000 });
+  await page.waitForTimeout(500);
+  await d.locator(".ds-export-actions .ds-button--primary").click();
+  await page.waitForFunction(() => window.__sepxMock.saved.length === 1, null, { timeout: 20000 });
+  return page.evaluate(async () => {
+    const b = window.__sepxMock.saved[0].contents;
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const types = [];
+    let ppm = null;
+    for (let p = 8; p + 12 <= b.length; ) {
+      const len = dv.getUint32(p);
+      const type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+      types.push(type);
+      if (type === "pHYs") ppm = dv.getUint32(p + 8);
+      p += 12 + len;
+    }
+    const img = await createImageBitmap(new Blob([b], { type: "image/png" }));
+    const c = document.createElement("canvas");
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const px = ctx.getImageData(0, 0, c.width, c.height).data;
+    const [r, g, bl] = px;
+    // The projector palette's traj-1, #0072b2.
+    const traj = [0x00, 0x72, 0xb2];
+    let ink = 0;
+    let line = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (Math.abs(px[i] - r) + Math.abs(px[i + 1] - g) + Math.abs(px[i + 2] - bl) > 24) ink++;
+      if (Math.abs(px[i] - traj[0]) + Math.abs(px[i + 1] - traj[1]) + Math.abs(px[i + 2] - traj[2]) < 24) line++;
+    }
+    return { name: window.__sepxMock.saved[0].name, w: dv.getUint32(16), h: dv.getUint32(20), types, dpi: Math.round(ppm * 0.0254), ink: ink / (c.width * c.height), line };
+  });
+}
+
+for (const webgl of [true, false]) {
+  test(`Lorenz in 3D ${webgl ? "with WebGL" : "without WebGL"} exports a PNG at 2× with pHYs at 192 dpi, with ink on it`, async () => {
+    const { browser, page } = await open({ webgl });
+    try {
+      await lorenz3d(page);
+      await page.evaluate(() => {
+        window.__glAsked = 0;
+        const get = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
+          if (/webgl/.test(type)) window.__glAsked++;
+          return get.call(this, type, ...rest);
+        };
+      });
+      const png = await exportPng(page);
+      assert.ok((await page.evaluate(() => window.__glAsked)) > 0, "the export asked for a WebGL context");
+      console.log(`# ${webgl ? "WebGL" : "fallback"}: ${png.w} × ${png.h}, ${png.dpi} dpi, ${(100 * png.ink).toFixed(2)}% not background, ${png.line} px in traj-1`);
+      assert.equal(png.name, "lorenz-equations.png");
+      assert.deepEqual([png.w, png.h], [1600, 1280], "2× the 800 × 640 px figure");
+      assert.deepEqual(png.types.slice(0, 2), ["IHDR", "pHYs"]);
+      assert.equal(png.dpi, 192);
+      assert.ok(png.ink > 0.01, `${(100 * png.ink).toFixed(2)}% of the pixels are not background`);
+      assert.ok(png.line > 20000, `${png.line} px in the trajectory's colour`);
+    } finally {
+      await browser.close();
+    }
+  });
+}
+
+test("a 3D view's LaTeX figure is disabled with its reason; equations, fixed points and CSV stay", async () => {
+  const { browser, page } = await open();
+  try {
+    await lorenz3d(page);
+    await page.getByRole("button", { name: /^Export/ }).first().click();
+    await page.waitForSelector(".export-dialog[role=dialog]");
+    const d = page.locator(".export-dialog");
+    await d.getByRole("radio", { name: /^LaTeX/ }).click();
+    const content = d.getByRole("radiogroup", { name: "Content" });
+    const figure = content.getByRole("radio", { name: "Figure" });
+    assert.equal(await figure.getAttribute("aria-disabled"), "true");
+    assert.equal(await figure.getAttribute("data-tooltip"), REFUSAL);
+    assert.equal(await page.locator(`[id="${await figure.getAttribute("aria-describedby")}"]`).innerText(), REFUSAL);
+    assert.equal(await content.getByRole("radio", { name: "Equations" }).getAttribute("aria-checked"), "true", "equations instead");
+    await page.waitForFunction(() => /\\begin\{align\}/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    await content.getByRole("radio", { name: "Fixed points" }).click();
+    await page.waitForFunction(() => /\\begin\{table\}/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    await d.getByRole("radio", { name: "CSV", exact: true }).click();
+    await page.waitForFunction(() => /^t,x,y,z\n/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
   } finally {
     await browser.close();
   }

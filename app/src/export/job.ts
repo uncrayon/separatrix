@@ -18,6 +18,8 @@ import type {
   TrajectoryTag,
 } from "../api/types";
 import type { Scene } from "../canvas/draw";
+import type { FigureFonts } from "../canvas/figure";
+import { fitCamera, spaceNames, type SpaceFigure } from "../canvas/space";
 import { viewAxisLabels } from "../math/format";
 import {
   COBWEB_GRAPH_SAMPLES,
@@ -26,6 +28,7 @@ import {
   isCobweb,
   isReturnMap,
   isSection,
+  isSpace,
   portraitGraph,
   type InitialCondition,
   type MapRequestFields,
@@ -33,6 +36,10 @@ import {
   type TrajectoryMeta,
   type View,
 } from "../state/model";
+
+/** Why a 3D view has no LaTeX figure: the dialog's reason and `export_figure_latex`'s error, word for word. */
+export const SPACE_LATEX_REFUSAL =
+  "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 
 export const EXPORT_MIN_SAMPLES = 2000;
 export const EXPORT_MAX_SAMPLES = 20000;
@@ -146,6 +153,31 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
     avoid: { labels: [], field: [] },
     cobweb: job.cobweb ? { graph: portraitGraph(res) ?? [] } : null,
     section: job.section,
+  };
+}
+
+/**
+ * A 3D view's figure from its export scene, seen from the studio's camera
+ * (zoomed out where the figure is too small for the axis names): the
+ * trajectories in their colours and the fixed points, with no start points
+ * or selection (null for any other view).
+ */
+export function exportSpaceFigure(
+  job: FigureJob,
+  scene: Scene,
+  states: readonly { latex: string }[],
+  fonts?: FigureFonts,
+): SpaceFigure | null {
+  if (!isSpace(job.view)) return null;
+  return {
+    view: { ...job.view, camera: fitCamera(job.view, job.widthPx, job.heightPx) },
+    trajectories: scene.trajectories.map((t) => ({
+      out: t.out,
+      color: t.color,
+      backward: t.meta.direction === "backward",
+      selected: false,
+    })),
+    marks: { dim: job.dim, names: spaceNames(job.view, states), fixedPoints: scene.fixedPoints, ics: [], fonts },
   };
 }
 

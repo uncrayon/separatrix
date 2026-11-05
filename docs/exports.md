@@ -13,13 +13,38 @@ text and files.
 | LaTeX fixed points | `latex_fixed_points::table` | booktabs `table` float |
 | LaTeX figure | `latex_figure::figure` | pgfplots; inline data (Copy) or `.dat` files (Save) |
 | CSV + `.meta.json` | `csv::files` | one pair per initial condition |
-| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed) |
+| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed); a section's crossings and a 3D view's trajectories are only cut |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
 Every LaTeX snippet starts with comment lines: the title, the equations as
 plain text (`convert` to text), the parameter values, and a `% Needs:` line
 with the packages it uses. Nothing in a `.tex` output is U+2212 (TeX's default
 input encoding can't read it); the real minus sign stays in SVG and PNG.
+
+## 3D view
+
+A 3D view (the request's `zAxis`) exports as a picture of the box seen from
+the studio's camera. PNG draws the trajectories with three.js offscreen (a
+`WebGLRenderer` with `preserveDrawingBuffer` at `w·scale × h·scale` px),
+copies them into the 2D canvas and draws the box, ticks, axis names and fixed
+points over them at the same scale (`renderSpaceFigure`); without WebGL it
+draws the lines in 2D through the same projection. The PNG keeps its pHYs at
+`96·scale` dpi. SVG is the same drawing projected to 2D (`drawSpaceLines` and
+`drawSpaceOverlay` on the SVG recorder), with one path per trajectory. Where
+the figure is too small for the axis names (they sit a fixed number of px
+outside the box), the camera is zoomed out until they and the end tick labels
+are inside. The export portrait cuts a 3D view's trajectories but does not
+simplify them: an x–y simplification can't know which samples the turned box
+needs. The LaTeX figure is refused: the dialog disables it with the reason,
+and `export_figure_latex` returns the same sentence for a request with
+`zAxis`, so no path draws an x–y plane instead:
+
+```
+LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.
+```
+
+The LaTeX equations and fixed points, and the CSV (every state of each
+trajectory), are the same as in any other view of the flow.
 
 ## The system
 

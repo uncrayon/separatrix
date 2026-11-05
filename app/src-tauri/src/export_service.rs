@@ -75,11 +75,16 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
     }
 }
 
+/// Why a 3D view (a request with `z_axis`) has no LaTeX figure; the export
+/// dialog gives the same sentence as the Figure option's reason.
+pub const SPACE_LATEX_REFUSAL: &str =
+    "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
 /// `compute_export_portrait`: [`service::compute_portrait`], then every
 /// curve cut at its first non-finite point and simplified with RDP at
-/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates and a section's
-/// crossings are only cut; the graph of a cobweb's `f` is simplified like
-/// the nullclines).
+/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates, a section's
+/// crossings and a 3D view's trajectories are only cut; the graph of a
+/// cobweb's `f` is simplified like the nullclines).
 /// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
@@ -122,8 +127,9 @@ pub fn export_portrait(
     for line in out.graph.iter_mut().flatten() {
         *line = simplify_polyline(&vp, line, GRAPH_TOLERANCE_PX);
     }
-    // A section's crossings are points, as a map's iterates are.
-    let kind = if req.portrait.section.is_some() {
+    // A section's crossings are points, as a map's iterates are. A 3D view's
+    // lines are turned to any angle, so the x–y plane can't say which samples to drop.
+    let kind = if req.portrait.section.is_some() || req.portrait.z_axis.is_some() {
         SystemKind::Map
     } else {
         f.kind()
@@ -289,6 +295,9 @@ pub fn figure_latex(
             "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
             req.width_cm, req.height_cm
         ));
+    }
+    if req.portrait.z_axis.is_some() {
+        return Err(SPACE_LATEX_REFUSAL.to_string());
     }
     let res = export_portrait(
         cache,
@@ -856,6 +865,82 @@ mod tests {
             "{}",
             files[0].meta
         );
+    }
+
+    #[test]
+    fn a_3d_view_has_no_latex_figure_and_keeps_every_sample() {
+        let store = SystemStore::new();
+        let res = service::compile_system(
+            &store,
+            &CompileRequest {
+                source: "\\dot{x}=10(y-x)\n\\dot{y}=x(28-z)-y\n\\dot{z}=xy-\\frac{8}{3}z".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let id = res.system_id.unwrap();
+        let sys = store.get(id).unwrap();
+        let mut portrait = request(id);
+        portrait.x_range = (-25.0, 25.0);
+        portrait.y_range = (-30.0, 30.0);
+        portrait.base_state = vec![0.0, 0.0, 0.0];
+        portrait.field_grid = 0;
+        portrait.nullclines = false;
+        portrait.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0, 1.0, 1.0],
+            t0: 0.0,
+            t1: 25.0,
+        }];
+        portrait.z_axis = Some(AxisRef::State { index: 2 });
+        portrait.z_range = Some((0.0, 50.0));
+        let fig = FigureLatexRequest {
+            portrait: portrait.clone(),
+            tags: vec![tags()[0].clone()],
+            width_cm: 8.0,
+            height_cm: 6.4,
+            theme: ExportTheme::Light,
+            title: "Lorenz equations".into(),
+            source_ref: None,
+            lines: vec![],
+            format: InputFormat::Latex,
+            standalone: true,
+        };
+        let cache = ExportCache::new();
+        let refusal = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+        for placement in [
+            Placement::Inline,
+            Placement::External {
+                base: "lorenz".into(),
+            },
+        ] {
+            assert_eq!(
+                figure_latex(&cache, &sys, &fig, placement).unwrap_err(),
+                refusal
+            );
+        }
+        let mut plane = fig.clone();
+        plane.portrait.z_axis = None;
+        plane.portrait.z_range = None;
+        assert!(figure_latex(&cache, &sys, &plane, Placement::Inline).is_ok());
+
+        // The PNG and SVG get every sample: simplified in x–y, the turned box would show corners.
+        let at = |p: &PortraitRequest| {
+            export_portrait(
+                &ExportCache::new(),
+                &sys,
+                &ExportPortraitRequest {
+                    portrait: p.clone(),
+                    width_px: 400.0,
+                    height_px: 300.0,
+                },
+            )
+            .unwrap()
+            .trajectories[0]
+                .t
+                .len()
+        };
+        assert_eq!(at(&portrait), portrait.samples);
+        assert!(at(&plane.portrait) < portrait.samples / 2);
     }
 
     #[test]

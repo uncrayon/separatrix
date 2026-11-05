@@ -6,7 +6,8 @@ import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "..
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
 import { axisLatex, classificationTitle, fmt, latexToPlain } from "../math/format";
-import { hasNullclineLayer, isCobweb, isReturnMap, isSection, systemTitle } from "../state/model";
+import { hasNullclineLayer, isCobweb, isReturnMap, isSection, isSpace, systemTitle, type SpaceView } from "../state/model";
+import { spaceNames } from "../canvas/space";
 import type { StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import {
@@ -30,8 +31,10 @@ import {
   buildFigureJob,
   exportPortraitRequest,
   exportScene,
+  exportSpaceFigure,
   icProjectId,
   screenPortrait,
+  SPACE_LATEX_REFUSAL,
   type FigureJob,
 } from "./job";
 import {
@@ -48,7 +51,7 @@ import {
   type Notation,
   type PngScale,
 } from "./options";
-import { pngRaster, renderPng } from "./png";
+import { pngRaster, renderPng, spacePngDraw } from "./png";
 import { canvasMeasure, figureSvg } from "./svg";
 import type { ExportPalette } from "./theme";
 import { EXPORT_FONTS, exportTheme } from "./tokens";
@@ -243,6 +246,12 @@ function FixedPointsPreview({
   );
 }
 
+/** "x, y and z": a 3D view's axis names in plain text. */
+function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): string {
+  const [a, b, c] = spaceNames(v, states).map(latexToPlain);
+  return `${a}, ${b} and ${c}`;
+}
+
 const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const trajectories = (n: number) => plural(n, "trajectory", "trajectories");
 
@@ -280,15 +289,23 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
 
   const sys = state.compiled && state.compiled.ok ? state.compiled : null;
   const kind = sys?.kind;
-  // A cobweb's or a section's figure has no field or nullclines to offer.
+  // A cobweb's, a section's or a 3D view's figure has no field or nullclines to offer.
   const cobweb = !!sys && isCobweb(state.view);
   const section = !!sys && isSection(state.view);
+  const space = !!sys && isSpace(state.view);
   const returnMap = section && isReturnMap(state.view);
   const compiles = !!sys && state.compileOk;
   const timeDependent = !!sys && !sys.autonomous;
   const reasons = {
-    field: kind === "map" ? "none: a map" : section ? "none: a Poincaré section" : null,
-    nullclines: sys && !hasNullclineLayer(kind) ? "none: a map" : section ? "none: a Poincaré section" : null,
+    field: kind === "map" ? "none: a map" : section ? "none: a Poincaré section" : space ? "none: a 3D view" : null,
+    nullclines:
+      sys && !hasNullclineLayer(kind)
+        ? "none: a map"
+        : section
+          ? "none: a Poincaré section"
+          : space
+            ? "none: a 3D view"
+            : null,
     fixedPoints: timeDependent
       ? "none: the field changes with time"
       : section
@@ -296,11 +313,13 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         : null,
   };
   const contentReason: Record<LatexContent, string | null> = {
-    figure: sys ? null : "the equations have not compiled",
+    figure: !sys ? "the equations have not compiled" : space ? SPACE_LATEX_REFUSAL : null,
     equations: compiles ? null : "the equations don't compile",
     fixedPoints: !compiles ? "the equations don't compile" : timeDependent ? "the field changes with time" : null,
   };
-  const content: LatexContent = contentReason[opts.latexContent] ? "figure" : opts.latexContent;
+  // The chosen content, else the first one available (a 3D view has no LaTeX figure).
+  const content: LatexContent =
+    ([opts.latexContent, "figure", "equations", "fixedPoints"] as const).find((c) => !contentReason[c]) ?? "figure";
   const format = opts.format;
   // Equations and Fixed points are not figures: no export portrait for them.
   const wantsFigure = format === "svg" || format === "png" || (format === "latex" && content === "figure");
@@ -361,6 +380,10 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const theme = exportTheme(opts.palette);
   const names = useMemo(() => axisNames(state), [state]);
   const figReady = !!fig && !!job && fig.job === job;
+  const spaceFig = useMemo(
+    () => (fig && scene && sys ? exportSpaceFigure(fig.job, scene, sys.states, EXPORT_FONTS) : null),
+    [fig, scene, sys],
+  );
 
   // The LaTeX snippet (or the CSV), from the core.
   const figureReq = (): FigureLatexRequest | null =>
@@ -529,11 +552,16 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         fonts: EXPORT_FONTS,
         title: name,
         desc: figureDesc,
+        space: spaceFig,
       },
       canvasMeasure(probe),
     );
   };
   const raster = pngRaster(opts.pngWidthPx, opts.pngHeightPx, opts.pngScale);
+  const pngDraw = async () =>
+    fig && spaceFig
+      ? spacePngDraw(spaceFig, fig.job.widthPx, fig.job.heightPx, raster.scale, theme, !opts.transparent)
+      : drawTo;
 
   const run = async (what: () => Promise<void>) => {
     if (working) return;
@@ -639,7 +667,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ready: figReady,
       act: () =>
         run(async () => {
-          const png = await renderPng(raster, drawTo);
+          const png = await renderPng(raster, await pngDraw());
           saveDone((await savePngFile(png, `${stem}.png`))?.names);
         }),
     };
@@ -649,7 +677,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ready: figReady,
       act: () =>
         run(async () => {
-          await clipboardWritePng(await renderPng(raster, drawTo, false));
+          await clipboardWritePng(await renderPng(raster, await pngDraw(), false));
           copyDone("png", "Image");
         }),
     };
@@ -728,11 +756,13 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const viewWords = sys
     ? cobweb
       ? `cobweb of ${axisPlain(0)}`
-      : returnMap
-        ? `return map of ${axisPlain(0)}`
-        : section
-          ? `Poincaré section ${axisPlain(0)}–${axisPlain(1)}`
-          : `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
+      : space
+        ? `3D view of ${spaceAxesPlain(state.view as SpaceView, sys.states)}`
+        : returnMap
+          ? `return map of ${axisPlain(0)}`
+          : section
+            ? `Poincaré section ${axisPlain(0)}–${axisPlain(1)}`
+            : `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
     : "no plot yet";
   const sizeCaption =
     format === "png" ? (
@@ -862,7 +892,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const includeGroup = (
     <fieldset className="ds-export-group">
       <legend className="ds-export-label">Include</legend>
-      {!cobweb && !section && (
+      {!cobweb && !section && !space && (
         <>
           <Check
             checked={opts.field}
@@ -940,6 +970,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       transparent={transparent}
       label={previewLabel}
       busy={figBusy}
+      space={spaceFig}
       caption={
         <>
           <span>Preview</span>
@@ -1083,6 +1114,15 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   }
 
   const showCode = format === "latex" || format === "csv";
+  const contentHint =
+    [
+      space && contentReason.figure,
+      contentReason.equations
+        ? "Equations and Fixed points need equations that compile."
+        : contentReason.fixedPoints && "Fixed points: none, because the field changes with time.",
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
   const figureContent = format === "svg" || format === "png" || (format === "latex" && content === "figure");
   const codeText =
     format === "csv"
@@ -1165,19 +1205,17 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                 fill
                 ariaLabel="Content"
                 value={content}
-                describedBy={contentReason.equations || contentReason.fixedPoints ? reasonId : undefined}
+                describedBy={contentHint ? reasonId : undefined}
                 options={[
-                  { value: "figure", label: "Figure", disabled: !!contentReason.figure },
+                  { value: "figure", label: "Figure", disabled: !!contentReason.figure, title: space ? SPACE_LATEX_REFUSAL : undefined },
                   { value: "equations", label: "Equations", disabled: !!contentReason.equations, title: contentReason.equations ?? undefined },
                   { value: "fixedPoints", label: "Fixed points", disabled: !!contentReason.fixedPoints, title: contentReason.fixedPoints ?? undefined },
                 ]}
                 onChange={(v) => update({ latexContent: v })}
               />
-              {(contentReason.equations || contentReason.fixedPoints) && (
+              {contentHint && (
                 <p className="ds-export-hint export-hint-flush" id={reasonId}>
-                  {contentReason.equations
-                    ? "Equations and Fixed points need equations that compile."
-                    : "Fixed points: none, because the field changes with time."}
+                  {contentHint}
                 </p>
               )}
             </div>

@@ -15,6 +15,13 @@ All notable changes to this project are documented in this file.
   lines when dragging stops. Turning the box never asks the core for a new portrait. Project
   files save the view as `kind: "space"` with `z_axis`, `z_range` and `camera` (additive; the
   format stays at version 1).
+- Exports of a 3D view: PNG draws the box as the screen does (three.js offscreen at the PNG's
+  scale, or 2D lines without WebGL) with pHYs at `96·scale` dpi, and SVG is the same picture
+  projected to 2D, one path per trajectory. A small figure zooms the camera out so the axis names
+  stay inside. The LaTeX figure is disabled with the reason "LaTeX figures of the 3D view aren't
+  available yet. Export PNG or SVG, or switch to a phase plane.", which `export_figure_latex` also
+  returns for a request with `zAxis`; the LaTeX equations and fixed points and the CSV are
+  unchanged.
 - Cobweb plots for one-dimensional maps (Strogatz §10.1): the graph of `f` (split at poles,
   jumps and the edges of its domain), the diagonal `x_{n+1} = x_n` and each orbit's staircase,
   with the fixed points on the diagonal and their multipliers `λ = f′(x*)`. The logistic map

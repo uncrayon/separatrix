@@ -35,9 +35,10 @@ const { makeViewport } = await import("../canvas/viewport.ts");
 const { plotThemeFromTokens } = await import("../export/theme.ts");
 const { readExportOptions, DEFAULT_EXPORT_OPTIONS, sizeError, fileStem, figurePx } = await import("../export/options.ts");
 const { pngRaster, withPhys, pngChunks, physDpi, crc32, pixelsPerMetre, PNG_MAX_PIXELS } = await import("../export/png.ts");
-const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, icProjectId } = await import("../export/job.ts");
+const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, exportSpaceFigure, icProjectId, SPACE_LATEX_REFUSAL } =
+  await import("../export/job.ts");
 const { figureSvg } = await import("../export/svg.ts");
-const { DEFAULT_LAYERS, DEFAULT_SOLVER } = await import("../state/model.ts");
+const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA } = await import("../state/model.ts");
 
 const light = plotThemeFromTokens(tokens, "light");
 const dark = plotThemeFromTokens(tokens, "dark");
@@ -706,6 +707,91 @@ test("a section's export: crossings as dots, one SVG circle per crossing, a retu
   assert.equal(dotsIn(sec.svg), 4, "one dot per crossing");
   const many = svgOf(1, Array.from({ length: 2500 }, (_, k) => k / 250));
   assert.equal(dotsIn(many.svg), 2500, "squares above 2,000, one each");
+});
+
+test("a 3D view's SVG: one path per trajectory, the three axis names, Strogatz glyphs, the same bytes twice", () => {
+  const states = ["x", "y", "z"].map((n) => ({ name: n, latex: n, derived: false }));
+  const axis = (index) => ({ kind: "state", index });
+  const view = {
+    kind: "space",
+    xAxis: axis(0),
+    yAxis: axis(1),
+    zAxis: axis(2),
+    xRange: [-20, 20],
+    yRange: [-25, 25],
+    zRange: [0, 50],
+    camera: { yaw: 0.4, pitch: 0.5, zoom: 1.1 },
+  };
+  const s = snapshot({
+    compiled: { ...compiled, states },
+    view,
+    baseState: [0, 0, 0],
+    ics: [
+      { id: 1, x0: [1, 1, 1], t0: 0, color: 0 },
+      { id: 2, x0: [-1, 2, 20], t0: 0, color: 1 },
+    ],
+    layers: { ...DEFAULT_LAYERS, backward: false },
+  });
+  const job = buildFigureJob(s, { widthPx: 480, heightPx: 360 }, { field: true, nullclines: true, fixedPoints: true });
+  assert.deepEqual(job.portrait.zAxis, axis(2));
+  assert.deepEqual(job.portrait.zRange, [0, 50]);
+  assert.deepEqual(job.portrait.xRange, [-20, 20], "a 3D box keeps its ranges at any aspect");
+  assert.equal(job.portrait.fieldGrid, 0);
+  assert.equal(job.portrait.nullclines, false);
+  const helix = (r, z0) => {
+    const t = Array.from({ length: 200 }, (_, k) => k / 20);
+    return { t, x: t.flatMap((v) => [r * Math.cos(v), r * Math.sin(v), z0 + 3 * v]), status: "completed" };
+  };
+  const c = Math.sqrt((8 / 3) * 27);
+  const res = {
+    requestId: 0,
+    arrows: [],
+    nullclines: [],
+    fixedPoints: [fp([0, 0, 0], "saddle", false), fp([c, c, 27], "stable-spiral", true), fp([-c, -c, 27], "stable-spiral", true)],
+    trajectories: [helix(10, 5), helix(15, 2)],
+    stats: {},
+  };
+  const scene = exportScene(job, res, s.ics);
+  const fig = exportSpaceFigure(job, scene, states);
+  assert.deepEqual({ ...fig.view.camera, zoom: 0 }, { ...view.camera, zoom: 0 }, "the studio's angles");
+  assert.ok(fig.view.camera.zoom < view.camera.zoom, "zoomed out to make room for the names");
+  assert.deepEqual(fig.marks.ics, [], "no start points in a figure");
+  assert.equal(exportSpaceFigure(buildFigureJob(snapshot(), { widthPx: 9, heightPx: 9 }, {}), scene, states), null);
+
+  const svgOf = (camera = fig.view.camera) =>
+    figureSvg(
+      { widthPx: 480, heightPx: 360, xRange: [0, 1], yRange: [0, 1], scene, theme: light, names: null, transparent: false, space: { ...fig, view: { ...fig.view, camera } } },
+      measure,
+    );
+  const svg = svgOf();
+  assertWellFormedXml(svg);
+  assert.equal(svg, svgOf(), "the same bytes twice");
+  assert.notEqual(svg, svgOf(DEFAULT_CAMERA), "the camera is drawn");
+  const big = buildFigureJob(s, { widthPx: 1600, heightPx: 1200 }, { field: false, nullclines: false, fixedPoints: true });
+  assert.deepEqual(exportSpaceFigure(big, scene, states).view.camera, view.camera, "a large figure keeps the zoom");
+  assert.match(svg, new RegExp(`<rect x="0" y="0" width="480" height="360" fill="${light.bg}"/>`));
+  for (const k of [0, 1]) {
+    const lines = [...svg.matchAll(new RegExp(`<path d="([^"]*)"[^>]*stroke="${light.traj[k]}"`, "g"))];
+    assert.equal(lines.length, 1, `one path in traj-${k + 1}`);
+    assert.equal((lines[0][1].match(/[ML]/g) ?? []).length, 200, "every sample");
+  }
+  // Each name is a halo (fill="none") and its fill, in the maths font.
+  const names = [...svg.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-family="'KaTeX_Main'[^>]*fill="#[^>]*>(.*?)<\/text>/g)].map((m) => ({
+    x: Number(m[1]),
+    y: Number(m[2]),
+    text: m[3].replace(/<[^>]+>/g, ""),
+  }));
+  assert.deepEqual(names.map((n) => n.text), ["x", "y", "z"]);
+  for (const n of names) assert.ok(n.x > 0 && n.x < 480 && n.y > 0 && n.y < 360, `${n.text} at (${n.x}, ${n.y}) is inside the figure`);
+  const ring = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*"[^>]*stroke="${light.fp}"`, "g"))].length;
+  const filled = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*" fill="${light.fp}"`, "g"))].length;
+  assert.equal(ring, 3, "three fixed-point glyphs");
+  assert.equal(filled, 2, "two stable (filled), one saddle (open)");
+});
+
+test("the 3D view's LaTeX refusal is the sentence the core returns", () => {
+  const rust = readFileSync(fileURLToPath(new URL("../../src-tauri/src/export_service.rs", import.meta.url)), "utf8");
+  assert.ok(rust.includes(`"${SPACE_LATEX_REFUSAL}"`), "export_service.rs has the same sentence");
 });
 
 test("buildCsvRequest: the screen's runs, the CSV's own samples, the chosen initial conditions", () => {
