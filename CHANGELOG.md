@@ -36,6 +36,24 @@ All notable changes to this project are documented in this file.
   `r = 0`, the Sel'kov Hopf values `b = √0.12` and `√0.72`, pendulum energy drift, the Van der Pol
   limit cycle's period `T ≈ 6.66329` and amplitude `max x ≈ 2.00862` at `μ = 1`, measured on a
   Poincaré section) and that every template's section is in the 2nd edition's table of contents.
+  Every chapter from 2 to 8 has a passing claim, and a template citing a chapter 2–8 section
+  needs a claim of its own (both are tests).
+- 18 Strogatz templates, each with its claim in the gate: ẋ = sin x (§2.1), logistic growth
+  (§2.3), the transcritical (§3.2) and supercritical pitchfork (§3.4) bifurcations, the bead on a
+  rotating hoop (§3.5, pitchfork at `γ = 1`), the imperfect bifurcation (§3.6,
+  `h_c = 2/(3√3)`), the nonuniform oscillator (§4.3, `T = 2π/√(ω² − a²)`), Romeo and Juliet (§5.3,
+  a center with period `2π/√(ab)`), the double well (§6.5) and a reversible system (§6.6), the
+  relaxation oscillator (§7.5, Van der Pol at `μ = 10` in the Liénard plane, period 19.0784),
+  the saddle-node in the plane (§8.1), the supercritical Hopf
+  bifurcation (§8.2, radius `√μ`, period 2π), the chlorine dioxide–iodine–malonic acid reaction
+  (§8.3, Hopf at `b_c = 3a/5 − 25/a`), the driven pendulum and Josephson junction (§8.5), coupled
+  oscillators (§8.6, locked at `(K₂ω₁ + K₁ω₂)/(K₁ + K₂)`), the Poincaré map of `ẋ + x = A sin t`
+  (§8.7, fixed point `−A/2`, opening as its return map) and the forced double-well oscillator
+  (§12.5, opening on its stroboscopic section).
+- The gallery groups the templates under Strogatz's chapters, in the book's order, and draws a
+  thumbnail only once its card scrolls into view. An equation too wide for its card is scaled
+  down to fit. Templates can open on a Poincaré section (`view.kind: "section"`, the plane's
+  state by name) and skip a `transient` of crossings. The Rössler template now opens in 3D.
 - Poincaré section view (Strogatz §8.7): the View control's **Section** shows where a flow's
   orbits cross a plane `x_i = c` (Increasing, Decreasing or Both), or its state once per forcing
   period (stroboscopic, period `T` and phase `φ`: samples at `t = φ + kT`), as dots in two chosen

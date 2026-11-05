@@ -2,7 +2,9 @@
 //! a quantitative result of *Nonlinear Dynamics and Chaos*, 2nd edition
 //! (Westview Press, 2015, ISBN 9780813349107), through the same service
 //! functions the app calls. Every expected value comes from the book's
-//! formula, never from a run.
+//! formula, never from a run, except the relaxation oscillator's period at
+//! μ = 10: the book gives only its asymptote, so the gate checks the known
+//! value 19.0784 and that DOPRI5 and RK4 agree on it.
 //!
 //! `scripts/strogatz-gate.sh` prints the table of every claim.
 //!
@@ -12,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
@@ -147,8 +149,35 @@ enum Claim {
         bound: Option<f64>,
     },
     /// Successive crossing times of `run`'s section are all within `tol` of
-    /// the period `book`.
+    /// the period `book`; `None` prints an info row (an asymptote, say).
     Period {
+        run: SectionRun,
+        book: f64,
+        tol: Option<f64>,
+    },
+    /// The mean period of `runs[0]` and of `runs[1]` (one section, two
+    /// solvers) differ by at most `tol`.
+    PeriodsAgree { runs: [SectionRun; 2], tol: f64 },
+    /// The first crossing of `run`'s section comes at `t = book`, `book`
+    /// after the start at `t = 0`.
+    FirstCrossing {
+        run: SectionRun,
+        book: f64,
+        tol: f64,
+    },
+    /// Between the first and the last crossing of `run`'s section, each of
+    /// `states` advances at the mean rate `book`.
+    MeanFrequency {
+        run: SectionRun,
+        states: &'static [usize],
+        book: f64,
+        tol: f64,
+    },
+    /// The return map `x_k → x_{k+1}` of a one-state stroboscopic section
+    /// has its fixed point at `book`: the secant through the first three
+    /// crossings (exact for the affine map of a linear flow) and the last
+    /// crossing are both within `tol` of it.
+    StroboscopicFixedPoint {
         run: SectionRun,
         book: f64,
         tol: f64,
@@ -163,15 +192,26 @@ enum Claim {
     },
 }
 
-/// One orbit's Poincaré section, computed by `compute_portrait` with DOPRI5
-/// at rtol 1e−6, atol 1e−9: the crossings after the first `skip`.
+/// One orbit's Poincaré section, computed by `compute_portrait` with
+/// `solver`: the crossings after the first `skip`.
 struct SectionRun {
     params: &'static [(&'static str, f64)],
     x0: &'static [f64],
     t_end: f64,
     section: SectionSpec,
     skip: usize,
+    solver: SolverOptions,
 }
+
+/// The app's default solver: DOPRI5 at rtol 1e−6, atol 1e−9.
+const APP_SOLVER: SolverOptions = SolverOptions {
+    method: Method::Dopri5,
+    rtol: 1e-6,
+    atol: 1e-9,
+    h: 0.0,
+    h_max: None,
+    max_steps: 200_000,
+};
 
 enum Observable {
     /// The number of fixed points found in `search`, one interval per state.
@@ -182,6 +222,12 @@ enum Observable {
 
 fn pendulum_energy(x: &[f64]) -> f64 {
     x[1] * x[1] / 2.0 - x[0].cos()
+}
+
+/// `E = ẋ²/2 + V(x)` with the double well `V = −x²/2 + x⁴/4` (§6.5).
+fn double_well_energy(x: &[f64]) -> f64 {
+    let x2 = x[0] * x[0];
+    x[1] * x[1] / 2.0 - x2 / 2.0 + x2 * x2 / 4.0
 }
 
 const PENDULUM_POINTS: &[(&[f64], Classification)] = &[
@@ -204,6 +250,39 @@ const VAN_DER_POL_TURNS: SectionRun = SectionRun {
         direction: Direction::Falling,
     },
     skip: 10,
+    solver: APP_SOLVER,
+};
+
+/// The relaxation oscillator at μ = 10 from inside the cycle, cut where `y`
+/// falls through 0 on the slow branch, with `solver`.
+const fn relaxation_turns(t_end: f64, solver: SolverOptions) -> SectionRun {
+    SectionRun {
+        params: &[("mu", 10.0)],
+        x0: &[0.5, 0.0],
+        t_end,
+        section: SectionSpec::Plane {
+            state: 1,
+            value: 0.0,
+            direction: Direction::Falling,
+        },
+        skip: 2,
+        solver,
+    }
+}
+
+/// The supercritical Hopf normal form at μ = 0.25 from near the origin, cut
+/// where `y` rises through 0 (on the positive `x` axis).
+const HOPF_TURNS: SectionRun = SectionRun {
+    params: &[("mu", 0.25)],
+    x0: &[0.05, 0.0],
+    t_end: 200.0,
+    section: SectionSpec::Plane {
+        state: 1,
+        value: 0.0,
+        direction: Direction::Rising,
+    },
+    skip: 20,
+    solver: APP_SOLVER,
 };
 
 const CHECKS: &[Check] = &[
@@ -390,7 +469,7 @@ const CHECKS: &[Check] = &[
         claim: Claim::Period {
             run: VAN_DER_POL_TURNS,
             book: 6.663_286_859,
-            tol: 1e-3,
+            tol: Some(1e-3),
         },
     },
     Check {
@@ -436,6 +515,476 @@ const CHECKS: &[Check] = &[
             observable: Observable::StabilityOf { near: &[0.9, 1.0] },
             book: 0.848_528_137_423_857,
             tol: 1e-6,
+        },
+    },
+    Check {
+        template: "sin-x",
+        section: "2.1",
+        book: "x* = 0 unstable, x* = ±π stable",
+        claim: Claim::FixedPoints {
+            params: &[],
+            expect: &[
+                (&[-PI], Classification::Sink),
+                (&[0.0], Classification::Source),
+                (&[PI], Classification::Sink),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "logistic-growth",
+        section: "2.3",
+        book: "K = 2: N* = 0 unstable, N* = K stable",
+        claim: Claim::FixedPoints {
+            params: &[("r", 1.0), ("K", 2.0)],
+            expect: &[
+                (&[0.0], Classification::Source),
+                (&[2.0], Classification::Sink),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "transcritical",
+        section: "3.2",
+        book: "r = −1: x* = 0 stable, x* = r unstable",
+        claim: Claim::FixedPoints {
+            params: &[("r", -1.0)],
+            expect: &[
+                (&[0.0], Classification::Sink),
+                (&[-1.0], Classification::Source),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "transcritical",
+        section: "3.2",
+        book: "r = 1: x* = 0 unstable, x* = r stable",
+        claim: Claim::FixedPoints {
+            params: &[("r", 1.0)],
+            expect: &[
+                (&[0.0], Classification::Source),
+                (&[1.0], Classification::Sink),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "transcritical",
+        section: "3.2",
+        book: "x* = 0 exchanges stability at r_c = 0",
+        // The branches x* = 0 and x* = r separate linearly in r, and the
+        // finder merges roots closer than 1e−6 of the box diagonal (4e−6
+        // here), so the switch is seen at r = −4e−6.
+        claim: Claim::Bifurcation {
+            param: "r",
+            bracket: (-1.0, 1.0),
+            observable: Observable::StabilityOf { near: &[0.0] },
+            book: 0.0,
+            tol: 1e-5,
+        },
+    },
+    Check {
+        template: "pitchfork",
+        section: "3.4",
+        book: "r = 1: x* = ±√r stable, x* = 0 unstable",
+        claim: Claim::FixedPoints {
+            params: &[("r", 1.0)],
+            expect: &[
+                (&[-1.0], Classification::Sink),
+                (&[0.0], Classification::Source),
+                (&[1.0], Classification::Sink),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "pitchfork",
+        section: "3.4",
+        book: "one fixed point becomes three at r_c = 0",
+        claim: Claim::Bifurcation {
+            param: "r",
+            bracket: (-1.0, 1.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.0, 2.0)],
+            },
+            book: 0.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "bead-on-hoop",
+        section: "3.5",
+        book: "γ = 2: φ* = ±arccos(1/γ) = ±π/3 stable, 0 and ±π not",
+        claim: Claim::FixedPoints {
+            params: &[("gamma", 2.0)],
+            expect: &[
+                (&[-PI], Classification::Source),
+                (&[-PI / 3.0], Classification::Sink),
+                (&[0.0], Classification::Source),
+                (&[PI / 3.0], Classification::Sink),
+                (&[PI], Classification::Source),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "bead-on-hoop",
+        section: "3.5",
+        book: "supercritical pitchfork at γ = 1",
+        claim: Claim::Bifurcation {
+            param: "gamma",
+            bracket: (0.5, 2.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.5, 2.5)],
+            },
+            book: 1.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "imperfect-bifurcation",
+        section: "3.6",
+        book: "r = 1: two fixed points vanish at h_c = 2/(3√3)",
+        claim: Claim::Bifurcation {
+            param: "h",
+            bracket: (0.0, 1.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.0, 2.0)],
+            },
+            book: 0.384_900_179_459_750_5,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "nonuniform-oscillator",
+        section: "4.3",
+        book: "ω = 1, a = 0.5: period T = 2π/√(ω² − a²)",
+        claim: Claim::FirstCrossing {
+            run: SectionRun {
+                params: &[("omega", 1.0), ("a", 0.5)],
+                x0: &[0.0],
+                t_end: 20.0,
+                section: SectionSpec::Plane {
+                    state: 0,
+                    value: 2.0 * PI,
+                    direction: Direction::Rising,
+                },
+                skip: 0,
+                solver: APP_SOLVER,
+            },
+            book: 7.255_197_456_936_871,
+            tol: 1e-4,
+        },
+    },
+    Check {
+        template: "nonuniform-oscillator",
+        section: "4.3",
+        book: "a = 2 > ω: θ* = π/6 stable, θ* = 5π/6 unstable",
+        claim: Claim::FixedPoints {
+            params: &[("omega", 1.0), ("a", 2.0)],
+            expect: &[
+                (&[PI / 6.0], Classification::Sink),
+                (&[5.0 * PI / 6.0], Classification::Source),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "nonuniform-oscillator",
+        section: "4.3",
+        book: "ω = 1: saddle-node bifurcation at a_c = ω",
+        claim: Claim::Bifurcation {
+            param: "a",
+            bracket: (0.5, 2.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-0.5, 6.4)],
+            },
+            book: 1.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "romeo-juliet",
+        section: "5.3",
+        book: "a, b > 0: τ = 0, Δ = ab > 0, center",
+        claim: Claim::FixedPoints {
+            params: &[("a", 1.0), ("b", 2.0)],
+            expect: &[(&[0.0, 0.0], Classification::Centre)],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "romeo-juliet",
+        section: "5.3",
+        book: "a = 1, b = 2: period 2π/√(ab)",
+        claim: Claim::Period {
+            run: SectionRun {
+                params: &[("a", 1.0), ("b", 2.0)],
+                x0: &[1.0, 0.5],
+                t_end: 30.0,
+                section: SectionSpec::Plane {
+                    state: 1,
+                    value: 0.0,
+                    direction: Direction::Falling,
+                },
+                skip: 0,
+                solver: APP_SOLVER,
+            },
+            book: 4.442_882_938_158_366,
+            tol: Some(1e-4),
+        },
+    },
+    Check {
+        template: "double-well",
+        section: "6.5",
+        book: "saddle at x = 0, centers at x = ±1",
+        claim: Claim::FixedPoints {
+            params: &[],
+            expect: &[
+                (&[-1.0, 0.0], Classification::Centre),
+                (&[0.0, 0.0], Classification::Saddle),
+                (&[1.0, 0.0], Classification::Centre),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "double-well",
+        section: "6.5",
+        book: "E = ẋ²/2 − x²/2 + x⁴/4 conserved, rtol 1e−8",
+        claim: Claim::EnergyDrift {
+            params: &[],
+            x0: &[1.5, 0.0],
+            energy: double_well_energy,
+            t_end: 100.0,
+            rtol: 1e-8,
+            atol: 1e-10,
+            bound: Some(1e-6),
+        },
+    },
+    Check {
+        template: "reversible",
+        section: "6.6",
+        book: "nonlinear center at 0, saddles at (−1, ±1)",
+        claim: Claim::FixedPoints {
+            params: &[],
+            expect: &[
+                (&[0.0, 0.0], Classification::Centre),
+                (&[-1.0, 1.0], Classification::Saddle),
+                (&[-1.0, -1.0], Classification::Saddle),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "relaxation-oscillator",
+        section: "7.5",
+        book: "μ = 10: period T = 19.0784",
+        claim: Claim::Period {
+            run: relaxation_turns(200.0, APP_SOLVER),
+            book: 19.0784,
+            tol: Some(1e-2),
+        },
+    },
+    Check {
+        template: "relaxation-oscillator",
+        section: "7.5",
+        book: "DOPRI5 rtol 1e−10 and RK4 h = 1e−4 agree on T",
+        claim: Claim::PeriodsAgree {
+            runs: [
+                relaxation_turns(
+                    120.0,
+                    SolverOptions {
+                        method: Method::Dopri5,
+                        rtol: 1e-10,
+                        atol: 1e-12,
+                        h: 0.0,
+                        h_max: None,
+                        max_steps: 1_000_000,
+                    },
+                ),
+                relaxation_turns(
+                    120.0,
+                    SolverOptions {
+                        method: Method::Rk4,
+                        rtol: 0.0,
+                        atol: 0.0,
+                        h: 1e-4,
+                        h_max: None,
+                        max_steps: 1_300_000,
+                    },
+                ),
+            ],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        template: "relaxation-oscillator",
+        section: "7.5",
+        book: "μ ≫ 1 asymptote T ≈ μ(3 − 2 ln 2) = 16.14",
+        claim: Claim::Period {
+            run: relaxation_turns(200.0, APP_SOLVER),
+            book: 16.137_056_388_801_094,
+            tol: None,
+        },
+    },
+    Check {
+        template: "saddle-node-2d",
+        section: "8.1",
+        book: "μ = 1: (1, 0) stable node, (−1, 0) saddle",
+        claim: Claim::FixedPoints {
+            params: &[("mu", 1.0)],
+            expect: &[
+                (&[1.0, 0.0], Classification::StableNode),
+                (&[-1.0, 0.0], Classification::Saddle),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "saddle-node-2d",
+        section: "8.1",
+        book: "node and saddle collide and vanish at μ_c = 0",
+        claim: Claim::Bifurcation {
+            param: "mu",
+            bracket: (-1.0, 1.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.0, 2.0), (-2.0, 2.0)],
+            },
+            book: 0.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "hopf-supercritical",
+        section: "8.2",
+        book: "the origin loses stability at μ_c = 0",
+        claim: Claim::Bifurcation {
+            param: "mu",
+            bracket: (-0.5, 0.5),
+            observable: Observable::StabilityOf { near: &[0.0, 0.0] },
+            book: 0.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "hopf-supercritical",
+        section: "8.2",
+        book: "μ = 0.25: limit cycle radius √μ",
+        claim: Claim::Amplitude {
+            run: HOPF_TURNS,
+            state: 0,
+            book: 0.5,
+            tol: 1e-4,
+        },
+    },
+    Check {
+        template: "hopf-supercritical",
+        section: "8.2",
+        book: "ω = 1, b = 0: limit cycle period 2π",
+        claim: Claim::Period {
+            run: HOPF_TURNS,
+            book: 2.0 * PI,
+            tol: Some(1e-4),
+        },
+    },
+    Check {
+        template: "cdima",
+        section: "8.3",
+        book: "a = 10, b = 2: x* = a/5, y* = 1 + (a/5)², unstable",
+        claim: Claim::FixedPoints {
+            params: &[("a", 10.0), ("b", 2.0)],
+            expect: &[(&[2.0, 5.0], Classification::UnstableSpiral)],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "cdima",
+        section: "8.3",
+        book: "a = 10: Hopf at b_c = 3a/5 − 25/a",
+        claim: Claim::Bifurcation {
+            param: "b",
+            bracket: (2.0, 5.0),
+            observable: Observable::StabilityOf { near: &[2.0, 5.0] },
+            book: 3.5,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "driven-pendulum",
+        section: "8.5",
+        book: "I = 1/2: φ* = arcsin I stable, π − arcsin I saddles",
+        claim: Claim::FixedPoints {
+            params: &[("alpha", 0.2), ("I", 0.5)],
+            expect: &[
+                (&[PI / 6.0, 0.0], Classification::StableSpiral),
+                (&[5.0 * PI / 6.0, 0.0], Classification::Saddle),
+                (&[PI / 6.0 + 2.0 * PI, 0.0], Classification::StableSpiral),
+                (&[5.0 * PI / 6.0 + 2.0 * PI, 0.0], Classification::Saddle),
+            ],
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "driven-pendulum",
+        section: "8.5",
+        book: "fixed points vanish in a saddle-node at I = 1",
+        claim: Claim::Bifurcation {
+            param: "I",
+            bracket: (0.5, 1.5),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.0, 5.0), (-2.0, 4.0)],
+            },
+            book: 1.0,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "coupled-oscillators",
+        section: "8.6",
+        book: "phase-locked at (K₂ω₁ + K₁ω₂)/(K₁ + K₂)",
+        claim: Claim::MeanFrequency {
+            run: SectionRun {
+                params: &[
+                    ("omega_1", 1.2),
+                    ("omega_2", 1.0),
+                    ("K_1", 0.25),
+                    ("K_2", 0.25),
+                ],
+                x0: &[0.0, 3.0],
+                t_end: 200.0,
+                section: SectionSpec::Stroboscopic {
+                    period: 1.0,
+                    phase: 0.0,
+                },
+                skip: 50,
+                solver: APP_SOLVER,
+            },
+            states: &[0, 1],
+            book: 1.1,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "poincare-map-forced",
+        section: "8.7",
+        book: "A = 1: the Poincaré map's fixed point x* = −A/2",
+        claim: Claim::StroboscopicFixedPoint {
+            run: SectionRun {
+                params: &[("A", 1.0)],
+                x0: &[2.0],
+                t_end: 40.0,
+                section: SectionSpec::Stroboscopic {
+                    period: 2.0 * PI,
+                    phase: 0.0,
+                },
+                skip: 0,
+                solver: APP_SOLVER,
+            },
+            book: -0.5,
+            tol: 1e-5,
         },
     },
 ];
@@ -562,14 +1111,7 @@ impl<'a> Lab<'a> {
             nullclines: false,
             fixed_points: false,
             trajectories: Vec::new(),
-            solver: SolverOptions {
-                method: Method::Dopri5,
-                rtol: 1e-6,
-                atol: 1e-9,
-                h: 0.0,
-                h_max: None,
-                max_steps: 200_000,
-            },
+            solver: APP_SOLVER,
             samples: 0,
             graph_samples: None,
             transient: None,
@@ -605,6 +1147,7 @@ impl<'a> Lab<'a> {
         }];
         req.section = Some(run.section);
         req.transient = Some(run.skip);
+        req.solver = run.solver;
         let mut out = service::compute_portrait(&self.system, &req)
             .unwrap_or_else(|e| panic!("{}: {e}", self.template.id));
         out.trajectories.remove(0)
@@ -613,21 +1156,41 @@ impl<'a> Lab<'a> {
 
 /// `(book, measured, delta, tol, pass)` of values that should all be `book`:
 /// the measured column is their mean, the delta the worst of them.
+/// With `tol` `None` the row is info, unless the run failed.
 fn all_near(
     values: &[f64],
     status: Status,
     book: f64,
-    tol: f64,
+    tol: Option<f64>,
 ) -> (String, String, f64, f64, Verdict) {
     let delta = values.iter().map(|v| (v - book).abs()).fold(0.0, f64::max);
     let measured = if values.is_empty() {
         format!("no crossings, {status:?}")
     } else {
-        let mean = values.iter().sum::<f64>() / values.len() as f64;
-        format!("{mean:.6} over {}", values.len())
+        format!("{:.6} over {}", mean(values), values.len())
     };
-    let ok = status == Status::Completed && values.len() >= 2 && delta <= tol;
-    (format!("{book:.6}"), measured, delta, tol, verdict(ok))
+    let ran = status == Status::Completed && !values.is_empty();
+    let pass = match tol {
+        Some(tol) => verdict(ran && delta <= tol),
+        None if ran => Verdict::Info,
+        None => Verdict::Fail,
+    };
+    (
+        format!("{book:.6}"),
+        measured,
+        delta,
+        tol.unwrap_or(f64::NAN),
+        pass,
+    )
+}
+
+fn mean(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+/// The times between successive crossings.
+fn periods(sol: &TrajectoryOut) -> Vec<f64> {
+    sol.t.windows(2).map(|w| w[1] - w[0]).collect()
 }
 
 fn distance(a: &[f64], b: &[f64]) -> f64 {
@@ -754,8 +1317,64 @@ fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
         }
         Claim::Period { run, book, tol } => {
             let sol = lab.section(run);
-            let periods: Vec<f64> = sol.t.windows(2).map(|w| w[1] - w[0]).collect();
-            all_near(&periods, sol.status, *book, *tol)
+            all_near(&periods(&sol), sol.status, *book, *tol)
+        }
+        Claim::PeriodsAgree { runs, tol } => {
+            let [a, b] = runs.each_ref().map(|r| lab.section(r));
+            let (pa, pb) = (periods(&a), periods(&b));
+            let ran = [&a, &b].iter().all(|s| s.status == Status::Completed)
+                && !pa.is_empty()
+                && !pb.is_empty();
+            let delta = if ran {
+                (mean(&pa) - mean(&pb)).abs()
+            } else {
+                f64::INFINITY
+            };
+            (
+                "agree".into(),
+                format!("{:.6} vs {:.6}", mean(&pa), mean(&pb)),
+                delta,
+                *tol,
+                verdict(ran && delta <= *tol),
+            )
+        }
+        Claim::FirstCrossing { run, book, tol } => {
+            let sol = lab.section(run);
+            let first: Vec<f64> = sol.t.first().copied().into_iter().collect();
+            all_near(&first, sol.status, *book, Some(*tol))
+        }
+        Claim::MeanFrequency {
+            run,
+            states,
+            book,
+            tol,
+        } => {
+            let sol = lab.section(run);
+            let dim = lab.res.states.len();
+            let n = sol.t.len();
+            let rates: Vec<f64> = if n < 2 {
+                Vec::new()
+            } else {
+                let span = sol.t[n - 1] - sol.t[0];
+                states
+                    .iter()
+                    .map(|&i| (sol.x[(n - 1) * dim + i] - sol.x[i]) / span)
+                    .collect()
+            };
+            all_near(&rates, sol.status, *book, Some(*tol))
+        }
+        Claim::StroboscopicFixedPoint { run, book, tol } => {
+            let sol = lab.section(run);
+            assert_eq!(lab.res.states.len(), 1, "a one-state return map");
+            let x = &sol.x;
+            let values: Vec<f64> = if x.len() < 3 {
+                Vec::new()
+            } else {
+                let slope = (x[2] - x[1]) / (x[1] - x[0]);
+                let secant = (x[1] - slope * x[0]) / (1.0 - slope);
+                vec![secant, x[x.len() - 1]]
+            };
+            all_near(&values, sol.status, *book, Some(*tol))
         }
         Claim::Amplitude {
             run,
@@ -766,7 +1385,7 @@ fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
             let sol = lab.section(run);
             let dim = lab.res.states.len();
             let values: Vec<f64> = sol.x.chunks(dim).map(|x| x[*state]).collect();
-            all_near(&values, sol.status, *book, *tol)
+            all_near(&values, sol.status, *book, Some(*tol))
         }
         Claim::EnergyDrift {
             params,
@@ -818,7 +1437,7 @@ fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
 }
 
 fn print_line([ch, sec, tpl, claim, book, meas, d, tol, res]: [&str; 9]) {
-    println!("{ch:<3} {sec:<4} {tpl:<20} {claim:<54} {book:<12} {meas:<26} {d:>8} {tol:>7} {res}");
+    println!("{ch:<3} {sec:<4} {tpl:<22} {claim:<54} {book:<12} {meas:<26} {d:>8} {tol:>7} {res}");
 }
 
 fn print_table(rows: &[Row]) {
@@ -880,37 +1499,95 @@ fn template_sections_are_in_the_second_edition() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
+/// `"8.3"` as `(8, 3)`, so rows sort by chapter, then section.
+fn section_key(section: &str) -> (u32, u32) {
+    let mut parts = section.split('.').map(|p| p.parse().unwrap_or(u32::MAX));
+    (
+        parts.next().unwrap_or(u32::MAX),
+        parts.next().unwrap_or(u32::MAX),
+    )
+}
+
+/// Every check evaluated once, in book order, shared by the tests below.
+fn gate_rows() -> &'static [Row] {
+    static ROWS: OnceLock<Vec<Row>> = OnceLock::new();
+    ROWS.get_or_init(|| {
+        let templates = templates();
+        let store = SystemStore::new();
+        let mut rows: Vec<Row> = CHECKS
+            .iter()
+            .map(|c| {
+                let template = templates
+                    .iter()
+                    .find(|t| t.id == c.template)
+                    .unwrap_or_else(|| panic!("no template {:?}", c.template));
+                let lab = Lab::new(&store, template);
+                let (book, measured, delta, tol, pass) = evaluate(&lab, &c.claim);
+                Row {
+                    chapter: chapter_of(c.section).to_string(),
+                    section: c.section,
+                    template: c.template,
+                    claim: c.book,
+                    book,
+                    measured,
+                    delta,
+                    tol,
+                    pass,
+                }
+            })
+            .collect();
+        rows.sort_by_key(|r| section_key(r.section));
+        rows
+    })
+}
+
 #[test]
 fn strogatz_claims_reproduce() {
-    let templates = templates();
-    let store = SystemStore::new();
-    let rows: Vec<Row> = CHECKS
-        .iter()
-        .map(|c| {
-            let template = templates
-                .iter()
-                .find(|t| t.id == c.template)
-                .unwrap_or_else(|| panic!("no template {:?}", c.template));
-            let lab = Lab::new(&store, template);
-            let (book, measured, delta, tol, pass) = evaluate(&lab, &c.claim);
-            Row {
-                chapter: chapter_of(c.section).to_string(),
-                section: c.section,
-                template: c.template,
-                claim: c.book,
-                book,
-                measured,
-                delta,
-                tol,
-                pass,
-            }
-        })
-        .collect();
-    print_table(&rows);
+    let rows = gate_rows();
+    print_table(rows);
     let failed: Vec<String> = rows
         .iter()
         .filter(|r| r.pass == Verdict::Fail)
         .map(|r| format!("§{} {}: {}", r.section, r.template, r.claim))
         .collect();
     assert!(failed.is_empty(), "failed claims:\n{}", failed.join("\n"));
+}
+
+/// The gate's promise: each of chapters 2 to 8 has a template that
+/// reproduces one of the book's results.
+#[test]
+fn every_chapter_2_to_8_is_covered() {
+    let rows = gate_rows();
+    let missing: Vec<u32> = (2..=8)
+        .filter(|ch| {
+            !rows
+                .iter()
+                .any(|r| r.chapter == ch.to_string() && r.pass == Verdict::Pass)
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no passing claim in chapter(s) {missing:?}"
+    );
+}
+
+/// A template that cites a section of chapters 2 to 8 can't join the
+/// gallery without a claim in [`CHECKS`].
+#[test]
+fn every_ch2_8_template_has_a_claim() {
+    let unchecked: Vec<String> = templates()
+        .into_iter()
+        .filter(|t| {
+            t.section
+                .as_deref()
+                .is_some_and(|s| (2..=8).contains(&section_key(s).0))
+        })
+        .filter(|t| !CHECKS.iter().any(|c| c.template == t.id))
+        .map(|t| format!("{} (§{})", t.id, t.section.unwrap_or_default()))
+        .collect();
+    assert!(
+        unchecked.is_empty(),
+        "templates with no claim: {}",
+        unchecked.join(", ")
+    );
 }

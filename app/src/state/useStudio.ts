@@ -307,7 +307,7 @@ export function useStudio() {
           fresh.push({ ...ic, color: newIcColor(fresh, v) });
         }
         setIcs(fresh);
-        setSolverState((s) => ({ ...s, tEnd: template.tEnd, transient: 0 }));
+        setSolverState((s) => ({ ...s, tEnd: template.tEnd, transient: template.transient ?? 0 }));
         setLayersState((l) => ({
           ...l,
           backward: template.backward ?? true,

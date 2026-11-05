@@ -763,6 +763,13 @@ export function templateView(t: Template, sys: CompileResponse): View {
     const ranges = [t.view.xRange, t.view.yRange, t.view.zRange!];
     return spaceView(idx as [number, number, number], (i) => [...ranges[idx.indexOf(i)]] as [number, number]);
   }
+  if (t.view.kind === "section") {
+    const section = templateSection(t, sys);
+    const xAxis = resolveAxis(t.view.x, sys.states);
+    const yAxis = resolveAxis(t.view.y, sys.states);
+    if (!section || xAxis?.kind !== "state" || yAxis?.kind !== "state") return defaultView(sys);
+    return { kind: "section", section, xAxis, yAxis, xRange: [...t.view.xRange], yRange: [...t.view.yRange] };
+  }
   if (t.view.kind === "cobweb") {
     const axis = resolveAxis(t.view.x, sys.states);
     if (!cobwebAvailability(sys).ok || axis?.kind !== "state" || axis.index !== 0) return defaultView(sys);
@@ -772,6 +779,16 @@ export function templateView(t: Template, sys: CompileResponse): View {
   const yAxis = resolveAxis(t.view.y, sys.states);
   if (!xAxis || !yAxis) return defaultView(sys);
   return { xAxis, yAxis, xRange: [...t.view.xRange], yRange: [...t.view.yRange] };
+}
+
+/** The template's section with its plane's state as an index, or null when `sys` can't take it. */
+function templateSection(t: Template, sys: CompileResponse): SectionSpec | null {
+  const s = t.view.section;
+  if (!s || !sectionAvailability(sys).ok) return null;
+  if (s.kind === "stroboscopic") return { kind: "stroboscopic", period: s.period, phase: s.phase };
+  const axis = resolveAxis(s.state, sys.states);
+  if (axis?.kind !== "state" || !planeSectionAvailability(sys).ok) return null;
+  return { kind: "plane", state: axis.index, value: s.value, direction: s.direction };
 }
 
 export function defaultParamRange(v: number): [number, number] {

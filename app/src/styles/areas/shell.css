@@ -79,9 +79,26 @@
 }
 
 .gallery-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
   padding: var(--space-6);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+}
+
+/* "Chapter 6  Phase plane": the chapter in ink, Strogatz's title after it in ink-2. */
+.gallery-chapter-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.gallery-chapter-title {
+  color: var(--ink-2);
 }
 
 /* Projector mode: the maths grows with the 115% root, but the grid's 200px

@@ -38,6 +38,8 @@ struct Template {
     initial_conditions: Vec<Vec<f64>>,
     t_end: f64,
     #[serde(default)]
+    transient: Option<usize>,
+    #[serde(default)]
     backward: Option<bool>,
 }
 
@@ -50,6 +52,27 @@ struct View {
     y: String,
     x_range: (f64, f64),
     y_range: (f64, f64),
+    #[serde(default)]
+    z: Option<String>,
+    #[serde(default)]
+    z_range: Option<(f64, f64)>,
+    #[serde(default)]
+    section: Option<TemplateSection>,
+}
+
+/// A template's section, its plane's state named.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum TemplateSection {
+    Plane {
+        state: String,
+        value: f64,
+        direction: Direction,
+    },
+    Stroboscopic {
+        period: f64,
+        phase: f64,
+    },
 }
 
 fn have_pdflatex() -> bool {
@@ -85,6 +108,29 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
     let is_map = res.kind == Some(SystemKind::Map);
     let x_axis = axis(&t.view.x, res);
     let y_axis = axis(&t.view.y, res);
+    let z_axis = t.view.z.as_deref().map(|z| axis(z, res));
+    let section = t.view.section.as_ref().map(|s| match s {
+        TemplateSection::Plane {
+            state,
+            value,
+            direction,
+        } => {
+            let AxisRef::State { index } = axis(state, res) else {
+                panic!("{}: a section through time", t.id)
+            };
+            SectionSpec::Plane {
+                state: index,
+                value: *value,
+                direction: *direction,
+            }
+        }
+        TemplateSection::Stroboscopic { period, phase } => SectionSpec::Stroboscopic {
+            period: *period,
+            phase: *phase,
+        },
+    });
+    // A section and a 3D view draw orbits only, forward in time.
+    let orbits_only = section.is_some() || z_axis.is_some();
     let time_window = match (x_axis, y_axis) {
         (AxisRef::Time, _) => Some(t.view.x_range),
         (_, AxisRef::Time) => Some(t.view.y_range),
@@ -119,7 +165,7 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
             }
         } else {
             push(t.t_end, false);
-            if t.backward != Some(false) {
+            if t.backward != Some(false) && !orbits_only {
                 push(-t.t_end, true);
             }
         }
@@ -138,9 +184,9 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
         y_range: t.view.y_range,
         base_state: vec![0.0; dim],
         field_time: 0.0,
-        field_grid: 21,
-        nullclines: true,
-        fixed_points: res.autonomous,
+        field_grid: if orbits_only { 0 } else { 21 },
+        nullclines: !orbits_only,
+        fixed_points: res.autonomous && section.is_none(),
         trajectories,
         solver: SolverOptions {
             method: Method::Dopri5,
@@ -153,10 +199,10 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
         samples: 2000,
         // The export dialog's graph: clamp(2 · width px, 2048, 4096).
         graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
-        transient: None,
-        section: None,
-        z_axis: None,
-        z_range: None,
+        transient: section.and(t.transient),
+        section,
+        z_axis,
+        z_range: t.view.z_range,
     };
     (req, tags)
 }
@@ -283,6 +329,35 @@ fn every_template_exports_latex_that_compiles() {
             format: t.format,
             standalone: false,
         };
+        if portrait.z_axis.is_some() {
+            for placement in [
+                Placement::Inline,
+                Placement::External { base: t.id.clone() },
+            ] {
+                assert_eq!(
+                    export_service::figure_latex(&cache, &system, &fig, placement).err(),
+                    Some(export_service::SPACE_LATEX_REFUSAL.to_string()),
+                    "{}: a 3D view has no LaTeX figure",
+                    t.id
+                );
+            }
+            if run_tex {
+                let dir = scratch(&t.id);
+                let mut snippets: Vec<&str> = vec![&sys.tex, &prime.tex];
+                snippets.extend(fixed.as_deref());
+                let doc = format!(
+                    "\\documentclass{{article}}\n{}\n\\begin{{document}}\n{}\n\n{}\n\n{}\n\\end{{document}}\n",
+                    preamble(&snippets),
+                    sys.tex,
+                    prime.tex,
+                    fixed.as_deref().unwrap_or("")
+                );
+                std::fs::write(dir.join("main.tex"), doc).unwrap();
+                pdflatex(&dir, "main.tex");
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            continue;
+        }
         let inline = export_service::figure_latex(&cache, &system, &fig, Placement::Inline)
             .unwrap_or_else(|e| panic!("{}: figure: {e}", t.id));
         let base = file_base(&format!("{}.tex", t.id));
@@ -329,6 +404,29 @@ fn every_template_exports_latex_that_compiles() {
             );
             let table = fixed.as_deref().unwrap_or_default();
             assert!(table.contains("$\\lambda = f'(x^*)$"), "{table}");
+        }
+        if let Some(section) = &portrait.section {
+            let header = match section {
+                SectionSpec::Plane { .. } => "% Section: plane ",
+                SectionSpec::Stroboscopic { .. } => "% Section: stroboscopic, period ",
+            };
+            assert!(
+                inline.tex.contains(header),
+                "{}: no {header:?} in\n{}",
+                t.id,
+                inline.tex
+            );
+            let dots = if t.view.x == t.view.y {
+                "% Return map of ic-1\n\\addplot[sepxtraj1, only marks"
+            } else {
+                "% Section of ic-1\n\\addplot[sepxtraj1, only marks"
+            };
+            assert!(
+                inline.tex.contains(dots),
+                "{}: no {dots:?} in\n{}",
+                t.id,
+                inline.tex
+            );
         }
 
         if !run_tex {
