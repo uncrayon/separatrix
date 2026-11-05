@@ -13,6 +13,10 @@ All notable changes to this project are documented in this file.
   `% Graph of f`, `% Cobweb of <ic>`), a one-dimensional map's fixed-point table lists
   `λ = f′(x*)` and `|λ|`, and the CSV metadata records the transient. Project files keep the
   view's `kind` and the solver's `transient` (additive keys; the format stays at version 1).
+- Strogatz validation suite (`scripts/strogatz-gate.sh`): checks the chapter 2–8 templates
+  against the book's own results (fixed points and their classification, the saddle-node at
+  `r = 0`, the Sel'kov Hopf values `b = √0.12` and `√0.72`, pendulum energy drift) and that every
+  template's section is in the 2nd edition's table of contents.
 
 ### Changed
 - Rewrite as a cross-platform desktop app (Tauri 2 + Rust core). No Python, no server.
