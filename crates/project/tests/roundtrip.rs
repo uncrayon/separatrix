@@ -5,14 +5,15 @@ mod common;
 use common::{fixture, APP};
 use separatrix_project::{
     from_value_checked, parse, parse_named, to_json, Opened, ProjectAxis, ProjectError,
-    ProjectFile, CURRENT_VERSION, MAX_FILE_BYTES, SECTION_MISFIT,
+    ProjectFile, CURRENT_VERSION, MAX_FILE_BYTES, SECTION_MISFIT, SPACE_MISFIT,
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 7] = [
+const GOOD: [&str; 8] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
     "section-view.sepx",
+    "space-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -20,11 +21,12 @@ const GOOD: [&str; 7] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 4] = [
+const CANONICAL: [&str; 5] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
     "section-view.sepx",
+    "space-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -1159,4 +1161,107 @@ fn a_section_view_that_does_not_fit_falls_back_to_the_default_view() {
         .unwrap_err()
         .to_string()
         .contains("views[0].section.value"));
+}
+
+// ---------------------------------------------------------------------
+// 3D views (`views[].kind = "space"`, `z_axis`, `z_range`, `camera`).
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_space_view_is_read_and_written_back() {
+    let opened = open("space-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("space"));
+    assert_eq!(view.z_axis, Some(ProjectAxis::state("z")));
+    assert_eq!(view.z_range, Some([0.0, 50.0]));
+    let c = view.camera.as_ref().unwrap();
+    assert_eq!(
+        (c.yaw, c.pitch, c.zoom),
+        (
+            -std::f64::consts::FRAC_PI_4,
+            std::f64::consts::PI / 6.0,
+            1.0
+        )
+    );
+    let text = to_json(&opened.project, APP).unwrap();
+    // Each z key right after its y key, and the camera after the ranges.
+    assert!(text.contains(
+        "\"y_axis\": {\n        \"kind\": \"state\",\n        \"name\": \"y\"\n      },\n      \"z_axis\": {"
+    ));
+    assert!(text.contains(
+        "\"z_range\": [\n        0.0,\n        50.0\n      ],\n      \"camera\": {\n        \"yaw\": -0.7853981633974483,"
+    ));
+    // A camera missing a key gets its default; a newer key is kept.
+    let mut v = value(&fixture("space-view.sepx"));
+    v["views"][0]["camera"] = json!({ "zoom": 2.5, "roll": 0.1 });
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let c = opened.project.views[0].camera.as_ref().unwrap();
+    assert_eq!(
+        (c.yaw, c.pitch, c.zoom),
+        (
+            -std::f64::consts::FRAC_PI_4,
+            std::f64::consts::PI / 6.0,
+            2.5
+        )
+    );
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["camera"]["roll"],
+        json!(0.1)
+    );
+}
+
+#[test]
+fn a_space_view_that_does_not_fit_falls_back_to_the_default_view() {
+    let base = value(&fixture("space-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 6] = [
+        ("a map", &|v| v["system"]["kind"] = json!("map")),
+        ("two states", &|v| {
+            v["system"]["states"] = json!(["x", "y"]);
+            v["initial_conditions"] = json!([]);
+        }),
+        ("no third axis", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("z_axis");
+        }),
+        ("no third range", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("z_range");
+        }),
+        ("a time axis", &|v| {
+            v["views"][0]["z_axis"] = json!({ "kind": "time" })
+        }),
+        ("one state twice", &|v| {
+            v["views"][0]["z_axis"] = json!({ "kind": "state", "name": "x" })
+        }),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [SPACE_MISFIT], "{name}");
+    }
+    assert_eq!(
+        warns(&|v| v["views"][0]["z_axis"]["name"] = json!("w")),
+        ["The z axis of the view \u{201c}main\u{201d} uses the state w, which the system doesn't have, so the default view is used."]
+    );
+    assert_eq!(
+        warns(&|v| v["views"][0]["z_range"] = json!([5.0, 5.0])),
+        ["The z range of the view \u{201c}main\u{201d} (5 to 5) is empty, so the default view is used."]
+    );
+    // A plane view keeps no z keys, and ignores any it was given.
+    assert!(warns(&|v| {
+        v["views"][0].as_object_mut().unwrap().remove("kind");
+        v["views"][0]["z_range"] = json!([5.0, 5.0]);
+    })
+    .is_empty());
+    // JSON can't hold a non-finite camera.
+    let mut p = open("space-view.sepx").project;
+    p.views[0].camera.as_mut().unwrap().zoom = f64::INFINITY;
+    assert!(to_json(&p, APP)
+        .unwrap_err()
+        .to_string()
+        .contains("views[0].camera.zoom"));
 }

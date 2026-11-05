@@ -264,6 +264,16 @@ fn first_non_finite(p: &ProjectFile) -> Option<String> {
         if bad(v.slice.t) {
             return Some(format!("views[{i}].slice.t"));
         }
+        if let Some(j) = v.z_range.and_then(|r| r.iter().position(|x| bad(*x))) {
+            return Some(format!("views[{i}].z_range[{j}]"));
+        }
+        if let Some(c) = &v.camera {
+            for (k, x) in [("yaw", c.yaw), ("pitch", c.pitch), ("zoom", c.zoom)] {
+                if bad(x) {
+                    return Some(format!("views[{i}].camera.{k}"));
+                }
+            }
+        }
         if let Some(s) = &v.section {
             for (k, x) in [("value", s.value), ("period", s.period), ("phase", s.phase)] {
                 if x.is_some_and(bad) {

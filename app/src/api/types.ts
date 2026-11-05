@@ -40,6 +40,7 @@ export type {
   PortraitRequest,
   PortraitResponse,
   ProjectAxis,
+  ProjectCamera,
   ProjectChooseSaveRequest,
   ProjectFile,
   ProjectInitialCondition,

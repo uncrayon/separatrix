@@ -83,10 +83,13 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `kind` | `"plane"` \| `"cobweb"` \| `"section"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb or a section, after `id`. |
+| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section or a 3D view, after `id`. |
 | `section` | object | Only in a `"section"` view, after `kind`: the Poincaré section (below). |
+| `z_axis` | `{ "kind": "state", "name": "z" }` | Only in a `"space"` view, after `y_axis`: the third state of the 3D view. |
 | `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` | Axes are stored by state name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
+| `z_range` | `[lo, hi]` | Only in a `"space"` view, after `y_range`: the range of `z_axis`. |
+| `camera` | `{ "yaw": number, "pitch": number, "zoom": number }` | Only in a `"space"` view, after `z_range`: where the box is seen from (below). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
 
@@ -121,6 +124,30 @@ upward, plotted in `x` and `y`, after the first `solver.transient` crossings of 
 }
 ```
 
+A 3D view of the Lorenz equations (Strogatz §9.2), three states in a box seen from the default
+camera (`crates/project/tests/fixtures/space-view.sepx`):
+
+```json
+{
+  "id": "main",
+  "kind": "space",
+  "x_axis": { "kind": "state", "name": "x" },
+  "y_axis": { "kind": "state", "name": "y" },
+  "z_axis": { "kind": "state", "name": "z" },
+  "x_range": [-20.0, 20.0],
+  "y_range": [-25.0, 25.0],
+  "z_range": [0.0, 50.0],
+  "camera": { "yaw": -0.7853981633974483, "pitch": 0.5235987755982988, "zoom": 1.0 },
+  "…": "slice and layers as in any view; a 3D view draws no field or nullclines"
+}
+```
+
+The three axes are three different states of a flow with at least 3 states. `yaw` turns the box
+about its third axis and `pitch` tilts it towards the viewer, both in radians; `zoom` scales it.
+A missing camera key takes its default (`yaw = −π/4`, `pitch = π/6` as `Math.PI / 6` computes
+it, `zoom = 1`); the app clamps `pitch` to ±(π/2 − 0.01) and `zoom` to 0.25–8 when it opens the
+file. Unknown keys inside `camera` are kept.
+
 | `section` key | Type | Meaning |
 |---|---|---|
 | `kind` | `"plane"` \| `"stroboscopic"` | A plane `x_i = c`, or the state once per forcing period. |
@@ -144,6 +171,14 @@ view doesn't fit this system, so the default view is shown.", shows its default 
 `kind` and `section` as unknown keys (written back after the known keys, so not byte for byte).
 Its studio drops `kind` when it saves from its default view and keeps `section`; this build reads
 such a view as the plane view its axes say, and drops the stale `section` on its next save.
+
+`z_axis`, `z_range` and `camera` are additive in the same way, so `format_version` and
+`min_reader_version` stay 1. The 0.2.0 reader that knows section views (trunk before 3D views)
+opens a 3D view with its view-kind warning, "The saved cobweb view doesn't fit this system, so
+the default view is shown.", shows its default view and keeps `kind`, `z_axis`, `z_range` and
+`camera` as unknown keys (written back after the known keys, so not byte for byte). Its studio
+drops `kind` when it saves from its default view; this build then reads the plane view the
+`x_axis` and `y_axis` say and drops the stale z keys and camera on its next save.
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -230,6 +265,7 @@ Everything else is repaired on open, with one warning per repair:
 | A primary `"section"` view whose `section.kind` this version doesn't know | "The section of the view “main” is of a kind (“…”) this version doesn't know, so the default view is used." The view is kept as written. |
 | A primary `"section"` plane through a state the system doesn't have | "The section of the view “main” holds the state w fixed, which the system doesn't have, so the default view is used." |
 | Any other section that doesn't fit: no `section`, a map, a plane of a one-state system, no `value`, an unknown `direction`, a `period` that isn't above 0, or axes other than two states or a state and its `next` | "The saved Poincaré section doesn't fit this system, so the default view is shown." The app gives the same sentences when the compiled system can't take the section. The view is kept as written. |
+| A primary `"space"` view of a map or of a system with fewer than 3 states, with no `z_axis` or `z_range`, or whose three axes are not three different states | "The saved 3D view doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `z_axis` naming a state the system lacks, or an empty `z_range`, gets the axis and range warnings of `x` and `y` (with "z"). The view is kept as written. |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |

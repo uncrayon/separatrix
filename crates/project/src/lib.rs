@@ -32,12 +32,13 @@ pub use io::{
 };
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
-    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSection,
-    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
+    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
 };
 pub use validate::{
-    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, section_misfit, COBWEB,
-    COBWEB_MISFIT, SECTION, SECTION_MISFIT, TRANSIENT_MAX,
+    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, section_misfit,
+    space_misfit, COBWEB, COBWEB_MISFIT, SECTION, SECTION_MISFIT, SPACE, SPACE_MISFIT,
+    TRANSIENT_MAX,
 };
 
 /// The value of the `format` key.
@@ -79,6 +80,7 @@ mod bindings {
             ProjectLayers::decl(&cfg),
             ProjectSolver::decl(&cfg),
             ProjectSection::decl(&cfg),
+            ProjectCamera::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -93,6 +95,13 @@ mod bindings {
             decls[4]
         );
         assert!(decls[9].contains("value?: number"), "{}", decls[9]);
+        assert!(decls[4].contains("camera?: ProjectCamera"), "{}", decls[4]);
+        assert!(
+            decls[4].contains("z_range?: [number, number]"),
+            "{}",
+            decls[4]
+        );
+        assert!(decls[10].contains("zoom: number"), "{}", decls[10]);
         assert!(
             decls[4].contains("x_range: [number, number]"),
             "{}",

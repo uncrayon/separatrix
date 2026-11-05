@@ -12,12 +12,16 @@ import {
   adaptInitialConditions,
   adaptView,
   buildPortraitJob,
+  clampCamera,
   clampTransient,
   cobwebAvailability,
   defaultView,
   isCobweb,
   isSection,
+  isSpace,
   knownStateRange,
+  viewRequestKey,
+  withSpaceAxis,
   withSection,
   liftPlotPoint,
   switchView,
@@ -31,6 +35,7 @@ import {
   templateLines,
   templateView,
   trackSelection,
+  type Camera,
   type EquationLine,
   type InitialCondition,
   type Layers,
@@ -214,9 +219,11 @@ export function useStudio() {
   );
   useEffect(() => () => scheduler.dispose(), [scheduler]);
 
+  // A 3D view's camera changes only the drawing: turning the box asks the core for nothing.
+  const viewKey = viewRequestKey(view);
   useEffect(() => {
     scheduler.request();
-  }, [scheduler, compiled, params, view, baseState, fieldTime, ics, layers, solver, plotAspect]);
+  }, [scheduler, compiled, params, viewKey, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
   const runCompile = useCallback(
     async (lines: string[], format: InputFormat, template?: Template) => {
@@ -595,6 +602,24 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
+  /** Where the 3D view is seen from; it leaves the home view (and Reset view) as it was. */
+  const setCamera = useCallback((camera: Camera) => {
+    setViewState((v) => (isSpace(v) ? { ...v, camera: clampCamera(camera) } : v));
+  }, []);
+
+  /** Puts state `index` on the 3D view's axis `slot`, swapping it with the axis it was on (see {@link withSpaceAxis}). */
+  const setSpaceAxis = useCallback((slot: 0 | 1 | 2, index: number) => {
+    const cur = latest.current;
+    const sys = cur.compiled;
+    if (!sys || !isSpace(cur.view)) return;
+    const v = cur.view;
+    const mem = viewMemory.current.shapeId === cur.shapeId ? Object.values(viewMemory.current.views) : [];
+    const rangeOf = (i: number) => knownStateRange(i, [v, ...mem], cur.portrait?.res, sys.states.length);
+    const next = withSpaceAxis(v, slot, index, rangeOf);
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
   /** Takes the section `spec` in the section view (see {@link withSection}). */
   const setSection = useCallback((spec: SectionSpec) => {
     const cur = latest.current;
@@ -700,6 +725,8 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setCamera,
+      setSpaceAxis,
       setSlice,
       setFieldTime,
       addIc,
@@ -729,6 +756,8 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setCamera,
+      setSpaceAxis,
       setSlice,
       setFieldTime,
       addIc,

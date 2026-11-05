@@ -255,6 +255,18 @@ function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
   return null;
 }
 
+/** The checks `validate` makes of a 3D view's third axis in service.rs, with the same messages. */
+function thirdAxisError(dim: number, req: PortraitRequest): string | null {
+  const { zAxis, zRange } = req;
+  if (!zAxis && !zRange) return null;
+  if (zAxis?.kind === "time") return "The third axis of a 3D view must be a state.";
+  if (!zAxis || !zRange) return "A 3D view needs both a third axis and its range.";
+  if (zAxis.index >= dim) return `The third axis shows state ${zAxis.index + 1} but the system only has ${dim}.`;
+  const [lo, hi] = zRange;
+  if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return `The third axis range [${lo}, ${hi}] is not a valid interval.`;
+  return null;
+}
+
 /** The checks `section_fits` makes in service.rs, with the same messages. */
 function sectionError(sys: MockSystem, section: SectionSpec): string | null {
   const dim = sys.states.length;
@@ -368,6 +380,8 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
     const err = sectionError(sys, req.section);
     if (err) throw err;
   }
+  const zErr = thirdAxisError(dim, req);
+  if (zErr) throw zErr;
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -607,14 +621,21 @@ function findFixedPoints(
   };
   const found: number[][] = [];
   const seeds = 9;
+  // A 3D view's third axis is searched across its range too (as `fixed_point_search_box` does).
+  const z = req.zAxis?.kind === "state" && req.zRange ? { index: req.zAxis.index, range: req.zRange } : null;
+  const zSeeds = z ? 5 : 1;
   for (let i = 0; i < seeds; i++) {
     for (let j = 0; j < seeds; j++) {
-      const px = req.xRange[0] + ((i + 0.5) / seeds) * (req.xRange[1] - req.xRange[0]);
-      const py = req.yRange[0] + ((j + 0.5) / seeds) * (req.yRange[1] - req.yRange[0]);
-      const root = newton(g, lift(px, py)[1], dim);
-      if (!root) continue;
-      const scale = 1e-6 * (1 + Math.hypot(...root));
-      if (!found.some((q) => Math.hypot(...q.map((v, k) => v - root[k])) < scale)) found.push(root);
+      for (let l = 0; l < zSeeds; l++) {
+        const px = req.xRange[0] + ((i + 0.5) / seeds) * (req.xRange[1] - req.xRange[0]);
+        const py = req.yRange[0] + ((j + 0.5) / seeds) * (req.yRange[1] - req.yRange[0]);
+        const start = lift(px, py)[1];
+        if (z) start[z.index] = z.range[0] + ((l + 0.5) / zSeeds) * (z.range[1] - z.range[0]);
+        const root = newton(g, start, dim);
+        if (!root) continue;
+        const scale = 1e-6 * (1 + Math.hypot(...root));
+        if (!found.some((q) => Math.hypot(...q.map((v, k) => v - root[k])) < scale)) found.push(root);
+      }
     }
   }
   return found.map((x) => {

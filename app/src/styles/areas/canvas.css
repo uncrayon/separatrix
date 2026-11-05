@@ -294,3 +294,27 @@
   stroke-width: calc(1.5 * var(--line-scale));
   stroke-linejoin: miter;
 }
+
+/* The 3D view: the WebGL lines under the 2D overlay that takes the pointer (SpaceCanvas.tsx). */
+.space-gl {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.space-overlay {
+  cursor: grab;
+}
+.space-overlay:active {
+  cursor: grabbing;
+}
+.space-axes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.space-gl[hidden] {
+  display: none;
+}

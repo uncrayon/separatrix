@@ -3,11 +3,11 @@
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
 //! solver settings (the transient too), the field grid, `x0` lengths. View
-//! ranges, axes and a cobweb or section view that doesn't fit the system
+//! ranges, axes and a cobweb, section or 3D view that doesn't fit the system
 //! are only reported: the UI falls back to the default view for a primary
 //! view whose range isn't usable (see [`range_ok`]), whose cobweb axes are
-//! wrong (see [`cobweb_axes_ok`]) or whose section doesn't fit (see
-//! [`section_misfit`]).
+//! wrong (see [`cobweb_axes_ok`]), whose section doesn't fit (see
+//! [`section_misfit`]) or whose 3D axes don't (see [`space_misfit`]).
 
 use std::collections::HashSet;
 
@@ -90,6 +90,38 @@ pub fn section_misfit(view: &ProjectView, kind: &str, states: &[String]) -> Opti
         };
     if kind == "map" || !pair {
         return misfit();
+    }
+    None
+}
+
+/// The view kind of a 3D view of a flow.
+pub const SPACE: &str = "space";
+/// The warning for a saved 3D view the app can't show (the app gives the
+/// same one when the compiled system can't take it).
+pub const SPACE_MISFIT: &str =
+    "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+/// Why the 3D view `view` can't be shown for a system of `kind` with
+/// `states` (either may be empty: not known until the app compiles), or
+/// `None` when it can: a map, a system with fewer than three states, or axes
+/// other than three different states with a third range. A state the system
+/// lacks and an empty range are reported with the other axes and ranges.
+pub fn space_misfit(view: &ProjectView, kind: &str, states: &[String]) -> Option<String> {
+    let names: Vec<Option<&String>> =
+        [Some(&view.x_axis), Some(&view.y_axis), view.z_axis.as_ref()]
+            .iter()
+            .map(|a| {
+                a.filter(|a| a.kind == "state")
+                    .and_then(|a| a.name.as_ref())
+            })
+            .collect();
+    let distinct = names.iter().all(Option::is_some)
+        && names[0] != names[1]
+        && names[0] != names[2]
+        && names[1] != names[2];
+    let three = states.is_empty() || states.len() >= 3;
+    if kind == "map" || !three || !distinct || view.z_range.is_none() {
+        return Some(SPACE_MISFIT.to_string());
     }
     None
 }
@@ -217,7 +249,15 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 continue;
             }
         }
+        let space = kind == Some(SPACE);
+        if space {
+            if let Some(w) = space_misfit(view, &p.system.kind, states) {
+                warnings.push(w);
+                continue;
+            }
+        }
         let cobweb = !section
+            && !space
             && (kind.is_some_and(|k| k != "plane")
                 || [&view.x_axis, &view.y_axis]
                     .iter()
@@ -230,7 +270,10 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 continue;
             }
         }
-        for (axis, r) in [("x", &view.x_range), ("y", &view.y_range)] {
+        let z_range = view.z_range.filter(|_| space);
+        let ranges = [("x", Some(&view.x_range)), ("y", Some(&view.y_range))];
+        for (axis, r) in ranges.into_iter().chain([("z", z_range.as_ref())]) {
+            let Some(r) = r else { continue };
             if !range_ok(r) {
                 warnings.push(format!(
                     "The {axis} range of the view \u{201c}{}\u{201d} ({} to {}) is empty, so the default view is used.",
@@ -240,7 +283,10 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 ));
             }
         }
-        for (name, axis) in [("x", &view.x_axis), ("y", &view.y_axis)] {
+        let z_axis = view.z_axis.as_ref().filter(|_| space);
+        let axes = [("x", Some(&view.x_axis)), ("y", Some(&view.y_axis))];
+        for (name, axis) in axes.into_iter().chain([("z", z_axis)]) {
+            let Some(axis) = axis else { continue };
             let known = match axis.kind.as_str() {
                 "time" => true,
                 // Checked above, with the view's kind.

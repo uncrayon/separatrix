@@ -290,7 +290,17 @@ transient?: number,
  * the orbit's crossings of it (at most `MAX_SECTION_POINTS` after the
  * transient), not its samples. Absent = whole trajectories.
  */
-section?: SectionSpec, };
+section?: SectionSpec, 
+/**
+ * The third axis of a 3D view: a state plotted along the box's depth.
+ * The fixed-point search treats it as a visible axis over `z_range`, as
+ * it does `x_axis` and `y_axis`. Absent = a plane view.
+ */
+zAxis?: AxisRef, 
+/**
+ * The range of `z_axis` in view `[min, max]`; required with `z_axis`.
+ */
+zRange?: [number, number], };
 
 export type SectionSpec = { "kind": "plane", 
 /**
@@ -504,8 +514,10 @@ id: string,
 /**
  * `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
  * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
- * for a Poincaré section of a flow (see `section`); absent for the
- * phase plane and the time series, which the axes tell apart.
+ * for a Poincaré section of a flow (see `section`); `"space"` for a 3D
+ * view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
+ * `camera`); absent for the phase plane and the time series, which the
+ * axes tell apart.
  */
 kind?: string, 
 /**
@@ -515,9 +527,22 @@ kind?: string,
  */
 section?: ProjectSection, x_axis: ProjectAxis, y_axis: ProjectAxis, 
 /**
+ * The third axis of a `"space"` view (a 3D view of a flow): a state, as
+ * `x_axis` and `y_axis` are.
+ */
+z_axis?: ProjectAxis, 
+/**
  * The user's ranges (not the ones equalized for the plot's aspect).
  */
-x_range: [number, number], y_range: [number, number], slice: ProjectSlice, layers: ProjectLayers, };
+x_range: [number, number], y_range: [number, number], 
+/**
+ * The range of `z_axis` in a `"space"` view.
+ */
+z_range?: [number, number], 
+/**
+ * Where a `"space"` view is seen from.
+ */
+camera?: ProjectCamera, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -528,6 +553,8 @@ state?: string, value?: number,
  * `"rising"`, `"falling"` or `"both"`.
  */
 direction?: string, period?: number, phase?: number, };
+
+export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 

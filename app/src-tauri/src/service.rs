@@ -257,6 +257,26 @@ fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
             ));
         }
     }
+    match (req.z_axis, req.z_range) {
+        (None, None) => {}
+        (Some(AxisRef::State { index }), Some((lo, hi))) => {
+            if index >= dim {
+                return Err(format!(
+                    "The third axis shows state {} but the system only has {dim}.",
+                    index + 1
+                ));
+            }
+            if !(lo.is_finite() && hi.is_finite() && lo < hi) {
+                return Err(format!(
+                    "The third axis range [{lo}, {hi}] is not a valid interval."
+                ));
+            }
+        }
+        (Some(AxisRef::Time), _) => {
+            return Err("The third axis of a 3D view must be a state.".into());
+        }
+        _ => return Err("A 3D view needs both a third axis and its range.".into()),
+    }
     if req.graph_samples.is_some() {
         cobweb_fits(f, req.x_axis)?;
     }
@@ -358,9 +378,17 @@ fn to_axis(a: AxisRef) -> Axis {
 /// Half-width searched around a hidden state when no state is on an axis.
 const HIDDEN_STATE_FALLBACK_HALF_SPAN: f64 = 10.0;
 
+/// The axes in view with their ranges: the horizontal, the vertical and, in
+/// a 3D view, the third.
+fn visible_axes(req: &PortraitRequest) -> Vec<(AxisRef, (f64, f64))> {
+    let mut axes = vec![(req.x_axis, req.x_range), (req.y_axis, req.y_range)];
+    axes.extend(req.z_axis.zip(req.z_range));
+    axes
+}
+
 /// Half the larger range of the state axes in view (0 if none is a state).
 fn widest_visible_state_half_span(req: &PortraitRequest) -> f64 {
-    [(req.x_axis, req.x_range), (req.y_axis, req.y_range)]
+    visible_axes(req)
         .iter()
         .filter(|(a, _)| matches!(a, AxisRef::State { .. }))
         .map(|(_, (lo, hi))| (hi - lo).abs() / 2.0)
@@ -368,7 +396,7 @@ fn widest_visible_state_half_span(req: &PortraitRequest) -> f64 {
 }
 
 pub fn fixed_point_search_box(req: &PortraitRequest, dim: usize) -> Vec<(f64, f64)> {
-    let visible = [(req.x_axis, req.x_range), (req.y_axis, req.y_range)];
+    let visible = visible_axes(req);
     let span = widest_visible_state_half_span(req);
     let span = if span > 0.0 {
         span
@@ -508,6 +536,11 @@ mod tests {
         y: String,
         x_range: (f64, f64),
         y_range: (f64, f64),
+        /// A 3D view's third axis and its range (`kind` `"space"`).
+        #[serde(default)]
+        z: Option<String>,
+        #[serde(default)]
+        z_range: Option<(f64, f64)>,
     }
 
     fn templates() -> Vec<Template> {
@@ -559,6 +592,7 @@ mod tests {
         let is_map = res.kind == Some(SystemKind::Map);
         let x_axis = resolve_axis(&t.view.x, &res.states);
         let y_axis = resolve_axis(&t.view.y, &res.states);
+        let z_axis = t.view.z.as_ref().map(|z| resolve_axis(z, &res.states));
         let params = res
             .params
             .iter()
@@ -640,6 +674,8 @@ mod tests {
             graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
             transient: None,
             section: None,
+            z_axis,
+            z_range: t.view.z_range,
         }
     }
 
@@ -889,6 +925,8 @@ mod tests {
             graph_samples: None,
             transient: None,
             section: None,
+            z_axis: None,
+            z_range: None,
         }
     }
 
@@ -952,6 +990,73 @@ mod tests {
         req.samples = 0;
         let out = compute_portrait(&sys, &req).unwrap();
         assert_eq!(out.trajectories[0].t.len(), 101);
+    }
+
+    #[test]
+    fn a_3d_view_searches_its_third_axis_for_fixed_points() {
+        let store = SystemStore::new();
+        let id = compile_src(
+            &store,
+            "\\dot{x}=10(y-x)\n\\dot{y}=28x-y-xz\n\\dot{z}=xy-\\frac{8}{3}z",
+        );
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 3);
+        req.field_grid = 0;
+        req.fixed_points = true;
+        req.x_range = (-20.0, 20.0);
+        req.y_range = (-25.0, 25.0);
+        req.base_state = vec![0.0, 0.0, 0.0];
+        // Strogatz §9.2: C± = (±√(b(r−1)), ±√(b(r−1)), r−1).
+        let c = (8.0 / 3.0 * 27.0_f64).sqrt();
+        let c_pm = [[c, c, 27.0], [-c, -c, 27.0]];
+        let near = |out: &PortraitResponse, x: &[f64; 3]| {
+            out.fixed_points
+                .iter()
+                .any(|fp| fp.x.iter().zip(x).all(|(a, b)| (a - b).abs() < 1e-6))
+        };
+
+        // Without the third axis, z would be searched over the slice 0 ± 25.
+        assert_eq!(fixed_point_search_box(&req, 3)[2], (-25.0, 25.0));
+        req.z_axis = Some(AxisRef::State { index: 2 });
+        req.z_range = Some((0.0, 50.0));
+        let out = compute_portrait(&sys, &req).unwrap();
+        for x in &c_pm {
+            assert!(near(&out, x), "C± = {x:?} not in {:?}", out.fixed_points);
+        }
+        assert!(near(&out, &[0.0, 0.0, 0.0]));
+        assert_eq!(out.fixed_points.len(), 3);
+        assert_eq!(
+            fixed_point_search_box(&req, 3),
+            vec![(-20.0, 20.0), (-25.0, 25.0), (0.0, 50.0)]
+        );
+    }
+
+    #[test]
+    fn bad_third_axes_get_readable_errors() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=y\n\\dot{y}=-x");
+        let sys = store.get(id).unwrap();
+        let mut req = simple_request(id, 2);
+        let err = |req: &PortraitRequest| compute_portrait(&sys, req).unwrap_err();
+        req.z_axis = Some(AxisRef::State { index: 2 });
+        req.z_range = Some((0.0, 1.0));
+        assert_eq!(
+            err(&req),
+            "The third axis shows state 3 but the system only has 2."
+        );
+        req.z_axis = Some(AxisRef::Time);
+        assert_eq!(err(&req), "The third axis of a 3D view must be a state.");
+        req.z_axis = Some(AxisRef::State { index: 1 });
+        req.z_range = Some((1.0, 1.0));
+        assert_eq!(
+            err(&req),
+            "The third axis range [1, 1] is not a valid interval."
+        );
+        req.z_range = None;
+        assert_eq!(
+            err(&req),
+            "A 3D view needs both a third axis and its range."
+        );
     }
 
     #[test]

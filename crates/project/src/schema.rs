@@ -125,8 +125,10 @@ pub struct ProjectView {
     pub id: String,
     /// `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
     /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
-    /// for a Poincaré section of a flow (see `section`); absent for the
-    /// phase plane and the time series, which the axes tell apart.
+    /// for a Poincaré section of a flow (see `section`); `"space"` for a 3D
+    /// view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
+    /// `camera`); absent for the phase plane and the time series, which the
+    /// axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
@@ -138,9 +140,22 @@ pub struct ProjectView {
     pub section: Option<ProjectSection>,
     pub x_axis: ProjectAxis,
     pub y_axis: ProjectAxis,
+    /// The third axis of a `"space"` view (a 3D view of a flow): a state, as
+    /// `x_axis` and `y_axis` are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub z_axis: Option<ProjectAxis>,
     /// The user's ranges (not the ones equalized for the plot's aspect).
     pub x_range: [f64; 2],
     pub y_range: [f64; 2],
+    /// The range of `z_axis` in a `"space"` view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub z_range: Option<[f64; 2]>,
+    /// Where a `"space"` view is seen from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub camera: Option<ProjectCamera>,
     #[serde(default)]
     pub slice: ProjectSlice,
     #[serde(default)]
@@ -178,6 +193,24 @@ pub struct ProjectSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub phase: Option<f64>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// The camera of a 3D view: `{ "yaw": -0.785…, "pitch": 0.523…, "zoom": 1 }`.
+/// `yaw` turns the box about its third axis and `pitch` tilts it towards the
+/// viewer, both in radians; `zoom` scales it. The app clamps `pitch` to
+/// ±(π/2 − 0.01) and `zoom` to 0.25–8 when it opens the file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectCamera {
+    #[serde(default = "default_yaw")]
+    pub yaw: f64,
+    #[serde(default = "default_pitch")]
+    pub pitch: f64,
+    #[serde(default = "default_zoom")]
+    pub zoom: f64,
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: Map<String, Value>,
@@ -337,6 +370,16 @@ fn nan() -> f64 {
 }
 fn yes() -> bool {
     true
+}
+fn default_yaw() -> f64 {
+    -std::f64::consts::FRAC_PI_4
+}
+/// π/6 as the app computes it (`Math.PI / 6`), one ulp below `FRAC_PI_6`.
+fn default_pitch() -> f64 {
+    std::f64::consts::PI / 6.0
+}
+fn default_zoom() -> f64 {
+    1.0
 }
 pub(crate) fn default_field_grid() -> u32 {
     21

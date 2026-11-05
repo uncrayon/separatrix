@@ -155,6 +155,8 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
         graph_samples: (t.view.kind.as_deref() == Some("cobweb")).then_some(2048),
         transient: None,
         section: None,
+        z_axis: None,
+        z_range: None,
     };
     (req, tags)
 }

@@ -25,6 +25,8 @@ import {
   isCobweb,
   isReturnMap,
   isSection,
+  isSpace,
+  spaceStates,
   planeSectionAvailability,
   viewChoice,
   viewChoiceAvailability,
@@ -204,9 +206,10 @@ function KvRow({ label, children, text }: { label: ReactNode; children: ReactNod
 function LayersSection({ state, actions, open, onToggle }: SectionProps) {
   const isMap = state.compiled?.kind === "map";
   const section = isSection(state.view);
+  const space = isSpace(state.view);
   const L = state.layers;
   const mapHint = useId();
-  const noField = isMap || section;
+  const noField = isMap || section || space;
   return (
     <PanelSection title="Layers" open={open} onToggle={onToggle} flush>
       <Switch
@@ -243,6 +246,10 @@ function LayersSection({ state, actions, open, onToggle }: SectionProps) {
         {section ? (
           <p className="ds-panel-section-hint caption" id={mapHint}>
             A Poincaré section shows only the crossings: no field, nullclines or fixed points.
+          </p>
+        ) : space ? (
+          <p className="ds-panel-section-hint caption" id={mapHint}>
+            The 3D view draws trajectories and fixed points: no direction field or nullclines.
           </p>
         ) : isMap ? (
           <p className="ds-panel-section-hint caption" id={mapHint}>
@@ -282,6 +289,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const view = state.view;
   const cobweb = isCobweb(view);
   const section = isSection(view);
+  const space = isSpace(view) ? view : null;
   const reasonBase = useId();
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const choices = viewChoicesFor(sys);
@@ -307,13 +315,13 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
     ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
   ];
   const sliceStates =
-    kind === "ode" && !section
+    kind === "ode" && !section && !space
       ? sys.states
           .map((s, i) => ({ s, i }))
           .filter(({ i }) => !sameAxis(view.xAxis, { kind: "state", index: i }) && !sameAxis(view.yAxis, { kind: "state", index: i }))
       : [];
   const timeSlice =
-    kind === "ode" && !section && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
+    kind === "ode" && !section && !space && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
   const hId = useId();
   const vId = useId();
   return (
@@ -337,7 +345,27 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {cobweb ? (
+      {space ? (
+        <>
+          <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+            {spaceStates(space).map((index, slot) => (
+              <FieldRow key={slot} label={`${["First", "Second", "Third"][slot]} axis`}>
+                <Select
+                  size="sm"
+                  math
+                  value={`s${index}`}
+                  options={sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) }))}
+                  onChange={(v) => actions.setSpaceAxis(slot as 0 | 1 | 2, Number(v.slice(1)))}
+                  ariaLabel={`${["First", "Second", "Third"][slot]} axis of the 3D view`}
+                />
+              </FieldRow>
+            ))}
+          </dl>
+          <p className="ds-panel-section-hint caption">
+            Drag the plot to turn the box and scroll to zoom. A state already on another axis swaps with it.
+          </p>
+        </>
+      ) : cobweb ? (
         <>
           <dl className="ds-panel-section-kv">
             <KvRow label="Horizontal" text>

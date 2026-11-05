@@ -13,6 +13,7 @@ import type {
   InputFormat,
   Method,
   ProjectAxis,
+  ProjectCamera,
   ProjectFile,
   ProjectInitialCondition,
   ProjectParam,
@@ -21,7 +22,8 @@ import type {
   SectionSpec,
   SystemKind,
 } from "../api/types";
-import type { EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
+import type { Camera, EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
+
 
 /** Keys this version writes; anything else in a loaded object is kept as read. */
 type Obj = Record<string, unknown>;
@@ -67,9 +69,15 @@ export interface LoadedView {
   section?: LoadedSection;
   xAxis: LoadedAxis;
   yAxis: LoadedAxis;
+  /** A 3D view's third axis. */
+  zAxis?: LoadedAxis;
   /** Null when the saved range isn't finite with lo < hi. */
   xRange: [number, number] | null;
   yRange: [number, number] | null;
+  /** A 3D view's third range (null when it isn't usable). */
+  zRange?: [number, number] | null;
+  /** A 3D view's camera, its finite keys only. */
+  camera?: Partial<Camera>;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -245,16 +253,24 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     // return map's (a section with one state on both axes) is the next crossing.
     const cobweb = s.view.kind === "cobweb";
     const section = s.view.kind === "section" ? s.view.section : null;
+    const space = s.view.kind === "space" ? s.view : null;
     const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space ? { kind: s.view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
       y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, next),
+      ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
+      ...(space
+        ? {
+            z_range: [space.zRange[0], space.zRange[1]] as [number, number],
+            camera: { ...(isObj(lv?.camera) ? lv.camera : {}), ...space.camera } as ProjectCamera,
+          }
+        : {}),
       slice: {
         ...lv?.slice,
         states: Object.fromEntries(states.map((name, i) => [name, s.baseState[i] ?? 0])),
@@ -269,9 +285,15 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    // A plane view has no `kind` or `section` (a file saved from one is byte-identical to before cobwebs).
-    if (!cobweb && !section) delete primary.kind;
+    // A plane view has no `kind` or `section` (a file saved from one is byte-identical to before cobwebs);
+    // only a 3D view has the z keys and a camera.
+    if (!cobweb && !section && !space) delete primary.kind;
     if (!section) delete primary.section;
+    if (!space) {
+      delete primary.z_axis;
+      delete primary.z_range;
+      delete primary.camera;
+    }
     views = at >= 0 ? lviews.map((v, k) => (k === at ? primary : v)) : [primary];
 
     const transient = Math.round(s.solver.transient ?? 0);
@@ -407,14 +429,18 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     const layers: Obj = isObj(v.layers) ? v.layers : {};
     const kind = str(v.kind);
     const section = loadSection(v.section);
+    const cam: Obj = isObj(v.camera) ? v.camera : {};
     view = {
       id: str(v.id) || "main",
       ...(kind !== undefined ? { kind } : {}),
       ...(section ? { section } : {}),
       xAxis: loadAxis(v.x_axis),
       yAxis: loadAxis(v.y_axis),
+      ...(v.z_axis !== undefined ? { zAxis: loadAxis(v.z_axis) } : {}),
       xRange: loadRange(v.x_range),
       yRange: loadRange(v.y_range),
+      ...(v.z_range !== undefined ? { zRange: loadRange(v.z_range) } : {}),
+      ...(isObj(v.camera) ? { camera: definedOnly({ yaw: num(cam.yaw), pitch: num(cam.pitch), zoom: num(cam.zoom) }) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({

@@ -348,6 +348,23 @@ crossings follow it. The other layers (field, nullclines, fixed points) are comp
 - "The stroboscopic period must be a positive number."
 - "The stroboscopic phase must be a finite number."
 
+### The 3D view
+
+`PortraitRequest.zAxis` (`AxisRef?`) and `zRange` (`[lo, hi]?`) are the third axis of a 3D view
+and its range. Both are absent for every other view. The fixed-point search box treats the third
+axis as visible, as `xAxis` and `yAxis` are: that state is searched over `zRange` instead of
+around its slice value (`fixed_point_search_box`), so the Lorenz points
+`C± = (±√(b(r−1)), ±√(b(r−1)), r−1)` are found with `z` on the third axis over `[0, 50]` whatever
+the slice. The studio's 3D request also has `fieldGrid: 0` and `nullclines: false`; trajectories
+are whole orbits, forward and (with the layer) backward, as on the phase plane. The camera is
+not part of the request: turning the box redraws without asking the core. The pair is refused
+with one of these messages:
+
+- "The third axis shows state 4 but the system only has 3."
+- "The third axis of a 3D view must be a state."
+- "The third axis range [1, 1] is not a valid interval."
+- "A 3D view needs both a third axis and its range."
+
 `PortraitResponse.fixedPoints[]` is `FixedPointOut { x, eigenvalues: [re, im][],
 eigenvectors: (number[] | null)[], eigenvectorsIm: (number[] | null)[], classification, stable }`,
 with the eigenvector conventions of `dyn-analysis` above.

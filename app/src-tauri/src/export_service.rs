@@ -561,6 +561,8 @@ mod tests {
             graph_samples: None,
             transient: None,
             section: None,
+            z_axis: None,
+            z_range: None,
         }
     }
 

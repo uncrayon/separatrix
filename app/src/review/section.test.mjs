@@ -49,7 +49,7 @@ const plane = (state, value, direction = "rising") => ({ kind: "plane", state, v
 const S = (i) => ({ kind: "state", index: i });
 
 test("the View control offers each kind its own options, with reasons for the rest", () => {
-  assert.deepEqual(model.viewChoicesFor(lorenz), ["phase", "series", "section"]);
+  assert.deepEqual(model.viewChoicesFor(lorenz), ["phase", "series", "section", "space"]);
   assert.deepEqual(model.viewChoicesFor(logistic), ["phase", "series", "cobweb"]);
   assert.equal(model.VIEW_CHOICE_SHORT.section, "Section");
   assert.deepEqual(model.sectionAvailability(lorenz), { ok: true });

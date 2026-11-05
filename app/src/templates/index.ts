@@ -22,12 +22,19 @@ export interface Template {
   params: Record<string, number>;
   paramRanges?: Record<string, [number, number]>;
   view: {
-    /** `cobweb` opens a 1-D map as its cobweb plot (`x` and `y` both name its state); absent, a plane view. */
-    kind?: "cobweb";
+    /**
+     * `cobweb` opens a 1-D map as its cobweb plot (`x` and `y` both name its
+     * state); `space` opens a flow in the 3D view (`x`, `y` and `z` name
+     * three states); absent, a plane view.
+     */
+    kind?: "cobweb" | "space";
     x: string;
     y: string;
     xRange: [number, number];
     yRange: [number, number];
+    /** The 3D view's third state and its range. */
+    z?: string;
+    zRange?: [number, number];
   };
   initialConditions: number[][];
   tEnd: number;

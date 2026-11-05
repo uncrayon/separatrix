@@ -45,13 +45,40 @@ export interface ParamState {
   max: number;
 }
 
+/** Where a 3D view's box is seen from (canvas/space.ts): angles in radians, zoom as a factor. */
+export interface Camera {
+  yaw: number;
+  pitch: number;
+  zoom: number;
+}
+
+/** The most the camera tilts: just short of looking straight down (or up) the third axis. */
+export const PITCH_LIMIT = Math.PI / 2 - 0.01;
+export const ZOOM_MIN = 0.25;
+export const ZOOM_MAX = 8;
+export const DEFAULT_CAMERA: Camera = { yaw: -Math.PI / 4, pitch: Math.PI / 6, zoom: 1 };
+
+const finite = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+
+/** A camera within its limits: yaw in [−π, π), pitch within ±{@link PITCH_LIMIT}, zoom in [0.25, 8]. */
+export function clampCamera(c: Partial<Camera>): Camera {
+  const yaw = finite(c.yaw, DEFAULT_CAMERA.yaw);
+  const turn = 2 * Math.PI;
+  return {
+    yaw: yaw - turn * Math.floor((yaw + Math.PI) / turn),
+    pitch: Math.min(PITCH_LIMIT, Math.max(-PITCH_LIMIT, finite(c.pitch, DEFAULT_CAMERA.pitch))),
+    zoom: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, finite(c.zoom, DEFAULT_CAMERA.zoom))),
+  };
+}
+
 /**
  * How a view draws its two axes. `plane` is the phase plane and the time
  * series (the axes tell them apart); `cobweb` is the cobweb plot of a 1-D
  * map x_{n+1} = f(x_n), whose two axes are both state 0 (x_n across, x_{n+1}
  * up) and whose ranges are kept at equal scales; `section` is a flow's
  * Poincaré section, its crossings plotted in two states, or as the return
- * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention).
+ * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention);
+ * `space` is the 3D view of a flow, three states in a box seen from `camera`.
  */
 interface ViewBase {
   xAxis: AxisRef;
@@ -61,20 +88,23 @@ interface ViewBase {
 }
 
 export type SectionView = ViewBase & { kind: "section"; section: SectionSpec };
+/** A flow's 3D view: `xAxis`, `yAxis` and `zAxis` are three different states. */
+export type SpaceView = ViewBase & { kind: "space"; zAxis: AxisRef; zRange: [number, number]; camera: Camera };
 /** A view of each kind; a plane view's `kind` may be absent. */
-export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView;
+export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView | SpaceView;
 export type ViewKind = NonNullable<View["kind"]>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
 export const isSection = (v: View): v is SectionView => v.kind === "section";
+export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 /** A section view of one state on both axes: the return map x_k -> x_{k+1}. */
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section"];
+export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space";
+export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space"];
 
 /**
  * The View control's options for each kind of system. Five equal segments
@@ -83,7 +113,7 @@ export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb",
  * show stays, disabled, with its reason.
  */
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
-  ode: ["phase", "series", "section"],
+  ode: ["phase", "series", "section", "space"],
   map: ["phase", "series", "cobweb"],
 };
 
@@ -94,6 +124,7 @@ export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undef
 export function viewChoice(v: View): ViewChoice {
   if (isCobweb(v)) return "cobweb";
   if (isSection(v)) return "section";
+  if (isSpace(v)) return "space";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
@@ -141,11 +172,20 @@ export function planeSectionAvailability(sys: SystemShape | null | undefined, na
     : { ok: false, reason: `A plane section needs at least 2 states. ${name} has ${dim}; take a stroboscopic section.` };
 }
 
+/** The 3D view can show `sys`: a flow with three states or more. */
+export function spaceAvailability(sys: SystemShape | null | undefined, name = "This system"): Availability {
+  const needs = "The 3D view needs a flow with at least 3 states.";
+  if (sys?.kind === "map") return { ok: false, reason: `${needs} ${name} is a map.` };
+  const dim = sys?.states.length ?? 0;
+  return dim >= 3 ? { ok: true } : { ok: false, reason: `${needs} ${name} has ${dim}.` };
+}
+
 export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   phase: "Phase plane",
   series: "Time series",
   cobweb: "Cobweb",
   section: "Poincaré section",
+  space: "3D view",
 };
 
 /**
@@ -158,6 +198,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   series: "Series",
   cobweb: "Cobweb",
   section: "Section",
+  space: "3D",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -170,6 +211,7 @@ export function viewChoiceAvailability(
     series: { ok: true },
     cobweb: cobwebAvailability(sys, name),
     section: sectionAvailability(sys, name),
+    space: spaceAvailability(sys, name),
   };
 }
 
@@ -217,6 +259,7 @@ export function knownStateRange(
   for (const v of views) {
     if (v?.xAxis.kind === "state" && v.xAxis.index === i) return v.xRange;
     if (v?.yAxis.kind === "state" && v.yAxis.index === i) return v.yRange;
+    if (v && isSpace(v) && v.zAxis.kind === "state" && v.zAxis.index === i) return v.zRange;
   }
   const ext = stateExtent(res, dim, i);
   if (!ext || !(ext[1] > ext[0])) return [-5, 5];
@@ -233,6 +276,67 @@ export function withSection(
 ): SectionView {
   const onPlane = (a: AxisRef) => section.kind === "plane" && a.kind === "state" && a.index === section.state;
   return onPlane(view.xAxis) || onPlane(view.yAxis) ? sectionView(sys, section, rangeOf) : { ...view, section };
+}
+
+/**
+ * A 3D view of the states `axes` (three different ones), each over the
+ * range `rangeOf` gives, seen from `camera`.
+ */
+export function spaceView(
+  axes: [number, number, number],
+  rangeOf: (i: number) => [number, number],
+  camera: Camera = DEFAULT_CAMERA,
+): SpaceView {
+  const r = axes.map((i) => rangeOf(i));
+  return {
+    kind: "space",
+    xAxis: stateAxis(axes[0]),
+    yAxis: stateAxis(axes[1]),
+    zAxis: stateAxis(axes[2]),
+    xRange: [r[0][0], r[0][1]],
+    yRange: [r[1][0], r[1][1]],
+    zRange: [r[2][0], r[2][1]],
+    camera: clampCamera(camera),
+  };
+}
+
+/** The states on a 3D view's axes. */
+export const spaceStates = (v: SpaceView): [number, number, number] =>
+  [v.xAxis, v.yAxis, v.zAxis].map((a) => (a.kind === "state" ? a.index : 0)) as [number, number, number];
+
+/**
+ * `view` with state `index` on its axis `slot` (0, 1, 2). The state shown
+ * there now goes to the axis `index` leaves, so the three stay different;
+ * a state new to the view gets the range `rangeOf` gives.
+ */
+export function withSpaceAxis(
+  view: SpaceView,
+  slot: 0 | 1 | 2,
+  index: number,
+  rangeOf: (i: number) => [number, number],
+): SpaceView {
+  const axes = spaceStates(view);
+  const ranges: [number, number][] = [view.xRange, view.yRange, view.zRange];
+  const from = axes.indexOf(index);
+  if (from === slot) return view;
+  if (from >= 0) {
+    [axes[from], axes[slot]] = [axes[slot], axes[from]];
+    [ranges[from], ranges[slot]] = [ranges[slot], ranges[from]];
+  } else {
+    axes[slot] = index;
+    ranges[slot] = rangeOf(index);
+  }
+  return spaceView(axes, (i) => ranges[axes.indexOf(i)], view.camera);
+}
+
+/**
+ * The portrait request of a view without what only changes the drawing (a
+ * 3D view's camera), so orbiting the box asks the core for nothing.
+ */
+export function viewRequestKey(v: View): string {
+  if (!isSpace(v)) return JSON.stringify(v);
+  const { camera: _camera, ...rest } = v;
+  return JSON.stringify(rest);
 }
 
 /** Graph samples of f a cobweb asks for on screen: at least one per CSS px up to 2,048 px. */
@@ -317,6 +421,7 @@ export function fixedPointMatchTolerance(view: View): number {
   const all: [AxisRef, [number, number]][] = [
     [view.xAxis, view.xRange],
     [view.yAxis, view.yRange],
+    ...(isSpace(view) ? [[view.zAxis, view.zRange] as [AxisRef, [number, number]]] : []),
   ];
   const onState = spans(all.filter(([a]) => a.kind === "state"));
   const pick = onState.length ? onState : spans(all);
@@ -650,6 +755,14 @@ export function resolveAxis(name: string, states: StateInfo[]): AxisRef | null {
 }
 
 export function templateView(t: Template, sys: CompileResponse): View {
+  if (t.view.kind === "space") {
+    const axes = [t.view.x, t.view.y, t.view.z ?? ""].map((n) => resolveAxis(n, sys.states));
+    const idx = axes.map((a) => (a?.kind === "state" ? a.index : -1));
+    const ok = spaceAvailability(sys).ok && idx.every((i) => i >= 0) && new Set(idx).size === 3 && !!t.view.zRange;
+    if (!ok) return defaultView(sys);
+    const ranges = [t.view.xRange, t.view.yRange, t.view.zRange!];
+    return spaceView(idx as [number, number, number], (i) => [...ranges[idx.indexOf(i)]] as [number, number]);
+  }
   if (t.view.kind === "cobweb") {
     const axis = resolveAxis(t.view.x, sys.states);
     if (!cobwebAvailability(sys).ok || axis?.kind !== "state" || axis.index !== 0) return defaultView(sys);
@@ -753,6 +866,12 @@ export function adaptView(
   const xAxis = follow(view.xAxis);
   const yAxis = follow(view.yAxis);
   if (!xAxis || !yAxis) return null;
+  if (isSpace(view)) {
+    // A 3D view stays while each axis's variable does and the system is still a flow of 3 states or more.
+    const zAxis = follow(view.zAxis);
+    if (!zAxis || newStates.length < 3 || (next && next.kind === "map")) return null;
+    return { ...view, xAxis, yAxis, zAxis };
+  }
   if (isSection(view)) {
     // The plane's state follows its variable too; a return map keeps one state on both axes.
     const s = view.section;
@@ -815,6 +934,7 @@ export function trajectorySpans(
   if (kind === "map") return [mapSpan(ic, solver)];
   // A section's crossings come from tEnd forward of the start.
   if (isSection(view)) return phasePlaneSpans(ic, solver.tEnd, false);
+  if (isSpace(view)) return phasePlaneSpans(ic, solver.tEnd, layers.backward);
   const window = visibleTimeRange(view);
   return window
     ? visibleWindowSpans(window, ic, layers.backward)
@@ -870,6 +990,8 @@ export function isFlowPhasePlane(xAxis: AxisRef, yAxis: AxisRef, kind: SystemKin
  * the diagonal is at 45° and f's slope can be compared with it by eye).
  */
 export function hasEqualScales(view: View, kind: SystemKind | undefined): boolean {
+  // A 3D view's box is a cube whatever its ranges.
+  if (isSpace(view)) return false;
   return isCobweb(view) || isFlowPhasePlane(view.xAxis, view.yAxis, kind);
 }
 
@@ -913,14 +1035,18 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
   const shown = displayRanges(s.view, sys.kind, s.plotAspect);
   const cobweb = isCobweb(s.view);
   const section = isSection(s.view) ? s.view.section : null;
+  const space = isSpace(s.view) ? s.view : null;
   const transient = clampTransient(s.solver.transient, s.solver.tEnd);
   // A map hides the same transient in every view; a cobweb also asks for f's graph.
   // A section skips its first `transient` crossings.
-  const extra: Pick<PortraitRequest, "graphSamples" | "transient" | "section"> = !isOde
+  // A 3D view's third axis is searched for fixed points as the other two are.
+  const extra: Pick<PortraitRequest, "graphSamples" | "transient" | "section" | "zAxis" | "zRange"> = !isOde
     ? { ...(cobweb ? { graphSamples: COBWEB_GRAPH_SAMPLES } : {}), transient }
     : section
       ? { section, transient }
-      : {};
+      : space
+        ? { zAxis: space.zAxis, zRange: space.zRange }
+        : {};
   // A section plots crossings only: no field, nullclines or equilibria (they lie off the section).
   const fixedPoints = s.layers.fixedPoints && !section;
   return {
@@ -933,8 +1059,8 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
       yRange: shown.yRange,
       baseState: Array.from({ length: dim }, (_, i) => s.baseState[i] ?? 0),
       fieldTime: s.fieldTime,
-      fieldGrid: isOde && s.layers.field && !cobweb && !section ? s.layers.fieldGrid : 0,
-      nullclines: hasNullclineLayer(sys.kind) && s.layers.nullclines && !cobweb && !section,
+      fieldGrid: isOde && s.layers.field && !cobweb && !section && !space ? s.layers.fieldGrid : 0,
+      nullclines: hasNullclineLayer(sys.kind) && s.layers.nullclines && !cobweb && !section && !space,
       fixedPoints,
       trajectories,
       solver: {
@@ -1001,8 +1127,8 @@ export function liftPlotPoint(
   return { x0, t0 };
 }
 
-/** A click on the plot can place a start point: everywhere but a return map, whose points are pairs of crossings. */
-export const canAddOnPlot = (view: View): boolean => !isReturnMap(view);
+/** A click on the plot can place a start point: everywhere but a return map, whose points are pairs of crossings, and a 3D view, where a click has no depth. */
+export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view);
 
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
@@ -1014,7 +1140,9 @@ export type ViewMemory = Partial<Record<ViewChoice, View>>;
  * without one it is made from what is shown now: a cobweb over the state's
  * range now (else [−0.1, 1.1]), a time series over n (or t) in [T − 0.04N, T + N]
  * with the state's range, a phase plane of states 0 and 1 over their ranges
- * (else their extents in the portrait, as `setAxis` does).
+ * (else their extents in the portrait, as `setAxis` does), a 3D view of
+ * states 0, 1 and 2 over their extents in the portrait, seen from
+ * {@link DEFAULT_CAMERA}.
  */
 export function switchView(
   choice: ViewChoice,
@@ -1034,6 +1162,7 @@ export function switchView(
   const shownRange = (i: number): [number, number] | null => {
     if (v.xAxis.kind === "state" && v.xAxis.index === i) return v.xRange;
     if (v.yAxis.kind === "state" && v.yAxis.index === i) return v.yRange;
+    if (isSpace(v) && v.zAxis.kind === "state" && v.zAxis.index === i) return v.zRange;
     return null;
   };
   const fromExtent = (i: number): [number, number] => {
@@ -1048,6 +1177,7 @@ export function switchView(
     const r0 = rangeOf(0);
     return sectionView(sys, defaultSection(sys, (r0[0] + r0[1]) / 2), rangeOf);
   }
+  if (choice === "space") return spaceView([0, 1, 2], fromExtent);
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -1122,7 +1252,7 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section") return null;
+  if (!v || v.kind === "section" || v.kind === "space") return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1184,11 +1314,35 @@ function loadSectionView(v: LoadedView, sys: CompileResponse): SectionView | str
   };
 }
 
+/** The notice when a saved 3D view can't be shown (`SPACE_MISFIT` in crates/project). */
+export const SPACE_VIEW_WARNING = "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+/**
+ * A saved 3D view as `sys` shows it, or the sentence saying why it can't
+ * (as `project_read` says it): three different states of a flow with three
+ * or more, with usable ranges. The camera is clamped to its limits; a
+ * missing one is {@link DEFAULT_CAMERA}.
+ */
+function loadSpaceView(v: LoadedView, sys: CompileResponse): SpaceView | string {
+  const axes = [v.xAxis, v.yAxis, v.zAxis];
+  const names = axes.map((a) => (a?.kind === "state" ? a.name : undefined));
+  if (!spaceAvailability(sys).ok || names.some((n) => n === undefined) || new Set(names).size !== 3 || !v.zAxis)
+    return SPACE_VIEW_WARNING;
+  const idx = names.map((n) => sys.states.findIndex((st) => st.name === n));
+  const ranges = [v.xRange, v.yRange, v.zRange];
+  if (idx.some((i) => i < 0) || ranges.some((r) => !r)) return VIEW_WARNING;
+  return spaceView(idx as [number, number, number], (i) => ranges[idx.indexOf(i)]!, clampCamera(v.camera ?? {}));
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
   if (v?.kind === "section") {
     const fit = loadSectionView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
+  if (v?.kind === "space") {
+    const fit = loadSpaceView(v, sys);
     return typeof fit === "string" ? null : fit;
   }
   if (!v || !v.xRange || !v.yRange) return null;
@@ -1245,6 +1399,7 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
   if (!view) {
     view = defaultView(sys, solver);
     if (load.view?.kind === "section") warnings.push(loadSectionView(load.view, sys) as string);
+    else if (load.view?.kind === "space") warnings.push(loadSpaceView(load.view, sys) as string);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
   const slice = load.view?.slice ?? {};

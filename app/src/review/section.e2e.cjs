@@ -63,7 +63,7 @@ async function commit(locator, value) {
 /** Lorenz with the section z = 27 crossed upward, tEnd 500, 10 crossings skipped. */
 async function lorenzZ27(page) {
   await pick(page, "Lorenz equations");
-  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section"]);
+  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D"]);
   await viewRadio(page, "Poincaré section").click();
   await waitPortrait(page, "!!req.section");
   await inspector(page).getByLabel("State", { exact: true }).selectOption("s2");

@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
+  least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
+  the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).
+  Trajectories keep their colours and get thicker in projector mode; fixed points are drawn in
+  Strogatz's glyphs and are searched over the third axis's range too, so the Lorenz points `C±`
+  appear whatever the slice. The toolbar and the View panel pick the three states (a state
+  already on another axis swaps with it). Lines are drawn with WebGL through three.js, loaded
+  only for this view; without WebGL the view says so and draws on a 2D canvas, redrawing the
+  lines when dragging stops. Turning the box never asks the core for a new portrait. Project
+  files save the view as `kind: "space"` with `z_axis`, `z_range` and `camera` (additive; the
+  format stays at version 1).
 - Cobweb plots for one-dimensional maps (Strogatz §10.1): the graph of `f` (split at poles,
   jumps and the edges of its domain), the diagonal `x_{n+1} = x_n` and each orbit's staircase,
   with the fixed points on the diagonal and their multipliers `λ = f′(x*)`. The logistic map

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { isTauri } from "./api/client";
 import { PortraitCanvas } from "./canvas/PortraitCanvas";
 import { CanvasToolbar } from "./components/CanvasToolbar";
@@ -13,9 +13,13 @@ import { projectStem } from "./project/names";
 import { useProjectDocument } from "./project/useProjectDocument";
 import { useShortcuts } from "./project/useShortcuts";
 import { useStudio } from "./state/useStudio";
+import { isSpace } from "./state/model";
 import type { Template } from "./templates";
 
 type Theme = "dark" | "light";
+
+// three.js comes only with the 3D view, as a chunk of its own.
+const SpaceCanvas = lazy(() => import("./canvas/SpaceCanvas"));
 
 const THEME_KEY = "separatrix.theme";
 function readStored(key: string): string | null {
@@ -175,12 +179,23 @@ export default function App() {
         <div className="workspace">
           <SystemPanel state={state} actions={actions} />
           <main className="canvas-area">
-            <PortraitCanvas
-              state={state}
-              actions={actions}
-              theme={theme}
-              toolbar={<CanvasToolbar state={state} actions={actions} />}
-            />
+            {isSpace(state.view) ? (
+              <Suspense fallback={<div className="plot-wrap" />}>
+                <SpaceCanvas
+                  state={state}
+                  actions={actions}
+                  theme={theme}
+                  toolbar={<CanvasToolbar state={state} actions={actions} />}
+                />
+              </Suspense>
+            ) : (
+              <PortraitCanvas
+                state={state}
+                actions={actions}
+                theme={theme}
+                toolbar={<CanvasToolbar state={state} actions={actions} />}
+              />
+            )}
             {doc.banner.length > 0 && !galleryOpen && (
               <div className="project-banner-dock">
                 <ProjectBanner messages={doc.banner} onDismiss={doc.dismissBanner} />

@@ -5,11 +5,13 @@ import { fixedPointGlyph } from "../canvas/draw";
 import { readPlotTheme } from "../canvas/theme";
 import { makeViewport, sx, sy, hasEqualScales, type Viewport } from "../canvas/viewport";
 import { cobwebPx, diagonalSegment, graphPx, orbitValues } from "../canvas/cobweb";
+import { drawSpaceLines } from "../canvas/space";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
   autoSamples,
   isCobweb,
+  isSpace,
   portraitGraph,
   templateView,
   trajectorySpans,
@@ -128,6 +130,12 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
 
   ctx.fillStyle = th.bg;
   ctx.fillRect(0, 0, w, h);
+
+  if (isSpace(view)) {
+    const lines = res.trajectories.map((out, i) => ({ out, color: icOf[i] ?? i, backward: false, selected: false }));
+    drawSpaceLines(ctx, view, w, h, lines, dim, { ...th, lineScale: 0.5 * s });
+    return;
+  }
 
   ctx.strokeStyle = th.axis;
   ctx.lineWidth = 1;

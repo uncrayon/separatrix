@@ -261,6 +261,16 @@ pub struct PortraitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub section: Option<SectionSpec>,
+    /// The third axis of a 3D view: a state plotted along the box's depth.
+    /// The fixed-point search treats it as a visible axis over `z_range`, as
+    /// it does `x_axis` and `y_axis`. Absent = a plane view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub z_axis: Option<AxisRef>,
+    /// The range of `z_axis` in view `[min, max]`; required with `z_axis`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub z_range: Option<(f64, f64)>,
 }
 
 /// Where a Poincaré section samples a flow (`dyn_solve::Section`).
@@ -391,8 +401,8 @@ pub struct PortraitResponse {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSection,
-    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
+    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -822,6 +832,7 @@ mod bindings {
             ProjectInitialCondition::decl(&cfg),
             ProjectView::decl(&cfg),
             ProjectSection::decl(&cfg),
+            ProjectCamera::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),

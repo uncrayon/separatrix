@@ -9,7 +9,8 @@ A desktop app for exploring dynamical systems, built for students and professors
 - ODEs from 1D slope fields to n-dimensional systems, and discrete maps (logistic, Hénon).
 - Cobweb plots of one-dimensional maps x_{n+1} = f(x_n), with a transient to hide the first iterates.
 - Poincaré sections of flows: a plane x_i = c or a stroboscopic section of a forced oscillator, plotted in two states or as the return map x_k → x_{k+1}.
-- Phase portraits, nullclines, fixed points with stability, 2D/3D projections of any variables.
+- Phase portraits, nullclines, fixed points with stability, 2D projections of any variables.
+- An interactive 3D view of any three states of a flow (Lorenz, Rössler): drag to turn the box, scroll to zoom, with the fixed points in Strogatz's glyphs. Drawn with WebGL (three.js), or on a 2D canvas where WebGL is unavailable.
 - Lyapunov exponents, orbit diagrams, and continuation of equilibria (fold, Hopf, flip, Neimark–Sacker).
 - Symplectic integration for Hamiltonian systems.
 - Export to LaTeX, PNG, SVG and CSV. Shareable project files.
