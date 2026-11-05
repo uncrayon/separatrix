@@ -295,7 +295,6 @@
   stroke-linejoin: miter;
 }
 
-/* The 3D view: the WebGL lines under the 2D overlay that takes the pointer (SpaceCanvas.tsx). */
 .space-gl {
   position: absolute;
   inset: 0;

@@ -365,7 +365,6 @@ fn lorenz_section_in_x_and_y() {
         !tex.contains("% Diagonal"),
         "a section in two states has no diagonal"
     );
-    // Every crossing is a row: dots are never simplified.
     let rest = &tex[tex.find("% Section of ic-1").unwrap()..];
     let body = &rest[rest.find("]{\n").unwrap() + 3..];
     let rows = body[..body.find('}').unwrap()].lines().skip(1).count();

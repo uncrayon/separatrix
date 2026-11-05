@@ -34,9 +34,9 @@ import {
   exportSpaceFigure,
   icProjectId,
   screenPortrait,
-  SPACE_LATEX_REFUSAL,
   type FigureJob,
 } from "./job";
+import { SPACE_LATEX_REFUSAL } from "../api/ipc.generated";
 import {
   CSV_MAX_SAMPLES,
   fileStem,
@@ -246,7 +246,6 @@ function FixedPointsPreview({
   );
 }
 
-/** "x, y and z": a 3D view's axis names in plain text. */
 function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): string {
   const [a, b, c] = spaceNames(v, states).map(latexToPlain);
   return `${a}, ${b} and ${c}`;
@@ -289,7 +288,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
 
   const sys = state.compiled && state.compiled.ok ? state.compiled : null;
   const kind = sys?.kind;
-  // A cobweb's, a section's or a 3D view's figure has no field or nullclines to offer.
   const cobweb = !!sys && isCobweb(state.view);
   const section = !!sys && isSection(state.view);
   const space = !!sys && isSpace(state.view);
@@ -317,7 +315,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     equations: compiles ? null : "the equations don't compile",
     fixedPoints: !compiles ? "the equations don't compile" : timeDependent ? "the field changes with time" : null,
   };
-  // The chosen content, else the first one available (a 3D view has no LaTeX figure).
   const content: LatexContent =
     ([opts.latexContent, "figure", "equations", "fixedPoints"] as const).find((c) => !contentReason[c]) ?? "figure";
   const format = opts.format;
@@ -725,7 +722,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   }
 
   const trajectoriesShown = scene ? new Set(scene.trajectories.map((t) => t.meta.icId)).size : 0;
-  // A return map draws one dot per pair of successive crossings.
   const crossingsShown = scene
     ? scene.trajectories.reduce((n, t) => n + Math.max(0, t.out.t.length - (returnMap ? 1 : 0)), 0)
     : 0;

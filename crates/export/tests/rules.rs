@@ -495,7 +495,6 @@ fn a_transient_is_named_in_the_header() {
     assert!(!cobweb_figure(&p).tex.contains("Transient"));
 }
 
-/// A plane section y = 0 (decreasing) whose orbit crosses at `xs`.
 fn section_of(xs: &[f64], return_map: bool) -> Portrait {
     let n = xs.len();
     let mut p = plane(vec![run(

@@ -33,7 +33,8 @@ pub use io::{
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
     ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
-    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH,
+    DEFAULT_YAW, DEFAULT_ZOOM,
 };
 pub use validate::{
     cobweb_axes_ok, default_param_range, primary_view_index, range_ok, section_misfit,

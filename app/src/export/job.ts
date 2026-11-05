@@ -37,10 +37,6 @@ import {
   type View,
 } from "../state/model";
 
-/** Why a 3D view has no LaTeX figure: the dialog's reason and `export_figure_latex`'s error, word for word. */
-export const SPACE_LATEX_REFUSAL =
-  "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
-
 export const EXPORT_MIN_SAMPLES = 2000;
 export const EXPORT_MAX_SAMPLES = 20000;
 
@@ -80,7 +76,6 @@ export interface FigureJob {
   dim: number;
   /** A cobweb plot: the graph of f, the diagonal and the staircases. */
   cobweb: boolean;
-  /** A Poincaré section: each run is its crossings, drawn as dots (a return map pairs them over the diagonal). */
   section: { returnMap: boolean } | null;
 }
 
@@ -156,12 +151,6 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
   };
 }
 
-/**
- * A 3D view's figure from its export scene, seen from the studio's camera
- * (zoomed out where the figure is too small for the axis names): the
- * trajectories in their colours and the fixed points, with no start points
- * or selection (null for any other view).
- */
 export function exportSpaceFigure(
   job: FigureJob,
   scene: Scene,

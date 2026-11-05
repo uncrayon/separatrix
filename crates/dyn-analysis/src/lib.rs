@@ -43,7 +43,10 @@ mod slope;
 
 pub use classify::{classify, classify_jacobian, Classification, ABS_TOL, REL_TOL};
 pub use eigvec::{eigenvectors, Eigenvectors};
-pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
+pub use fixed::{
+    fixed_points, fixed_points_with_budget, seed_count, FixedPoint, FIXED_POINT_MERGE_REL,
+    MAX_SEEDS,
+};
 pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
 pub use linalg::eigenvalues;
 pub use nullcline::{nullclines, Nullcline, JUMP_FACTOR};

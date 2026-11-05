@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { AxisRef, Direction, FixedPointOut, Method, SectionSpec, SystemKind, TrajectoryOut } from "../api/types";
+import { MAX_SECTION_POINTS } from "../api/ipc.generated";
 import { Tex } from "../math/Tex";
 import { MathProse } from "../math/MathProse";
 import {
@@ -309,7 +310,6 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
     .map((c) => `${reasonBase}-${c}`)
     .join(" ");
   const names = viewAxisLabels(view, sys.states, kind);
-  // A section's points are crossings, plotted in states only.
   const options: SelectOption<string>[] = [
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
@@ -470,10 +470,7 @@ const CROSSINGS: SelectOption<Direction>[] = [
 
 const CROSSING_WORDS: Record<Direction, string> = { rising: "upward", falling: "downward", both: "either way" };
 
-/** Most crossings the core returns per orbit after the skipped ones (`MAX_SECTION_POINTS` in service.rs). */
-const MAX_SECTION_POINTS = 100_000;
 
-/** The Section panel: the plane x_i = c and its crossing direction, or the stroboscopic period and phase, and the crossings skipped. */
 function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const view = state.view;
@@ -490,7 +487,6 @@ function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
     if (k === sec.kind) return;
     if (k === "stroboscopic") set({ kind: "stroboscopic", period: 2 * Math.PI, phase: 0 });
     else {
-      // The first state on neither axis (else state 0), cut through the middle of its range, crossed upward.
       const on = (a: AxisRef, i: number) => a.kind === "state" && a.index === i;
       const free = sys.states.findIndex((_, i) => !on(view.xAxis, i) && !on(view.yAxis, i));
       const i = Math.max(0, free);

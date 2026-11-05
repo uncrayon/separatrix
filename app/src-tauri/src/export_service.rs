@@ -75,17 +75,9 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
     }
 }
 
-/// Why a 3D view (a request with `z_axis`) has no LaTeX figure; the export
-/// dialog gives the same sentence as the Figure option's reason.
 pub const SPACE_LATEX_REFUSAL: &str =
     "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 
-/// `compute_export_portrait`: [`service::compute_portrait`], then every
-/// curve cut at its first non-finite point and simplified with RDP at
-/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates, a section's
-/// crossings and a 3D view's trajectories are only cut; the graph of a
-/// cobweb's `f` is simplified like the nullclines).
-/// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
     system: &CompiledSystem,
@@ -127,8 +119,6 @@ pub fn export_portrait(
     for line in out.graph.iter_mut().flatten() {
         *line = simplify_polyline(&vp, line, GRAPH_TOLERANCE_PX);
     }
-    // A section's crossings are points, as a map's iterates are. A 3D view's
-    // lines are turned to any angle, so the x–y plane can't say which samples to drop.
     let kind = if req.portrait.section.is_some() || req.portrait.z_axis.is_some() {
         SystemKind::Map
     } else {
@@ -923,7 +913,6 @@ mod tests {
         plane.portrait.z_range = None;
         assert!(figure_latex(&cache, &sys, &plane, Placement::Inline).is_ok());
 
-        // The PNG and SVG get every sample: simplified in x–y, the turned box would show corners.
         let at = |p: &PortraitRequest| {
             export_portrait(
                 &ExportCache::new(),

@@ -238,9 +238,6 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
         if Some(i) != primary {
             continue;
         }
-        // A view of a kind other than the plane or a section, or with an
-        // x_{n+1} axis, must be a cobweb plot of a one-dimensional map.
-        // Whether that map is autonomous is only known once the app compiles it.
         let kind = view.kind.as_deref();
         let section = kind == Some(SECTION);
         if section {

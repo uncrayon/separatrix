@@ -123,10 +123,8 @@ struct Meta<'a> {
     /// Maps only: iterates computed but not written (the first row is `n = T`).
     #[serde(skip_serializing_if = "Option::is_none")]
     transient: Option<usize>,
-    /// Sections only: `"plane z = 27 (increasing)"`; each row is a crossing.
     #[serde(skip_serializing_if = "Option::is_none")]
     section: Option<String>,
-    /// Sections only: crossings computed but not written before the first row.
     #[serde(skip_serializing_if = "Option::is_none")]
     skipped_crossings: Option<usize>,
     segments: Vec<MetaSegment>,

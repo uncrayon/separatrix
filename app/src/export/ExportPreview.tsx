@@ -19,15 +19,9 @@ interface Props {
   label: string;
   caption: ReactNode;
   busy: boolean;
-  /** A 3D view: drawn as the SVG draws it, projected from its camera. */
   space?: SpaceFigure | null;
 }
 
-/**
- * The exported figure, drawn by the same code as the PNG and SVG (drawFigure,
- * or drawSpaceFigure for a 3D view) at the figure's own size and scaled into the well, so line weights and
- * type sit as they will in the file.
- */
 export function ExportPreview({
   widthPx,
   heightPx,

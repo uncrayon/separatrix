@@ -180,7 +180,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     // The staircase comes from any portrait of this map (it is the same
     // orbit); the graph of f only from one that was asked for it.
     const graph = valid ? portraitGraph(p.res) : undefined;
-    // A section's dots come only from a portrait of the same section (any other is whole orbits).
     const sameSection = valid && sectionKey(p.meta.view) === viewSection;
     const trajectories = sameSection
       ? p.res.trajectories.flatMap((out, i) => {
@@ -200,7 +199,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       nullclines: sameAxes && state.layers.nullclines ? p.res.nullclines : [],
       fixedPoints: valid && state.layers.fixedPoints ? p.res.fixedPoints : [],
       trajectories,
-      // A return map's points are pairs of crossings: no start point sits on it.
       ics: returnMap ? [] : state.ics,
       selectedIc: state.selection?.kind === "ic" ? state.selection.id : null,
       selectedFp:
@@ -328,7 +326,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
       }
       return best;
     }
-    // A map's orbit off a time axis, and a section's crossings, are drawn as dots only, so only the dots can be hit.
     const dotsOnly =
       !!scene.section || (scene.kind === "map" && scene.xAxis.kind !== "time" && scene.yAxis.kind !== "time");
     let best: number | null = null;
@@ -597,7 +594,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
     !compiled.autonomous &&
     view.xAxis.kind !== "time" &&
     view.yAxis.kind !== "time";
-  // A section has no field to slice.
   const hasSlice = !section && (hiddenStates.length > 0 || !!showTimeSlice);
 
   const axes = axisLines(vp);
@@ -1336,7 +1332,6 @@ function describePlot(
   return parts.join(" ");
 }
 
-/** Which section a view shows, as a comparable key; "" for a view that is not a section. */
 function sectionKey(v: View): string {
   return isSection(v) ? JSON.stringify(v.section) : "";
 }

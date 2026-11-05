@@ -51,7 +51,6 @@ export type LoadedAxis =
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
 export const MAX_TRANSIENT = 1_000_000;
 
-/** A saved Poincaré section as read: the plane's state by name; `kind` may be one this version lacks. */
 export interface LoadedSection {
   kind: string;
   state?: string;
@@ -65,18 +64,14 @@ export interface LoadedView {
   id: string;
   /** The saved `kind`; absent for a plane view (phase plane or time series). */
   kind?: string;
-  /** The saved `section` of a section view. */
   section?: LoadedSection;
   xAxis: LoadedAxis;
   yAxis: LoadedAxis;
-  /** A 3D view's third axis. */
   zAxis?: LoadedAxis;
   /** Null when the saved range isn't finite with lo < hi. */
   xRange: [number, number] | null;
   yRange: [number, number] | null;
-  /** A 3D view's third range (null when it isn't usable). */
   zRange?: [number, number] | null;
-  /** A 3D view's camera, its finite keys only. */
   camera?: Partial<Camera>;
   /** Slice values by state name. */
   slice: Record<string, number>;
@@ -185,7 +180,6 @@ function axisOut(prev: ProjectAxis | undefined, a: AxisRef, states: readonly str
   return out;
 }
 
-/** A section as saved: the plane's state by name. A sub-object whose kind changed is written fresh. */
 function sectionOut(prev: ProjectSection | undefined, s: SectionSpec, states: readonly string[]): ProjectSection {
   const fresh: ProjectSection =
     s.kind === "plane"
@@ -249,8 +243,6 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const lviews = loaded?.views ?? [];
     const at = primaryViewIndex(lviews);
     const lv: ProjectView | undefined = at >= 0 ? lviews[at] : undefined;
-    // A cobweb's vertical axis is the state one iterate later, x_{n+1}; a
-    // return map's (a section with one state on both axes) is the next crossing.
     const cobweb = s.view.kind === "cobweb";
     const section = s.view.kind === "section" ? s.view.section : null;
     const space = s.view.kind === "space" ? s.view : null;
@@ -285,8 +277,6 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    // A plane view has no `kind` or `section` (a file saved from one is byte-identical to before cobwebs);
-    // only a 3D view has the z keys and a camera.
     if (!cobweb && !section && !space) delete primary.kind;
     if (!section) delete primary.section;
     if (!space) {

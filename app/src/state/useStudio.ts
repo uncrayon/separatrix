@@ -219,7 +219,6 @@ export function useStudio() {
   );
   useEffect(() => () => scheduler.dispose(), [scheduler]);
 
-  // A 3D view's camera changes only the drawing: turning the box asks the core for nothing.
   const viewKey = viewRequestKey(view);
   useEffect(() => {
     scheduler.request();
@@ -572,8 +571,6 @@ export function useStudio() {
 
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
-    // Picking an axis gives a plane view (a cobweb's axes are fixed); a
-    // section stays one, and one state on both axes is its return map.
     const section = isSection(cur.view) ? cur.view : null;
     if (section && axis.kind === "time") return;
     const { xAxis, yAxis, xRange, yRange } = cur.view;
@@ -602,12 +599,10 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
-  /** Where the 3D view is seen from; it leaves the home view (and Reset view) as it was. */
   const setCamera = useCallback((camera: Camera) => {
     setViewState((v) => (isSpace(v) ? { ...v, camera: clampCamera(camera) } : v));
   }, []);
 
-  /** Puts state `index` on the 3D view's axis `slot`, swapping it with the axis it was on (see {@link withSpaceAxis}). */
   const setSpaceAxis = useCallback((slot: 0 | 1 | 2, index: number) => {
     const cur = latest.current;
     const sys = cur.compiled;
@@ -620,7 +615,6 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
-  /** Takes the section `spec` in the section view (see {@link withSection}). */
   const setSection = useCallback((spec: SectionSpec) => {
     const cur = latest.current;
     const sys = cur.compiled;

@@ -1,12 +1,9 @@
 //! The Strogatz gate: each gallery template from chapters 2 to 8 reproduces
 //! a quantitative result of *Nonlinear Dynamics and Chaos*, 2nd edition
-//! (Westview Press, 2015, ISBN 9780813349107), through the same service
-//! functions the app calls. Every expected value comes from the book's
-//! formula, never from a run, except the relaxation oscillator's period at
+//! (Westview Press, 2015, ISBN 9780813349107). Every expected value comes
+//! from the book's formula, except the relaxation oscillator's period at
 //! μ = 10: the book gives only its asymptote, so the gate checks the known
 //! value 19.0784 and that DOPRI5 and RK4 agree on it.
-//!
-//! `scripts/strogatz-gate.sh` prints the table of every claim.
 //!
 //! The section titles in [`STROGATZ_2E`] were checked against the 2nd
 //! edition's contents pages, as scanned by the Czech library cover service:
@@ -16,6 +13,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock};
 
+use dyn_analysis::FIXED_POINT_MERGE_REL;
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
 use separatrix_lib::ipc::{
@@ -28,8 +26,6 @@ use serde::Deserialize;
 
 const TEMPLATES_JSON: &str = include_str!("../../src/templates/templates.json");
 
-/// Every section a template or a check may cite: (section, title) from the
-/// 2nd edition's table of contents, chapters 2 to 12.
 const STROGATZ_2E: &[(&str, &str)] = &[
     ("2.1", "A Geometric Way of Thinking"),
     ("2.2", "Fixed Points and Stability"),
@@ -107,29 +103,26 @@ const STROGATZ_2E: &[(&str, &str)] = &[
     ("12.5", "Forced Double-Well Oscillator"),
 ];
 
-/// Bisection stops once the parameter bracket is narrower than this.
 const BISECTION_WIDTH: f64 = 1e-9;
 
-/// One result of the book, checked on one template.
+/// The transcritical template's view is `x ∈ [−2, 2]`, so its branches
+/// `x* = 0` and `x* = r` are found as one for `|r|` below
+/// `FIXED_POINT_MERGE_REL` times this.
+const TRANSCRITICAL_SEARCH_DIAGONAL: f64 = 4.0;
+
 struct Check {
     template: &'static str,
     section: &'static str,
-    /// The book's statement, as printed in the table.
     book: &'static str,
     claim: Claim,
 }
 
 enum Claim {
-    /// With `params` overriding the template's defaults, the fixed points
-    /// found in the template's view are exactly `expect`, each within `tol`
-    /// (max norm) and with that classification.
     FixedPoints {
         params: &'static [(&'static str, f64)],
         expect: &'static [(&'static [f64], Classification)],
         tol: f64,
     },
-    /// The `observable` changes inside `bracket` of `param`, and bisection
-    /// puts the change within `tol` of `book`.
     Bifurcation {
         param: &'static str,
         bracket: (f64, f64),
@@ -137,8 +130,6 @@ enum Claim {
         book: f64,
         tol: f64,
     },
-    /// The largest `|energy(x(t)) − energy(x0)|` over the accepted DOPRI5
-    /// steps to `t_end` stays within `bound`; `None` prints an info row.
     EnergyDrift {
         params: &'static [(&'static str, f64)],
         x0: &'static [f64],
@@ -148,42 +139,31 @@ enum Claim {
         atol: f64,
         bound: Option<f64>,
     },
-    /// Successive crossing times of `run`'s section are all within `tol` of
-    /// the period `book`; `None` prints an info row (an asymptote, say).
     Period {
         run: SectionRun,
         book: f64,
         tol: Option<f64>,
     },
-    /// The mean period of `runs[0]` and of `runs[1]` (one section, two
-    /// solvers) differ by at most `tol`.
-    PeriodsAgree { runs: [SectionRun; 2], tol: f64 },
-    /// The first crossing of `run`'s section comes at `t = book`, `book`
-    /// after the start at `t = 0`.
+    PeriodsAgree {
+        runs: [SectionRun; 2],
+        tol: f64,
+    },
     FirstCrossing {
         run: SectionRun,
         book: f64,
         tol: f64,
     },
-    /// Between the first and the last crossing of `run`'s section, each of
-    /// `states` advances at the mean rate `book`.
     MeanFrequency {
         run: SectionRun,
         states: &'static [usize],
         book: f64,
         tol: f64,
     },
-    /// The return map `x_k → x_{k+1}` of a one-state stroboscopic section
-    /// has its fixed point at `book`: the secant through the first three
-    /// crossings (exact for the affine map of a linear flow) and the last
-    /// crossing are both within `tol` of it.
     StroboscopicFixedPoint {
         run: SectionRun,
         book: f64,
         tol: f64,
     },
-    /// `x[state]` at every crossing of `run`'s section is within `tol` of
-    /// `book`.
     Amplitude {
         run: SectionRun,
         state: usize,
@@ -192,8 +172,6 @@ enum Claim {
     },
 }
 
-/// One orbit's Poincaré section, computed by `compute_portrait` with
-/// `solver`: the crossings after the first `skip`.
 struct SectionRun {
     params: &'static [(&'static str, f64)],
     x0: &'static [f64],
@@ -203,7 +181,6 @@ struct SectionRun {
     solver: SolverOptions,
 }
 
-/// The app's default solver: DOPRI5 at rtol 1e−6, atol 1e−9.
 const APP_SOLVER: SolverOptions = SolverOptions {
     method: Method::Dopri5,
     rtol: 1e-6,
@@ -214,9 +191,7 @@ const APP_SOLVER: SolverOptions = SolverOptions {
 };
 
 enum Observable {
-    /// The number of fixed points found in `search`, one interval per state.
     FixedPointCount { search: &'static [(f64, f64)] },
-    /// Whether the fixed point nearest `near` is asymptotically stable.
     StabilityOf { near: &'static [f64] },
 }
 
@@ -238,8 +213,6 @@ const PENDULUM_POINTS: &[(&[f64], Classification)] = &[
     (&[-2.0 * PI, 0.0], Classification::Centre),
 ];
 
-/// Van der Pol at μ = 1 from near the origin, cut where `y = ẋ` falls
-/// through 0: the maximum of `x` on each turn of the limit cycle.
 const VAN_DER_POL_TURNS: SectionRun = SectionRun {
     params: &[("mu", 1.0)],
     x0: &[0.1, 0.0],
@@ -253,8 +226,6 @@ const VAN_DER_POL_TURNS: SectionRun = SectionRun {
     solver: APP_SOLVER,
 };
 
-/// The relaxation oscillator at μ = 10 from inside the cycle, cut where `y`
-/// falls through 0 on the slow branch, with `solver`.
 const fn relaxation_turns(t_end: f64, solver: SolverOptions) -> SectionRun {
     SectionRun {
         params: &[("mu", 10.0)],
@@ -270,8 +241,6 @@ const fn relaxation_turns(t_end: f64, solver: SolverOptions) -> SectionRun {
     }
 }
 
-/// The supercritical Hopf normal form at μ = 0.25 from near the origin, cut
-/// where `y` rises through 0 (on the positive `x` axis).
 const HOPF_TURNS: SectionRun = SectionRun {
     params: &[("mu", 0.25)],
     x0: &[0.05, 0.0],
@@ -574,15 +543,12 @@ const CHECKS: &[Check] = &[
         template: "transcritical",
         section: "3.2",
         book: "x* = 0 exchanges stability at r_c = 0",
-        // The branches x* = 0 and x* = r separate linearly in r, and the
-        // finder merges roots closer than 1e−6 of the box diagonal (4e−6
-        // here), so the switch is seen at r = −4e−6.
         claim: Claim::Bifurcation {
             param: "r",
             bracket: (-1.0, 1.0),
             observable: Observable::StabilityOf { near: &[0.0] },
             book: 0.0,
-            tol: 1e-5,
+            tol: 2.0 * FIXED_POINT_MERGE_REL * TRANSCRITICAL_SEARCH_DIAGONAL,
         },
     },
     Check {
@@ -1016,7 +982,6 @@ fn templates() -> Vec<Template> {
     serde_json::from_str(TEMPLATES_JSON).expect("templates.json")
 }
 
-/// The chapter number of a section such as `"6.7"`.
 fn chapter_of(section: &str) -> &str {
     section.split('.').next().unwrap_or(section)
 }
@@ -1025,7 +990,6 @@ fn in_second_edition(section: &str) -> bool {
     STROGATZ_2E.iter().any(|(s, _)| *s == section)
 }
 
-/// A template compiled through the app's service, with its first view.
 struct Lab<'a> {
     template: &'a Template,
     res: CompileResponse,
@@ -1059,7 +1023,6 @@ impl<'a> Lab<'a> {
         }
     }
 
-    /// The template's parameter values with `overrides` applied.
     fn params(&self, overrides: &[(&str, f64)]) -> Vec<f64> {
         for (name, _) in overrides {
             assert!(
@@ -1095,7 +1058,6 @@ impl<'a> Lab<'a> {
         AxisRef::State { index }
     }
 
-    /// A request in the template's view that computes nothing yet.
     fn request(&self, params: Vec<f64>) -> PortraitRequest {
         PortraitRequest {
             request_id: 1,
@@ -1121,8 +1083,6 @@ impl<'a> Lab<'a> {
         }
     }
 
-    /// The fixed points `compute_portrait` reports in the template's view,
-    /// or in `search` (one interval per state) when given.
     fn fixed_points(&self, params: Vec<f64>, search: Option<&[(f64, f64)]>) -> Vec<FixedPointOut> {
         let mut req = self.request(params);
         let range = |axis: AxisRef, view: (f64, f64)| match (axis, search) {
@@ -1137,7 +1097,6 @@ impl<'a> Lab<'a> {
             .fixed_points
     }
 
-    /// The crossings of `run`'s section that `compute_portrait` returns.
     fn section(&self, run: &SectionRun) -> TrajectoryOut {
         let mut req = self.request(self.params(run.params));
         req.trajectories = vec![TrajectoryRequest {
@@ -1154,9 +1113,6 @@ impl<'a> Lab<'a> {
     }
 }
 
-/// `(book, measured, delta, tol, pass)` of values that should all be `book`:
-/// the measured column is their mean, the delta the worst of them.
-/// With `tol` `None` the row is info, unless the run failed.
 fn all_near(
     values: &[f64],
     status: Status,
@@ -1188,7 +1144,6 @@ fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len() as f64
 }
 
-/// The times between successive crossings.
 fn periods(sol: &TrajectoryOut) -> Vec<f64> {
     sol.t.windows(2).map(|w| w[1] - w[0]).collect()
 }
@@ -1215,7 +1170,6 @@ enum Verdict {
     Info,
 }
 
-/// One printed line of the gate's table.
 struct Row {
     chapter: String,
     section: &'static str,
@@ -1236,7 +1190,6 @@ fn verdict(ok: bool) -> Verdict {
     }
 }
 
-/// `(book, measured, delta, tol, pass)` of one claim.
 fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
     match claim {
         Claim::FixedPoints {
@@ -1499,7 +1452,6 @@ fn template_sections_are_in_the_second_edition() {
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
-/// `"8.3"` as `(8, 3)`, so rows sort by chapter, then section.
 fn section_key(section: &str) -> (u32, u32) {
     let mut parts = section.split('.').map(|p| p.parse().unwrap_or(u32::MAX));
     (
@@ -1508,7 +1460,6 @@ fn section_key(section: &str) -> (u32, u32) {
     )
 }
 
-/// Every check evaluated once, in book order, shared by the tests below.
 fn gate_rows() -> &'static [Row] {
     static ROWS: OnceLock<Vec<Row>> = OnceLock::new();
     ROWS.get_or_init(|| {
@@ -1553,8 +1504,6 @@ fn strogatz_claims_reproduce() {
     assert!(failed.is_empty(), "failed claims:\n{}", failed.join("\n"));
 }
 
-/// The gate's promise: each of chapters 2 to 8 has a template that
-/// reproduces one of the book's results.
 #[test]
 fn every_chapter_2_to_8_is_covered() {
     let rows = gate_rows();
@@ -1571,8 +1520,6 @@ fn every_chapter_2_to_8_is_covered() {
     );
 }
 
-/// A template that cites a section of chapters 2 to 8 can't join the
-/// gallery without a claim in [`CHECKS`].
 #[test]
 fn every_ch2_8_template_has_a_claim() {
     let unchecked: Vec<String> = templates()

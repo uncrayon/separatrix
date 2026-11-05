@@ -135,7 +135,6 @@ pub fn simplify_portrait(p: &mut Portrait, width: f64, height: f64, tol: f64) {
     for line in &mut p.graph {
         *line = simplify_polyline(&vp, line, tol * GRAPH_TOLERANCE_PX / EXPORT_TOLERANCE_PX);
     }
-    // A section's crossings are points, as a map's iterates are.
     let kind = if p.section.is_some() {
         SystemKind::Map
     } else {

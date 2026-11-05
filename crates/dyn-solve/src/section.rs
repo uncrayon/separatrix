@@ -22,12 +22,12 @@ pub enum Section {
         direction: Direction,
     },
     /// The stroboscopic map of a flow forced with period `period`: the state
-    /// at `t_k = t0 + phase + k·period` for every integer `k` with `t_k` in
+    /// at `t_k = phase + k·period` for every integer `k` with `t_k` in
     /// the integration interval, `t0` and `t1` included.
     Stroboscopic {
         /// Forcing period, `> 0`.
         period: f64,
-        /// Offset of the first sample from `t0`.
+        /// One sample time, in absolute time (not from `t0`).
         phase: f64,
     },
 }
@@ -45,7 +45,7 @@ pub enum Section {
 /// [`Status`] and [`Stats`]. Unlike `integrate`, the last computed point is
 /// never appended: every point is a crossing.
 ///
-/// Stroboscopic times are `(t0 + phase) + k as f64 * period`, one multiply
+/// Stroboscopic times are `phase + k as f64 * period`, one multiply
 /// and one add with no library function, so the same samples are kept on
 /// every platform.
 ///
@@ -134,7 +134,6 @@ pub fn section(
     out.finish(status, stepper.stats())
 }
 
-/// The crossings met so far: the first `skip` are counted but not kept.
 struct Crossings {
     skip: usize,
     wanted: usize,
@@ -176,7 +175,6 @@ impl Crossings {
     }
 }
 
-/// Finds the section's points inside the stepper's last accepted step.
 enum Sampler<'e> {
     Plane {
         tracker: EventTracker<'e>,
@@ -186,8 +184,6 @@ enum Sampler<'e> {
 }
 
 impl Sampler<'_> {
-    /// Push the points in `(t_prev, t]` of the last step (just `t0` before
-    /// the first step) until `out` is full.
     fn take(&mut self, s: &Stepper, out: &mut Crossings) {
         match self {
             Sampler::Plane { tracker, hits } => {
@@ -204,8 +200,6 @@ impl Sampler<'_> {
     }
 }
 
-/// The sample times `t_k = base + k·period`, `base = t0 + phase`, walked
-/// in the direction of integration.
 struct Strobe {
     base: f64,
     period: f64,
@@ -222,13 +216,13 @@ impl Strobe {
             TimeDirection::Forward => 1,
             TimeDirection::Backward => -1,
         };
-        let guess = -phase / period;
+        let guess = (t0 - phase) / period;
         let k = match dir {
             TimeDirection::Forward => guess.ceil(),
             TimeDirection::Backward => guess.floor(),
         } as i64;
         let mut strobe = Self {
-            base: t0 + phase,
+            base: phase,
             period,
             k,
             step,

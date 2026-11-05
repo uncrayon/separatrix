@@ -18,7 +18,6 @@ import type { Template } from "./templates";
 
 type Theme = "dark" | "light";
 
-// three.js comes only with the 3D view, as a chunk of its own.
 const SpaceCanvas = lazy(() => import("./canvas/SpaceCanvas"));
 
 const THEME_KEY = "separatrix.theme";
@@ -184,7 +183,6 @@ export default function App() {
                 <SpaceCanvas
                   state={state}
                   actions={actions}
-                  theme={theme}
                   toolbar={<CanvasToolbar state={state} actions={actions} />}
                 />
               </Suspense>

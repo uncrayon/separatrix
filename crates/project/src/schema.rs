@@ -371,15 +371,21 @@ fn nan() -> f64 {
 fn yes() -> bool {
     true
 }
+/// The yaw of a camera that gives none.
+pub const DEFAULT_YAW: f64 = -std::f64::consts::FRAC_PI_4;
+/// The pitch of a camera that gives none.
+pub const DEFAULT_PITCH: f64 = std::f64::consts::PI / 6.0;
+/// The zoom of a camera that gives none.
+pub const DEFAULT_ZOOM: f64 = 1.0;
+
 fn default_yaw() -> f64 {
-    -std::f64::consts::FRAC_PI_4
+    DEFAULT_YAW
 }
-/// π/6 as the app computes it (`Math.PI / 6`), one ulp below `FRAC_PI_6`.
 fn default_pitch() -> f64 {
-    std::f64::consts::PI / 6.0
+    DEFAULT_PITCH
 }
 fn default_zoom() -> f64 {
-    1.0
+    DEFAULT_ZOOM
 }
 pub(crate) fn default_field_grid() -> u32 {
     21

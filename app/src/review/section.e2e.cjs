@@ -1,7 +1,3 @@
-// Poincaré section views in the browser preview (mocked core): the Lorenz
-// plane z = 27 crossed upward, the View control's options and reasons for
-// a map and a one-state flow, a click that starts an orbit on the section,
-// and the return map.
 // CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");
@@ -45,7 +41,6 @@ async function waitPortrait(page, pred) {
   );
 }
 
-/** The pixel (in the page) of plot point (x, y), from the last request's ranges (the ranges as drawn). */
 async function toPx(page, x, y) {
   const { req } = await last(page);
   const box = await page.locator("canvas.plot-canvas").boundingBox();
@@ -60,7 +55,6 @@ async function commit(locator, value) {
   await locator.press("Enter");
 }
 
-/** Lorenz with the section z = 27 crossed upward, tEnd 500, 10 crossings skipped. */
 async function lorenzZ27(page) {
   await pick(page, "Lorenz equations");
   assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D"]);
@@ -99,7 +93,6 @@ test("Lorenz: the section z = 27 crossed upward is a two-lobed set of at least 2
     assert.match(await canvas.getAttribute("aria-label"), /^Poincaré section: x from .* across, y from .* up\./);
     const count = page.locator(".statusbar [data-section-count]");
     assert.equal((await count.innerText()).replace(/\s+/g, " "), `${n.toLocaleString("en-US")} crossings, 10 skipped`);
-    // The layers don't apply; the toolbar drops them.
     assert.equal(await page.locator(".plot-toolbar [role=group][aria-label=Layers]").count(), 0);
     assert.equal(await inspector(page).getByRole("switch", { name: "Fixed points" }).isDisabled(), true);
     assert.equal(await inspector(page).getByText("Not searched: a Poincaré section shows only the crossings.").count(), 1);
@@ -117,7 +110,6 @@ test("a map shows Phase, Series and Cobweb, and a one-state flow's plane section
     const cobweb = viewRadio(page, "Cobweb");
     assert.equal(await cobweb.getAttribute("aria-disabled"), "true");
     assert.match(await page.locator(`[id="${await cobweb.getAttribute("aria-describedby")}"]`).textContent(), /; Hénon map has 2 states\.$/);
-    // The toolbar menu offers the same three.
     await page.getByRole("button", { name: /^Axes:/ }).click();
     const labels = await page.getByRole("menu").locator("[data-view-choice] .axes-menu-label").allInnerTexts();
     assert.deepEqual(labels, ["Phase plane", "Time series", "Cobweb"]);
@@ -129,7 +121,6 @@ test("a map shows Phase, Series and Cobweb, and a one-state flow's plane section
     const phase = viewRadio(page, "Phase plane");
     assert.equal(await phase.getAttribute("aria-disabled"), "true");
     assert.equal(await page.locator(`[id="${await phase.getAttribute("aria-describedby")}"]`).innerText(), "A phase plane needs at least 2 states. Slope field has 1.");
-    // A forced one-state flow takes a stroboscopic section of period 2π; a plane needs two states.
     await viewRadio(page, "Poincaré section").click();
     await waitPortrait(page, "req.section && req.section.kind === 'stroboscopic'");
     assert.ok(Math.abs((await last(page)).req.section.period - 2 * Math.PI) < 1e-15);
@@ -158,7 +149,6 @@ test("a click starts an orbit on the section; the return map pairs crossings and
     assert.equal(added.x0[2], 27, "on the plane exactly");
     assert.ok(res.trajectories[before].t.length >= 20, "the new orbit crosses too");
 
-    // One state on both axes: the return map x_k -> x_{k+1}.
     await inspector(page).getByLabel("Vertical", { exact: true }).selectOption("s0");
     await waitPortrait(page, "req.yAxis.kind === 'state' && req.yAxis.index === 0 && req.xAxis.index === 0");
     assert.match(await page.getByRole("button", { name: /^Section:/ }).getAttribute("aria-label"), /^Section: x k horizontal, x k\+1 vertical$/);

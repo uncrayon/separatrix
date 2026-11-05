@@ -154,7 +154,7 @@ pub fn section(f: &dyn VectorField, p: &[f64], t0: f64, x0: &[f64], t1: f64,
 times and `x` the crossing states, row-major. A `Plane` crossing is a sign change of
 `g = x[state] − value` in `direction`, judged in the direction of integration (so backwards in time
 when `t1 < t0`), located by Brent's method on the dense output as for events; starting on the plane
-is not a crossing. A `Stroboscopic` sample is the dense output at `t_k = (t0 + phase) + k·period`
+is not a crossing. A `Stroboscopic` sample is the dense output at `t_k = phase + k·period`
 for every integer `k` with `t_k` between `t0` and `t1` inclusive, computed with one multiply and one
 add and no library function, so the same samples are kept on every OS. The first `skip` crossings
 are dropped. The run stops at `skip + max_points` crossings (`Completed`), at `t1`, or for any
@@ -280,7 +280,9 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 `Method`, `Status`, `Stats`, `Direction`, `Classification`, derived behind each crate's `ts` feature), into
 `app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
-compiles against what Rust sends, and CI fails while the generated file is stale.
+compiles against what Rust sends, and CI fails while the generated file is stale. The same file
+carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, the `SECTION_MISFIT` and
+`SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
 added by reducing a higher-order equation to first order (`\theta'` for `\ddot{\theta} = …`), never a
@@ -336,9 +338,8 @@ vectors are `crates/export/tests/vectors/cobweb.json`.
 | `"plane"` | `state`, `value`, `direction: "rising" \| "falling" \| "both"` | crossings of `x[state] = value` |
 | `"stroboscopic"` | `period`, `phase` | the state at `t_k = phase + k·period`, for every `t_k` from the trajectory's `t0` to its `t1` |
 
-The IPC `phase` is absolute (`t ≡ phase mod period`); the service passes `phase − t0` to
-`dyn_solve::section`, whose phase counts from `t0`, so orbits started at different times are
-sampled at the same forcing phase. The studio starts a click on a stroboscopic section at
+The `phase` is absolute (`t ≡ phase mod period`) both over IPC and in `dyn_solve::section`, so
+orbits started at different times are sampled at the same forcing phase. The studio starts a click on a stroboscopic section at
 `t0 = phase`, so the start point is itself a point of the section.
 
 With `section` present, each `PortraitResponse.trajectories[i]` is that orbit's crossings

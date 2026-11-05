@@ -47,10 +47,8 @@ function TemplateTags({ template }: { template: Template }) {
 
 const CHAPTERS = templateChapters(TEMPLATES);
 
-/** The smallest a long equation shrinks to fit its card, as a fraction of the card's math size. */
 const MIN_MATH_SCALE = 0.6;
 
-/** Each line of the card's math, scaled down (to `MIN_MATH_SCALE` at most) until it fits the card's width. */
 function useFitLines(ref: RefObject<HTMLElement | null>) {
   useLayoutEffect(() => {
     const el = ref.current;

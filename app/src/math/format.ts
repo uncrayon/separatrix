@@ -117,12 +117,6 @@ export function axisLabelLatex(
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
-/**
- * The axis names of a view in LaTeX, as the canvas, the toolbar and the
- * exports show them: a cobweb's are x_{n} across and x_{n+1} up, and a
- * section's return map x_{k} and x_{k+1}, built from the user's own state
- * LaTeX; any other view's are {@link axisLabelLatex}.
- */
 export function viewAxisLabels(
   view: { kind?: string; xAxis: AxisRef; yAxis: AxisRef },
   states: StateInfo[],
@@ -132,7 +126,6 @@ export function viewAxisLabels(
     const base = axisLatex(view.xAxis, states, kind);
     return { x: withSubscript(base, "n"), y: withSubscript(base, "n+1") };
   }
-  // A section's return map pairs successive crossings: x_k across, x_{k+1} up.
   if (view.kind === "section" && sameAxis(view.xAxis, view.yAxis)) {
     const base = axisLatex(view.xAxis, states, kind);
     return { x: withSubscript(base, "k"), y: withSubscript(base, "k+1") };

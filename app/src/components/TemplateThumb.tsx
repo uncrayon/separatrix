@@ -262,7 +262,6 @@ function drawThumbFixedPoint(
   }
 }
 
-/** A section thumbnail: one dot per crossing, or per pair (x_k, x_{k+1}) over the diagonal of a return map. */
 function drawSectionThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thumb, th: ReturnType<typeof readPlotTheme>) {
   const { view, res, kind, dim, icOf } = thumb;
   if (!isSection(view)) return;
@@ -329,7 +328,6 @@ function drawCobwebThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thu
   }
 }
 
-/** The thumbnail, computed the first time its card scrolls into the gallery's view. */
 export function TemplateThumb({ template }: { template: Template }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [thumb, setThumb] = useState<Thumb | null>(null);

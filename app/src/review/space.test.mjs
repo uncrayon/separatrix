@@ -1,8 +1,3 @@
-// The 3D view (Strogatz ch. 9's Lorenz box): three.js's projection through
-// the camera the view sets up equals the projection the overlay draws with,
-// the camera's limits, the View control's 3D option, what a 3D portrait asks
-// the core for, picking its axes, and the .sepx round trip.
-//
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports resolve to .ts through a module hook.
 
@@ -23,6 +18,7 @@ registerHooks({
 });
 
 const model = await import("../state/model.ts");
+const { SECTION_MISFIT, SPACE_MISFIT } = await import("../api/ipc.generated.ts");
 const space = await import("../canvas/space.ts");
 const { projectFromState, stateFromProject } = await import("../project/serialize.ts");
 
@@ -53,7 +49,6 @@ function rng(seed) {
   };
 }
 
-/** An OrthographicCamera set up as SpaceCanvas sets it up. */
 function threeCameraFor(camera, w, h) {
   const t = space.threeCamera(camera, w, h);
   const cam = new OrthographicCamera();
@@ -69,7 +64,6 @@ function threeCameraFor(camera, w, h) {
 test("three.js projects the WebGL lines exactly where the overlay draws: 200 points, 10 cameras", () => {
   const rand = rng(20261105);
   const [w, h] = [913, 641];
-  // Four states, three of them on the box in another order, with ranges of different sizes.
   const box = { xAxis: S(2), yAxis: S(0), zAxis: S(3), xRange: [-3, 7], yRange: [100, 100.5], zRange: [-1e3, 2e3] };
   const cameras = [
     space.DEFAULT_CAMERA,
@@ -100,7 +94,6 @@ test("three.js projects the WebGL lines exactly where the overlay draws: 200 poi
     }
   }
   assert.ok(worst < 1e-9, `largest difference ${worst}`);
-  // The default view looks down on the box from the front: the box's near top corner is nearer than its far bottom one.
   const [, , near] = space.spaceProjector({ ...box, camera: space.DEFAULT_CAMERA }, w, h)([100.5, 0, 7, 2e3]);
   const [, , far] = space.spaceProjector({ ...box, camera: space.DEFAULT_CAMERA }, w, h)([100, 0, -3, -1e3]);
   assert.ok(near < far, `${near} < ${far}`);
@@ -114,7 +107,6 @@ test("the camera stays within its limits", () => {
   assert.equal(space.clampCamera({ yaw: 0, pitch: 0, zoom: 100 }).zoom, 8);
   assert.equal(space.clampCamera({ yaw: 0, pitch: 0, zoom: 0.01 }).zoom, 0.25);
   assert.equal(space.clampCamera({ yaw: 0, pitch: 0, zoom: 2 }).zoom, 2);
-  // Yaw wraps into [−π, π); a value already there is kept exactly.
   assert.equal(space.clampCamera({ yaw: -Math.PI / 4, pitch: 0, zoom: 1 }).yaw, -Math.PI / 4);
   assert.ok(Math.abs(space.clampCamera({ yaw: 2 * Math.PI + 0.5, pitch: 0, zoom: 1 }).yaw - 0.5) < 1e-12);
   assert.deepEqual(space.clampCamera({ yaw: NaN, pitch: Infinity }), space.DEFAULT_CAMERA);
@@ -141,7 +133,6 @@ test("switching to 3D shows states 0, 1 and 2 over their extents, and the camera
   const v = model.switchView("space", { compiled: lorenz, view: model.defaultView(lorenz), solver: model.DEFAULT_SOLVER, portrait }, memory);
   assert.equal(v.kind, "space");
   assert.deepEqual([v.xAxis, v.yAxis, v.zAxis], [S(0), S(1), S(2)]);
-  // Extents padded by 10% (at least 0.5).
   assert.deepEqual([v.xRange, v.yRange, v.zRange], [[-12, 12], [-24, 24], [1, 49]]);
   assert.deepEqual(v.camera, space.DEFAULT_CAMERA);
   assert.equal(model.switchView("space", { compiled: flow(["x", "y"]), view: model.defaultView(flow(["x", "y"])), solver: model.DEFAULT_SOLVER }, {}), null);
@@ -161,7 +152,6 @@ test("switching to 3D shows states 0, 1 and 2 over their extents, and the camera
   const job = model.buildPortraitJob(snapshot(v));
   assert.deepEqual(job.body.zAxis, S(2));
   assert.deepEqual(job.body.zRange, [1, 49]);
-  // The box is a cube whatever its ranges: no equal scales on x and y.
   assert.deepEqual([job.body.xRange, job.body.yRange], [[-12, 12], [-24, 24]]);
   assert.equal(job.body.fieldGrid, 0);
   assert.equal(job.body.nullclines, false);
@@ -174,7 +164,6 @@ test("switching to 3D shows states 0, 1 and 2 over their extents, and the camera
   assert.deepEqual(model.buildPortraitJob(snapshot(turned)).body, job.body);
   assert.equal(model.viewRequestKey(turned), model.viewRequestKey(v));
   assert.notEqual(model.viewRequestKey({ ...v, zRange: [0, 50] }), model.viewRequestKey(v));
-  // A click has no depth in 3D.
   assert.equal(model.canAddOnPlot(v), false);
 });
 
@@ -188,7 +177,6 @@ test("picking a state already on another 3D axis swaps the two, ranges and all",
   assert.deepEqual([fresh.xAxis, fresh.yAxis, fresh.zAxis], [S(0), S(3), S(2)]);
   assert.deepEqual(fresh.yRange, [5, 6]);
   assert.equal(model.withSpaceAxis(v, 2, 2, () => [0, 1]), v);
-  // A recompile keeps the 3D view while its variables stay, and drops it at 2 states.
   assert.deepEqual(model.adaptView(fresh, four.states, [st("w"), ...lorenz.states], four).yAxis, S(0));
   assert.equal(model.adaptView(v, lorenz.states, [st("x"), st("y")], flow(["x", "y"])), null);
 });
@@ -228,11 +216,9 @@ test("a 3D view round-trips through .sepx identically, camera included", () => {
   const again = projectFromState({ ...documentOf(lorenz, applied.view), ics: applied.ics }, { loaded: doc });
   assert.equal(JSON.stringify(again), JSON.stringify(doc));
 
-  // Back to a plane view: no z keys or camera left behind.
   const back = projectFromState(documentOf(lorenz, model.defaultView(lorenz)), { loaded: doc });
   for (const k of ["kind", "z_axis", "z_range", "camera"]) assert.equal(k in back.views[0], false, k);
 
-  // A camera out of its limits opens clamped; one that is missing opens as the default.
   const open = (edit, sys = lorenz) => {
     const d = JSON.parse(JSON.stringify(doc));
     edit(d.views[0]);
@@ -240,10 +226,9 @@ test("a 3D view round-trips through .sepx identically, camera included", () => {
   };
   assert.deepEqual(open((v) => (v.camera = { yaw: 0, pitch: 9, zoom: 99 })).view.camera, { yaw: 0, pitch: Math.PI / 2 - 0.01, zoom: 8 });
   assert.deepEqual(open((v) => delete v.camera).view.camera, space.DEFAULT_CAMERA);
-  // A system the view doesn't fit opens in its default view, with the sentence crates/project uses.
   const two = flow(["x", "y"]);
   const misfit = open(() => {}, two);
   assert.deepEqual(misfit.warnings, ["The saved 3D view doesn't fit this system, so the default view is shown."]);
   assert.deepEqual(misfit.view, model.defaultView(two));
-  assert.deepEqual(open((v) => (v.z_axis = { kind: "state", name: "x" })).warnings, [model.SPACE_VIEW_WARNING]);
+  assert.deepEqual(open((v) => (v.z_axis = { kind: "state", name: "x" })).warnings, [SPACE_MISFIT]);
 });

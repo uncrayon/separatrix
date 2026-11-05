@@ -12,7 +12,6 @@ fn tight() -> SolverOptions {
     }
 }
 
-/// `ẋ = y, ẏ = −x`: from `(1, 0)`, `x = cos t`, `y = −sin t`.
 fn harmonic() -> FnField {
     FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = x[1];
@@ -174,11 +173,10 @@ fn a_phase_moves_every_stroboscopic_sample() {
     let f = harmonic();
     let strobe = Section::Stroboscopic {
         period: 2.0,
-        phase: -3.5,
+        phase: -2.5,
     };
     let sol = section(&f, &[], 1.0, &[1.0, 0.0], 8.0, &tight(), &strobe, 0, 100);
-    let base: f64 = 1.0 + -3.5;
-    let want: Vec<f64> = (2..=5).map(|k| base + k as f64 * 2.0).collect();
+    let want: Vec<f64> = (2..=5).map(|k| -2.5 + k as f64 * 2.0).collect();
     assert_eq!(sol.t, want, "t_k = 1.5, 3.5, 5.5, 7.5");
     for (i, &t) in sol.t.iter().enumerate() {
         assert!((sol.state(i)[0] - (t - 1.0).cos()).abs() < 1e-9);
@@ -192,19 +190,21 @@ fn the_first_stroboscopic_sample_is_the_first_on_or_after_t0() {
         let strobe = Section::Stroboscopic { period: 0.2, phase };
         section(&f, &[], t0, &[1.0, 0.0], t0 + 1.0, &tight(), &strobe, 0, 1).t[0]
     };
-    let base: f64 = 0.6 + 1.8;
+    let (t0, phase): (f64, f64) = (0.063, 0.863);
+    assert_eq!(((t0 - phase) / 0.2).ceil(), -4.0);
     assert!(
-        base + -9.0 * 0.2 < 0.6,
-        "ceil(−phase/period) = −9 rounds below t0"
+        phase + -4.0 * 0.2 < t0,
+        "ceil((t0 − phase)/period) = −4 rounds below t0"
     );
-    assert_eq!(first(0.6, 1.8), base + -8.0 * 0.2);
-    let base: f64 = -3.809 + 0.6;
+    assert_eq!(first(t0, phase), phase + -3.0 * 0.2);
+    let (t0, phase): (f64, f64) = (4.727, 3.927);
+    assert_eq!(((t0 - phase) / 0.2).ceil(), 5.0);
     assert_eq!(
-        base + -3.0 * 0.2,
-        -3.809,
-        "ceil(−phase/period) = −2 skips t0"
+        phase + 4.0 * 0.2,
+        t0,
+        "ceil((t0 − phase)/period) = 5 skips t0"
     );
-    assert_eq!(first(-3.809, 0.6), -3.809);
+    assert_eq!(first(t0, phase), t0);
 }
 
 #[test]

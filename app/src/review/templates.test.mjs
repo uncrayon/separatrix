@@ -1,7 +1,3 @@
-// The gallery templates: each one has generated text-mode lines, compiles in
-// the browser preview's mock core with the states and parameters it names,
-// opens in the view it asks for, and cites a Strogatz section in its chapter.
-//
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports (a file or a folder's index.ts) and its JSON imports
 // resolve through module hooks.

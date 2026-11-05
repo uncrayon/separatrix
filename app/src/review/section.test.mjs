@@ -1,8 +1,3 @@
-// Poincaré section views (Strogatz §8.7): switching to and from the
-// section view, a click lifted onto the section, the return map's pairs,
-// what a section portrait asks the core for, and the .sepx round trip of
-// every section kind.
-//
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports resolve to .ts through a module hook.
 
@@ -22,6 +17,7 @@ registerHooks({
 });
 
 const model = await import("../state/model.ts");
+const { SECTION_MISFIT, SPACE_MISFIT } = await import("../api/ipc.generated.ts");
 const draw = await import("../canvas/draw.ts");
 const { makeViewport, sx, sy } = await import("../canvas/viewport.ts");
 const { projectFromState, stateFromProject } = await import("../project/serialize.ts");
@@ -68,7 +64,6 @@ test("switching to the section view and back keeps the remembered view", () => {
   const s = { compiled: lorenz, view: phase, solver: model.DEFAULT_SOLVER, portrait: null };
 
   const section = model.switchView("section", s, memory);
-  // A plane through the middle of state 0's range, crossed upward, plotted in the other two states.
   assert.deepEqual(section, {
     kind: "section",
     section: plane(0, 0),
@@ -80,23 +75,19 @@ test("switching to the section view and back keeps the remembered view", () => {
   assert.equal(model.viewChoice(section), "section");
   assert.deepEqual(memory.phase, phase, "the phase plane is remembered");
 
-  // The user moves the section to z = 27; coming back to the phase plane and then the section restores both as left.
   const z27 = model.withSection(section, lorenz, plane(2, 27), () => [-20, 20]);
   assert.deepEqual([z27.xAxis, z27.yAxis], [S(0), S(1)], "the plane's own state left the axes");
   assert.equal(model.switchView("phase", { ...s, view: z27 }, memory), phase);
   assert.deepEqual(model.switchView("section", { ...s, view: phase }, memory), z27);
 
-  // Moving the plane picks a range a view already showed for a state, never a held state's single value.
   const crossings = { trajectories: [{ t: [0, 1], x: [0, -3, 27, 0, 4, 27], status: "completed" }] };
   assert.deepEqual(model.knownStateRange(0, [z27, phase], crossings, 3), [-20, 20]);
   assert.deepEqual(model.knownStateRange(0, [], crossings, 3), [-5, 5], "x is 0 at every crossing of x = 0");
   assert.deepEqual(model.knownStateRange(1, [], crossings, 3), [-3.7, 4.7]);
 
-  // A forced oscillator opens a stroboscopic section of period 2π.
   const strobe = model.switchView("section", { ...s, compiled: forced, view: { xAxis: S(0), yAxis: S(1), xRange: [-4, 4], yRange: [-3, 3] } }, {});
   assert.deepEqual(strobe.section, { kind: "stroboscopic", period: 2 * Math.PI, phase: 0 });
   assert.deepEqual([strobe.xAxis, strobe.yAxis], [S(0), S(1)]);
-  // A map can't show it.
   assert.equal(model.switchView("section", { ...s, compiled: logistic, view: model.cobwebView([0, 1]) }, {}), null);
 });
 
@@ -107,20 +98,17 @@ test("a click lands on the section: the plane's state is its value exactly, a st
   assert.deepEqual(x0, [-7.25, 11.5, value]);
   assert.equal(x0[2], value);
   assert.equal(t0, 1.5);
-  // Dragging keeps it on the plane.
   assert.equal(model.liftPlotPoint(lorenz, view, [0, 0, 0], 0, 1, 2, { x0: [9, 9, 9], t0: 4 }).x0[2], value);
 
   const strobe = { ...view, section: { kind: "stroboscopic", period: 2 * Math.PI, phase: 0.75 } };
   assert.deepEqual(model.liftPlotPoint(forced, strobe, [0, 0], 3, 1, -2), { x0: [1, -2], t0: 0.75 });
 
-  // The return map's points are pairs of crossings: a click adds nothing.
   assert.equal(model.canAddOnPlot({ ...view, yAxis: S(0) }), false);
   assert.equal(model.canAddOnPlot(view), true);
 });
 
 test("the return map plots each crossing against the next, and labels them x_k and x_{k+1}", () => {
   const vp = makeViewport(400, 300, [0, 10], [0, 10], true);
-  // Crossings of a 2-state orbit; state 1 runs 1, 2, 4, 8.
   const out = { t: [0, 1, 2, 3], x: [9, 1, 9, 2, 9, 4, 9, 8], status: "completed", stats: { accepted: 0, rejected: 0, evals: 0 } };
   const expected = [
     [1, 2],
@@ -129,14 +117,12 @@ test("the return map plots each crossing against the next, and labels them x_k a
   ].flatMap(([a, b]) => [sx(vp, a), sy(vp, b)]);
   const scene = { kind: "ode", dim: 2, xAxis: S(1), yAxis: S(1), section: { returnMap: true } };
   assert.deepEqual([...draw.trajectoryPx(vp, scene, out)], expected);
-  // A plane section plots the crossings themselves.
   assert.deepEqual([...draw.trajectoryPx(vp, { ...scene, xAxis: S(0), section: { returnMap: false } }, out)], [1, 2, 4, 8].flatMap((v) => [sx(vp, 9), sy(vp, v)]));
 
   const view = { kind: "section", section: plane(0, 0), xAxis: S(1), yAxis: S(1), xRange: [0, 10], yRange: [0, 10] };
   assert.equal(model.isReturnMap(view), true);
   assert.deepEqual(viewAxisLabels(view, [st("x"), st("y")], "ode"), { x: "y_{k}", y: "y_{k+1}" });
 
-  // Drawn as dots, one per pair, with the diagonal.
   const calls = [];
   const ctx = new Proxy({}, {
     get: (_, k) => (k in ctx2 ? ctx2[k] : (...a) => calls.push([k, ...a])),
@@ -188,7 +174,6 @@ test("a section portrait asks for the crossings only, after the skipped ones", (
   assert.deepEqual(sectionCounts({ trajectories: [{ t: [1, 2, 3] }, { t: [4] }] }, 10), { crossings: 4, skipped: 10 });
 });
 
-/** The document state of `view` for `sys`, as the studio saves it. */
 function documentOf(sys, view, transient = 10) {
   return {
     format: "latex",
@@ -226,10 +211,8 @@ test("plane, stroboscopic and return-map section views round-trip through .sepx 
     const again = projectFromState({ ...documentOf(sys, applied.view), ics: applied.ics }, { loaded: doc });
     assert.equal(JSON.stringify(again), JSON.stringify(doc), name);
   }
-  // A plane z = 27 is saved by name.
   const doc = projectFromState(documentOf(lorenz, cases[0][2]));
   assert.deepEqual(doc.views[0].section, { kind: "plane", state: "z", value: 27, direction: "rising" });
-  // Back to a plane view: no kind and no section left behind.
   const planeView = { xAxis: S(0), yAxis: S(2), xRange: [-25, 25], yRange: [-2, 64] };
   const back = projectFromState(documentOf(lorenz, planeView, 0), { loaded: doc });
   assert.equal("kind" in back.views[0], false);
@@ -248,6 +231,6 @@ test("a saved section that doesn't fit falls back to the default view with the c
   assert.deepEqual(unknown.warnings, ["The section of the view “main” is of a kind (“hyperbola”) this version doesn't know, so the default view is used."]);
   assert.equal(unknown.view.kind, undefined);
   assert.deepEqual(open((v) => (v.section.state = "w")).warnings, ["The section of the view “main” holds the state w fixed, which the system doesn't have, so the default view is used."]);
-  assert.deepEqual(open((v) => (v.section.direction = "sideways")).warnings, [model.SECTION_VIEW_WARNING]);
-  assert.deepEqual(open(() => {}, { ...lorenz, kind: "map" }).warnings, [model.SECTION_VIEW_WARNING]);
+  assert.deepEqual(open((v) => (v.section.direction = "sideways")).warnings, [SECTION_MISFIT]);
+  assert.deepEqual(open(() => {}, { ...lorenz, kind: "map" }).warnings, [SECTION_MISFIT]);
 });

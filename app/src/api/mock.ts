@@ -41,6 +41,7 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
+import { MAX_SECTION_POINTS } from "./ipc.generated";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -401,7 +402,6 @@ function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
   return null;
 }
 
-/** The checks `validate` makes of a 3D view's third axis in service.rs, with the same messages. */
 function thirdAxisError(dim: number, req: PortraitRequest): string | null {
   const { zAxis, zRange } = req;
   if (!zAxis && !zRange) return null;
@@ -413,7 +413,6 @@ function thirdAxisError(dim: number, req: PortraitRequest): string | null {
   return null;
 }
 
-/** The checks `section_fits` makes in service.rs, with the same messages. */
 function sectionError(sys: MockSystem, section: SectionSpec): string | null {
   const dim = sys.states.length;
   if (sys.kind === "map") return "A Poincaré section needs a flow; this system is a map.";
@@ -427,8 +426,6 @@ function sectionError(sys: MockSystem, section: SectionSpec): string | null {
   return null;
 }
 
-/** MAX_SECTION_POINTS in service.rs. */
-const MAX_SECTION_POINTS = 100_000;
 
 /** MAX_GRAPH_SAMPLES in dyn-analysis. */
 const MAX_GRAPH_SAMPLES = 4096;
@@ -678,7 +675,6 @@ function solve(
   return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
 }
 
-/** One RK4 step of size h. */
 function rk4(sys: MockSystem, p: number[], t: number, x: number[], h: number): number[] {
   const k1 = sys.f(t, x, p);
   const k2 = sys.f(t + h / 2, x.map((v, i) => v + (h / 2) * k1[i]), p);
@@ -687,12 +683,6 @@ function rk4(sys: MockSystem, p: number[], t: number, x: number[], h: number): n
   return x.map((v, i) => v + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
 }
 
-/**
- * As `dyn_solve::section` through service.rs: the orbit's crossings of the
- * section (a plane's located by linear interpolation in a step; a
- * stroboscopic section's at t ≡ phase mod period), the first `transient`
- * skipped, at most MAX_SECTION_POINTS after them. Forward in time only.
- */
 function crossings(
   sys: MockSystem,
   p: number[],
@@ -767,7 +757,6 @@ function findFixedPoints(
   };
   const found: number[][] = [];
   const seeds = 9;
-  // A 3D view's third axis is searched across its range too (as `fixed_point_search_box` does).
   const z = req.zAxis?.kind === "state" && req.zRange ? { index: req.zAxis.index, range: req.zRange } : null;
   const zSeeds = z ? 5 : 1;
   for (let i = 0; i < seeds; i++) {

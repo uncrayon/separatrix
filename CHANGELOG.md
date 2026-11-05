@@ -72,8 +72,8 @@ All notable changes to this project are documented in this file.
   crossings.
 - Poincaré sections in the core (Strogatz §8.7): `dyn_solve::section` returns the crossings of a
   hyperplane `x_i = c` (rising, falling or both, located by Brent's method on the dense output) or
-  the stroboscopic samples `t_k = t0 + phase + k·T` of a periodically forced flow, skipping a
-  transient of crossings. Over IPC the stroboscopic `phase` is absolute (`t ≡ phase mod T`), so
+  the stroboscopic samples `t_k = phase + k·T` of a periodically forced flow, skipping a
+  transient of crossings. The stroboscopic `phase` is absolute (`t ≡ phase mod T`), so
   every orbit is sampled at the same forcing phase whatever its start time. `compute_portrait` takes an optional `section` and then returns each
   flow trajectory as its crossings; `transient` counts the skipped ones. The studio's section view
   builds on this.

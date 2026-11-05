@@ -1,8 +1,3 @@
-// What the inspector says about how a run ended: the status line's words
-// and the n (or t) they name, and the floating-point note for a map orbit
-// that lands exactly on an unstable fixed point; and what the status bar
-// says about a Poincaré section's crossings.
-
 import type { FixedPointOut, PortraitResponse, Status, TrajectoryOut } from "../api/types";
 import { dec } from "./startPoint";
 
@@ -60,12 +55,6 @@ export function landedOnSource(
   return { n: out.t[k], at };
 }
 
-
-/**
- * The status bar's count for a section portrait: the crossings drawn (every
- * orbit's) and the crossings each orbit skipped first (`transient`), for
- * "N crossings, k skipped".
- */
 export function sectionCounts(res: PortraitResponse, transient: number): { crossings: number; skipped: number } {
   const crossings = res.trajectories.reduce((n, tr) => n + tr.t.length, 0);
   return { crossings, skipped: Math.max(0, Math.round(transient)) };

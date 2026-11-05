@@ -872,6 +872,31 @@ mod bindings {
         for d in decls {
             out.push_str(&format!("\nexport {d}\n"));
         }
+        let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
+        let consts = [
+            (
+                "MAX_SECTION_POINTS",
+                crate::service::MAX_SECTION_POINTS.to_string(),
+            ),
+            ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
+            ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
+            (
+                "SPACE_LATEX_REFUSAL",
+                text(crate::export_service::SPACE_LATEX_REFUSAL),
+            ),
+            (
+                "DEFAULT_CAMERA",
+                format!(
+                    "{{ yaw: {:?}, pitch: {:?}, zoom: {:?} }}",
+                    separatrix_project::DEFAULT_YAW,
+                    separatrix_project::DEFAULT_PITCH,
+                    separatrix_project::DEFAULT_ZOOM
+                ),
+            ),
+        ];
+        for (name, value) in consts {
+            out.push_str(&format!("\nexport const {name} = {value};\n"));
+        }
         out
     }
 

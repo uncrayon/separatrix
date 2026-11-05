@@ -658,7 +658,6 @@ struct Plot {
     table: Option<(String, Table)>,
     /// Curves that may be simplified further, as pieces (data coords).
     curve: Option<Vec<Vec<(f64, f64)>>>,
-    /// Map iterates or crossings that may be rasterised or thinned.
     cloud: Option<Cloud>,
     raw: String,
 }
@@ -695,7 +694,6 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     let (upx, upy) = vp.units_per_px();
     let is_map = p.kind == SystemKind::Map;
     let section = p.section.filter(|_| !is_map);
-    // Map iterates and a section's crossings are points of a map: dots.
     let dots = is_map || section.is_some();
     let return_map = section.is_some() && p.x_axis == p.y_axis && p.x_axis != Axis::Time;
     let points_word = if is_map { "map iterates" } else { "crossings" };
@@ -858,8 +856,6 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         });
     }
 
-    // A cobweb's diagonal and the graph of f, under the staircases; a return
-    // map's diagonal, under the pairs.
     if cobweb || return_map {
         if let Some((a, b)) = crate::cobweb::diagonal(p.x_range, p.y_range) {
             let pt = |(x, y): (f64, f64)| format!("({},{})", quant.write(0, x), quant.write(1, y));
@@ -918,7 +914,6 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         let tr = &p.trajectories[i];
         let dim = p.dim;
         let n = tr.t.len().min(tr.x.len().checked_div(dim).unwrap_or(0));
-        // A return map pairs successive crossings (x_k, x_{k+1}), as `returnMapPx`.
         let next = usize::from(return_map);
         let shown: Vec<(f64, f64)> = (0..n.saturating_sub(next))
             .map(|k| {

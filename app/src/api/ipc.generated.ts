@@ -932,3 +932,13 @@ export type ClipboardTextRequest = {
  * The text to copy.
  */
 text: string, };
+
+export const MAX_SECTION_POINTS = 100000;
+
+export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
+
+export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
+export const DEFAULT_CAMERA = { yaw: -0.7853981633974483, pitch: 0.5235987755982988, zoom: 1.0 };

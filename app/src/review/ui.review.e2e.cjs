@@ -44,7 +44,6 @@ test("1024x768 (common projector): the centre column stays inside its grid track
   }
 });
 
-/** Whether the thumbnail of each card in `selector` has been drawn (its canvas holds pixels). */
 const thumbsDrawn = (page, selector) =>
   page.$$eval(`${selector} .ds-template-card-thumb canvas`, (canvases) =>
     canvases.map((c) => c.width > 0 && c.height > 0 && c.getContext("2d").getImageData(1, 1, 1, 1).data[3] > 0),

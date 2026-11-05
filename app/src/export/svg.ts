@@ -24,7 +24,6 @@ export interface SvgFigure {
   fonts?: FigureFonts;
   title?: string;
   desc?: string;
-  /** A 3D view, drawn projected from its camera instead of the plane. */
   space?: SpaceFigure | null;
 }
 

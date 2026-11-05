@@ -113,7 +113,6 @@ export function CanvasToolbar({ state, actions }: Props) {
       onClick: actions.resetView,
     },
   ];
-  // A section plots crossings only: no layer applies. A 3D view draws fixed points, no field or nullclines.
   const layers: IconButtonSpec[] = isSection(state.view) ? [] : [
     ...(!isMap && !space
       ? [
@@ -150,7 +149,6 @@ export function CanvasToolbar({ state, actions }: Props) {
     },
   ];
 
-  // A 3D view is only turned and zoomed: no tool applies.
   const tools = space ? [] : TOOLS;
   const keys = [
     ...tools.map((t) => t.key as string),
@@ -256,7 +254,6 @@ export function CanvasToolbar({ state, actions }: Props) {
 
 const SPACE_SLOTS = ["First", "Second", "Third"] as const;
 
-/** The 3D view's three states, one select each; picking a state shown on another axis swaps the two. */
 function SpaceAxes({ view, state, actions }: Props & { view: SpaceView }) {
   const sys = state.compiled!;
   const axes = spaceStates(view);
@@ -279,7 +276,6 @@ function SpaceAxes({ view, state, actions }: Props & { view: SpaceView }) {
   );
 }
 
-/** The 3D view's three ranges fitted to the start points, fixed points and trajectories, 10% padded. */
 function fitSpace(state: StudioState, view: SpaceView): Pick<SpaceView, "xRange" | "yRange" | "zRange"> | null {
   const sys = state.compiled;
   if (!sys) return null;
@@ -313,7 +309,6 @@ function fitView(state: StudioState): { xRange: [number, number]; yRange: [numbe
   const dim = sys.states.length;
   const { xAxis: rx } = state.view;
   if (isReturnMap(state.view) && rx.kind === "state") {
-    // Every crossing of the state, as one square range (the diagonal stays at 45°).
     const p = state.portrait;
     const vs = portraitFits(sys, state.shapeId, p) ? p.res.trajectories.flatMap((out) => orbitValues(out, dim, rx.index)) : [];
     const r = cobwebFit(vs);
@@ -402,7 +397,6 @@ function AxisPicker({
       value: { kind: "state", index: i } as AxisRef,
       latex: axisLatex({ kind: "state", index: i }, sys.states, sys.kind),
     })),
-    // A section's points are crossings, plotted in states only.
     ...(section
       ? []
       : [
@@ -415,11 +409,9 @@ function AxisPicker({
         ]),
   ];
   const cobweb = isCobweb(state.view);
-  // A cobweb's axes are fixed, and a 3D view's are picked beside the menu: the menu has the View group only.
   const viewOnly = cobweb || space;
   const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
-  // A cobweb's names spoken: "x n" and "x n+1"; a return map's "x k" and "x k+1".
   const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
   const xPlain = step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
   const yPlain = step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);

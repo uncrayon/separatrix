@@ -145,10 +145,6 @@ export async function renderPng(
   return physical ? withPhys(bytes, 96 * raster.scale) : bytes;
 }
 
-/**
- * The PNG drawing of a 3D figure at `scale` (three.js offscreen, or 2D lines
- * without WebGL). three.js comes with the 3D view's own chunk, loaded here.
- */
 export async function spacePngDraw(
   fig: SpaceFigure,
   w: number,

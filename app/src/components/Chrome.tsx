@@ -331,7 +331,6 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const states = sys?.states ?? [];
   const current = !!p && !!sys && p.meta.systemId === sys.systemId;
   const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
-  // A section's portrait counts its crossings.
   const crossings =
     current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
@@ -351,7 +350,6 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
-  // A cobweb's axes are x_n and x_{n+1}; a return map's x_k and x_{k+1}.
   const cobwebNames =
     (state.view.kind === "cobweb" || isReturnMap(state.view)) && states[0] ? viewAxisLabels(state.view, states, kind) : null;
   const xName = cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind);

@@ -60,7 +60,6 @@ struct View {
     section: Option<TemplateSection>,
 }
 
-/// A template's section, its plane's state named.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum TemplateSection {
@@ -129,7 +128,6 @@ fn request(t: &Template, res: &CompileResponse) -> (PortraitRequest, Vec<Traject
             phase: *phase,
         },
     });
-    // A section and a 3D view draw orbits only, forward in time.
     let orbits_only = section.is_some() || z_axis.is_some();
     let time_window = match (x_axis, y_axis) {
         (AxisRef::Time, _) => Some(t.view.x_range),
@@ -458,8 +456,6 @@ fn every_template_exports_latex_that_compiles() {
     }
 }
 
-/// The Lorenz template's section z = 27, crossed upward, through the export
-/// commands: the figure names it and compiles, and the CSV is its crossings.
 #[test]
 fn a_lorenz_section_exports_its_crossings() {
     let templates: Vec<Template> = serde_json::from_str(TEMPLATES_JSON).expect("templates.json");
@@ -557,7 +553,6 @@ fn a_lorenz_section_exports_its_crossings() {
     ] {
         assert!(out.tex.contains(want), "no {want:?} in\n{}", out.tex);
     }
-    // Every crossing in view is a dot: none is simplified away.
     let shown = kept
         .iter()
         .filter(|r| r[1].abs() <= 25.0 && r[2].abs() <= 25.0)

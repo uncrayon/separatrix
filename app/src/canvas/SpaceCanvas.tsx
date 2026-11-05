@@ -1,13 +1,4 @@
-// The 3D view of a flow: three.js draws the trajectory lines in WebGL, and a
-// 2D canvas over them draws the box, ticks, axis names, fixed points and
-// start points from the same projection (canvas/space.ts). Without WebGL
-// the 2D canvas draws the lines too, when dragging stops.
-//
-// Loaded lazily (App.tsx), so three.js is a chunk of its own. Dragging and
-// the wheel redraw straight from the pointer events and commit the camera
-// to the studio when they end; the camera never asks the core for anything.
-
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   BufferAttribute,
   BufferGeometry,
@@ -25,17 +16,19 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { latexToPlain } from "../math/format";
 import { IconInfo } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { isSection, portraitFits, selectedFixedPointIndex, type SpaceView } from "../state/model";
+import { isSection, portraitFits, selectedFixedPointIndex, stateAxis, type SpaceView } from "../state/model";
 import {
   clampCamera,
   DEFAULT_CAMERA,
   drawSpaceLines,
   drawSpaceOverlay,
+  spaceAxes,
   spaceNames,
   threeCamera,
   trajectoryBoxCoords,
   trajectoryWidth,
   type Camera,
+  type SpaceBox,
   type SpaceFigure,
   type SpaceTrajectory,
 } from "./space";
@@ -44,41 +37,29 @@ import { readPlotTheme, type PlotTheme } from "./theme";
 interface Props {
   state: StudioState;
   actions: StudioActions;
-  theme: "dark" | "light";
   toolbar?: ReactNode;
 }
 
-/** Radians the box turns per px dragged. */
 const TURN_PER_PX = 0.01;
-/** Radians per arrow key press (5°). */
 const KEY_TURN = Math.PI / 36;
 const KEY_ZOOM = 1.25;
-/** The wheel commits the camera this long after it stops. */
 const WHEEL_SETTLE_MS = 250;
 /**
- * While the box turns on a slow WebGL (one whose frame at rest took over
- * {@link FAST_FRAME_MS}), the trajectories are drawn as 1 px lines through
- * at most this many samples in all (at least 200 each). In software WebGL
- * (SwiftShader, measured) a wide line costs about 20 µs a segment, so 8
- * orbits of 20,000 samples take seconds a frame, and a thin one about 2 µs a
- * vertex over a floor of about 5 ms. The wide lines through every sample
- * are drawn again when the turn ends.
+ * In software WebGL (SwiftShader, measured) a wide line costs about 20 µs a
+ * segment, so 8 orbits of 20,000 samples take seconds a frame, and a thin
+ * one about 2 µs a vertex over a floor of about 5 ms.
  */
 const TURNING_VERTICES = 4000;
-/** Wide lines that drew at rest within this many ms are kept while turning. */
 const FAST_FRAME_MS = 8;
 
 interface Gl {
   renderer: WebGLRenderer;
   scene: Scene;
   camera: OrthographicCamera;
-  /** The trajectories as wide lines (at rest) and as thinned 1 px lines (while turning). */
   wide: Object3D[];
   thin: Object3D[];
   disposables: { dispose(): void }[];
-  /** How long the last frame at rest took to draw, ms. */
   restMs: number;
-  /** The frame that draws the view at rest again. */
   settle: number;
 }
 
@@ -100,7 +81,6 @@ function clearLines(gl: Gl) {
   gl.disposables = [];
 }
 
-/** Every k-th point of `q` (x y z after each other), with the last, so at most about `max` remain. */
 function thinned(q: Float64Array, max: number): Float32Array {
   const n = q.length / 3;
   const k = Math.max(1, Math.ceil(n / max));
@@ -113,7 +93,6 @@ function thinned(q: Float64Array, max: number): Float32Array {
   return out;
 }
 
-/** A trajectory as a wide line in its traj-n colour, from its box coordinates `q`, on a w × h plot. */
 function wideLine(q: Float64Array, tr: SpaceTrajectory, th: PlotTheme, w: number, h: number) {
   const geometry = new LineGeometry();
   geometry.setPositions(Float32Array.from(q));
@@ -145,12 +124,6 @@ function setCamera(gl: Pick<Gl, "camera">, c: Camera, w: number, h: number) {
   cam.updateMatrixWorld();
 }
 
-/**
- * A 3D figure for a PNG: three.js draws the lines offscreen at `scale`
- * pixels per CSS px, the image is drawn into `ctx` (already scaled to CSS
- * px), and the overlay goes on top. Without WebGL the lines are drawn in 2D
- * through the same projection.
- */
 export function renderSpaceFigure(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -168,7 +141,6 @@ export function renderSpaceFigure(
   drawSpaceOverlay(ctx, fig.view, w, h, fig.marks, th);
 }
 
-/** Draws the trajectories with WebGL on a transparent canvas of w·scale × h·scale pixels, then into `ctx`; false without WebGL. */
 function drawWebGlLines(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -209,14 +181,14 @@ function drawWebGlLines(
   }
 }
 
-export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
+export default function SpaceCanvas({ state, actions, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const probeRef = useRef<HTMLSpanElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [gl, setGl] = useState<Gl | null | undefined>(undefined);
-  const [themeVersion, setThemeVersion] = useState(0);
+  const [th, setTh] = useState<PlotTheme>(() => readPlotTheme());
   const live = useRef<Camera | null>(null);
   const drag = useRef<{ x: number; y: number; from: Camera } | null>(null);
   const wheelTimer = useRef(0);
@@ -245,30 +217,24 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
     };
   }, []);
 
-  useEffect(() => {
-    const bump = () => setThemeVersion((v) => v + 1);
-    const mo = new MutationObserver(bump);
+  useLayoutEffect(() => {
+    const read = () => setTh(readPlotTheme(probeRef.current));
+    read();
+    const mo = new MutationObserver(read);
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     let alive = true;
-    document.fonts?.ready.then(() => alive && bump());
+    document.fonts?.ready.then(() => alive && read());
     return () => {
       alive = false;
       mo.disconnect();
     };
   }, []);
 
-  const th = useMemo<PlotTheme>(
-    () => readPlotTheme(probeRef.current),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [theme, themeVersion, size.w > 0],
-  );
-
   const marks = useMemo(() => {
     const p = state.portrait;
     const valid = !!compiled && portraitFits(compiled, state.shapeId, p);
     const colorOf = new Map(state.ics.map((ic) => [ic.id, ic]));
     const selectedIc = state.selection?.kind === "ic" ? state.selection.id : null;
-    // A section's portrait holds crossings, not trajectories.
     const trajectories: SpaceTrajectory[] =
       valid && !isSection(p.meta.view)
         ? p.res.trajectories.flatMap((out, i) => {
@@ -293,14 +259,28 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
     };
   }, [compiled, dim, state.portrait, state.shapeId, state.ics, state.layers.fixedPoints, state.selection, view.xAxis, view.yAxis, view.zAxis]);
 
-  // The lines in box coordinates: rebuilt when the trajectories, the box or the theme change, not when the camera turns.
-  const boxKey = JSON.stringify([view.xAxis, view.yAxis, view.zAxis, view.xRange, view.yRange, view.zRange]);
+  const [ix, iy, iz] = spaceAxes(view);
+  const [x0, x1] = view.xRange;
+  const [y0, y1] = view.yRange;
+  const [z0, z1] = view.zRange;
+  const box = useMemo<Omit<SpaceBox, "camera">>(
+    () => ({
+      xAxis: stateAxis(ix),
+      yAxis: stateAxis(iy),
+      zAxis: stateAxis(iz),
+      xRange: [x0, x1],
+      yRange: [y0, y1],
+      zRange: [z0, z1],
+    }),
+    [ix, iy, iz, x0, x1, y0, y1, z0, z1],
+  );
+
   useLayoutEffect(() => {
     if (!gl) return;
     clearLines(gl);
     const turning = Math.max(200, Math.floor(TURNING_VERTICES / Math.max(1, marks.trajectories.length)));
     for (const tr of marks.trajectories) {
-      const q = trajectoryBoxCoords(view, tr.out, dim);
+      const q = trajectoryBoxCoords(box, tr.out, dim);
       if (q.length < 6) continue;
       const color = th.traj[tr.color % th.traj.length];
       const { line: wide, disposables } = wideLine(q, tr, th, size.w, size.h);
@@ -315,16 +295,12 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
       gl.thin.push(thin);
       gl.disposables.push(...disposables, thinGeometry, thinMaterial);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gl, marks.trajectories, boxKey, th, size.w, size.h, dim]);
+  }, [gl, marks.trajectories, box, th, size.w, size.h, dim]);
 
-  /**
-   * Draws the view seen from `camera`. While turning (`lines` false) WebGL
-   * draws the thinned 1 px lines, and without WebGL no lines at all.
-   */
-  const draw = (camera: Camera, lines: boolean) => {
+  const draw = useCallback((camera: Camera, lines: boolean) => {
     const overlay = overlayRef.current;
-    const { w, h } = size;
+    const w = size.w;
+    const h = size.h;
     if (!overlay || w === 0 || h === 0) return;
     const dpr = window.devicePixelRatio || 1;
     const W = Math.round(w * dpr);
@@ -333,9 +309,8 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
       overlay.width = W;
       overlay.height = H;
     }
-    const v = { ...view, camera };
+    const v = { ...box, camera };
     if (gl) {
-      // Turning keeps the wide lines where they drew fast enough at rest (a GPU), and the thin ones otherwise.
       const wide = lines || gl.restMs < FAST_FRAME_MS;
       for (const o of gl.wide) o.visible = wide;
       for (const o of gl.thin) o.visible = !wide;
@@ -375,19 +350,11 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
       if (lines) drawSpaceLines(ctx, v, w, h, marks.trajectories, dim, th);
     }
     drawSpaceOverlay(ctx, v, w, h, marks.overlay, th);
-  };
-  const drawRef = useRef(draw);
-  drawRef.current = draw;
+  }, [size.w, size.h, gl, box, th, marks, dim]);
 
-  // Redrawn when what it shows changes, not on every render of the studio (a keystroke in an equation).
-  const painted = useRef<unknown[]>([]);
   useLayoutEffect(() => {
-    if (gl === undefined) return;
-    const inputs = [gl, marks, boxKey, th, size.w, size.h, view.camera];
-    if (inputs.length === painted.current.length && inputs.every((v, i) => v === painted.current[i])) return;
-    painted.current = inputs;
-    drawRef.current(live.current ?? view.camera, true);
-  });
+    if (gl !== undefined) draw(live.current ?? view.camera, true);
+  }, [draw, gl, view.camera]);
 
   const commit = (c: Camera) => {
     live.current = null;
@@ -396,30 +363,28 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
   const current = () => live.current ?? view.camera;
   const preview = (c: Camera) => {
     live.current = c;
-    drawRef.current(c, false);
+    draw(c, false);
   };
 
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const c = current();
+    preview(clampCamera({ ...c, zoom: c.zoom * Math.exp(-e.deltaY * 0.0015) }));
+    window.clearTimeout(wheelTimer.current);
+    wheelTimer.current = window.setTimeout(() => live.current && commit(live.current), WHEEL_SETTLE_MS);
+  };
+  const wheelRef = useRef(onWheel);
+  wheelRef.current = onWheel;
   useEffect(() => {
     const el = overlayRef.current;
     if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const c = live.current ?? (latestView.current.camera);
-      preview(clampCamera({ ...c, zoom: c.zoom * Math.exp(-e.deltaY * 0.0015) }));
-      window.clearTimeout(wheelTimer.current);
-      wheelTimer.current = window.setTimeout(() => live.current && commitRef.current(live.current), WHEEL_SETTLE_MS);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
+    const listener = (e: WheelEvent) => wheelRef.current(e);
+    el.addEventListener("wheel", listener, { passive: false });
     return () => {
-      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("wheel", listener);
       window.clearTimeout(wheelTimer.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const latestView = useRef(view);
-  latestView.current = view;
-  const commitRef = useRef(commit);
-  commitRef.current = commit;
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button !== 0) return;
@@ -431,7 +396,6 @@ export default function SpaceCanvas({ state, actions, theme, toolbar }: Props) {
     if (!d) return;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
-    // The box follows the pointer: dragging right turns its front to the right, dragging down tips its top forward.
     preview(clampCamera({ ...d.from, yaw: d.from.yaw + dx * TURN_PER_PX, pitch: d.from.pitch + dy * TURN_PER_PX }));
   };
   const onPointerUp = () => {

@@ -35,7 +35,7 @@ const { makeViewport } = await import("../canvas/viewport.ts");
 const { plotThemeFromTokens } = await import("../export/theme.ts");
 const { readExportOptions, DEFAULT_EXPORT_OPTIONS, sizeError, fileStem, figurePx } = await import("../export/options.ts");
 const { pngRaster, withPhys, pngChunks, physDpi, crc32, pixelsPerMetre, PNG_MAX_PIXELS } = await import("../export/png.ts");
-const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, exportSpaceFigure, icProjectId, SPACE_LATEX_REFUSAL } =
+const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, exportSpaceFigure, icProjectId } =
   await import("../export/job.ts");
 const { figureSvg } = await import("../export/svg.ts");
 const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA } = await import("../state/model.ts");
@@ -775,7 +775,6 @@ test("a 3D view's SVG: one path per trajectory, the three axis names, Strogatz g
     assert.equal(lines.length, 1, `one path in traj-${k + 1}`);
     assert.equal((lines[0][1].match(/[ML]/g) ?? []).length, 200, "every sample");
   }
-  // Each name is a halo (fill="none") and its fill, in the maths font.
   const names = [...svg.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-family="'KaTeX_Main'[^>]*fill="#[^>]*>(.*?)<\/text>/g)].map((m) => ({
     x: Number(m[1]),
     y: Number(m[2]),
@@ -787,11 +786,6 @@ test("a 3D view's SVG: one path per trajectory, the three axis names, Strogatz g
   const filled = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*" fill="${light.fp}"`, "g"))].length;
   assert.equal(ring, 3, "three fixed-point glyphs");
   assert.equal(filled, 2, "two stable (filled), one saddle (open)");
-});
-
-test("the 3D view's LaTeX refusal is the sentence the core returns", () => {
-  const rust = readFileSync(fileURLToPath(new URL("../../src-tauri/src/export_service.rs", import.meta.url)), "utf8");
-  assert.ok(rust.includes(`"${SPACE_LATEX_REFUSAL}"`), "export_service.rs has the same sentence");
 });
 
 test("buildCsvRequest: the screen's runs, the CSV's own samples, the chosen initial conditions", () => {

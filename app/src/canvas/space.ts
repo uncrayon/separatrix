@@ -1,20 +1,3 @@
-// The 3D view of a flow with three or more states (Strogatz ch. 9's Lorenz
-// pictures): a camera that orbits the box of the three state ranges, the
-// orthographic projection of that box, and the 2D drawing every surface
-// shares (the overlay on screen, the fallback without WebGL, exports).
-//
-// The box is normalised to [−1, 1]³: box coordinate k of a state vector p is
-// (p[axis k] − mid_k) / half_k. The camera turns about the box's third axis
-// (yaw) and tilts towards it (pitch); with both 0 the first axis points
-// right, the third up and the second away from the viewer. three.js draws
-// only the trajectory lines, through an OrthographicCamera set from
-// {@link threeCamera}, so the overlay drawn from {@link spaceProjector} sits
-// exactly on them.
-//
-// The camera itself (its limits and default) is state, in state/model.ts,
-// whose unit tests run in plain Node; it is re-exported here. Node's unit
-// tests import this module too, so it imports no three.js.
-
 import type { FixedPointOut, TrajectoryOut } from "../api/types";
 import type { Camera, InitialCondition, SpaceView } from "../state/model";
 import { drawFixedPoint, fixedPointGlyph, type DrawContext } from "./draw";
@@ -27,22 +10,17 @@ export { clampCamera, DEFAULT_CAMERA, PITCH_LIMIT, ZOOM_MAX, ZOOM_MIN, type Came
 
 export type Vec3 = [number, number, number];
 
-/** What the projection needs of a 3D view. */
 export type SpaceBox = Pick<SpaceView, "xAxis" | "yAxis" | "zAxis" | "xRange" | "yRange" | "zRange" | "camera">;
 
-/** The camera's axes in box coordinates and the screen it draws on. */
 export interface SpaceFrame {
   right: Vec3;
   up: Vec3;
-  /** From the box centre towards the viewer. */
   toward: Vec3;
-  /** Pixels per box unit. */
   scale: number;
   w: number;
   h: number;
 }
 
-/** At zoom 1 a box unit is this fraction of the plot's shorter side, so the box (diagonal 2√3) fits at any angle. */
 export const BOX_FILL = 0.27;
 
 export function spaceFrame(c: Camera, w: number, h: number): SpaceFrame {
@@ -50,7 +28,6 @@ export function spaceFrame(c: Camera, w: number, h: number): SpaceFrame {
   const sy = Math.sin(c.yaw);
   const cp = Math.cos(c.pitch);
   const sp = Math.sin(c.pitch);
-  // A larger yaw carries the side of the box facing the viewer to the right.
   return {
     right: [cy, -sy, 0],
     up: [sp * sy, sp * cy, cp],
@@ -61,14 +38,12 @@ export function spaceFrame(c: Camera, w: number, h: number): SpaceFrame {
   };
 }
 
-/** The state indices on the box's three axes. */
 export function spaceAxes(v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">): Vec3 {
   const at = (a: SpaceView["xAxis"]) => (a.kind === "state" ? a.index : 0);
   return [at(v.xAxis), at(v.yAxis), at(v.zAxis)];
 }
 
-/** A state vector's box coordinates. */
-export function boxCoords(v: SpaceBox): (p: readonly number[]) => Vec3 {
+export function boxCoords(v: Omit<SpaceBox, "camera">): (p: readonly number[]) => Vec3 {
   const [i, j, k] = spaceAxes(v);
   const mid = (r: [number, number]) => (r[0] + r[1]) / 2;
   const half = (r: [number, number]) => (r[1] - r[0]) / 2;
@@ -79,16 +54,10 @@ export function boxCoords(v: SpaceBox): (p: readonly number[]) => Vec3 {
 
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-/**
- * A box point on screen: CSS px from the plot's top left, and its depth as
- * three.js's normalised device z (−1 nearest, +1 farthest; the box spans
- * about ±0.87).
- */
 export function projectBox(f: SpaceFrame, q: Vec3): [sx: number, sy: number, depth: number] {
   return [f.w / 2 + f.scale * dot(f.right, q), f.h / 2 - f.scale * dot(f.up, q), -dot(f.toward, q) / 2];
 }
 
-/** The orthographic projection of a state vector in the view `v` on a w × h plot. */
 export function spaceProjector(
   v: SpaceBox,
   w: number,
@@ -99,14 +68,8 @@ export function spaceProjector(
   return (p) => projectBox(f, box(p));
 }
 
-/** How far the three.js camera sits from the box centre; the near and far planes are 2 either side of it. */
 export const CAMERA_DISTANCE = 4;
 
-/**
- * The settings of a three.js OrthographicCamera that projects box
- * coordinates exactly as {@link projectBox} does: set `position` and `up`,
- * look at the origin, then set the frustum and update its projection.
- */
 export function threeCamera(c: Camera, w: number, h: number) {
   const f = spaceFrame(c, w, h);
   const d = CAMERA_DISTANCE;
@@ -122,7 +85,6 @@ export function threeCamera(c: Camera, w: number, h: number) {
   };
 }
 
-/** A trajectory as the 3D view draws it. */
 export interface SpaceTrajectory {
   out: TrajectoryOut;
   color: number;
@@ -130,15 +92,10 @@ export interface SpaceTrajectory {
   selected: boolean;
 }
 
-/** Line width of a trajectory at line scale 1, CSS px (2.25 when selected), as in the phase plane. */
 export const trajectoryWidth = (t: Pick<SpaceTrajectory, "selected">, th: Pick<PlotTheme, "lineScale">) =>
   (t.selected ? 2.25 : 1.5) * th.lineScale;
 
-/**
- * Box coordinates of a trajectory's samples, x y z after each other, up to
- * the first sample that isn't finite (what three.js draws).
- */
-export function trajectoryBoxCoords(v: SpaceBox, out: TrajectoryOut, dim: number): Float64Array {
+export function trajectoryBoxCoords(v: Omit<SpaceBox, "camera">, out: TrajectoryOut, dim: number): Float64Array {
   const box = boxCoords(v);
   const n = Math.min(out.t.length, Math.floor(out.x.length / Math.max(1, dim)));
   const pts = new Float64Array(n * 3);
@@ -158,7 +115,6 @@ export function trajectoryBoxCoords(v: SpaceBox, out: TrajectoryOut, dim: number
 const CLAMP = 1e5;
 const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
 
-/** The trajectories projected and stroked in their traj-n colours (the drawing without WebGL). */
 export function drawSpaceLines(
   ctx: DrawContext,
   v: SpaceBox,
@@ -188,20 +144,16 @@ export function drawSpaceLines(
   ctx.globalAlpha = 1;
 }
 
-/** What the overlay draws besides the box: names, fixed points, start points. */
 export interface SpaceMarks {
   dim: number;
-  /** The three axis names, in LaTeX. */
   names: [string, string, string];
   fixedPoints: readonly FixedPointOut[];
   ics: readonly InitialCondition[];
   selectedFp?: number | null;
   selectedIc?: number | null;
-  /** The axis names' font; the screen's by default. */
   fonts?: FigureFonts;
 }
 
-/** The three axis names of a 3D view, in LaTeX. */
 export function spaceNames(
   v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">,
   states: readonly { latex: string }[],
@@ -210,14 +162,12 @@ export function spaceNames(
   return [name(v.xAxis), name(v.yAxis), name(v.zAxis)];
 }
 
-/** What a 3D figure draws: the box seen from its camera, the trajectories and the overlay's marks. */
 export interface SpaceFigure {
   view: SpaceBox;
   trajectories: readonly SpaceTrajectory[];
   marks: SpaceMarks;
 }
 
-/** The 12 edges of the box: for each axis k, the four edges along it, by the other two coordinates. */
 function edge(k: number, a: number, b: number): [Vec3, Vec3] {
   const lo: Vec3 = [0, 0, 0];
   const hi: Vec3 = [0, 0, 0];
@@ -236,25 +186,17 @@ const SIGNS: [number, number][] = [
   [1, 1],
 ];
 
-/**
- * The edge that carries axis k's ticks and name: for the first two axes the
- * floor edge nearest the viewer, for the third the vertical edge furthest
- * left on screen.
- */
 function labelEdge(f: SpaceFrame, k: number): [Vec3, Vec3] {
-  // For the first two axes the second free coordinate is the third axis: b = −1 is the floor.
   const candidates = SIGNS.filter(([, b]) => k === 2 || b === -1).map(([a, b]) => edge(k, a, b));
   const mid = (e: [Vec3, Vec3]): Vec3 => [(e[0][0] + e[1][0]) / 2, (e[0][1] + e[1][1]) / 2, (e[0][2] + e[1][2]) / 2];
   const score = (e: [Vec3, Vec3]) => (k === 2 ? projectBox(f, mid(e))[0] : projectBox(f, mid(e))[2]);
   return candidates.reduce((best, e) => (score(e) < score(best) ? e : best));
 }
 
-/** Tick length at glyph scale 1, and the gap from a tick to its label, px. */
 const TICK = 4;
 const LABEL_GAP = 12;
 const NAME_GAP = 34;
 
-/** Axis k's label edge on screen, and the unit direction its ticks, labels and name point (away from the box centre). */
 function axisLayout(f: SpaceFrame, k: number) {
   const [lo, hi] = labelEdge(f, k);
   const p0 = projectBox(f, lo);
@@ -269,15 +211,8 @@ function axisLayout(f: SpaceFrame, k: number) {
   return { p0, p1, mx, my, ox, oy };
 }
 
-/** Room kept between an axis name's or an end tick label's centre and the figure's edge, px. */
 const FIT_MARGIN = 12;
 
-/**
- * The camera zoomed out, if need be, so the axis names and the tick labels
- * at the ends of their edges lie inside a w × h figure: they sit a fixed
- * number of px outside the box, which scales with the figure, so a small
- * figure would cut them off.
- */
 export function fitCamera(v: SpaceBox, w: number, h: number, glyphScale = 1): Camera {
   const tick = TICK * glyphScale;
   const inside = ([x, y]: [number, number]) =>
@@ -296,11 +231,6 @@ export function fitCamera(v: SpaceBox, w: number, h: number, glyphScale = 1): Ca
   return c;
 }
 
-/**
- * The axis box with its edges, ticks and tick labels, the three axis names,
- * the fixed points (Strogatz's glyphs, farthest first) and the start points.
- * Draws no background, so it can lie over the WebGL lines.
- */
 export function drawSpaceOverlay(
   ctx: DrawContext,
   v: SpaceBox,
@@ -406,11 +336,6 @@ export function drawSpaceOverlay(
   }
 }
 
-/**
- * A 3D figure drawn in 2D, on a canvas or the SVG recorder: the background
- * (unless `background` is false), the projected lines and the overlay. It is
- * the 3D view without WebGL, the SVG export and the export preview.
- */
 export function drawSpaceFigure(
   ctx: DrawContext,
   w: number,

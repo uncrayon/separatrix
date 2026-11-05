@@ -87,7 +87,6 @@
   scrollbar-color: var(--line-strong) transparent;
 }
 
-/* "Chapter 6  Phase plane": the chapter in ink, Strogatz's title after it in ink-2. */
 .gallery-chapter-head {
   display: flex;
   align-items: baseline;

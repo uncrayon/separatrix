@@ -1,8 +1,3 @@
-// The 3D view in the browser preview (mocked core): Lorenz in WebGL turns
-// under a drag and labels its axes, the Canvas2D fallback when WebGL is
-// unavailable, the reason Van der Pol has no 3D view, the time a frame of
-// dragging takes with 8 trajectories of 20,000 samples, and the 3D view's
-// PNG export (with and without WebGL) and its refused LaTeX figure.
 // CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");
@@ -11,7 +6,6 @@ const { chromium } = require("playwright");
 
 const BASE = process.env.UI_URL || "http://localhost:5612/";
 
-/** Records every string the 2D canvases fill, so the axis names can be read back. */
 function recordText() {
   window.__filled = [];
   const fill = CanvasRenderingContext2D.prototype.fillText;
@@ -21,7 +15,6 @@ function recordText() {
   };
 }
 
-/** A browser without WebGL: every WebGL context request fails, as on a machine without a GPU driver. */
 function noWebGl() {
   const get = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function (type, ...rest) {
@@ -75,10 +68,8 @@ async function lorenz3d(page) {
   await page.waitForTimeout(400);
 }
 
-/** The plot's pixels (a PNG of the plot well). */
 const shot = (page) => page.locator(".space-wrap").screenshot();
 
-/** How many bytes two same-size PNG screenshots differ in (the PNGs differ where the pixels do). */
 function differs(a, b) {
   let n = Math.abs(a.length - b.length);
   for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) n++;
@@ -119,7 +110,6 @@ test("Lorenz in 3D: a 100 px drag turns the box, the axes are named x, y and z, 
     assert.ok(differs(before, after) > 1000, "the drawing changed");
     assert.equal((await last(page)).req.requestId, id, "no new portrait for a turn of the camera");
 
-    // Arrow keys turn it too; 0 puts it back.
     await overlay(page).focus();
     await page.keyboard.press("ArrowLeft");
     await page.waitForTimeout(150);
@@ -140,7 +130,6 @@ test("without WebGL the 3D view says so and draws the lines on the 2D canvas", a
     await lorenz3d(page);
     await page.getByText("This 3D view is drawn without WebGL, so the trajectories are redrawn when you stop dragging.").waitFor();
     assert.equal(await page.locator("canvas.space-gl").isVisible(), false);
-    // Pixels in the first trajectory colour: the lines are on the 2D canvas.
     const traj = await overlay(page).evaluate((el) => {
       const css = getComputedStyle(document.documentElement);
       const probe = document.createElement("canvas").getContext("2d");
@@ -171,7 +160,6 @@ test("without WebGL the 3D view says so and draws the lines on the 2D canvas", a
 
 const REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 
-/** Saves the 3D view as a PNG through the export dialog; its size, pHYs and how much of it is not background. */
 async function exportPng(page) {
   await page.getByRole("button", { name: /^Export/ }).first().click();
   await page.waitForSelector(".export-dialog[role=dialog]");
@@ -204,7 +192,6 @@ async function exportPng(page) {
     ctx.drawImage(img, 0, 0);
     const px = ctx.getImageData(0, 0, c.width, c.height).data;
     const [r, g, bl] = px;
-    // The projector palette's traj-1, #0072b2.
     const traj = [0x00, 0x72, 0xb2];
     let ink = 0;
     let line = 0;
@@ -291,7 +278,6 @@ test("a frame of dragging Lorenz in 3D with 8 trajectories of 20,000 samples tak
   const { browser, page } = await open();
   try {
     await pick(page, "Lorenz equations");
-    // Seven more start points, placed on the phase plane with the Add trajectory tool.
     await page.locator(".plot-toolbar").getByRole("button", { name: "Add trajectory" }).click();
     const plot = page.locator("canvas.plot-canvas");
     const box = await plot.boundingBox();

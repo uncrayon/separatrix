@@ -1030,10 +1030,6 @@ fn a_cobweb_view_that_does_not_fit_falls_back_to_the_default_view() {
     assert!(parse(&v.to_string()).unwrap().warnings.is_empty());
 }
 
-// ---------------------------------------------------------------------
-// Section views (`views[].kind = "section"`, `views[].section`).
-// ---------------------------------------------------------------------
-
 #[test]
 fn a_section_view_is_read_and_written_back() {
     let opened = open("section-view.sepx");
@@ -1053,7 +1049,6 @@ fn a_section_view_is_read_and_written_back() {
     assert_eq!((s.period, s.phase), (None, None));
     assert_eq!(opened.project.solver.transient, Some(10));
     let text = to_json(&opened.project, APP).unwrap();
-    // `section` right after `kind`, its keys in order and nothing it lacks.
     assert!(text.contains(
         "\"kind\": \"section\",\n      \"section\": {\n        \"kind\": \"plane\",\n        \"state\": \"z\",\n        \"value\": 27.0,\n        \"direction\": \"rising\"\n      },\n      \"x_axis\""
     ));
@@ -1145,7 +1140,6 @@ fn a_section_view_that_does_not_fit_falls_back_to_the_default_view() {
     for (name, edit) in misfits {
         assert_eq!(warns(edit), [SECTION_MISFIT], "{name}");
     }
-    // Kept as written: a newer kind survives a save.
     let mut v = base.clone();
     v["views"][0]["section"]["kind"] = json!("hyperbola");
     v["views"][0]["section"]["focus"] = json!([1, 2]);
@@ -1162,10 +1156,6 @@ fn a_section_view_that_does_not_fit_falls_back_to_the_default_view() {
         .to_string()
         .contains("views[0].section.value"));
 }
-
-// ---------------------------------------------------------------------
-// 3D views (`views[].kind = "space"`, `z_axis`, `z_range`, `camera`).
-// ---------------------------------------------------------------------
 
 #[test]
 fn a_space_view_is_read_and_written_back() {
@@ -1185,14 +1175,12 @@ fn a_space_view_is_read_and_written_back() {
         )
     );
     let text = to_json(&opened.project, APP).unwrap();
-    // Each z key right after its y key, and the camera after the ranges.
     assert!(text.contains(
         "\"y_axis\": {\n        \"kind\": \"state\",\n        \"name\": \"y\"\n      },\n      \"z_axis\": {"
     ));
     assert!(text.contains(
         "\"z_range\": [\n        0.0,\n        50.0\n      ],\n      \"camera\": {\n        \"yaw\": -0.7853981633974483,"
     ));
-    // A camera missing a key gets its default; a newer key is kept.
     let mut v = value(&fixture("space-view.sepx"));
     v["views"][0]["camera"] = json!({ "zoom": 2.5, "roll": 0.1 });
     let opened = parse(&v.to_string()).unwrap();
@@ -1251,7 +1239,6 @@ fn a_space_view_that_does_not_fit_falls_back_to_the_default_view() {
         warns(&|v| v["views"][0]["z_range"] = json!([5.0, 5.0])),
         ["The z range of the view \u{201c}main\u{201d} (5 to 5) is empty, so the default view is used."]
     );
-    // A plane view keeps no z keys, and ignores any it was given.
     assert!(warns(&|v| {
         v["views"][0].as_object_mut().unwrap().remove("kind");
         v["views"][0]["z_range"] = json!([5.0, 5.0]);

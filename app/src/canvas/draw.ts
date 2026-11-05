@@ -83,11 +83,6 @@ export interface Scene {
    * and each orbit as a staircase instead of dots. Absent or null otherwise.
    */
   cobweb?: { graph: [number, number][][] } | null;
-  /**
-   * A flow's Poincaré section: each trajectory is its crossings, drawn as
-   * dots like a map's iterates. A return map (both axes one state) plots
-   * successive pairs (x_k, x_{k+1}) and the diagonal. Absent or null otherwise.
-   */
   section?: { returnMap: boolean } | null;
 }
 
@@ -134,7 +129,6 @@ export function trajectoryPx(vp: Viewport, scene: SceneAxes, out: TrajectoryOut)
   return pts.subarray(0, m);
 }
 
-/** The pairs (v_k, v_{k+1}) of one state's successive section crossings, in px, up to the first non-finite value. */
 export function returnMapPx(vp: Viewport, out: TrajectoryOut, dim: number, index: number): Float64Array {
   const n = Math.max(0, Math.min(out.t.length, Math.floor(out.x.length / Math.max(1, dim))) - 1);
   const pts = new Float64Array(n * 2);
@@ -479,7 +473,6 @@ function drawTrajectories(
   const rank = (t: SceneTrajectory) =>
     (scene.selectedIc === t.meta.icId ? 2 : 0) + (t.meta.direction === "forward" ? 1 : 0);
   const ordered = [...scene.trajectories].sort((a, b) => rank(a) - rank(b));
-  // A section's crossings are iterates of its Poincaré map: dots, as a map's are.
   const dots = scene.kind === "map" || !!scene.section;
   const timeSeries = scene.xAxis.kind === "time" || scene.yAxis.kind === "time";
   const dense = scene.dim >= 3;
@@ -541,7 +534,6 @@ function drawTrajectories(
   ctx.globalAlpha = 1;
 }
 
-/** The diagonal y = x across the view: a thin reference line in the axis colour, never dashed (dashes are nullclines). */
 function drawDiagonal(ctx: DrawContext, vp: Viewport, th: PlotTheme) {
   ctx.setLineDash([]);
   const diag = diagonalSegment(vp.xRange, vp.yRange);

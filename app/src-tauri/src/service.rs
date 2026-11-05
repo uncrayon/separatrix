@@ -348,9 +348,7 @@ fn section_fits(f: &dyn VectorField, section: &SectionSpec) -> Result<(), String
     Ok(())
 }
 
-/// The core's section for a trajectory from `t0`: its stroboscopic phase
-/// counts from `t0`, the request's from `t = 0`.
-fn to_section(spec: SectionSpec, t0: f64) -> dyn_solve::Section {
+fn to_section(spec: SectionSpec) -> dyn_solve::Section {
     match spec {
         SectionSpec::Plane {
             state,
@@ -361,10 +359,9 @@ fn to_section(spec: SectionSpec, t0: f64) -> dyn_solve::Section {
             value,
             direction,
         },
-        SectionSpec::Stroboscopic { period, phase } => dyn_solve::Section::Stroboscopic {
-            period,
-            phase: phase - t0,
-        },
+        SectionSpec::Stroboscopic { period, phase } => {
+            dyn_solve::Section::Stroboscopic { period, phase }
+        }
     }
 }
 
@@ -378,8 +375,6 @@ fn to_axis(a: AxisRef) -> Axis {
 /// Half-width searched around a hidden state when no state is on an axis.
 const HIDDEN_STATE_FALLBACK_HALF_SPAN: f64 = 10.0;
 
-/// The axes in view with their ranges: the horizontal, the vertical and, in
-/// a 3D view, the third.
 fn visible_axes(req: &PortraitRequest) -> Vec<(AxisRef, (f64, f64))> {
     let mut axes = vec![(req.x_axis, req.x_range), (req.y_axis, req.y_range)];
     axes.extend(req.z_axis.zip(req.z_range));
@@ -483,7 +478,7 @@ fn trajectory(
             &tr.x0,
             tr.t1,
             &to_solver(&req.solver),
-            &to_section(spec, tr.t0),
+            &to_section(spec),
             req.transient.unwrap_or(0),
             MAX_SECTION_POINTS,
         )
@@ -536,7 +531,6 @@ mod tests {
         y: String,
         x_range: (f64, f64),
         y_range: (f64, f64),
-        /// A 3D view's third axis and its range (`kind` `"space"`).
         #[serde(default)]
         z: Option<String>,
         #[serde(default)]
@@ -1015,7 +1009,6 @@ mod tests {
                 .any(|fp| fp.x.iter().zip(x).all(|(a, b)| (a - b).abs() < 1e-6))
         };
 
-        // Without the third axis, z would be searched over the slice 0 ± 25.
         assert_eq!(fixed_point_search_box(&req, 3)[2], (-25.0, 25.0));
         req.z_axis = Some(AxisRef::State { index: 2 });
         req.z_range = Some((0.0, 50.0));
@@ -1195,7 +1188,6 @@ mod tests {
             phase: 0.75,
         });
         let out = compute_portrait(&sys, &req).unwrap();
-        // Samples at t = 0.75 + 2k, from each start on: 0.75 itself only for the orbit that starts there.
         let firsts: Vec<f64> = out.trajectories.iter().map(|tr| tr.t[0]).collect();
         assert_eq!(firsts, [0.75, 2.75, 0.75]);
         let counts: Vec<usize> = out.trajectories.iter().map(|tr| tr.t.len()).collect();
@@ -1242,7 +1234,6 @@ mod tests {
         }
     }
 
-    /// `cargo test --release -p separatrix -- --ignored --nocapture section_costs`
     #[test]
     #[ignore = "timing; run in release"]
     fn section_costs_about_as_much_as_plain_integration() {
