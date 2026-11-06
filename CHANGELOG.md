@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Pseudo-arclength continuation in the core (`dyn_analysis::continue_branch`), modelled on
+  BifurcationKit.jl (MIT). It follows a branch of equilibria of a flow, or of fixed points of `f^k`
+  for a map, as one parameter varies, through folds. Each step predicts along the tangent (first
+  step) or the secant and corrects by Newton's method on the bordered system with the exact
+  Jacobians. The step grows after fast corrections and halves after slow or failed ones, or when
+  successive tangents turn by more than the angle limit, so the branch does not jump. The last
+  point of a branch that leaves the parameter range lies exactly on its edge. Each point carries
+  its eigenvalues (of `J`, or of `D f^k` for a map), its unstable count and its stability. Not yet
+  reachable from the app.
 - Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
   view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
   as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,

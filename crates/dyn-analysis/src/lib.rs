@@ -17,6 +17,10 @@
 //! - [`orbit_diagram`]: the orbit (bifurcation) diagram of a map over a
 //!   parameter range, and [`period_doublings`]: the period-doubling points
 //!   of a one-dimensional map located from it;
+//! - [`continue_branch`]: a branch of equilibria of a flow, or of fixed
+//!   points of `f^k` for a map, followed through folds as one parameter
+//!   varies by pseudo-arclength continuation, with the eigenvalues and
+//!   stability of each point;
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -38,6 +42,7 @@
 #![warn(missing_docs)]
 
 mod classify;
+mod continuation;
 mod eigvec;
 mod fixed;
 mod graph;
@@ -49,6 +54,9 @@ mod plane;
 mod slope;
 
 pub use classify::{classify, classify_jacobian, Classification, ABS_TOL, REL_TOL};
+pub use continuation::{
+    continue_branch, Branch, BranchEnd, BranchPoint, ContinuationError, ContinuationOptions,
+};
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
 pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
