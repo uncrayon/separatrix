@@ -28,6 +28,7 @@ import {
   selectedFixedPointIndex,
   stateExtent,
   type View,
+  type PlotView,
 } from "../state/model";
 import { cobwebPx, diagonalSegment, orbitValues, pathsDist2, segDist2 } from "./cobweb";
 import { NumberField, Slider } from "../components/controls";
@@ -51,6 +52,7 @@ import { plotViewport, sx, sy, toPlot, unitsPerPx, zoomRange } from "./viewport"
 
 interface Props {
   state: StudioState;
+  view: PlotView;
   actions: StudioActions;
   theme: "dark" | "light";
   toolbar?: ReactNode;
@@ -79,7 +81,7 @@ export function dotted(latex: string): string {
 }
 
 
-export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
+export function PortraitCanvas({ state, view, actions, theme, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const probeRef = useRef<HTMLSpanElement>(null);
@@ -102,7 +104,7 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const tool = useCanvasTool();
   const showEigen = useShowEigenvectors();
 
-  const { compiled, view } = state;
+  const { compiled } = state;
   const cobweb = isCobweb(view);
   const section = isSection(view);
   const returnMap = isReturnMap(view);

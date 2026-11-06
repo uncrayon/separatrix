@@ -83,15 +83,16 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` \| `"lyapunov"` \| `"orbit"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section, a 3D, a Lyapunov or an orbit view, after `id`. |
+| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` \| `"lyapunov"` \| `"orbit"` \| `"continuation"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section, a 3D, a Lyapunov, an orbit or a continuation view, after `id`. |
 | `section` | object | Only in a `"section"` view, after `kind`: the Poincaré section (below). |
 | `z_axis` | `{ "kind": "state", "name": "z" }` | Only in a `"space"` view, after `y_axis`: the third state of the 3D view. |
-| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` \| `{ "kind": "exponent" }` \| `{ "kind": "param", "name": "r" }` | Axes are stored by state (or parameter) name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. `exponent` is λ, the `y_axis` of a Lyapunov view, whose `x_axis` is time. `param` is a parameter by its id, the `x_axis` of an orbit diagram, whose `y_axis` is a state. |
+| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` \| `{ "kind": "exponent" }` \| `{ "kind": "param", "name": "r" }` \| `{ "kind": "norm" }` | Axes are stored by state (or parameter) name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. `exponent` is λ, the `y_axis` of a Lyapunov view, whose `x_axis` is time. `param` is a parameter by its id, the `x_axis` of an orbit diagram, whose `y_axis` is a state, or of a branch plot. `norm` is ‖x‖₂, the Euclidean norm of the state, a `y_axis` of a branch plot. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
 | `z_range` | `[lo, hi]` | Only in a `"space"` view, after `y_range`: the range of `z_axis`. |
 | `camera` | `{ "yaw": number, "pitch": number, "zoom": number }` | Only in a `"space"` view, after `z_range`: where the box is seen from (below). |
 | `lyapunov` | `{ "transient", "total", "interval", "blocks" }` | Only in a `"lyapunov"` view, after the ranges: the run whose running estimates it shows (below). |
 | `orbit` | `{ "transient", "kept" }` | Only in an `"orbit"` view, after the ranges: the iterates dropped and drawn in every column of the orbit diagram (below). |
+| `continuation` | `{ "range", "ds", "max_points", "seeds" }` | Only in a `"continuation"` view, after the ranges: the requests the branch plot replays (below). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
 
@@ -209,6 +210,58 @@ keeps its value from `system.params`; the swept one's `value` is where the plot'
 The diagram starts every column at the selected start point, else the first. Unknown keys inside
 `orbit` are kept.
 
+A continuation view (a branch plot, Strogatz §3.4 and §10.2) of the logistic map: `r` across, `x` up,
+the fixed point `x* = 1 − 1/r` followed forward from `r = 2.8`, and the 2-, 4- and 8-cycles
+followed from the flips at `r1 = 3`, `r2 = 1 + √6` and `r3 ≈ 3.544090`
+(`crates/project/tests/fixtures/continuation-view.sepx`, abridged):
+
+```json
+{
+  "id": "main",
+  "kind": "continuation",
+  "x_axis": { "kind": "param", "name": "r" },
+  "y_axis": { "kind": "state", "name": "x" },
+  "x_range": [2.8, 3.6],
+  "y_range": [0.3, 1.0],
+  "continuation": {
+    "range": [2.8, 3.57],
+    "ds": 0.05,
+    "max_points": 1000,
+    "seeds": [
+      { "from": "point", "x": [0.6428571428571428], "param": 2.8, "period": 1, "direction": "forward" },
+      { "from": "switch", "x": [0.6666666666666541], "param": 2.9999999999998868, "period": 1,
+        "direction": "both", "kind": "flip", "tangent": [0.11043152607485479, 0.993883734673618] },
+      "…": "the flips at r2 (period 2) and r3 (period 4)"
+    ]
+  },
+  "…": "slice and layers as in any view"
+}
+```
+
+| `continuation` key | Type | Meaning |
+|---|---|---|
+| `range` | `[lo, hi]` | The interval of the `x_axis` parameter the branches stay in. |
+| `ds` | number | The first step in arclength. |
+| `max_points` | integer | The most points of a branch in each direction. |
+| `seeds` | list | One per branch, in the order they were followed (below). |
+
+| Seed key | Type | Meaning |
+|---|---|---|
+| `from` | `"point"` \| `"switch"` | A fixed point, which Newton's method corrects first; or a switch onto the other branch at a special point. |
+| `x` | list of numbers | One value per entry of `system.states`, in that order. For a switch, the special point's state (the cycle's first point for a map). |
+| `param` | number | The value of the `x_axis` parameter there. Every other parameter keeps its value from `system.params`. |
+| `period` | integer | `k` of `f^k` for a map, 1 for a flow. Absent = 1. |
+| `direction` | `"forward"` \| `"backward"` \| `"both"` | Which way the branch is followed from the seed: `r` increasing, decreasing, or both ways joined into one branch. |
+| `kind` | `"branchPoint"` \| `"flip"` | A switch only: the special point switched at. At a flip of `f^k` the new branch is the `2k`-cycle. |
+| `tangent` | list of numbers | A switch only: the unit tangent `(ẋ, ṗ)` of the old branch at the special point, `states + 1` values. |
+
+The seeds are saved, never the computed branches, so the file stays small and opening it replays
+the same requests; a switch seed holds all the core needs, so the branch it came from is not
+needed. A seed of the primary view whose `x` doesn't have one value per state, or a switch seed
+with no `tangent` or one of the wrong length, is left out with "The saved continuation's branch 2
+doesn't fit this system, so it was left out." (the seed's position, from 1). Unknown keys inside
+`continuation` and each seed are kept.
+
 | `section` key | Type | Meaning |
 |---|---|---|
 | `kind` | `"plane"` \| `"stroboscopic"` | A plane `x_i = c`, or the state once per forcing period. |
@@ -254,6 +307,12 @@ diagrams) opens an orbit diagram with its view-kind warning, "The saved cobweb v
 this system, so the default view is shown.", shows its default view and keeps `kind` and `orbit`
 as unknown keys. Its studio drops `kind` when it saves from its default view and writes its own
 axes; this build reads the plane view those axes say and drops the stale `orbit` on its next save.
+
+`continuation` and the axis kind `norm` are additive in the same way, so `format_version` and
+`min_reader_version` stay 1 and no migration step is needed. The 0.2.0 reader that knows orbit
+diagrams (trunk before branch plots) opens a continuation view with its view-kind warning, "The
+saved cobweb view doesn't fit this system, so the default view is shown.", shows its default view
+and keeps `kind` and `continuation` as unknown keys.
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -343,6 +402,7 @@ Everything else is repaired on open, with one warning per repair:
 | A primary `"space"` view of a map or of a system with fewer than 3 states, with no `z_axis` or `z_range`, or whose three axes are not three different states | "The saved 3D view doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `z_axis` naming a state the system lacks, or an empty `z_range`, gets the axis and range warnings of `x` and `y` (with "z"). The view is kept as written. |
 | A primary `"lyapunov"` view with no `lyapunov` or a key of it missing, axes other than `time` across and `exponent` up, a negative `transient`, a `total` or `interval` that isn't above 0 (or isn't a whole number for a map), or `blocks` outside 2 to the number of QR steps | "The saved Lyapunov view can't be run as saved, so the default view is shown." The app gives the same sentence when it judges the run itself, and also when the run would take more than 10⁷ QR steps. An `exponent` axis outside a Lyapunov view is an axis kind the view doesn't know. The view is kept as written. |
 | A primary `"orbit"` view of a flow, with no `orbit` or a key of it missing, a `transient` above 100,000, a `kept` outside 1–976, an `x_axis` other than a `param` the system has, or a `y_axis` other than a state it has | "The saved orbit diagram doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `param` axis outside an orbit diagram is an axis kind the view doesn't know. A `transient` or `kept` that isn't a whole number makes the file unreadable, as any wrongly typed key does. The view is kept as written. |
+| A seed of the primary `"continuation"` view whose `x` doesn't have one value per state (only when `states` is present), or a switch seed with no `tangent` or a `tangent` without `x` + 1 values | "The saved continuation's branch N doesn't fit this system, so it was left out." The seed is dropped; the other seeds are kept in order. A `param` axis naming a parameter the system lacks gets the axis warning ("uses the parameter mu, which the system doesn't have"). |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |

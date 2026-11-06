@@ -114,7 +114,7 @@ test("the camera stays within its limits", () => {
 });
 
 test("a flow of three states or more offers the 3D view; others say why not", () => {
-  assert.deepEqual(model.viewChoicesFor(lorenz), ["phase", "series", "section", "space", "lyapunov"]);
+  assert.deepEqual(model.viewChoicesFor(lorenz), ["phase", "series", "section", "space", "lyapunov", "continuation"]);
   assert.equal(model.VIEW_CHOICE_SHORT.space, "3D");
   assert.deepEqual(model.spaceAvailability(lorenz), { ok: true });
   assert.deepEqual(model.viewChoiceAvailability(flow(["x", "y"]), "Van der Pol oscillator").space, {

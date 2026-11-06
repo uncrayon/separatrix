@@ -7,7 +7,7 @@
 use dyn_expr::InputFormat;
 
 use crate::latex_system::header_comments;
-use crate::latex_util::{comment, escape_text, packages_comment, slug};
+use crate::latex_util::{comment, escape_text, packages_comment, title_slug};
 use crate::model::{FixedPoint, Labels, SystemKind};
 use crate::num;
 use crate::words::{classification_title, join_and};
@@ -117,7 +117,7 @@ pub fn table(input: &FixedPointsInput) -> String {
     let dim = input.labels.states.len();
     let is_map = input.kind == SystemKind::Map;
     let two_d_flow = !is_map && dim == 2;
-    let title_slug = slug(input.title, "system");
+    let title_slug = title_slug(input.title);
     let params: Vec<(String, f64)> = input
         .labels
         .params

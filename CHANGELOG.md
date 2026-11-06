@@ -4,6 +4,96 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Branch plot exports. In the Branch view, Export… offers LaTeX, SVG, PNG and CSV. The LaTeX
+  Figure is a pgfplots branch plot with the screen's frame: each branch in its trajectory colour,
+  stable stretches solid and unstable ones dashed, and each special point as a fixed-point glyph
+  labelled LP, H, BP, PD or NS. The new Special points content is a booktabs table with siunitx
+  `\num{}` cells: the type, the parameter to six decimals, the state, the period for a map, ω or θ,
+  and ℓ₁, each bifurcation once (Sel'kov's Hopf points at `\num{0.346410}` and `\num{0.848528}`).
+  The CSV has `branch,period,point,<param>,<states>,stable,unstable` with a `.meta.json`, and the
+  special points in `<stem>-special.csv`. PNG and SVG draw the screen's branches. The core follows
+  the view's own branch requests again for the LaTeX and the CSV, and caches the last run. New
+  commands are `export_continuation_latex`, `save_continuation_latex` and `export_continuation_csv`.
+  `CsvFileOut` gains an optional `special`, which `save_csv_file` writes beside the CSV.
+- The Branch view (View control: Continuation; "Branch" on the control), the first place a student
+  sees continuation. It follows a fixed point of a flow, or of a map, as one parameter changes and
+  plots the parameter against a state or ‖x‖: each branch in its own trajectory colour, solid
+  where it is stable and dashed where it is not, every point of a cycle, and each special point as
+  a fixed-point glyph labelled LP, H, BP, PD or NS. The Continuation panel sets the parameter, its
+  range, Δs, Max points, the direction (Forward, Backward, Both) and the vertical measure, lists
+  the branches (period, points, how each end stopped) and the special points once each in
+  increasing parameter, with ω and ℓ₁ (and super- or subcritical) at a Hopf point. A click on a row, or on the plot
+  near a branch, sets the slider to that point's parameter. Branch points and flips carry Switch
+  branch, which follows the second branch both ways (a point already switched at reads "Followed
+  as Branch k" instead): for the logistic map the 2-, 4- and 8-cycles,
+  and r₁ … r₄ = 3.000000, 3.449490, 3.544090, 3.564407 in the list. A branch starts from the
+  selected fixed point (Continue on a Fixed points row, or Continue from selection),
+  and a fresh view from every fixed point found. The View control is a 3 × 2 grid of equal segments
+  with six views for flows and maps alike, and the toolbar's axes menu offers the same. The status
+  bar reads "Continuation 4 ms" and "213 points · 2 special". Saved in `.sepx` as its seeds; a view
+  that can't be replayed opens with "The saved continuation can't be run as saved, so the default
+  view is shown." The browser preview follows branches with a small JavaScript stand-in.
+- Continuation views in `.sepx` (format version 1, additive). A view of `kind` `"continuation"` is a
+  branch plot: a parameter across (`{ "kind": "param" }`), a state or the new axis kind
+  `{ "kind": "norm" }` (‖x‖₂) up, and a `continuation` object with the parameter `range`, `ds`,
+  `max_points` and the `seeds` the branches are followed from: a fixed point, or a switch at a
+  branch point or a flip with the old branch's tangent. Seeds are saved, never computed branches,
+  so a file stays small and replays the same requests. A seed that doesn't fit the system is left
+  out on open with "The saved continuation's branch N doesn't fit this system, so it was left out."
+  New fixture `continuation-view.sepx`: the logistic map with its fixed point and the flips at
+  `r1`, `r2` and `r3`, written back byte for byte.
+- Branch switching (`dyn_analysis::switch_branch`, and `compute_continuation` with `start: { kind:
+  "switch", at }`). At a branch point it follows the second branch, along the kernel direction of
+  `[g_x | g_p]` orthogonal to the old tangent, corrected on a hyperplane parallel to the old
+  branch so it cannot fall back onto it. At a flip of `f^k` it follows the `2k`-cycle born there
+  as fixed points of `f^{2k}`. The switch point is self-contained, so a saved project can replay
+  it without the parent branch. Switching at any other kind of point is refused. Six rows of the
+  continuation gate check it: the switched pitchfork branch `r = x²` with both signs of `x`, the switched
+  transcritical branch `x = r`, the logistic cascade `r2 = 1 + √6`, `r3` and `r4` to 1e−6 by
+  switching at each flip, and `r1 … r4` within 1e−9 of `period_doublings` (measured: 1.4e−13). It
+  also prints the Feigenbaum estimate `(r3 − r2)/(r4 − r3)`, and two of its wrong claims are about
+  switching.
+- Pseudo-arclength continuation in the core (`dyn_analysis::continue_branch`), modelled on
+  BifurcationKit.jl (MIT). It follows a branch of equilibria of a flow, or of fixed points of `f^k`
+  for a map, as one parameter varies, through folds. Each step predicts along the tangent (first
+  step) or the secant and corrects by Newton's method on the bordered system with the exact
+  Jacobians. The step grows after fast corrections and halves after slow or failed ones, or when
+  successive tangents turn by more than the angle limit, so the branch does not jump. The last
+  point of a branch that leaves the parameter range lies exactly on its edge. Each point carries
+  its eigenvalues (of `J`, or of `D f^k` for a map), its unstable count and its stability.
+- Special points on a continuation branch (`Branch::special`), each located by bisection in
+  arclength to `|Δp| ≤ 1e−13 (1 + |p|)` and inserted into the branch: folds (LP), Hopf points (H)
+  and branch points (BP) of flows, and folds, branch points, flips (PD) and Neimark–Sacker points
+  (NS) of maps. One table of signed test functions finds them: `ṗ` of the tangent, the determinant
+  of the bordered Jacobian, `Re λ` of each complex pair (so a neutral saddle's real pair `λ, −λ` is
+  never a Hopf point), `det(D f^k + I)`, and `|μ| − 1` of each complex pair. The per-pair values
+  are ranked, so one pair crossing is seen while another pair sits further out, and a test that is
+  exactly 0 at the start (the Hopf normal form started at `μ = 0`) puts the special point there.
+  A step is kept only when its change in the unstable count is the jump of the one test that
+  changed sign (none: no change), so a Hopf point inside a step whose pair was still real at one
+  end is not missed. The next step is limited to 1.5 times the predicted arclength to the nearest
+  crossing of the stability boundary, so two close crossings are not stepped over together. A
+  Hopf point carries `ω = Im λ` and the first Lyapunov coefficient `ℓ₁` (Kuznetsov's formula,
+  with `⟨q, q⟩ = 1/2` so the normal form `ṙ = μr + ar³, θ̇ = ω` gives `ℓ₁ = a/ω`); a
+  Neimark–Sacker point its angle `θ = arg μ`. At a special point the critical eigenvalues count as
+  neutral, so it is not stable and its unstable count is the smaller of its two sides'. Checked
+  against the saddle-node, pitchfork and transcritical normal forms at `r = 0`, the Hopf normal
+  form (`ω = 1`, `ℓ₁ = ∓1`), Sel'kov's Hopf points `b = √0.12, √0.72` at `a = 0.08`, the
+  Brusselator's `b = 1 + a²`, the logistic map's flip at `r = 3`, Hénon's fold and flip at
+  `a = −(1 − b)²/4` and `3(1 − b)²/4`, and the delayed logistic map's Neimark–Sacker point at
+  `r = 2` with `θ = π/3`.
+- The `compute_continuation` command (docs/contracts.md, Continuation): a branch through a start
+  point, followed forward, backward or both ways (joined into one polyline through the start), as
+  flat arrays of parameters, cycles, stability and unstable counts, with its special points (kind,
+  index, parameter, state, tangent, eigenvalues, `ω` or `θ`, `ℓ₁`) and why each end stopped. It
+  refuses, with a message, a system that depends on `t` or `n`, a missing or out-of-range
+  parameter, an empty or non-finite range, a start that doesn't fit, a period of 0 (or above 1 for
+  a flow), `ds ≤ 0`, `dsMax < ds` and more than `MAX_CONTINUATION_POINTS = 20000` points per
+  direction.
+- The continuation gate, `bash scripts/continuation-gate.sh`: 27 rows of bifurcation values derived
+  in closed form or published, reproduced through `compute_continuation` and printed as a table, from the
+  saddle-node fold at `r = 0` to the delayed logistic map's Neimark–Sacker point at `r = 2`,
+  `θ = π/3`, and the logistic cascade r₁ … r₄ to 1e−6. Seven wrong claims must fail.
 - Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
   view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
   as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,
@@ -190,6 +280,17 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- An apostrophe in a document title separates words in LaTeX labels and export file names
+  (`Sel'kov glycolysis` → `sel-kov-glycolysis`, as the app suggests) instead of reading as a
+  prime (`sel-primekov-glycolysis`). State names keep `theta'` → `theta-prime`.
+- Continuation stays on the branch it follows where branches crowd. A special point is located
+  from the bracket's own end along its tangent rather than on the first secant, which near a
+  branch point let the corrector land on the other branch: the logistic map's transcritical point,
+  approached along `x* = 1 − 1/r`, was at `r = 1.000016`; it is now at `1` to 1e−9. After a flip of
+  `f^k`, the first point of the `2k`-cycle must lie within twice the offset of the flip and must
+  not be a fixed point of `f^k`: with the slider's whole range `r ∈ [0, 4]` and `ds = 0.04`, one
+  half of the 8-cycle switched at `r3` had landed on a point of the 4-cycle and followed it back
+  to `r = 3`, reporting a fold and two branch points that are not there.
 - A fixed-step run that needs exactly the step limit (h = 0.05 to T = 10⁴ with 200,000 steps)
   finishes at T instead of stopping a sliver short with "Step limit": fixed steps sit at
   t₀ + k·h rather than accumulating rounding by repeated addition.

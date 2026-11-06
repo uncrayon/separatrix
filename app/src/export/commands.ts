@@ -8,6 +8,8 @@ import {
   mockClipboardWritePng,
   mockClipboardWriteText,
   mockComputeExportPortrait,
+  mockExportContinuationCsv,
+  mockExportContinuationLatex,
   mockExportCsv,
   mockExportFigureLatex,
   mockExportFixedPointsLatex,
@@ -17,6 +19,7 @@ import {
   mockExportOrbitLatex,
   mockExportSystemLatex,
   mockSaveCsv,
+  mockSaveContinuationLatex,
   mockSaveCsvFile,
   mockSaveOrbitLatex,
   mockSaveFigureLatex,
@@ -24,6 +27,8 @@ import {
   mockSaveTextFile,
 } from "../api/mock";
 import type {
+  ContinuationExportRequest,
+  ContinuationFigureRequest,
   CsvFileOut,
   CsvRequest,
   CsvResponse,
@@ -90,6 +95,21 @@ export function saveOrbitLatex(figure: OrbitFigureRequest, suggestedName: string
 
 export function exportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
   return isTauri() ? invoke<CsvFileOut>("export_orbit_csv", { req }) : mockExportOrbitCsv(req);
+}
+
+export function exportContinuationLatex(req: ContinuationFigureRequest): Promise<FigureLatexResponse> {
+  return isTauri()
+    ? invoke<FigureLatexResponse>("export_continuation_latex", { req })
+    : mockExportContinuationLatex(req);
+}
+
+export function saveContinuationLatex(figure: ContinuationFigureRequest, suggestedName: string): Promise<SavedFiles | null> {
+  const req = { figure, suggestedName };
+  return isTauri() ? invoke<SavedFiles | null>("save_continuation_latex", { req }) : mockSaveContinuationLatex(req);
+}
+
+export function exportContinuationCsv(req: ContinuationExportRequest): Promise<CsvFileOut> {
+  return isTauri() ? invoke<CsvFileOut>("export_continuation_csv", { req }) : mockExportContinuationCsv(req);
 }
 
 export function saveCsvFile(file: CsvFileOut, title: string, suggestedName: string): Promise<SavedFiles | null> {

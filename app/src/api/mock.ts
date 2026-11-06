@@ -7,6 +7,10 @@ import type {
   ClipboardTextRequest,
   CompileRequest,
   CompileResponse,
+  ContinuationExportRequest,
+  ContinuationFigureRequest,
+  ContinuationRequest,
+  ContinuationResponse,
   ConvertRequest,
   ConvertResponse,
   CsvFileOut,
@@ -32,9 +36,12 @@ import type {
   PortraitResponse,
   ProjectChooseSaveRequest,
   SectionSpec,
+  SpecialKindOut,
+  SpecialPointOut,
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
+  SaveContinuationFigureRequest,
   SaveCsvFileRequest,
   SaveCsvRequest,
   SavedFiles,
@@ -460,6 +467,317 @@ export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitD
   };
   sepxMock().lastOrbit = { req, res };
   return res;
+}
+
+export async function mockContinuation(req: ContinuationRequest): Promise<ContinuationResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  const flow = sys.kind !== "map";
+  const at = req.start.kind === "switch" ? req.start.at : null;
+  const period = flow ? 1 : at ? (at.kind === "flip" ? 2 : 1) * at.period : Math.max(1, req.start.kind === "point" ? req.start.period : 1);
+  const c = new MockBranch(sys, req, period);
+  const halves =
+    req.direction === "both" ? [c.follow(-1), c.follow(1)] : [c.follow(req.direction === "backward" ? -1 : 1)];
+  const res: ContinuationResponse = { requestId: req.requestId, branch: c.join(halves), elapsedMs: performance.now() - started };
+  const m = sepxMock();
+  m.continuations = [...(m.continuations ?? []), { req, res }];
+  return res;
+}
+
+interface MockPoint {
+  z: number[];
+  t: number[];
+  cycle: number[];
+  eig: [number, number][];
+  special?: SpecialKindOut;
+}
+
+const MOCK_TESTS: { kind: SpecialKindOut; flow: boolean | null }[] = [
+  { kind: "fold", flow: null },
+  { kind: "branchPoint", flow: null },
+  { kind: "hopf", flow: true },
+  { kind: "flip", flow: false },
+  { kind: "neimarkSacker", flow: false },
+];
+
+class MockBranch {
+  private readonly sys: MockSystem;
+  private readonly req: ContinuationRequest;
+  private readonly k: number;
+  private readonly n: number;
+  private readonly flow: boolean;
+
+  constructor(sys: MockSystem, req: ContinuationRequest, k: number) {
+    this.sys = sys;
+    this.req = req;
+    this.k = k;
+    this.n = sys.states.length;
+    this.flow = sys.kind !== "map";
+  }
+
+  private eval(z: number[]): { g: number[]; jac: number[]; cycle: number[]; a: number[] } {
+    const { n, k } = this;
+    const ps = this.req.params.slice();
+    ps[this.req.param] = z[n];
+    const f = (x: number[], p = ps) => this.sys.f(0, x, p);
+    let x = z.slice(0, n);
+    let m: number[] = Array.from({ length: n * n }, (_, i) => (i % (n + 1) === 0 ? 1 : 0));
+    let dp = new Array<number>(n).fill(0);
+    const cycle: number[] = [];
+    for (let s = 0; s < k; s++) {
+      cycle.push(...x);
+      const a = jacobian((y) => f(y), x, n);
+      const h = 1e-6 * Math.max(1, Math.abs(z[n]));
+      const up = ps.slice();
+      const down = ps.slice();
+      up[this.req.param] += h;
+      down[this.req.param] -= h;
+      const fu = f(x, up);
+      const fd = f(x, down);
+      m = Array.from({ length: n * n }, (_, ij) => {
+        let acc = 0;
+        for (let l = 0; l < n; l++) acc += a[Math.floor(ij / n) * n + l] * m[l * n + (ij % n)];
+        return acc;
+      });
+      dp = Array.from({ length: n }, (_, i) => {
+        let acc = (fu[i] - fd[i]) / (2 * h);
+        for (let l = 0; l < n; l++) acc += a[i * n + l] * dp[l];
+        return acc;
+      });
+      x = f(x);
+    }
+    const g = this.flow ? x : x.map((v, i) => v - z[i]);
+    const gx = this.flow ? m : m.map((v, ij) => v - (ij % (n + 1) === 0 ? 1 : 0));
+    const jac: number[] = [];
+    for (let i = 0; i < n; i++) jac.push(...gx.slice(i * n, i * n + n), dp[i]);
+    return { g, jac, cycle, a: m };
+  }
+
+  private correct(zp: number[], t: number[] | null): number[] | null {
+    const n = this.n;
+    let z = zp.slice();
+    for (let it = 0; it < 20; it++) {
+      const { g, jac } = this.eval(z);
+      if (!g.every(Number.isFinite)) return null;
+      const row = t ?? Array.from({ length: n + 1 }, (_, i) => (i === n ? 1 : 0));
+      const rhs = [...g.map((v) => -v), -row.reduce((acc, ti, i) => acc + ti * (z[i] - zp[i]), 0)];
+      const dz = solveLinear([...jac, ...row], rhs, n + 1);
+      if (!dz) return null;
+      z = z.map((v, i) => v + dz[i]);
+      const size = 1 + Math.max(...z.map(Math.abs));
+      if (Math.max(...dz.map(Math.abs)) < 1e-11 * size) return z;
+      if (size > 1e8) return null;
+    }
+    return null;
+  }
+
+  private tangent(z: number[], prev: number[]): number[] | null {
+    const n = this.n;
+    const v = solveLinear([...this.eval(z).jac, ...prev], [...new Array<number>(n).fill(0), 1], n + 1);
+    if (!v) return null;
+    const len = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0));
+    return v.map((x) => x / len);
+  }
+
+  private point(z: number[], t: number[]): MockPoint {
+    const { cycle, a } = this.eval(z);
+    return { z, t, cycle, eig: eigenvalues(a, this.n) };
+  }
+
+  private test(kind: SpecialKindOut, p: MockPoint): number {
+    const n = this.n;
+    const pairs = (op: (a: [number, number], b: [number, number]) => [number, number]) => {
+      let acc: [number, number] = [1, 0];
+      for (let i = 0; i < p.eig.length; i++)
+        for (let j = i + 1; j < p.eig.length; j++) {
+          const [re, im] = op(p.eig[i], p.eig[j]);
+          acc = [acc[0] * re - acc[1] * im, acc[0] * im + acc[1] * re];
+        }
+      return acc[0];
+    };
+    if (kind === "fold") return p.t[n];
+    if (kind === "branchPoint") return determinant([...this.eval(p.z).jac, ...p.t], n + 1);
+    if (kind === "flip") return p.eig.reduce(([ar, ai], [re, im]) => [ar * (re + 1) - ai * im, ar * im + ai * (re + 1)], [1, 0])[0];
+    if (kind === "hopf") return n < 2 ? 1 : pairs(([a, b], [c, d]) => [a + c, b + d]);
+    return n < 2 ? 1 : pairs(([a, b], [c, d]) => [a * c - b * d - 1, a * d + b * c]);
+  }
+
+  private genuine(kind: SpecialKindOut, p: MockPoint): boolean {
+    const tol = 1e-5;
+    if (kind === "hopf") return p.eig.some(([re, im]) => im !== 0 && Math.abs(re) < tol * (1 + Math.abs(im)));
+    if (kind === "neimarkSacker") return p.eig.some(([re, im]) => im !== 0 && Math.abs(Math.sqrt(re * re + im * im) - 1) < tol);
+    return true;
+  }
+
+  private stability(p: MockPoint): { stable: boolean; unstable: number } {
+    const big = (e: [number, number]) => (this.flow ? e[0] : Math.sqrt(e[0] * e[0] + e[1] * e[1]) - 1);
+    return { stable: p.eig.every((e) => big(e) < -1e-9), unstable: p.eig.filter((e) => big(e) > 1e-9).length };
+  }
+
+  private locate(kind: SpecialKindOut, a: MockPoint, b: MockPoint): MockPoint | null {
+    const hit = this.secantZero(kind, ...this.narrowAlongBranch(kind, a, b));
+    return this.genuine(kind, hit) ? { ...hit, special: kind } : null;
+  }
+
+  private narrowAlongBranch(kind: SpecialKindOut, a: MockPoint, b: MockPoint): [MockPoint, MockPoint] {
+    const dist = (p: number[], q: number[]) => Math.sqrt(p.reduce((acc, v, i) => acc + (v - q[i]) ** 2, 0));
+    for (let round = 0; round < 8; round++) {
+      const h = dist(a.z, b.z) / 8;
+      if (h < 1e-12) break;
+      let prev = a;
+      let next: MockPoint | null = null;
+      for (let step = 0; step < 12 && !next; step++) {
+        const z = this.correct(prev.z.map((v, i) => v + h * prev.t[i]), prev.t);
+        const t = z && this.tangent(z, prev.t);
+        if (!z || !t) break;
+        const q = this.point(z, t);
+        if (Math.sign(this.test(kind, q)) !== Math.sign(this.test(kind, prev))) next = q;
+        else prev = q;
+      }
+      if (!next) break;
+      [a, b] = [prev, next];
+    }
+    return [a, b];
+  }
+
+  private secantZero(kind: SpecialKindOut, a: MockPoint, b: MockPoint): MockPoint {
+    const fa = this.test(kind, a);
+    const s = fa / (fa - this.test(kind, b));
+    return this.point(a.z.map((v, i) => v + s * (b.z[i] - v)), a.t);
+  }
+
+  private start(): number[] {
+    const { n, req } = this;
+    if (req.start.kind === "switch") return [...req.start.at.x, req.start.at.p];
+    const z = this.correct([...req.start.x0, req.params[req.param]], null);
+    if (!z) throw new Error(`No ${this.flow ? "equilibrium" : "fixed point"} was found near the starting point.`);
+    return z.slice(0, n + 1);
+  }
+
+  private second(z: number[], tau: number[]): number[] {
+    const n = this.n;
+    const m = [...this.eval(z).jac, ...tau];
+    const mtm = Array.from({ length: (n + 1) * (n + 1) }, (_, ij) => {
+      let acc = 0;
+      for (let l = 0; l <= n; l++) acc += m[l * (n + 1) + Math.floor(ij / (n + 1))] * m[l * (n + 1) + (ij % (n + 1))];
+      return acc + (Math.floor(ij / (n + 1)) === ij % (n + 1) ? 1e-12 : 0);
+    });
+    const across = (v: number[]) => {
+      const dot = v.reduce((acc, x, i) => acc + x * tau[i], 0);
+      const w = v.map((x, i) => x - dot * tau[i]);
+      const len = Math.sqrt(w.reduce((acc, x) => acc + x * x, 0)) || 1;
+      return w.map((x) => x / len);
+    };
+    let v = across(tau.map((_, i) => (i === tau.indexOf(Math.min(...tau.map(Math.abs))) ? 1 : 0.5)));
+    for (let it = 0; it < 30; it++) v = across(solveLinear(mtm, v, n + 1) ?? v);
+    return v;
+  }
+
+  follow(sign: 1 | -1): { points: MockPoint[]; end: "range" | "maxPoints" | "stepTooSmall" } {
+    const { n, req } = this;
+    const [lo, hi] = req.range;
+    const z0 = this.start();
+    const inRange = (p: number) => p >= lo && p <= hi;
+    const unit = (v: number[]) => {
+      const len = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0));
+      return v.map((x) => x / len);
+    };
+    let t0: number[];
+    const points: MockPoint[] = [];
+    if (req.start.kind === "switch") {
+      const len = Math.sqrt(req.start.at.tangent.reduce((acc, x) => acc + x * x, 0));
+      const tau = req.start.at.tangent.map((x) => x / len);
+      const d = this.second(z0, tau);
+      const largest = d.reduce((a, b) => (Math.abs(b) > Math.abs(a) ? b : a), 1);
+      const dir = d.map((x) => x * (largest < 0 === sign < 0 ? 1 : -1));
+      points.push({ ...this.point(z0, dir), special: undefined });
+      let h = req.ds;
+      let z1: number[] | null = null;
+      for (let tries = 0; tries < 9 && !z1; tries++, h /= 2) {
+        const pred = z0.map((v, i) => v + h * dir[i]);
+        const z = this.correct(pred, dir);
+        z1 = z && inRange(z[n]) && Math.sqrt(z.reduce((acc, v, i) => acc + (v - pred[i]) ** 2, 0)) <= 0.5 * h ? z : null;
+      }
+      if (!z1) throw new Error("No second branch was found near this point; try a smaller ds.");
+      t0 = unit(z1.map((v, i) => v - z0[i]));
+      points.push(this.point(z1, this.tangent(z1, t0) ?? t0));
+    } else {
+      const first = this.tangent(z0, [...new Array<number>(n).fill(0), sign]);
+      if (!first) throw new Error("The start is singular: the branch has no single direction there.");
+      points.push(this.point(z0, first));
+      if (!inRange(z0[n])) return { points, end: "range" };
+    }
+    let ds = req.ds;
+    const cosMax = Math.cos(0.3);
+    while (points.length < req.maxPoints) {
+      const a = points[points.length - 1];
+      const zp = a.z.map((v, i) => v + ds * a.t[i]);
+      const edge = zp[n] > hi ? hi : zp[n] < lo ? lo : null;
+      const z = edge === null ? this.correct(zp, a.t) : this.correct([...zp.slice(0, n), edge], null);
+      const t = z && this.tangent(z, a.t);
+      const jump = z ? Math.sqrt(z.reduce((acc, v, i) => acc + (v - zp[i]) ** 2, 0)) > 0.5 * ds : true;
+      if (!z || !t || jump || t.reduce((acc, x, i) => acc + x * a.t[i], 0) < cosMax) {
+        ds /= 2;
+        if (ds < 1e-8) return { points, end: "stepTooSmall" };
+        continue;
+      }
+      const b = this.point(z, t);
+      const found = MOCK_TESTS.filter((tf) => tf.flow === null || tf.flow === this.flow)
+        .filter((tf) => this.test(tf.kind, a) * this.test(tf.kind, b) < 0)
+        .flatMap((tf) => {
+          const hit = this.locate(tf.kind, a, b);
+          return hit ? [hit] : [];
+        })
+        .sort((x, y) => Math.abs(x.z[n] - a.z[n]) - Math.abs(y.z[n] - a.z[n]));
+      points.push(...found, b);
+      if (edge !== null) return { points, end: "range" };
+      ds = Math.min(1.5 * ds, req.dsMax);
+    }
+    return { points, end: "maxPoints" };
+  }
+
+  join(halves: { points: MockPoint[]; end: "range" | "maxPoints" | "stepTooSmall" }[]): ContinuationResponse["branch"] {
+    const { n, k } = this;
+    const both = halves.length === 2;
+    const back = both ? halves[0].points.slice(1).reverse().map((p) => ({ ...p, t: p.t.map((x) => -x) })) : [];
+    const pts = [...back, ...halves[halves.length - 1].points];
+    const special: SpecialPointOut[] = [];
+    const out = { p: [] as number[], x: [] as number[], stable: [] as boolean[], unstable: [] as number[] };
+    pts.forEach((pt, i) => {
+      const neutral = !!pt.special || (this.req.start.kind === "switch" && i === back.length);
+      const st = this.stability(pt);
+      out.p.push(pt.z[n]);
+      out.x.push(...pt.cycle);
+      out.stable.push(!neutral && st.stable);
+      out.unstable.push(neutral ? 0 : st.unstable);
+      if (!pt.special) return;
+      const crit = pt.eig.filter(([, im]) => im > 0);
+      const omega =
+        pt.special === "hopf"
+          ? (crit.sort((a, b) => Math.abs(a[0]) - Math.abs(b[0]))[0]?.[1] ?? null)
+          : pt.special === "neimarkSacker" && crit[0]
+            ? Math.atan2(crit[0][1], crit[0][0])
+            : null;
+      special.push({
+        kind: pt.special,
+        index: i,
+        p: pt.z[n],
+        x: pt.cycle.slice(0, n),
+        period: k,
+        tangent: pt.t,
+        eigenvalues: pt.eig,
+        omega,
+        lyapunov: null,
+      });
+    });
+    return {
+      period: k,
+      ...out,
+      special,
+      end: { first: both ? halves[0].end : null, last: halves[halves.length - 1].end },
+    };
+  }
 }
 
 function mockDoublings(
@@ -1508,6 +1826,7 @@ export interface SepxMock {
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
   lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
   lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
+  continuations?: { req: ContinuationRequest; res: ContinuationResponse }[];
 }
 
 function sepxMock(): SepxMock {
@@ -1933,13 +2252,129 @@ export async function mockSaveOrbitLatex(req: SaveOrbitFigureRequest): Promise<S
   return { names: [name, ...fig.files] };
 }
 
+const MOCK_SPECIAL_LABELS: Record<SpecialKindOut, string> = {
+  fold: "LP",
+  hopf: "H",
+  branchPoint: "BP",
+  flip: "PD",
+  neimarkSacker: "NS",
+};
+
+async function mockBranches(req: ContinuationExportRequest): Promise<ContinuationResponse["branch"][]> {
+  if (req.branches.length === 0)
+    throw "There are no branches to export yet. Continue from a fixed point in the Continuation panel first.";
+  const runs = await Promise.allSettled(req.branches.map((b) => mockContinuation(b.request)));
+  return runs.flatMap((run) => (run.status === "fulfilled" ? [run.value.branch] : []));
+}
+
+export async function mockExportContinuationLatex(req: ContinuationFigureRequest): Promise<FigureLatexResponse> {
+  const c = req.continuation;
+  const sys = mockSystemOf(c.systemId);
+  const dim = sys.states.length;
+  const branches = await mockBranches(c);
+  if (req.content === "specialPoints") {
+    const rows = branches.flatMap((b) => b.special).sort((a, b) => a.p - b.p);
+    const tex = [
+      `% Separatrix special points: ${c.title}`,
+      PREVIEW_NOTE,
+      "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+      "\\begin{table}",
+      "\\centering",
+      "\\begin{tabular}{@{}lll@{}}",
+      "\\toprule",
+      `Type & $${sys.params[c.param]?.latex ?? "r"}$ & $\\omega$ \\\\`,
+      "\\midrule",
+      ...rows.map(
+        (r) => `${MOCK_SPECIAL_LABELS[r.kind]} & \\num{${r.p.toFixed(6)}} & ${r.omega === null ? "--" : `\\num{${r.omega.toFixed(6)}}`} \\\\`,
+      ),
+      "\\bottomrule",
+      "\\end{tabular}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+    return { tex, points: rows.length, thinned: false, notes: [] };
+  }
+  const value = (b: ContinuationResponse["branch"], i: number) => {
+    const x = b.x.slice(i * b.period * dim, i * b.period * dim + dim);
+    return c.yAxis.kind === "state" ? x[c.yAxis.index] : Math.sqrt(x.reduce((a, v) => a + v * v, 0));
+  };
+  const plots = branches.flatMap((b, k) =>
+    [true, false].flatMap((stable) => {
+      const pts = b.p.flatMap((p, i) => (b.stable[i] === stable ? [`(${p},${value(b, i)})`] : []));
+      return pts.length
+        ? [`% Branch ${k + 1}, ${stable ? "stable (solid)" : "unstable (dashed)"}`, `\\addplot[${stable ? "solid" : "dashed"}] coordinates {${pts.join(" ")}};`]
+        : [];
+    }),
+  );
+  const tex = [
+    `% Separatrix branch plot: ${c.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{pgfplots} \\pgfplotsset{compat=1.18} \\usetikzlibrary{calc}",
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[xmin=${req.xRange[0]}, xmax=${req.xRange[1]}, ymin=${req.yRange[0]}, ymax=${req.yRange[1]}]`,
+    ...plots,
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+    "",
+  ].join("\n");
+  return { tex, points: branches.reduce((n, b) => n + b.p.length, 0), thinned: false, notes: [] };
+}
+
+export async function mockSaveContinuationLatex(req: SaveContinuationFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  mockSaved(name, (await mockExportContinuationLatex(req.figure)).tex);
+  return { names: [name] };
+}
+
+export async function mockExportContinuationCsv(req: ContinuationExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.systemId);
+  const dim = sys.states.length;
+  const branches = await mockBranches(req);
+  const param = sys.params[req.param]?.name ?? "r";
+  const names = sys.states.map((s) => s.name);
+  const header = ["branch", "period", "point", param, ...names, "stable", "unstable"];
+  const rows = branches.flatMap((b, k) =>
+    b.p.flatMap((p, i) =>
+      Array.from({ length: b.period }, (_, m) =>
+        [k + 1, b.period, i, p, ...b.x.slice((i * b.period + m) * dim, (i * b.period + m + 1) * dim), b.stable[i], b.unstable[i]].join(","),
+      ),
+    ),
+  );
+  const special = [
+    ["branch", "point", "type", "period", param, ...names, "omega", "lyapunov"].join(","),
+    ...branches.flatMap((b, k) =>
+      b.special.map((s) => [k + 1, s.index, MOCK_SPECIAL_LABELS[s.kind], b.period, s.p, ...s.x, s.omega ?? "", s.lyapunov ?? ""].join(",")),
+    ),
+  ];
+  const stem = `${mockSlug(req.title)}-continuation`;
+  const meta = {
+    format: "separatrix-continuation",
+    format_version: 1,
+    title: req.title,
+    csv: `${stem}.csv`,
+    special_csv: `${stem}-special.csv`,
+    columns: header,
+    note: "Browser preview.",
+  };
+  return {
+    stem,
+    csv: [header.join(","), ...rows].join("\n") + "\n",
+    meta: JSON.stringify(meta, null, 2) + "\n",
+    special: special.join("\n") + "\n",
+  };
+}
+
 export async function mockSaveCsvFile(req: SaveCsvFileRequest): Promise<SavedFiles | null> {
   const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "data", "csv").path);
   if (chosen === null) return null;
   const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
   mockSaved(`${stem}.csv`, req.file.csv);
+  const special = req.file.special;
+  if (special !== undefined) mockSaved(`${stem}-special.csv`, special);
   mockSaved(`${stem}.meta.json`, req.file.meta);
-  return { names: [`${stem}.csv`, `${stem}.meta.json`] };
+  return { names: [`${stem}.csv`, ...(special !== undefined ? [`${stem}-special.csv`] : []), `${stem}.meta.json`] };
 }
 
 function mockSaved(name: string, contents: string | Uint8Array): void {

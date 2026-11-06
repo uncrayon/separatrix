@@ -13,7 +13,7 @@
 //! time and the transient, and how many renormalizations, how far apart.
 
 use crate::latex_system::header_comments;
-use crate::latex_util::{escape_text, packages_comment, slug};
+use crate::latex_util::{escape_text, packages_comment, title_slug};
 use crate::model::{LyapunovRun, Method, Status, SystemKind, SystemMeta};
 use crate::num;
 use crate::words::{join_and, status_word};
@@ -153,7 +153,7 @@ pub fn lyapunov_latex(sys: &SystemMeta, run: &LyapunovRun) -> String {
     tex.push_str(&format!("\\caption{{{}}}\n", caption(sys, run)));
     tex.push_str(&format!(
         "\\label{{tab:{}-lyapunov}}\n",
-        slug(sys.title, "system")
+        title_slug(sys.title)
     ));
     tex.push_str("\\begin{tabular}{@{}ll@{}}\n\\toprule\nExponent & Value \\\\\n\\midrule\n");
     if s.exponents.is_empty() {

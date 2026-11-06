@@ -7,7 +7,9 @@ import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
 import { METHODS, STIFF_HINT } from "../state/methods";
 import {
+  continuationSummary,
   countText,
+  isContinuation,
   isLyapunov,
   isOrbit,
   isReturnMap,
@@ -16,6 +18,7 @@ import {
   lyapunovSolver,
   renormalizations,
   searchedFixedPoints,
+  shownBranches,
   systemTitle,
   type LyapunovSettings,
   type OrbitSettings,
@@ -242,6 +245,16 @@ function orbitSummary(o: OrbitSettings, columns: number) {
   };
 }
 
+function branchSummary(s: { points: number; special: number }, branches: number) {
+  const n = (v: number) => v.toLocaleString("en-US");
+  return {
+    lead: "",
+    num: n(s.points),
+    tail: ` ${s.points === 1 ? "point" : "points"} · ${n(s.special)} special`,
+    tip: `${n(branches)} ${branches === 1 ? "branch" : "branches"} of ${n(s.points)} points, with ${n(s.special)} special ${s.special === 1 ? "point" : "points"}`,
+  };
+}
+
 function focusEquationLine(index: number) {
   const boxes = document.querySelectorAll<HTMLElement>(".panel-left .ds-equation-editor-field");
   const box = boxes[Math.max(0, index)] ?? boxes[0];
@@ -354,7 +367,11 @@ interface StatusBarProps {
 export function StatusBar({ state, actions }: StatusBarProps) {
   const lyapunov = isLyapunov(state.view) ? state.view : null;
   const orbit = isOrbit(state.view) ? state.view : null;
-  const p = lyapunov || orbit ? null : state.portrait;
+  const branch = isContinuation(state.view) ? state.view : null;
+  const plot = isContinuation(state.view) ? null : state.view;
+  const p = lyapunov || orbit || branch ? null : state.portrait;
+  const branches = branch ? shownBranches(state) : [];
+  const branchRuns = branches.map((b) => b.run);
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
@@ -362,12 +379,15 @@ export function StatusBar({ state, actions }: StatusBarProps) {
     ? lyapunovCurrent(state)
     : orbit
       ? orbitCurrent(state)
-      : !!p && !!sys && p.meta.systemId === sys.systemId;
+      : branch
+        ? branches.length > 0 && branchRuns.every((r) => r !== undefined)
+        : !!p && !!sys && p.meta.systemId === sys.systemId;
   const run = lyapunov && current ? state.lyapunov : null;
   const diagram = orbit && current ? state.orbit : null;
+  const followed = branch && current ? continuationSummary(branchRuns) : null;
   const drawMs = useOrbitDrawMs();
   const nFp =
-    state.layers.fixedPoints && !lyapunov && !orbit ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+    state.layers.fixedPoints && !lyapunov && !orbit && !branch ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
   const crossings =
     p && current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
@@ -385,33 +405,51 @@ export function StatusBar({ state, actions }: StatusBarProps) {
   const lines = state.equations.map((l) => l.source);
   const firstBad = errors.length ? diagnosticLine(errors[0], lines) : -1;
 
-  const waiting =
-    lyapunov || orbit ? !current && state.ics.some((ic) => ic.x0.length === states.length) : !current;
+  const waiting = branch
+    ? !current && branches.length > 0
+    : lyapunov || orbit
+      ? !current && state.ics.some((ic) => ic.x0.length === states.length)
+      : !current;
   const computing = useDelayed(!!sys?.ok && waiting && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
+  const swept = orbit ?? branch;
   const cobwebNames =
-    (state.view.kind === "cobweb" || isReturnMap(state.view)) && states[0] ? viewAxisLabels(state.view, states, kind) : null;
+    plot && (plot.kind === "cobweb" || isReturnMap(plot)) && states[0] ? viewAxisLabels(plot, states, kind) : null;
   const xName = lyapunov
     ? kind === "map"
       ? "n"
       : "t"
-    : orbit
-      ? (sys?.params[orbit.param]?.latex ?? "")
-      : (cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind));
+    : swept
+      ? (sys?.params[swept.param]?.latex ?? "")
+      : plot
+        ? (cobwebNames?.x ?? axisName(plot.xAxis, plot.yAxis, states, kind))
+        : "";
   const yName = lyapunov
     ? "\\lambda"
     : orbit
       ? (states[orbit.yAxis.index]?.latex ?? "")
-      : (cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind));
+      : branch
+        ? branch.yAxis.kind === "state"
+          ? (states[branch.yAxis.index]?.latex ?? "")
+          : "\\lVert x \\rVert"
+        : plot
+          ? (cobwebNames?.y ?? axisName(plot.yAxis, plot.xAxis, states, kind))
+          : "";
   const solver = lyapunov
     ? lyapunovSummary(lyapunov.lyapunov, state.solver, kind)
     : orbit
       ? orbitSummary(orbit.orbit, state.orbitColumns)
-      : solverSummary(state.solver, kind);
-  const settingsId = orbit ? "orbit-settings" : "solver-settings";
-  const settingsTip = orbit ? "Open orbit diagram settings" : "Open solver settings";
-  const done = run ?? diagram ?? p;
+      : branch
+        ? branchSummary(continuationSummary(branchRuns), branches.length)
+        : solverSummary(state.solver, kind);
+  const settingsId = orbit ? "orbit-settings" : branch ? "continuation-settings" : "solver-settings";
+  const settingsTip = orbit
+    ? "Open orbit diagram settings"
+    : branch
+      ? "Open continuation settings"
+      : "Open solver settings";
+  const done = run ?? diagram ?? (followed ? { res: followed, roundTripMs: followed.roundTripMs } : null) ?? p;
   const t = done ? timing(done.res.elapsedMs) : null;
   const drawn = diagram && drawMs !== null ? ` Drawn in ${fmt(drawMs, 2)} ms.` : "";
   const timingDesc = done
@@ -531,7 +569,9 @@ export function StatusBar({ state, actions }: StatusBarProps) {
           t && (
             <span className="ds-statusbar-item" data-tooltip={timingLabel} data-tooltip-desc={timingDesc}>
               <span className="ds-statusbar-text">
-                <span className="ds-statusbar-wide">{run ? "Lyapunov " : diagram ? "Orbit " : "Portrait "}</span>
+                <span className="ds-statusbar-wide">
+                  {run ? "Lyapunov " : diagram ? "Orbit " : followed ? "Continuation " : "Portrait "}
+                </span>
                 <span className="ds-statusbar-num">{t.num}</span> {t.unit}
               </span>
               <span className="ds-sr">

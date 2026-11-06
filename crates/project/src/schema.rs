@@ -130,8 +130,9 @@ pub struct ProjectView {
     /// `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
     /// (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
     /// is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
-    /// absent for the phase plane and the time series, which the axes tell
-    /// apart.
+    /// `"continuation"` for a branch plot of fixed points against a
+    /// parameter (see `continuation`); absent for the phase plane and the
+    /// time series, which the axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
@@ -170,6 +171,12 @@ pub struct ProjectView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub orbit: Option<ProjectOrbit>,
+    /// The requests of a `"continuation"` view (a branch plot: `x_axis` is
+    /// `{ "kind": "param", "name": p }`, `y_axis` a state or
+    /// `{ "kind": "norm" }`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub continuation: Option<ProjectContinuation>,
     #[serde(default)]
     pub slice: ProjectSlice,
     #[serde(default)]
@@ -258,6 +265,59 @@ pub struct ProjectOrbit {
     pub extra: Map<String, Value>,
 }
 
+/// The requests of a branch plot: the parameter interval, the first step in
+/// arclength, the most points per direction, and the seeds the branches are
+/// followed from. Seeds are saved, never the computed branches, so opening
+/// the file replays the same requests.
+///
+/// Lenient like [`ProjectOrbit`]: a missing value takes the app's default.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectContinuation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub range: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub ds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub max_points: Option<u32>,
+    #[serde(default)]
+    pub seeds: Vec<ProjectSeed>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// Where one branch starts: `from` is `"point"` (a fixed point, corrected by
+/// Newton's method first) or `"switch"` (onto the other branch at a special
+/// point of `kind` `"branchPoint"` or `"flip"`, whose `tangent` is the old
+/// branch's there, `x` and then the parameter). `direction` is `"forward"`,
+/// `"backward"` or `"both"`; `period` is `k` of `f^k` for a map, 1 for a
+/// flow.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectSeed {
+    pub from: String,
+    /// One value per entry of `system.states`, in that order.
+    pub x: Vec<f64>,
+    /// The value of the view's parameter.
+    pub param: f64,
+    #[serde(default = "one")]
+    pub period: u32,
+    pub direction: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub tangent: Option<Vec<f64>>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
 /// The camera of a 3D view: `{ "yaw": -0.785…, "pitch": 0.523…, "zoom": 1 }`.
 /// `yaw` turns the box about its third axis and `pitch` tilts it towards the
 /// viewer, both in radians; `zoom` scales it. The app clamps `pitch` to
@@ -279,7 +339,8 @@ pub struct ProjectCamera {
 /// An axis: `{ "kind": "state", "name": "x" }`, `{ "kind": "time" }`, in a
 /// cobweb view `{ "kind": "next", "name": "x" }` (the state one iterate
 /// later, `x_{n+1}`), in a Lyapunov view `{ "kind": "exponent" }` (λ), or in
-/// an orbit diagram `{ "kind": "param", "name": "r" }` (a parameter).
+/// an orbit diagram or a branch plot `{ "kind": "param", "name": "r" }` (a
+/// parameter), or in a branch plot `{ "kind": "norm" }` (‖x‖₂).
 ///
 /// A lenient struct rather than a tagged enum, so an axis kind from a newer
 /// version is kept instead of making the whole file unreadable.
@@ -449,6 +510,9 @@ fn nan() -> f64 {
 }
 fn yes() -> bool {
     true
+}
+fn one() -> u32 {
+    1
 }
 /// The yaw of a camera that gives none.
 pub const DEFAULT_YAW: f64 = -std::f64::consts::FRAC_PI_4;

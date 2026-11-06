@@ -472,6 +472,143 @@ drops to −1 or below. The last two columns bracket the doubling, which is loca
 never gets there, or Newton fails. On the logistic map (above, `kept = 64`) it finds `r1 … r5`
 with `r1` and `r2 = 1 + √6` within 1e−13.
 
+### Continuation
+
+```rust
+pub struct ContinuationOptions { pub param: usize, pub period: usize, pub range: (f64, f64),
+                                 pub ds: f64, pub ds_min: f64, pub ds_max: f64,
+                                 pub max_points: usize, pub max_angle: f64 }
+pub fn continue_branch(f: &dyn VectorField, params: &[f64], x0: &[f64],
+                       opts: &ContinuationOptions) -> Result<Branch, ContinuationError>;
+pub fn switch_branch(f: &dyn VectorField, params: &[f64], at: &SpecialPoint,
+                     opts: &ContinuationOptions) -> Result<Branch, ContinuationError>;
+pub struct Branch { pub period: usize, pub points: Vec<BranchPoint>,
+                    pub special: Vec<SpecialPoint>, pub end: BranchEnd /* Range | MaxPoints | StepTooSmall */ }
+pub struct BranchPoint { pub s: f64, pub p: f64, pub x: Vec<f64>, pub cycle: Vec<f64>,
+                         pub tangent: Vec<f64>, pub eigenvalues: Vec<(f64, f64)>,
+                         pub unstable: usize, pub stable: bool }
+pub struct SpecialPoint { pub kind: SpecialKind /* Fold | Hopf | BranchPoint | Flip | NeimarkSacker */,
+                          pub index: usize, pub p: f64, pub x: Vec<f64>, pub period: usize,
+                          pub tangent: Vec<f64>, pub eigenvalues: Vec<(f64, f64)>,
+                          pub omega: Option<f64>, pub lyapunov: Option<f64> }
+pub enum ContinuationError { NotAFixedPoint, Singular, NotAutonomous,
+                             CannotSwitch, NoSecondBranch }
+```
+
+`continue_branch` follows the zeros of `g(x, p) = f(x, p)` (a flow) or `g = f^k(x, p) − x` (a map,
+`k = period`) as `p = params[param]` varies, by pseudo-arclength continuation modelled on
+BifurcationKit.jl (R. Veltz, MIT license). `x0` is first corrected by Newton's method at fixed `p`.
+Each step predicts along the unit tangent (the first step) or the secant (later steps) and
+corrects by Newton's method on the bordered system `[g_x g_p; τᵀ]` with the exact Jacobian and
+parameter Jacobian (`VectorField::jacobian`, `VectorField::param_jacobian`). The step grows by
+1.5 up to `ds_max` after a correction in at most 3 iterations and halves after more than 6, after
+a failed correction, or when successive unit tangents turn by more than `max_angle`. A step halved
+below `ds_min` ends the branch (`StepTooSmall`). A predictor that leaves `range` is corrected with
+`p` held on the edge, so the last point lies on it (`Range`). Only `+ − × ÷` and `sqrt` decide
+which points are kept, so a branch has the same points on every platform.
+
+The special points come from one table of signed test functions: `ṗ` of the tangent (LP), the
+determinant of the bordered Jacobian (BP), `Re λ` of each complex pair (H, so a neutral saddle's
+real pair `λ, −λ` is never a Hopf point), `det(D f^k + I)` (PD) and `|μ| − 1` of each complex pair
+(NS). LP and BP apply to flows and maps, H to flows, PD and NS to maps. H and NS rank their values
+per pair in descending order, and between two points with `c_a` and `c_b` positive values the value
+ranked `min(c_a, c_b)` is the one tested for a sign change, so one pair crossing is seen while
+another pair sits further out. A step is kept only when its change in the unstable count is the
+jump of the one test that changed sign, or zero when none did; otherwise it is halved, so a
+bifurcation between two points is never skipped. A test that is exactly `0` at a point and nonzero
+at the next, with the matching jump, makes that point itself the special point, so a branch
+started on a Hopf point or a flip (a slider sitting on `μ = 0`) reports it there. A sign change is located by bisection to `|Δp| ≤ 1e−13 (1 + |p|)`, each midpoint
+predicted from the bracket's lower end along its own tangent and corrected there (not on the
+step's secant, whose corrector can land on the other branch next to a branch point), and the located point is inserted into `points` at `index`. At a
+special point the critical eigenvalues count as neutral: it is not `stable`, and its `unstable`
+count is the smaller of its two sides'.
+
+A Hopf point carries `omega = ω = Im λ` and `lyapunov = ℓ₁`, the first Lyapunov coefficient by
+Kuznetsov's formula (*Elements of Applied Bifurcation Theory*, §3.5, eq. 3.20) with the
+second and third derivatives `B` and `C` from central differences of the exact Jacobian. It is
+normalized with `⟨p, q⟩ = 1` and `⟨q, q⟩ = 1/2`, the scaling at which the normal form
+`ṙ = μr + a r³, θ̇ = ω` has `ℓ₁ = a/ω`: the supercritical Hopf normal form gives `ℓ₁ = −1`. (With
+`⟨q, q⟩ = 1` it would be twice that.) A Neimark–Sacker point carries `omega = θ = arg μ ∈ (0, π)`
+and no `lyapunov`. The start fails with `NotAFixedPoint` when Newton's method doesn't converge,
+`Singular` when the start is itself a fold or branch point, and `NotAutonomous` for a system that
+depends on `t` or `n`.
+
+`switch_branch` follows the other branch through a special point `at` of a branch of the same
+system, parameters and `param`. Only a branch point (BP), or a flip (PD) of a map, can be switched
+at; any other kind fails with `CannotSwitch`. At a BP the kernel of `[g_x | g_p]` is
+two-dimensional, and the new direction `d` is its unit vector orthogonal to `at.tangent`: the null
+vector of the bordered Jacobian `[g_x g_p; τᵀ]`, by inverse iteration on its normal matrix with a
+shift of `1e−12 (1 + trace)`. A flip of `f^k` is handled the same way on `g = f^{2k} − x`, whose
+kernel there is spanned by the old tangent and `(v, 0)` (`v` the eigenvector of the multiplier
+`−1`), so the new branch is the `2k`-cycle born at the flip and has `period = 2k`. The first new
+point is corrected on the hyperplane through `z* + h d` orthogonal to `d`, with `h = |ds|` (clamped
+to `[ds_min, ds_max]`). That hyperplane is parallel to the old tangent, so every point of it lies
+`h` from the old branch's tangent line and the correction cannot fall back onto the old branch to
+first order. `h` is halved up to 8 times when Newton's method fails there, the point lies outside
+`range`, it lies more than `2h` from `at` (the new branch crosses the hyperplane at `h / cos θ`,
+`θ` its angle to `d`, so up to 60°), or, after a flip of `f^k`, `f^k` already fixes it to
+`1e−6 (1 + |z|∞)` (a point of the old cycle, which is also a fixed point of `f^{2k}`); then the branch continues as `continue_branch` does, away from `at`. `d` is oriented so
+that its largest component is positive for `ds > 0` and negative for `ds < 0`, which picks one half
+of the new branch (`x > 0` or `x < 0` of a pitchfork, either point of the 2-cycle). The branch
+starts at `at` itself, neutral (not `stable`, with the unstable count of the first new point), so
+the halves for `±ds` share their first point; the special point itself is not repeated in
+`special`. A start outside `range`, or a first point outside it at every offset, gives the start
+alone with `Range`; no point at any offset gives `NoSecondBranch`. Only `+ − × ÷` and `sqrt`
+choose `d` and its sign.
+
+`compute_continuation` takes `ContinuationRequest { requestId, systemId, params, param, range:
+[lo, hi], start: { kind: "point", x0, period } | { kind: "switch", at: SwitchPoint { kind, p, x, period, tangent } },
+direction: "forward" | "backward" | "both", ds, dsMax, maxPoints }` and returns `ContinuationResponse { requestId, branch, elapsedMs }` with
+`branch: BranchOut { period, p, x, stable, unstable, special, end: { first, last } }`. That is
+`continue_branch` (start `point`) or `switch_branch` (start `switch`) with `ds_min = 1e−8` and
+`max_angle = 0.3`, and `ds` signed by the direction: `forward` starts with `p` increasing,
+`backward` decreasing, or for a switch `forward` and `backward` take the halves for `ds > 0` and
+`ds < 0`, so `both` gives the whole second branch through the switch point. A switch seed is
+self-contained: it carries only the `kind`, `p`, `x`, `period` and `tangent` of a special point, so a saved project
+replays it without the branch it came from, and `params[param]` is replaced by its `p`. `both` runs backward and forward from
+the same start and joins them into one polyline: the backward half reversed, then the forward half,
+with the shared start once, the special indices shifted to match and the backward tangents negated,
+so they point along the polyline. The arrays are flat, as in `OrbitDiagramResponse`: `p`,
+`stable` and `unstable` have one entry per point, and `x` has `period · dim` per point, the cycle
+`x, f(x), …, f^{k−1}(x)`. `special` lists `SpecialPointOut { kind: "fold" | "hopf" | "branchPoint"
+| "flip" | "neimarkSacker", index, p, x, period, tangent, eigenvalues, omega, lyapunov }`, with
+`index` into `p`; the UI labels them LP, H, BP, PD and NS. `end.last` says why the last point
+stopped (`"range"`, `"maxPoints"` or `"stepTooSmall"`), and `end.first` why the first did, with
+direction `both`, or `null` when the first point is the start. `maxPoints` bounds each direction,
+so a `both` branch has at most `2·maxPoints − 1` points, plus the special points.
+
+The command refuses a system that depends on `t` or `n`; a parameter count that doesn't fit, a
+system with no parameter or a parameter index outside it; a range that is not finite with
+`lo < hi`; a start of the wrong dimension or a non-finite start or parameter; `period = 0`, or
+`period > 1` for a flow; a switch seed whose tangent doesn't have `dim + 1` finite components, not
+all zero, or whose `p` is not finite; `ds` that is not a positive number, `dsMax < ds`; and `maxPoints` outside
+`2..=MAX_CONTINUATION_POINTS = 20000`. `NotAFixedPoint` and `Singular` come back as messages that
+name an equilibrium (flow) or a fixed point (map), and `CannotSwitch` and `NoSecondBranch` as
+messages that say where switching works and to try a smaller `ds`. It runs on a blocking worker thread. A start
+whose `p` lies outside `range` is that point alone, with `end.last = "range"`. The continuation
+gate (`scripts/continuation-gate.sh`, see the README) checks this command against 27 values
+derived in closed form or published, among them the logistic cascade `r2 … r4` to 1e−6 by
+switching at each flip, and its agreement with `period_doublings` to 1e−9.
+
+The studio's Branch view (View control: Continuation) sends one request per seed of the view
+(`buildContinuationJobs` in state/model.ts), each request's JSON its key: `range`, `ds`,
+`dsMax = 2·ds` and `maxPoints` from the Continuation panel, every parameter but the swept one from
+its slider, and the swept one from the seed (a point seed's `param`, a switch seed's `p`), so
+moving the swept slider asks for nothing. A run is kept while its job is still asked for, so the
+requests go one at a time and only for new keys. A seed is a fixed point at the slider's value
+then (the selected one, with Continue on a Fixed points row or "Continue from the selected fixed
+point", in the panel's direction), or, from Switch branch on a BP or PD row, the special point
+itself, followed `both` ways. A fresh Branch view starts from the selected fixed point, else from
+every fixed point found in the view. The plot draws each branch in `traj-(i mod 7 + 1)`, solid
+where it is stable and dashed where it is not, split at each special point; every member of a
+cycle; and each special point as a fixed-point glyph with its label (LP, H, BP, PD, NS, one table
+`SPECIAL_KINDS`). The inspector lists each bifurcation once in increasing `p` (both halves of a
+switched cycle, and two branches that cross, report the same one), for example `H  b = 0.346410
+(x, y) = (0.3464, 1.7321)  ω = 0.447214  ℓ₁ < 0, supercritical`. A click on a row, or on the plot
+near a branch vertex, sets the swept slider to that `p` exactly. The view asks for no portrait.
+The browser preview's stand-in (`mockContinuation` in api/mock.ts) follows dimension ≤ 3 with
+finite-difference Jacobians and no eigenvalue-count check or `ℓ₁`.
+
 ## IPC (Tauri commands)
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
@@ -481,7 +618,7 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale. The same file
 carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`,
-`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, `BLOW_UP_THRESHOLD`, `LYAPUNOV_HISTORY`, the `SECTION_MISFIT` and
+`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, `MAX_CONTINUATION_POINTS`, `BLOW_UP_THRESHOLD`, `LYAPUNOV_HISTORY`, the `SECTION_MISFIT` and
 `SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
@@ -496,6 +633,7 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
 | `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
 | `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
+| `compute_continuation` | `ContinuationRequest` | `ContinuationResponse` (see Continuation above) |
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,

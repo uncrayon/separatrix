@@ -153,6 +153,13 @@ fn ascii_fold(c: char) -> Option<&'static str> {
     })
 }
 
+/// The slug of a document title, where an apostrophe separates words
+/// (`"Sel'kov glycolysis"` → `sel-kov-glycolysis`) instead of marking a
+/// derivative as in [`slug`]; `system` when nothing is left.
+pub fn title_slug(title: &str) -> String {
+    slug(&title.replace(['\'', '’'], " "), "system")
+}
+
 /// A label or file-name slug: lowercase `[a-z0-9-]`, words joined by single
 /// hyphens (`"Rabbits vs sheep"` → `rabbits-vs-sheep`, `"theta'"` →
 /// `theta-prime`, `"Hénon map"` → `henon-map`). `fallback` when nothing is
@@ -264,6 +271,8 @@ mod tests {
         assert_eq!(slug("Rössler", "system"), "rossler");
         assert_eq!(slug("σ", "x"), "sigma");
         assert_eq!(slug("  ", "system"), "system");
+        assert_eq!(title_slug("Sel'kov glycolysis"), "sel-kov-glycolysis");
+        assert_eq!(title_slug("Sel’kov"), "sel-kov");
         assert_eq!(comment("a\nb − c"), "% a b - c\n");
         assert_eq!(bp(1.5), "1.125bp");
         assert_eq!(bp(8.0), "6bp");

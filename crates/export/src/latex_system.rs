@@ -16,7 +16,7 @@ use dyn_expr::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::latex_util::{comment, packages_comment, plain_equations, slug};
+use crate::latex_util::{comment, packages_comment, plain_equations, slug, title_slug};
 use crate::num;
 use crate::words::join_and;
 
@@ -246,7 +246,7 @@ pub fn header_comments(
 
 /// The system as a LaTeX snippet.
 pub fn system(input: &SystemInput) -> SystemLatex {
-    let title_slug = slug(input.title, "system");
+    let title_slug = title_slug(input.title);
     let mut notes: Vec<String> = Vec::new();
 
     let latex_lines: Option<Vec<String>> = match input.format {

@@ -12,12 +12,14 @@ import type {
   Method,
   ProjectAxis,
   ProjectCamera,
+  ProjectContinuation,
   ProjectFile,
   ProjectInitialCondition,
   ProjectLyapunov,
   ProjectOrbit,
   ProjectParam,
   ProjectSection,
+  ProjectSeed,
   ProjectView,
   SectionSpec,
   SystemKind,
@@ -25,6 +27,8 @@ import type {
 import { DEFAULT_METHOD, METHODS } from "../state/methods.ts";
 import type {
   Camera,
+  ContinuationSeed,
+  ContinuationSettings,
   EquationLine,
   InitialCondition,
   Layers,
@@ -52,7 +56,25 @@ export type LoadedAxis =
   | { kind: "next"; name: string }
   | { kind: "exponent" }
   | { kind: "param"; name: string }
+  | { kind: "norm" }
   | { kind: "unknown"; kindName: string };
+
+export interface LoadedSeed {
+  from?: string;
+  x?: number[];
+  param?: number;
+  period?: number;
+  direction?: string;
+  kind?: string;
+  tangent?: number[];
+}
+
+export interface LoadedContinuation {
+  range?: [number, number] | null;
+  ds?: number;
+  maxPoints?: number;
+  seeds: LoadedSeed[];
+}
 
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
 export const MAX_TRANSIENT = 1_000_000;
@@ -81,6 +103,7 @@ export interface LoadedView {
   camera?: Partial<Camera>;
   lyapunov?: Partial<LyapunovSettings>;
   orbit?: Partial<OrbitSettings>;
+  continuation?: LoadedContinuation;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -197,6 +220,43 @@ function sectionOut(prev: ProjectSection | undefined, s: SectionSpec, states: re
   return prev && isObj(prev) && prev.kind === fresh.kind ? { ...prev, ...fresh } : fresh;
 }
 
+const SEED_FROMS: readonly string[] = ["point", "switch"] satisfies ContinuationSeed["from"][];
+
+function continuationOut(prev: ProjectContinuation | undefined, c: ContinuationSettings): ProjectContinuation {
+  const saved = isObj(prev) && Array.isArray(prev.seeds) ? prev.seeds : [];
+  const known = saved.filter((p) => isObj(p) && SEED_FROMS.includes(String(p.from)));
+  const unknown = saved.filter((p) => !known.includes(p));
+  const seeds = c.seeds.map((seed, i): ProjectSeed => {
+    const fresh: ProjectSeed =
+      seed.from === "point"
+        ? { from: "point", x: [...seed.x], param: seed.param, period: seed.period, direction: seed.direction }
+        : {
+            from: "switch",
+            x: [...seed.at.x],
+            param: seed.at.p,
+            period: seed.at.period,
+            direction: seed.direction,
+            kind: seed.at.kind,
+            tangent: [...seed.at.tangent],
+          };
+    const old = known[i];
+    if (!old || old.from !== fresh.from) return fresh;
+    const out: ProjectSeed = { ...old, ...fresh };
+    if (fresh.from === "point") {
+      delete out.kind;
+      delete out.tangent;
+    }
+    return out;
+  });
+  return {
+    ...(isObj(prev) ? prev : {}),
+    range: [c.range[0], c.range[1]],
+    ds: c.ds,
+    max_points: c.maxPoints,
+    seeds: [...seeds, ...unknown],
+  };
+}
+
 function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<unknown, T> {
   const out = new Map<unknown, T>();
   for (const t of list ?? []) if (isObj(t) && !out.has(key(t))) out.set(key(t), t);
@@ -256,6 +316,8 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const space = s.view.kind === "space" ? s.view : null;
     const lyapunov = s.view.kind === "lyapunov" ? s.view.lyapunov : null;
     const orbit = s.view.kind === "orbit" ? s.view : null;
+    const continuation = s.view.kind === "continuation" ? s.view : null;
+    const swept = orbit ?? continuation;
     const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const exponent: ProjectAxis = { kind: "exponent" };
     const paramAxis = (name: string | undefined): ProjectAxis => {
@@ -265,7 +327,7 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section || space || lyapunov || orbit ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space || lyapunov || swept ? { kind: s.view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       ...(lyapunov
         ? {
@@ -287,12 +349,15 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
             } as ProjectOrbit,
           }
         : {}),
-      x_axis: orbit ? paramAxis(s.params[orbit.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
+      ...(continuation ? { continuation: continuationOut(lv?.continuation, continuation.continuation) } : {}),
+      x_axis: swept ? paramAxis(s.params[swept.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
       y_axis: lyapunov
         ? lv?.y_axis?.kind === "exponent"
           ? { ...lv.y_axis, ...exponent }
           : exponent
-        : axisOut(lv?.y_axis, s.view.yAxis, states, next),
+        : s.view.yAxis.kind === "norm"
+          ? { ...(lv?.y_axis?.kind === "norm" ? lv.y_axis : {}), kind: "norm" }
+          : axisOut(lv?.y_axis, s.view.yAxis, states, next),
       ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
@@ -316,10 +381,11 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    if (!cobweb && !section && !space && !lyapunov && !orbit) delete primary.kind;
+    if (!cobweb && !section && !space && !lyapunov && !swept) delete primary.kind;
     if (!section) delete primary.section;
     if (!lyapunov) delete primary.lyapunov;
     if (!orbit) delete primary.orbit;
+    if (!continuation) delete primary.continuation;
     if (!space) {
       delete primary.z_axis;
       delete primary.z_range;
@@ -373,7 +439,8 @@ export function dirtyKey(s: DocumentState, opts: Omit<SerializeOptions, "exportS
   return JSON.stringify(p);
 }
 
-const sameStateAxes = (a: AxisRef, b: AxisRef) => a.kind === "state" && b.kind === "state" && a.index === b.index;
+const sameStateAxes = (a: { kind: string; index?: number }, b: { kind: string; index?: number }) =>
+  a.kind === "state" && b.kind === "state" && a.index === b.index;
 
 function loadSection(s: unknown): LoadedSection | undefined {
   if (!isObj(s)) return undefined;
@@ -396,6 +463,7 @@ function loadAxis(a: unknown): LoadedAxis {
   if (kind === "next" && isObj(a) && typeof a.name === "string") return { kind: "next", name: a.name };
   if (kind === "exponent") return { kind: "exponent" };
   if (kind === "param" && isObj(a) && typeof a.name === "string") return { kind: "param", name: a.name };
+  if (kind === "norm") return { kind: "norm" };
   return { kind: "unknown", kindName: kind ?? "" };
 }
 
@@ -410,6 +478,28 @@ function wholeTransient(v: unknown): number | undefined {
   const n = num(v);
   if (n === undefined) return undefined;
   return Math.min(MAX_TRANSIENT, Math.max(0, Math.round(n)));
+}
+
+const numbers = (v: unknown): number[] | undefined =>
+  Array.isArray(v) && v.every((x) => num(x) !== undefined) ? (v as number[]) : undefined;
+
+function loadContinuation(c: Obj): LoadedContinuation {
+  return {
+    ...definedOnly({ range: c.range !== undefined ? loadRange(c.range) : undefined, ds: num(c.ds), maxPoints: num(c.max_points) }),
+    seeds: (Array.isArray(c.seeds) ? c.seeds : []).map((seed) =>
+      isObj(seed)
+        ? definedOnly({
+            from: str(seed.from),
+            x: numbers(seed.x),
+            param: num(seed.param),
+            period: num(seed.period),
+            direction: str(seed.direction),
+            kind: str(seed.kind),
+            tangent: numbers(seed.tangent),
+          })
+        : {},
+    ),
+  };
 }
 
 function definedOnly<T extends Obj>(o: T): Partial<T> {
@@ -487,6 +577,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
           }
         : {}),
       ...(isObj(v.orbit) ? { orbit: definedOnly({ transient: num(orb.transient), kept: num(orb.kept) }) } : {}),
+      ...(isObj(v.continuation) ? { continuation: loadContinuation(v.continuation) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({

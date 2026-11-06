@@ -9,9 +9,10 @@
 use dyn_expr::InputFormat;
 use serde::Serialize;
 
-use crate::latex_util::slug;
+use crate::latex_util::title_slug;
 use crate::model::{
-    Labels, LyapunovRun, Method, OrbitRun, SectionSpec, SystemKind, SystemMeta, Trajectory,
+    ContinuationRun, Labels, LyapunovRun, Method, OrbitRun, SectionSpec, SystemKind, SystemMeta,
+    Trajectory,
 };
 use crate::num::shortest;
 use crate::words::{status_id, time_name};
@@ -279,7 +280,7 @@ pub fn files(input: &CsvInput) -> Vec<CsvFile> {
             order.push(&t.tag.ic_id);
         }
     }
-    let base = slug(input.title, "system");
+    let base = title_slug(input.title);
     let columns: Vec<String> = input.labels.states.iter().map(|s| s.name.clone()).collect();
     let mut stems: Vec<String> = Vec::new();
     ids.iter()
@@ -397,7 +398,7 @@ pub fn lyapunov(sys: &SystemMeta, run: &LyapunovRun, app_version: &str) -> CsvFi
         csv.push_str(&cells.join(","));
         csv.push('\n');
     }
-    let stem = format!("{}-lyapunov", slug(sys.title, "system"));
+    let stem = format!("{}-lyapunov", title_slug(sys.title));
     let o = &run.solver;
     let integrator = (sys.kind == SystemKind::Ode).then(|| {
         let adaptive = o.method.is_adaptive();
@@ -491,7 +492,7 @@ pub fn orbit(sys: &SystemMeta, run: &OrbitRun, app_version: &str) -> CsvFile {
             }
         }
     }
-    let stem = format!("{}-orbit-diagram", slug(sys.title, "system"));
+    let stem = format!("{}-orbit-diagram", title_slug(sys.title));
     let meta = pretty(&OrbitMeta {
         format: "separatrix-orbit-diagram",
         format_version: 1,
@@ -515,6 +516,142 @@ pub fn orbit(sys: &SystemMeta, run: &OrbitRun, app_version: &str) -> CsvFile {
         ],
     });
     CsvFile { stem, csv, meta }
+}
+
+#[derive(Serialize)]
+struct MetaBranch {
+    branch: usize,
+    period: usize,
+    points: usize,
+    rows: usize,
+    special: usize,
+}
+
+#[derive(Serialize)]
+struct ContinuationMeta<'a> {
+    format: &'static str,
+    format_version: u32,
+    app_version: &'a str,
+    title: &'a str,
+    csv: String,
+    special_csv: String,
+    system: MetaSystem<'a>,
+    params: Vec<MetaParam<'a>>,
+    columns: Vec<String>,
+    special_columns: Vec<String>,
+    swept: &'a str,
+    range: (f64, f64),
+    branches: Vec<MetaBranch>,
+    notes: Vec<&'static str>,
+}
+
+/// A branch plot's CSV, its `.meta.json` and the special points'
+/// `<stem>-special.csv`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinuationCsv {
+    /// `<stem>.csv` and `<stem>.meta.json`.
+    pub file: CsvFile,
+    /// `<stem>-special.csv`.
+    pub special: String,
+}
+
+/// The branches as rows `branch,period,point,<param>,<states…>,stable,unstable`
+/// (branches from 1, points from 0 in arclength order; a `k`-cycle's point
+/// is `k` rows, `x, f(x), …`), the special points as rows
+/// `branch,point,type,period,<param>,<states…>,omega,lyapunov` (empty where
+/// a kind has none), and the metadata.
+pub fn continuation(sys: &SystemMeta, run: &ContinuationRun, app_version: &str) -> ContinuationCsv {
+    let dim = sys.labels.states.len();
+    let param = sys
+        .labels
+        .params
+        .get(run.param)
+        .map_or("r", |p| p.name.as_str());
+    let states: Vec<String> = sys.labels.states.iter().map(|s| s.name.clone()).collect();
+    let mut columns = vec![
+        "branch".to_string(),
+        "period".into(),
+        "point".into(),
+        param.into(),
+    ];
+    columns.extend(states.iter().cloned());
+    columns.extend(["stable".to_string(), "unstable".into()]);
+    let mut special_columns = vec![
+        "branch".to_string(),
+        "point".into(),
+        "type".into(),
+        "period".into(),
+        param.into(),
+    ];
+    special_columns.extend(states.iter().cloned());
+    special_columns.extend(["omega".to_string(), "lyapunov".into()]);
+    let mut csv = record(&columns);
+    let mut special = record(&special_columns);
+    let mut branches = Vec::new();
+    for (b, br) in run.branches.iter().enumerate() {
+        let mut rows = 0;
+        for i in 0..br.len() {
+            for m in 0..br.period {
+                let mut cells = vec![
+                    (b + 1).to_string(),
+                    br.period.to_string(),
+                    i.to_string(),
+                    shortest(br.p[i]),
+                ];
+                cells.extend(br.state(dim, i, m).iter().map(|&v| shortest(v)));
+                cells.push(br.stable.get(i).copied().unwrap_or(false).to_string());
+                cells.push(br.unstable.get(i).copied().unwrap_or(0).to_string());
+                csv.push_str(&record(&cells));
+                rows += 1;
+            }
+        }
+        for sp in &br.special {
+            let mut cells = vec![
+                (b + 1).to_string(),
+                sp.index.to_string(),
+                sp.kind.label().to_string(),
+                br.period.to_string(),
+                shortest(sp.p),
+            ];
+            cells.extend(sp.x.iter().map(|&v| shortest(v)));
+            cells.push(sp.omega.map_or(String::new(), shortest));
+            cells.push(sp.lyapunov.map_or(String::new(), shortest));
+            special.push_str(&record(&cells));
+        }
+        branches.push(MetaBranch {
+            branch: b + 1,
+            period: br.period,
+            points: br.len(),
+            rows,
+            special: br.special.len(),
+        });
+    }
+    let stem = format!("{}-continuation", title_slug(sys.title));
+    let meta = pretty(&ContinuationMeta {
+        format: "separatrix-continuation",
+        format_version: 1,
+        app_version,
+        title: sys.title,
+        csv: format!("{stem}.csv"),
+        special_csv: format!("{stem}-special.csv"),
+        system: meta_system(sys),
+        params: meta_params(sys.labels),
+        columns,
+        special_columns,
+        swept: param,
+        range: run.range,
+        branches,
+        notes: vec![
+            "One row per point of each branch in arclength order, point counted from 0; a point of a k-cycle of a map is k rows, x, f(x), …, f^(k-1)(x).",
+            "stable: every eigenvalue has Re < 0 (flow) or every multiplier |mu| < 1 (map); unstable: how many do not. A special point is neutral: not stable, with the smaller count of its two sides.",
+            "The special CSV names each point by branch and point; omega is the frequency at a Hopf point (H) and the angle arg mu at a Neimark-Sacker point (NS); lyapunov is the first Lyapunov coefficient at H, with <p, q> = 1 and <q, q> = 1/2.",
+            "The swept parameter's value in params is the slider's; each branch starts at its own value.",
+        ],
+    });
+    ContinuationCsv {
+        file: CsvFile { stem, csv, meta },
+        special,
+    }
 }
 
 #[cfg(test)]

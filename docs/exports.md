@@ -17,6 +17,9 @@ text and files.
 | Lyapunov CSV + `.meta.json` | `csv::lyapunov` | `t,lambda_1,…,lambda_n`, the running estimates |
 | LaTeX orbit diagram | `latex_figure::orbit_figure` | pgfplots; dots up to 5,000, then a density PNG (Save) or thinned (Copy) |
 | Orbit CSV + `.meta.json` | `csv::orbit` | `r,n,x`, one row per finite kept iterate |
+| LaTeX branch plot | `latex_continuation::continuation_figure` | pgfplots; stable runs solid, unstable dashed, special points as glyphs with labels |
+| LaTeX special points | `latex_continuation::special_points_table` | booktabs `table`, siunitx `\num{0.346410}` |
+| Continuation CSV + `.meta.json` | `csv::continuation` | `branch,period,point,<param>,<states>,stable,unstable`, plus `<stem>-special.csv` |
 | Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed); a section's crossings and a 3D view's trajectories are only cut |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
@@ -184,6 +187,77 @@ that escaped are left out, and so is the rest of that orbit.
 `<title>-orbit-diagram.meta.json` has `format: "separatrix-orbit-diagram"`,
 the system, the parameters, `columns`, `swept`, `range` (the first and last
 `r`), `parameter_values`, `state`, `x0`, `transient`, `kept`, `rows` and notes.
+
+## Continuation
+
+The Branch view (a continuation view, Strogatz §3.1–3.4 and §8.2) exports its
+branches. The LaTeX and the CSV come from the core: `export_continuation_latex`,
+`save_continuation_latex` and `export_continuation_csv` take the view's own
+`ContinuationRequest`s, one per branch with its palette slot
+(`ContinuationExportRequest`), and follow them again. The last run is cached by
+those requests (their `requestId`s aside), so the figure, the table, the CSV
+and their Save share one. A branch the core can't follow is left out, as the
+plot leaves it out; with no branch left the export fails with that branch's
+reason, and with no branch at all with "There are no branches to export yet."
+PNG and SVG draw the screen's own branches through `drawBranch`.
+
+| Format | What |
+| --- | --- |
+| LaTeX | Figure: the pgfplots figure below. Special points: the booktabs table below. Fixed points is disabled (the view shows none); Equations is as in any view. |
+| CSV | the branches' points, `<stem>.meta.json`, and the special points in `<stem>-special.csv` |
+| PNG, SVG | the view as drawn (`drawBranch`, without the screen's parameter marker), with the axis names |
+
+The figure has the screen's frame, the parameter's LaTeX across and the
+state's (or `\lVert x \rVert`) up. Each branch is two `\addplot`s in
+`traj-(color mod 7 + 1)`, 1.75 px wide: its stable stretches solid and its
+unstable ones dashed (`dash pattern=on 4.5bp off 3bp`, the screen's 6 px on, 4
+px off), every point of a cycle drawn, the stretches split at every special
+point and `nan` rows between them. Each has a comment, `% Branch 2 (period 2),
+unstable (dashed)`. The special points come last: a half-filled fixed-point
+glyph (`halfcircle*`, `plotmarks`) on a halo at every point of the cycle, and
+the label (`LP`, `H`, `BP`, `PD`, `NS`) once, 7 px right of and 5 px above the
+first, in `plot-fp` on the label halo. Curves are clipped to the view grown by
+8 px. The header names the sweep (`% Branch plot: y against b from 0 to 1.5; 1
+branch, 2 special points.`) and leaves the swept parameter out of the
+`Parameters:` line. Data is inline for Copy; Save writes
+`<base>-branch-<k>-stable.dat`, `<base>-branch-<k>-unstable.dat` and
+`<base>-special-points.dat` beside the `.tex`. Above 5,000 rows a comment
+suggests lualatex; nothing is thinned.
+
+The special points table lists each special point once, in increasing
+parameter (`ContinuationRun::special_points`: both halves of a switched cycle,
+and two branches through one branch point, report the same one; the same kind
+and period within `1e-7·(1 + |p|)` is one row, as the inspector lists them).
+Columns: Type (the label), the parameter, the state (a cycle's first point),
+Period for a map, `ω` (Hopf) or `θ = arg μ` (Neimark–Sacker), and `ℓ₁`. A
+column no row fills is left out. The parameter and ω/θ are
+`\num{<num::to_fixed(v, 6)>}` (`\num{0.346410}`), states and ℓ₁ six
+significant digits (`num::si`), and a state below `1e-12` of the column's
+largest prints as 0. The caption names the system, the swept parameter, the
+other parameters' values and a legend of the types present, and says what ω,
+θ and ℓ₁ are (ℓ₁ with `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`, so `ṙ = μr + ar³` has
+`ℓ₁ = a/ω`). Label `tab:<title-slug>-special-points`.
+
+The CSV has one row per point of each branch in arclength order: `branch`
+(from 1), `period`, `point` (from 0), the swept parameter's name, every state
+by name, `stable` (`true` or `false`) and `unstable` (the count). A point of a
+k-cycle of a map is k rows, `x, f(x), …, f^(k−1)(x)`. `<stem>-special.csv` has
+`branch,point,type,period,<param>,<states>,omega,lyapunov`, one row per special
+point as each branch reports it (not merged), `omega` and `lyapunov` empty
+where the kind has none. `<stem>.meta.json` has `format:
+"separatrix-continuation"`, `csv`, `special_csv`, the system, the sliders'
+parameters, `columns`, `special_columns`, `swept`, `range`, one entry per
+branch (`branch`, `period`, `points`, `rows`, `special`) and notes. The stem
+is `<title-slug>-continuation`; Save writes `<name>.csv`, `<name>-special.csv`
+and `<name>.meta.json` and rewrites `csv` and `special_csv` to the names
+written.
+
+Every number goes through `num::shortest`, `num::si` or `num::to_fixed`,
+which round the exact decimal value of the double, and the norm is
+`sqrt(Σ xᵢ²)` (`+ ×` and a correctly rounded `sqrt`). No platform `libm`
+function decides a printed digit or a kept point. The goldens are built from
+literal data: the Sel'kov branch at `a = 0.08` with the core's Hopf points,
+and the logistic cascade's special points.
 
 ## The system
 

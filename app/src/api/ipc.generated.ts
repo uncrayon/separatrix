@@ -643,6 +643,192 @@ doublings?: Array<DoublingOut>,
  */
 elapsedMs: number, };
 
+export type ContinuationRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order; the branch
+ * starts at `params[param]`.
+ */
+params: Array<number>, 
+/**
+ * Index of the continuation parameter.
+ */
+param: number, 
+/**
+ * The parameter interval the branch stays in, `lo < hi`.
+ */
+range: [number, number], 
+/**
+ * Where the branch starts.
+ */
+start: ContinuationStart, 
+/**
+ * Which way to follow it from the start.
+ */
+direction: ContinuationDirection, 
+/**
+ * First step in arclength, `> 0`.
+ */
+ds: number, 
+/**
+ * Largest step, `>= ds`.
+ */
+dsMax: number, 
+/**
+ * Most points in each direction, the start included,
+ * `2..=MAX_CONTINUATION_POINTS`.
+ */
+maxPoints: number, };
+
+export type ContinuationStart = { "kind": "point", 
+/**
+ * Full state vector.
+ */
+x0: Array<number>, 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, } | { "kind": "switch", 
+/**
+ * A special point of kind `branchPoint` or `flip`.
+ */
+at: SwitchPoint, };
+
+export type ContinuationDirection = "forward" | "backward" | "both";
+
+export type ContinuationResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The branch.
+ */
+branch: BranchOut, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type BranchOut = { 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, 
+/**
+ * The parameter at each point.
+ */
+p: Array<number>, 
+/**
+ * `points · period · dim` values: point `i` is the cycle
+ * `x, f(x), …, f^{k−1}(x)` at `x[i·period·dim .. (i + 1)·period·dim]`.
+ */
+x: Array<number>, 
+/**
+ * Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map); `false`
+ * at a special point.
+ */
+stable: Array<boolean>, 
+/**
+ * Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map) at each point.
+ */
+unstable: Array<number>, 
+/**
+ * The located bifurcations in arclength order.
+ */
+special: Array<SpecialPointOut>, 
+/**
+ * Why each end of the branch stopped.
+ */
+end: BranchEndOut, };
+
+export type BranchEndOut = { 
+/**
+ * The first point's, with direction `both`; `null` when the first
+ * point is the start.
+ */
+first: BranchStop | null, 
+/**
+ * The last point's.
+ */
+last: BranchStop, };
+
+export type BranchStop = "range" | "maxPoints" | "stepTooSmall";
+
+export type SpecialPointOut = { 
+/**
+ * What it is.
+ */
+kind: SpecialKindOut, 
+/**
+ * Its own point in `BranchOut::p`.
+ */
+index: number, 
+/**
+ * The parameter.
+ */
+p: number, 
+/**
+ * The state (`dim` values; the cycle's first point for a map).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k`, as `BranchOut::period`.
+ */
+period: number, 
+/**
+ * Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values,
+ * oriented as the polyline.
+ */
+tangent: Array<number>, 
+/**
+ * Eigenvalues of `J` (flow) or `D f^k` (map) as `[re, im]` pairs, the
+ * critical ones on the stability boundary.
+ */
+eigenvalues: Array<[number, number]>, 
+/**
+ * Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ = arg μ` of
+ * the critical multiplier, in `(0, π)`. `null` otherwise.
+ */
+omega: number | null, 
+/**
+ * Hopf: the first Lyapunov coefficient `ℓ₁` (negative when
+ * supercritical), scaled so that `ṙ = μr + a r³, θ̇ = ω` has
+ * `ℓ₁ = a/ω`. `null` otherwise, or where it could not be computed.
+ */
+lyapunov: number | null, };
+
+export type SwitchPoint = { 
+/**
+ * `branchPoint` or `flip`.
+ */
+kind: SpecialKindOut, 
+/**
+ * The parameter.
+ */
+p: number, 
+/**
+ * The state (`dim` values).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k`, as `BranchOut::period`.
+ */
+period: number, 
+/**
+ * Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values.
+ */
+tangent: Array<number>, };
+
+export type SpecialKindOut = "fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker";
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.
@@ -724,8 +910,9 @@ id: string,
  * `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
  * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
  * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
- * absent for the phase plane and the time series, which the axes tell
- * apart.
+ * `"continuation"` for a branch plot of fixed points against a
+ * parameter (see `continuation`); absent for the phase plane and the
+ * time series, which the axes tell apart.
  */
 kind?: string, 
 /**
@@ -761,7 +948,13 @@ lyapunov?: ProjectLyapunov,
  * The columns of an `"orbit"` view (the orbit diagram of a map over
  * the range of the parameter across).
  */
-orbit?: ProjectOrbit, slice: ProjectSlice, layers: ProjectLayers, };
+orbit?: ProjectOrbit, 
+/**
+ * The requests of a `"continuation"` view (a branch plot: `x_axis` is
+ * `{ "kind": "param", "name": p }`, `y_axis` a state or
+ * `{ "kind": "norm" }`).
+ */
+continuation?: ProjectContinuation, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -778,6 +971,18 @@ export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
 export type ProjectLyapunov = { transient?: number, total?: number, interval?: number, blocks?: number, };
 
 export type ProjectOrbit = { transient?: number, kept?: number, };
+
+export type ProjectContinuation = { range?: [number, number], ds?: number, max_points?: number, seeds: Array<ProjectSeed>, };
+
+export type ProjectSeed = { from: string, 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, 
+/**
+ * The value of the view's parameter.
+ */
+param: number, period: number, direction: string, kind?: string, tangent?: Array<number>, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -1116,7 +1321,12 @@ csv: string,
 /**
  * The `.meta.json` contents.
  */
-meta: string, };
+meta: string, 
+/**
+ * A branch plot's special points, written beside it as
+ * `<stem>-special.csv`.
+ */
+special?: string, };
 
 export type CsvResponse = { 
 /**
@@ -1221,6 +1431,110 @@ figure: OrbitFigureRequest,
  */
 suggestedName: string, };
 
+export type BranchAxis = { "kind": "state", 
+/**
+ * Index into the state vector.
+ */
+index: number, } | { "kind": "norm" };
+
+export type BranchExport = { 
+/**
+ * The view's request for the branch.
+ */
+request: ContinuationRequest, 
+/**
+ * Palette index (taken mod 7), as the plot colors the branch.
+ */
+color: number, };
+
+export type ContinuationExportRequest = { 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * The sliders' parameter values (the swept one's is each branch's own).
+ */
+params: Array<number>, 
+/**
+ * Index of the swept parameter.
+ */
+param: number, 
+/**
+ * The parameter interval the branches are followed in.
+ */
+range: [number, number], 
+/**
+ * The vertical axis.
+ */
+yAxis: BranchAxis, 
+/**
+ * The branches, in the view's order.
+ */
+branches: Array<BranchExport>, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type ContinuationLatex = "figure" | "specialPoints";
+
+export type ContinuationFigureRequest = { 
+/**
+ * The branches and their names.
+ */
+continuation: ContinuationExportRequest, 
+/**
+ * The figure or the table.
+ */
+content: ContinuationLatex, 
+/**
+ * The view's parameter range (across).
+ */
+xRange: [number, number], 
+/**
+ * The view's range up.
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveContinuationFigureRequest = { 
+/**
+ * The figure or table.
+ */
+figure: ContinuationFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
 export type SaveCsvFileRequest = { 
 /**
  * The file and its metadata.
@@ -1268,6 +1582,10 @@ export const BLOW_UP_THRESHOLD = 1e12;
 export const LYAPUNOV_HISTORY = 2000;
 
 export const MAX_ORBIT_POINTS = 4000000;
+
+export const MAX_CONTINUATION_POINTS = 20000;
+
+export const SAME_BIFURCATION_TOL = 1e-7;
 
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 

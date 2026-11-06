@@ -516,6 +516,8 @@ interface SegmentedProps<T extends string> {
   labelledBy?: string;
   size?: "md" | "sm";
   fill?: boolean;
+  /** Lay the options out in rows of this many, each row ruled off from the one above. */
+  columns?: number;
   iconOnly?: boolean;
   describedBy?: string;
   disabled?: boolean;
@@ -530,6 +532,7 @@ export function SegmentedControl<T extends string>({
   labelledBy,
   size = "md",
   fill,
+  columns,
   iconOnly,
   describedBy,
   disabled,
@@ -571,6 +574,7 @@ export function SegmentedControl<T extends string>({
         "ds-segmented",
         size === "sm" && "ds-segmented--sm",
         fill && "ds-segmented--fill",
+        columns !== undefined && "segmented-grid",
         disabled && "is-disabled",
         className,
       )}
@@ -579,6 +583,7 @@ export function SegmentedControl<T extends string>({
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       aria-disabled={disabled || undefined}
+      style={columns !== undefined ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}
     >
       {options.map((o, i) => {
         const checked = o.value === value;
@@ -597,7 +602,13 @@ export function SegmentedControl<T extends string>({
             aria-label={o.ariaLabel ?? (iconOnly && typeof o.label === "string" ? o.label : undefined)}
             disabled={disabled}
             tabIndex={tabbable ? 0 : -1}
-            className={cx("ds-segmented-item", iconOnly && "ds-segmented-item--icon")}
+            className={cx(
+              "ds-segmented-item",
+              iconOnly && "ds-segmented-item--icon",
+              columns !== undefined && i % columns === 0 && "segmented-row-start",
+              columns !== undefined && i >= columns && "segmented-lower-row",
+              columns !== undefined && selectedIndex >= 0 && i === selectedIndex + columns && "segmented-below-checked",
+            )}
             data-tooltip={o.title ?? (iconOnly && typeof o.label === "string" ? o.label : undefined)}
             onClick={() => {
               if (available(i)) onChange(o.value);

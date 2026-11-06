@@ -8,8 +8,11 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   VIEW_CHOICE_LABELS,
   fitLyapunovRanges,
+  fitBranchRanges,
   fitOrbitRange,
   hasNullclineLayer,
+  isContinuation,
+  shownBranches,
   isCobweb,
   isLyapunov,
   isOrbit,
@@ -95,6 +98,7 @@ const PICKER: Record<ViewChoice, { noun: string; name: string; axes: string }> =
   space: { noun: "3D", name: "3D", axes: "; the three states are picked beside it." },
   lyapunov: { noun: "Lyapunov spectrum", name: "Lyapunov spectrum", axes: "." },
   orbit: { noun: "Orbit diagram", name: "orbit diagram", axes: "." },
+  continuation: { noun: "Branch plot", name: "continuation", axes: "; its parameter and the state up are picked in the inspector." },
 };
 
 /** "Phase plane, time series or cobweb". */
@@ -115,7 +119,8 @@ export function CanvasToolbar({ state, actions }: Props) {
   const space = isSpace(state.view) ? state.view : null;
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view);
-  const analysis = lyapunov || orbit;
+  const branch = isContinuation(state.view);
+  const analysis = lyapunov || orbit || branch;
 
   const zoomToFit = () => {
     const v = state.view;
@@ -125,7 +130,13 @@ export function CanvasToolbar({ state, actions }: Props) {
         ? fitLyapunov(state)
         : isOrbit(v)
           ? fitOrbit(state)
-          : fitView(state);
+          : isContinuation(v)
+            ? fitBranchRanges(
+                shownBranches(state).map((b) => b.run),
+                sys.states.length,
+                v.yAxis,
+              )
+            : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
@@ -136,6 +147,8 @@ export function CanvasToolbar({ state, actions }: Props) {
       label: "Zoom to fit",
       tip: orbit
         ? "Zoom to fit the diagram over the slider's range"
+        : branch
+          ? "Zoom to fit the branches"
         : lyapunov
           ? "Zoom to fit the run (or double-click the plot)"
           : "Zoom to fit the trajectories",
@@ -282,7 +295,11 @@ export function CanvasToolbar({ state, actions }: Props) {
           </div>
         </>
       )}
-      <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
+      <span
+        className={tools.length === 0 && layers.length === 0 ? "ds-canvas-toolbar-divider toolbar-view" : "ds-canvas-toolbar-divider"}
+        role="separator"
+        aria-orientation="vertical"
+      />
       <AxisPicker
         state={state}
         actions={actions}
@@ -359,7 +376,7 @@ function fitOrbit(state: StudioState): { xRange: [number, number]; yRange: [numb
 
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
-  if (!sys) return null;
+  if (!sys || isContinuation(state.view)) return null;
   const dim = sys.states.length;
   const { xAxis: rx } = state.view;
   if (isReturnMap(state.view) && rx.kind === "state") {
@@ -465,16 +482,25 @@ function AxisPicker({
   const cobweb = isCobweb(state.view);
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view) ? state.view : null;
-  const viewOnly = cobweb || space || lyapunov || !!orbit;
+  const branch = isContinuation(state.view) ? state.view : null;
+  const plot = isContinuation(state.view) ? null : state.view;
+  const viewOnly = cobweb || space || lyapunov || !!orbit || !!branch;
   const { x: xLatex, y: yLatex } = lyapunov
     ? { x: isMap ? "n" : "t", y: "\\lambda" }
     : orbit
       ? { x: sys.params[orbit.param]?.latex ?? "", y: sys.states[orbit.yAxis.index]?.latex ?? "" }
-      : viewAxisLabels(state.view, sys.states, sys.kind);
+      : branch
+        ? {
+            x: sys.params[branch.param]?.latex ?? "",
+            y: branch.yAxis.kind === "state" ? (sys.states[branch.yAxis.index]?.latex ?? "") : "\\lVert x \\rVert",
+          }
+        : plot
+          ? viewAxisLabels(plot, sys.states, sys.kind)
+          : { x: "", y: "" };
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
-  const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
-  const xPlain = lyapunov ? xLatex : orbit ? latexToPlain(xLatex) : step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
-  const yPlain = lyapunov ? "λ" : orbit ? latexToPlain(yLatex) : step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
+  const step = cobweb ? "n" : plot && isReturnMap(plot) ? "k" : null;
+  const xPlain = lyapunov || orbit || !plot ? latexToPlain(xLatex) : step ? `${plain(plot.xAxis)} ${step}` : plain(plot.xAxis);
+  const yPlain = lyapunov ? "λ" : orbit || !plot ? latexToPlain(yLatex) : step ? `${plain(plot.yAxis)} ${step}+1` : plain(plot.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -580,7 +606,8 @@ function AxisPicker({
   };
 
   const group = (which: "x" | "y") => {
-    const axis = which === "x" ? state.view.xAxis : state.view.yAxis;
+    if (!plot) return null;
+    const axis = which === "x" ? plot.xAxis : plot.yAxis;
     const headId = `${menuId}-${which}`;
     return (
       <div role="group" aria-labelledby={headId} className="axes-menu-group">

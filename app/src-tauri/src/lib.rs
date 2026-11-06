@@ -18,6 +18,7 @@
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
 //! | `compute_lyapunov` | [`ipc::LyapunovRequest`] | [`ipc::LyapunovResponse`] |
 //! | `compute_orbit_diagram` | [`ipc::OrbitDiagramRequest`] | [`ipc::OrbitDiagramResponse`] |
+//! | `compute_continuation` | [`ipc::ContinuationRequest`] | [`ipc::ContinuationResponse`] |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -32,6 +33,9 @@
 //! | `export_fixed_points_latex` | [`ipc::FixedPointsLatexRequest`] | `string` |
 //! | `export_csv` | [`ipc::CsvRequest`] | [`ipc::CsvResponse`] |
 //! | `save_csv` | [`ipc::SaveCsvRequest`] | [`ipc::SavedFiles`] or `null` |
+//! | `export_continuation_latex` | [`ipc::ContinuationFigureRequest`] | [`ipc::FigureLatexResponse`] |
+//! | `save_continuation_latex` | [`ipc::SaveContinuationFigureRequest`] | [`ipc::SavedFiles`] or `null` |
+//! | `export_continuation_csv` | [`ipc::ContinuationExportRequest`] | [`ipc::CsvFileOut`] |
 //! | `save_text_file` | [`ipc::SaveTextRequest`] | [`ipc::SavedFiles`] or `null` |
 //! | `save_png_file` | raw PNG body, header `x-sepx-name` | [`ipc::SavedFiles`] or `null` |
 //! | `clipboard_write_text` | [`ipc::ClipboardTextRequest`] | `()` |
@@ -120,6 +124,15 @@ async fn compute_orbit_diagram(
 ) -> Result<ipc::OrbitDiagramResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_orbit_diagram(&system, &req)).await
+}
+
+#[tauri::command]
+async fn compute_continuation(
+    req: ipc::ContinuationRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::ContinuationResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_continuation(&system, &req)).await
 }
 
 // ---------------------------------------------------------------------
@@ -584,6 +597,79 @@ async fn export_orbit_csv(
 }
 
 #[tauri::command]
+async fn export_continuation_latex(
+    req: ipc::ContinuationFigureRequest,
+    store: State<'_, SystemStore>,
+    cache: State<'_, Arc<ExportCache>>,
+) -> Result<ipc::FigureLatexResponse, String> {
+    let system = system_or_err(&store, req.continuation.system_id)?;
+    let cache = Arc::clone(&cache);
+    blocking(move || {
+        let out = export_service::continuation_latex(&cache, &system, &req, Placement::Inline)?;
+        Ok(ipc::FigureLatexResponse {
+            tex: out.tex,
+            points: out.points,
+            thinned: out.thinned,
+            notes: out.notes,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_continuation_latex<R: Runtime>(
+    app: AppHandle<R>,
+    req: ipc::SaveContinuationFigureRequest,
+    store: State<'_, SystemStore>,
+    cache: State<'_, Arc<ExportCache>>,
+) -> Result<Option<ipc::SavedFiles>, String> {
+    let system = system_or_err(&store, req.figure.continuation.system_id)?;
+    let cache = Arc::clone(&cache);
+    let name = export_service::suggested_file_name(&req.suggested_name, "tex");
+    let Some(chosen) = file_dialog(
+        &app,
+        DialogKind::Save,
+        ("LaTeX", &["tex"]),
+        Some(name),
+        None,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let (path, _) = export_service::with_extension(&chosen, "tex");
+    blocking(move || {
+        let base = separatrix_export::latex_figure::file_base(&export_service::display_name(&path));
+        let out = export_service::continuation_latex(
+            &cache,
+            &system,
+            &req.figure,
+            Placement::External { base },
+        )?;
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let mut names = vec![export_service::display_name(&path)];
+        for f in &out.files {
+            write_file(&dir.join(&f.name), &f.bytes)?;
+            names.push(f.name.clone());
+        }
+        write_file(&path, out.tex.as_bytes())?;
+        Ok(Some(ipc::SavedFiles { names }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_continuation_csv(
+    req: ipc::ContinuationExportRequest,
+    store: State<'_, SystemStore>,
+    cache: State<'_, Arc<ExportCache>>,
+) -> Result<ipc::CsvFileOut, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    let cache = Arc::clone(&cache);
+    blocking(move || export_service::continuation_csv(&cache, &system, &req)).await
+}
+
+#[tauri::command]
 async fn save_csv_file<R: Runtime>(
     app: AppHandle<R>,
     req: ipc::SaveCsvFileRequest,
@@ -886,6 +972,7 @@ pub fn run() {
             compute_portrait,
             compute_lyapunov,
             compute_orbit_diagram,
+            compute_continuation,
             project_choose_open_path,
             project_read,
             project_choose_save_path,
@@ -905,6 +992,9 @@ pub fn run() {
             export_orbit_latex,
             save_orbit_latex,
             export_orbit_csv,
+            export_continuation_latex,
+            save_continuation_latex,
+            export_continuation_csv,
             save_csv_file,
             save_text_file,
             save_png_file,

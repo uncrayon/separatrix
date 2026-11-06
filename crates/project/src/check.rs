@@ -117,6 +117,23 @@ const ORBIT: &[F] = &[
     opt("kept", Ty::Nullable(&Ty::U32)),
 ];
 
+const SEED: &[F] = &[
+    req("from", Ty::Str),
+    req("x", Ty::List(&Ty::Num)),
+    req("param", Ty::Num),
+    opt("period", Ty::U32),
+    req("direction", Ty::Str),
+    opt("kind", Ty::Nullable(&Ty::Str)),
+    opt("tangent", Ty::Nullable(&Ty::List(&Ty::Num))),
+];
+
+const CONTINUATION: &[F] = &[
+    opt("range", Ty::Nullable(&Ty::Pair)),
+    opt("ds", Ty::Nullable(&Ty::Num)),
+    opt("max_points", Ty::Nullable(&Ty::U32)),
+    opt("seeds", Ty::List(&Ty::Obj(SEED))),
+];
+
 const VIEW: &[F] = &[
     opt("id", Ty::Str),
     opt("kind", Ty::Nullable(&Ty::Str)),
@@ -130,6 +147,7 @@ const VIEW: &[F] = &[
     opt("camera", Ty::Nullable(&Ty::Obj(CAMERA))),
     opt("lyapunov", Ty::Nullable(&Ty::Obj(LYAPUNOV))),
     opt("orbit", Ty::Nullable(&Ty::Obj(ORBIT))),
+    opt("continuation", Ty::Nullable(&Ty::Obj(CONTINUATION))),
     opt("slice", Ty::Obj(SLICE)),
     opt("layers", Ty::Obj(LAYERS)),
 ];
