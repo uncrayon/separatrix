@@ -655,9 +655,13 @@ export function orbitRange(xRange: [number, number], columns: number): [number, 
   return [xRange[0] + half, xRange[1] - half];
 }
 
-export function orbitColumnAt(xRange: [number, number], columns: number, x: number): { column: number; r: number } {
+/**
+ * The column at fraction `f` of the plot's width (0 at the left edge). A
+ * fraction rather than an r, so that a click on a pixel's left edge, where
+ * every integer clientX lands, does not round into the column before it.
+ */
+export function orbitColumnAt(xRange: [number, number], columns: number, f: number): { column: number; r: number } {
   const [lo, hi] = orbitRange(xRange, columns);
-  const f = (x - xRange[0]) / (xRange[1] - xRange[0]);
   const column = Math.min(columns - 1, Math.max(0, Math.floor(f * columns)));
   return { column, r: lo + column * ((hi - lo) / (columns - 1)) };
 }

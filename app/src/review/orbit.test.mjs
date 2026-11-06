@@ -19,7 +19,8 @@ registerHooks({
 const model = await import("../state/model.ts");
 const { MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS, ORBIT_MISFIT } = await import("../api/ipc.generated.ts");
 const { projectFromState, stateFromProject } = await import("../project/serialize.ts");
-const { densityAlpha, densityPixels, orbitHistogram } = await import("../canvas/orbit.ts");
+const { canvasX, densityAlpha, densityPixels, markerX, orbitHistogram } = await import("../canvas/orbit.ts");
+const { makeViewport } = await import("../canvas/viewport.ts");
 
 const st = (name) => ({ name, latex: name, derived: false });
 const map = (names, params, systemId = 5, extra = {}) => ({
@@ -81,7 +82,7 @@ test("column j is the j-th pixel's centre, and a click sets the r of the column 
   const xRange = [2.8, 4];
   const [lo, hi] = model.orbitRange(xRange, 1200);
   assert.ok(Math.abs(lo - 2.8005) < 1e-12 && Math.abs(hi - 3.9995) < 1e-12);
-  const at = (x) => model.orbitColumnAt(xRange, 1200, x);
+  const at = (x) => model.orbitColumnAt(xRange, 1200, (x - 2.8) / 1.2);
   assert.equal(at(3.8304).column, 1030);
   assert.ok(Math.abs(at(3.8304).r - 3.8305) < 1e-12);
   assert.ok(Math.abs(at(3.83).r - 3.83) <= 0.001, "within one column width of the click");
@@ -90,6 +91,24 @@ test("column j is the j-th pixel's centre, and a click sets the r of the column 
   assert.equal(at(1).column, 0, "outside the range: the nearest column");
   const step = (hi - lo) / 1199;
   for (const j of [0, 17, 600, 1199]) assert.equal(at(2.8 + (j + 0.5) * 0.001).r, lo + j * step);
+});
+
+test("the click, the marker and the drawn density agree on the column when the canvas sits at a fractional left", () => {
+  const xRange = [2.8, 4];
+  for (const dpr of [1, 2]) {
+    const columns = model.orbitColumns(770, dpr);
+    const vp = makeViewport(770, 400, xRange, [0, 1]);
+    const r = Array.from({ length: columns }, (_, j) => model.orbitColumnAt(xRange, columns, (j + 0.5) / columns).r);
+    const hist = orbitHistogram({ r, x: r.map(() => 0.5) }, vp, columns, 400);
+    const rectLeft = 354.33;
+    for (const clientX of [1014, 1015, 354.5, 1123.5]) {
+      const drawn = Math.floor(clientX * dpr) - Math.round(rectLeft * dpr);
+      const { column, r: clicked } = model.orbitColumnAt(xRange, columns, canvasX(clientX, rectLeft, dpr) / vp.width);
+      assert.equal(column, drawn, `click at ${clientX}, dpr ${dpr}`);
+      assert.equal(hist.counts[200 * columns + column], 1, "the clicked column's iterate is binned in that pixel");
+      assert.equal(Math.floor(markerX(vp, clicked, dpr) * dpr), drawn, "the marker sits on that pixel");
+    }
+  }
 });
 
 test("the request sweeps the view's range, from the start point, with doublings for a 1-D map", () => {

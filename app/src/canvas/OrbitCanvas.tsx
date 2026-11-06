@@ -5,7 +5,7 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import { isOrbit, lyapunovStart, orbitColumnAt, orbitColumns, orbitFits } from "../state/model";
 import type { Box } from "./draw";
 import { axisLines } from "./draw";
-import { drawOrbit } from "./orbit";
+import { canvasX, drawOrbit } from "./orbit";
 import { readPlotTheme, type PlotTheme } from "./theme";
 import { makeViewport, toPlot, unitsPerPx, zoomRange } from "./viewport";
 
@@ -141,8 +141,8 @@ export function OrbitCanvas({ state, actions, toolbar }: Props) {
   const setParamAt = (clientX: number) => {
     const canvas = canvasRef.current;
     if (!canvas || !param || columns < 2) return;
-    const [x] = toPlot(vp, clientX - canvas.getBoundingClientRect().left, 0);
-    actions.setParam(param.name, orbitColumnAt(view.xRange, columns, x).r);
+    const x = canvasX(clientX, canvas.getBoundingClientRect().left, window.devicePixelRatio || 1);
+    actions.setParam(param.name, orbitColumnAt(view.xRange, columns, (x - vp.left) / vp.width).r);
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

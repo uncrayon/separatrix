@@ -8,6 +8,21 @@ export interface RasterContext extends DrawContext {
   drawImage(image: CanvasImageSource, dx: number, dy: number, dw: number, dh: number): void;
 }
 
+/**
+ * The canvas x (CSS pixels) under `clientX`. The browser puts the canvas's
+ * first device pixel at the rounded left edge, so a fractional
+ * `rectLeft` must be rounded the same way or a click lands one column off
+ * the density drawn under it.
+ */
+export function canvasX(clientX: number, rectLeft: number, pixelRatio: number): number {
+  return clientX - Math.round(rectLeft * pixelRatio) / pixelRatio;
+}
+
+/** The centre (CSS pixels) of the device-pixel column that holds parameter `r`. */
+export function markerX(vp: Viewport, r: number, pixelRatio: number): number {
+  return vp.left + (Math.floor((sx(vp, r) - vp.left) * pixelRatio) + 0.5) / pixelRatio;
+}
+
 export interface OrbitHistogram {
   width: number;
   height: number;
@@ -129,7 +144,7 @@ export function drawOrbit(
   }
   const m = opts.marker;
   if (m !== null && m !== undefined && Number.isFinite(m) && m >= vp.xRange[0] && m <= vp.xRange[1]) {
-    const x = Math.round(sx(vp, m)) + 0.5;
+    const x = markerX(vp, m, opts.pixelRatio ?? 1);
     ctx.strokeStyle = th.accent;
     ctx.lineWidth = th.lineScale;
     ctx.beginPath();
