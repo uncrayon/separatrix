@@ -56,7 +56,17 @@ Before you start, run `bash scripts/release-check.sh` on `main`. Every row must 
    **Done when** both installs started Separatrix and opened a project, the offline install worked
    with no network, and every step in the Windows guide worked as written.
 
-6. [ ] **Replace the screenshot placeholders.** While you test on the Mac and the PC, take each
+6. [ ] **Run the professor test (the M1 gate).** Give a colleague who has not seen Separatrix the
+   draft's installer for their own computer and one task, such as "show where the rabbits and the
+   sheep can live together, and export the figure for a paper". Do not help or explain. Watch, and
+   write down every place they stop, guess or ask. Fix what blocks them before you publish, or list
+   it as a known issue in the release notes.
+
+   **Done when** the colleague installed Separatrix, ran a first simulation and exported a figure
+   without help, and each place they got stuck is either fixed on `main` or listed in the release
+   notes.
+
+7. [ ] **Replace the screenshot placeholders.** While you test on the Mac and the PC, take each
    screenshot below. Save it in `docs/install/images/` with a name such as `macos-open-anyway.png`,
    and replace its `> **Screenshot to add on a real ...**` line in the guide with an image link to
    that file, written the same way as the images in the Linux guide. Tick each box
@@ -72,13 +82,13 @@ Before you start, run `bash scripts/release-check.sh` on `main`. Every row must 
    **Done when** `bash scripts/release-check.sh --skip-gates` reports `0 screenshot placeholders`
    on the `install-guides` row and the `checklist` row reads `PASS`.
 
-7. [ ] **Set the release date in the changelog.** In `CHANGELOG.md`, replace `unreleased` in the
+8. [ ] **Set the release date in the changelog.** In `CHANGELOG.md`, replace `unreleased` in the
    `## [1.0.0]` heading with today's date, written as `YYYY-MM-DD`. Commit the date and the
    screenshots, and push them to `main`.
 
    **Done when** `main` on GitHub shows the dated heading and the new screenshots.
 
-8. [ ] **Build the final draft from `main`.** The test draft points at the commit you built in
+9. [ ] **Build the final draft from `main`.** The test draft points at the commit you built in
    step 2, so its tag would miss the screenshots and the date. On the **Releases** page, delete the
    test draft. Then tag the latest commit and push the tag:
 
@@ -92,22 +102,22 @@ Before you start, run `bash scripts/release-check.sh` on `main`. Every row must 
    step 3 on the new draft's files.
 
    **Done when** the new draft is green, its files pass the checksum check, and its tag `v1.0.0`
-   points at the commit from step 7.
+   points at the commit from step 8.
 
-9. [ ] **Publish v1.0.0.** Open the draft and click **Edit**. Make sure
+10. [ ] **Publish v1.0.0.** Open the draft and click **Edit**. Make sure
    **Set as a pre-release** is clear and **Set as the latest release** is selected, and click **Publish release**. The updater reads
    `releases/latest/download/latest.json`, which only a full, latest release provides.
 
    **Done when** the release page shows v1.0.0 as **Latest**, and a copy installed from it says
    "Separatrix is up to date" when you click its version number.
 
-10. [ ] **Post the PyPI notice.** Follow [the PyPI deprecation steps](pypi-deprecation.md) to
+11. [ ] **Post the PyPI notice.** Follow [the PyPI deprecation steps](pypi-deprecation.md) to
     publish `equation-phase-portrait-tool` 0.1.1 with the notice, then archive the project.
 
     **Done when** <https://pypi.org/project/equation-phase-portrait-tool/> shows version 0.1.1 with
     the notice and the archived banner, and version 0.1.0 is still installable.
 
-11. [ ] **Run the class beta.** Send the beta class a link to the v1.0.0 release and the three
+12. [ ] **Run the class beta.** Send the beta class a link to the v1.0.0 release and the three
     install guides. Ask each student to install Separatrix on their own computer, open a project,
     and report any problem as a GitHub issue.
 
