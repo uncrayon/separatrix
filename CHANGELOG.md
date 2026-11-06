@@ -37,8 +37,11 @@ The first release of Separatrix, the desktop rewrite of the old Python tool.
   `SHA256SUMS.txt`, and builds `Separatrix_1.0.0_windows_x64_offline-setup.exe` with WebView2
   inside for a PC with neither WebView2 nor internet. Linux bundles are built on Ubuntu 22.04, and
   the macOS dmg is universal. The workflow creates a draft release, and the owner publishes it. The
-  asset names live in one table, `scripts/release/assets.sh`, and `scripts/release/manifest.sh`
-  writes the checksums and, once updates are signed, `latest.json`.
+  asset names and their updater platforms live in one table, `scripts/release/assets.txt`, and
+  `scripts/release/manifest.sh` writes the checksums and, once updates are signed, `latest.json`,
+  which lists the AppImage, .deb, .rpm, setup `.exe`, MSI and macOS app so each install updates
+  with its own kind of file. `bash scripts/smoke/linux-bundle.sh` builds the Linux packages,
+  installs the .deb and opens projects in the AppImage under Xvfb.
 - One version, 1.0.0, in Cargo and `app/package.json`. `tauri.conf.json` inherits it, and a test
   fails if they disagree or the version isn't one an MSI installer accepts.
   `bash scripts/release-check.sh` prints PASS or FAIL for each release requirement: versions, a
@@ -49,7 +52,8 @@ The first release of Separatrix, the desktop rewrite of the old Python tool.
   Install and restart, or "Couldn't check for updates. You can keep working offline." The macOS
   app menu has Check for Updates…. A quiet check runs once after launch, gives up after 15 s and
   never delays the gallery; it only speaks up when a newer version exists ("Update available"
-  beside the version). The updater stays off ("Updates are off in this build") until the owner
+  beside the version). Install and restart first asks to save unsaved changes, and Cancel installs
+  nothing. The version shown is the running app's. The updater stays off ("Updates are off in this build") until the owner
   adds a signing key, as docs/updater.md describes, so no placeholder key ships. New commands:
   `check_for_update` and `install_update`. New dependency: `tauri-plugin-updater` 2.14.0.
 - Open a project from the launch gallery. The gallery has an Open… button (Ctrl+O, ⌘O on a Mac)
@@ -58,7 +62,8 @@ The first release of Separatrix, the desktop rewrite of the old Python tool.
   folders, and a click reopens one. Both go through the unsaved-changes question, and Cancel keeps
   the gallery open. A `.sepx` file dropped on the window while the gallery is open opens too. The
   list is `recent-projects.json` in the app's config folder. A damaged list is read as empty. New
-  command: `recent_projects`. `scripts/smoke/xdnd_drop.py` drops a file on an X11 window over XDND,
+  command: `recent_projects`. Only one file dialog shows at a time: on Linux, where it isn't modal, a
+  second Open… while one is up does nothing. `scripts/smoke/xdnd_drop.py` drops a file on an X11 window over XDND,
   for checking drag-and-drop in the real app.
 - Branch plot exports. In the Branch view, Export… offers LaTeX, SVG, PNG and CSV. The LaTeX
   Figure is a pgfplots branch plot with the screen's frame: each branch in its trajectory colour,
