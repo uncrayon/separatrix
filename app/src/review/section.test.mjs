@@ -171,7 +171,7 @@ test("a section portrait asks for the crossings only, after the skipped ones", (
   assert.equal(job.body.nullclines, false);
   assert.equal(job.body.fixedPoints, false);
   assert.deepEqual(job.body.trajectories, [{ x0: [0, 1, 0], t0: 0, t1: 500 }], "forward only, tEnd long");
-  assert.deepEqual(sectionCounts({ trajectories: [{ t: [1, 2, 3] }, { t: [4] }] }, 10), { crossings: 4, skipped: 10 });
+  assert.deepEqual(sectionCounts({ trajectories: [{ t: [1, 2, 3] }, { t: [4] }] }, 10), { crossings: 4, skipPerOrbit: 10 });
 });
 
 function documentOf(sys, view, transient = 10) {

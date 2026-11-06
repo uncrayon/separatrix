@@ -12,6 +12,7 @@ import {
   sameAxis,
   viewAxisLabels,
   withSubscript,
+  texMinus,
 } from "../math/format";
 import { useCanvasTool } from "../components/CanvasToolbar";
 import { IconChevronDown, IconError, IconWarning } from "../components/icons";
@@ -1233,7 +1234,7 @@ function FixedPointTooltip(props: {
 }
 
 /** Three decimals, as the inspector's row ("−1.200"), for LaTeX. */
-const texDec = (v: number) => dec(v, 3).replace("−", "-");
+const texDec = (v: number) => texMinus(dec(v, 3));
 
 /** Unicode subscripts for the digits, signs and n of a cobweb's axis names. */
 const SUB: Record<string, string> = { n: "ₙ", "+": "₊", "-": "₋", "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉" };

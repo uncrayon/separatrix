@@ -18,6 +18,9 @@ function trimZeros(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
+/** UI text with the real minus sign (U+2212) as TeX input, which wants a hyphen-minus. */
+export const texMinus = (text: string): string => text.replaceAll("−", "-");
+
 export function fmtTex(v: number, digits = 3, zeroBelow = 0): string {
   const s = fmt(v, digits, zeroBelow);
   const m = /^(-?[\d.]+)e(-?\d+)$/.exec(s);
@@ -117,6 +120,12 @@ export function axisLabelLatex(
   return kind === "map" && axis.kind === "state" && other.kind === "time" ? withSubscript(base, "n") : base;
 }
 
+/**
+ * The axis names of a view in LaTeX, as the canvas, the toolbar and the
+ * exports show them: a cobweb's are x_{n} across and x_{n+1} up, and a
+ * section's return map x_{k} and x_{k+1}, built from the user's own state
+ * LaTeX; any other view's are {@link axisLabelLatex}.
+ */
 export function viewAxisLabels(
   view: { kind?: string; xAxis: AxisRef; yAxis: AxisRef },
   states: StateInfo[],

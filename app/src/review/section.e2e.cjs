@@ -92,7 +92,7 @@ test("Lorenz: the section z = 27 crossed upward is a two-lobed set of at least 2
     assert.equal(await canvas.getAttribute("aria-roledescription"), "Poincaré section");
     assert.match(await canvas.getAttribute("aria-label"), /^Poincaré section: x from .* across, y from .* up\./);
     const count = page.locator(".statusbar [data-section-count]");
-    assert.equal((await count.innerText()).replace(/\s+/g, " "), `${n.toLocaleString("en-US")} crossings, 10 skipped`);
+    assert.equal((await count.innerText()).replace(/\s+/g, " "), `${n.toLocaleString("en-US")} crossings, first 10 per orbit skipped`);
     assert.equal(await page.locator(".plot-toolbar [role=group][aria-label=Layers]").count(), 0);
     assert.equal(await inspector(page).getByRole("switch", { name: "Fixed points" }).isDisabled(), true);
     assert.equal(await inspector(page).getByText("Not searched: a Poincaré section shows only the crossings.").count(), 1);

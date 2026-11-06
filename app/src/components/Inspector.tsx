@@ -14,6 +14,7 @@ import {
   sameAxis,
   viewAxisLabels,
   withSubscript,
+  texMinus,
 } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
@@ -314,6 +315,9 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
   ];
+  // A return map's axes are one state at successive crossings, named x_k and x_{k+1} as on the plot.
+  const named = (axis: AxisRef, step: string) =>
+    isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}_${step}` } : o)) : options;
   const sliceStates =
     kind === "ode" && !section && !space
       ? sys.states
@@ -397,7 +401,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.xAxis)}
-                options={options}
+                options={named(view.xAxis, "k")}
                 onChange={(v) => actions.setAxis("x", axisFromValue(v))}
               />
             </dd>
@@ -414,7 +418,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.yAxis)}
-                options={options}
+                options={named(view.yAxis, "{k+1}")}
                 onChange={(v) => actions.setAxis("y", axisFromValue(v))}
               />
             </dd>
@@ -664,6 +668,7 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
   const backHint = useId();
+  const section = isSection(state.view);
   if (sys.kind === "map") {
     const n = Math.max(1, Math.round(state.solver.tEnd));
     const T = state.solver.transient ?? 0;
@@ -819,14 +824,17 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
         <Switch
           row
           label="Backward time"
-          checked={state.layers.backward}
+          checked={state.layers.backward && !section}
+          disabled={section}
           describedBy={backHint}
           onChange={(backward) => actions.setLayers({ backward })}
         />
       </div>
       <p className="ds-panel-section-hint caption" id={backHint}>
-        Also follow each start point backward in time, drawn fainter. Step limit{" "}
-        {s.maxSteps.toLocaleString("en-US")} per run.
+        {section
+          ? "A Poincaré section follows each start point forward only."
+          : "Also follow each start point backward in time, drawn fainter."}{" "}
+        Step limit {s.maxSteps.toLocaleString("en-US")} per run.
       </p>
     </PanelSection>
   );
@@ -1280,7 +1288,7 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
               <KvRow label="Function evaluations">{out.stats.evals.toLocaleString("en-US")}</KvRow>
               {len > 0 && (
                 <KvRow label="Ends at" text>
-                  <Tex latex={`${isMap ? "n" : "t"} = ${atTime(tEnd).replace("−", "-")}`} />
+                  <Tex latex={`${isMap ? "n" : "t"} = ${texMinus(atTime(tEnd))}`} />
                 </KvRow>
               )}
               {last.length > 0 && (

@@ -474,13 +474,22 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             <span
               className="ds-statusbar-item"
               data-tooltip="Section crossings drawn"
-              data-tooltip-desc={`The first ${crossings.skipped.toLocaleString("en-US")} crossings of each orbit are skipped.`}
+              data-tooltip-desc={
+                crossings.skipPerOrbit
+                  ? `The first ${crossings.skipPerOrbit.toLocaleString("en-US")} crossings of each orbit are skipped.`
+                  : "No crossings are skipped."
+              }
               data-section-count=""
             >
               <span className="ds-statusbar-text">
                 <span className="ds-statusbar-num">{crossings.crossings.toLocaleString("en-US")}</span>{" "}
-                {crossings.crossings === 1 ? "crossing" : "crossings"},{" "}
-                <span className="ds-statusbar-num">{crossings.skipped.toLocaleString("en-US")}</span> skipped
+                {crossings.crossings === 1 ? "crossing" : "crossings"}
+                {crossings.skipPerOrbit > 0 && (
+                  <>
+                    , first <span className="ds-statusbar-num">{crossings.skipPerOrbit.toLocaleString("en-US")}</span> per
+                    orbit skipped
+                  </>
+                )}
               </span>
             </span>
           </span>

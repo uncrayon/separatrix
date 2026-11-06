@@ -27,6 +27,12 @@ export interface Template {
   params: Record<string, number>;
   paramRanges?: Record<string, [number, number]>;
   view: {
+    /**
+     * `cobweb` opens a 1-D map as its cobweb plot (`x` and `y` both name its
+     * state); `space` opens a flow in the 3D view (`x`, `y` and `z` name
+     * three states); `section` opens a flow's Poincaré `section`, plotted in
+     * `x` and `y` (one state on both: its return map); absent, a plane view.
+     */
     kind?: "cobweb" | "space" | "section";
     x: string;
     y: string;
@@ -111,7 +117,7 @@ export function templateChapters(templates: readonly Template[]): TemplateChapte
     .sort((a, b) => a.number - b.number);
 }
 
+/** The book section a template reproduces; a template with none is grouped by chapter but not cited. */
 export function strogatzRef(t: Template): string {
-  if (t.section) return `Strogatz §${t.section}`;
-  return t.chapter ? `Strogatz ${t.chapter}` : "";
+  return t.section ? `Strogatz §${t.section}` : "";
 }

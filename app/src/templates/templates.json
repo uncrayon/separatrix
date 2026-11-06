@@ -435,7 +435,8 @@
       "yRange": [-2, 2]
     },
     "initialConditions": [[-1.8], [-1], [0.6], [1.8]],
-    "tEnd": 40
+    "tEnd": 40,
+    "backward": false
   },
   {
     "id": "forced-double-well",
