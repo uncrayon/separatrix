@@ -256,16 +256,22 @@ export function useStudio() {
   );
   useEffect(() => () => scheduler.dispose(), [scheduler]);
 
+  /** A project file just opened in the Lyapunov view; its next run keeps the saved framing. */
+  const framedByFile = useRef(false);
   const lyapunovScheduler = useMemo(
     () =>
       new LatestRequestScheduler(
         computeLyapunov,
         () => buildLyapunovJob(latest.current),
         (res, meta: LyapunovMeta, roundTripMs) => {
-          setLyapunovState({ res, meta, roundTripMs });
+          setLyapunovState({ res, meta, roundTripMs, framedByFile: framedByFile.current });
+          framedByFile.current = false;
           setComputeError(null);
         },
-        (err) => setComputeError(err instanceof Error ? err.message : String(err)),
+        (err) => {
+          framedByFile.current = false;
+          setComputeError(err instanceof Error ? err.message : String(err));
+        },
       ),
     [],
   );
@@ -367,9 +373,11 @@ export function useStudio() {
         setLayersState(applied.layers);
         setSolverState(applied.solver);
         method = applied.solver.method;
+        framedByFile.current = isLyapunov(applied.view);
         setSelection(null);
         if (applied.warnings.length) setLoadWarnings((w) => [...w, ...applied.warnings]);
       } else if (template) {
+        framedByFile.current = false;
         setShapeId((n) => n + 1);
         const v = templateView(template, res);
         setViewState(v);

@@ -73,6 +73,7 @@ export function LyapunovCanvas({ state, actions, toolbar }: Props) {
   useEffect(() => {
     if (!run || fitted.current === run) return;
     fitted.current = run;
+    if (run.framedByFile) return;
     const fit = fitLyapunovRanges(run.res);
     if (fit && isLyapunov(view)) actions.autoAdjustView({ ...view, ...fit });
   }, [run, view, actions]);

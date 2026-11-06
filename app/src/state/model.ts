@@ -489,6 +489,8 @@ export interface LyapunovState {
   res: LyapunovResponse;
   meta: LyapunovMeta;
   roundTripMs: number;
+  /** The first run after a project file opened: the plot keeps the file's framing instead of fitting this run. */
+  framedByFile?: boolean;
 }
 
 export type LyapunovJob = Job<Omit<LyapunovRequest, "requestId">, LyapunovMeta>;

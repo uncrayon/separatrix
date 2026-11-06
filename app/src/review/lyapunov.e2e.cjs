@@ -233,6 +233,8 @@ test("the saved Lyapunov view opens with its run, and saving writes it back", as
     assert.equal(v.kind, "lyapunov");
     assert.deepEqual(v.lyapunov, JSON.parse(FIXTURE).views[0].lyapunov);
     assert.deepEqual(v.y_axis, { kind: "exponent" });
+    const saved = JSON.parse(FIXTURE).views[0];
+    assert.deepEqual([v.x_range, v.y_range], [saved.x_range, saved.y_range], "the file's framing, not a fit of the run");
   } finally {
     await browser.close();
   }
