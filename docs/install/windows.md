@@ -104,10 +104,12 @@ Separatrix checks for a new version after it starts. When one exists, the status
 of the window shows **Update available** beside the version number, such as `v1.0.0`.
 
 1. Click the version number. You can click it at any time to check by hand.
-2. Click **Install and restart**. A small progress window appears while the update installs, and
-   then Separatrix starts again.
+2. Click **Install and restart**. If you have unsaved changes, Separatrix asks whether to save them
+   first. A small progress window appears while the update installs, and then Separatrix starts
+   again.
 
-If you installed with the MSI, ask your IT department to install the new MSI instead.
+If you installed with the MSI, the update installs the new MSI, and Windows may ask for an
+administrator's approval. If you can't give it, ask your IT department to install the new MSI.
 
 ## Uninstall Separatrix
 

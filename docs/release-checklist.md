@@ -28,8 +28,9 @@ Before you start, run `bash scripts/release-check.sh` on `main`. Every row must 
    download every file into one empty folder, and run `sha256sum -c SHA256SUMS.txt` in that folder
    (on a Mac, `shasum -a 256 -c SHA256SUMS.txt`).
 
-   **Done when** every line ends in `OK` and `latest.json` lists four platforms: `linux-x86_64`,
-   `windows-x86_64`, `darwin-x86_64` and `darwin-aarch64`.
+   **Done when** every line ends in `OK` and `latest.json` lists seven platforms: `linux-x86_64`
+   (the AppImage), `linux-x86_64-deb`, `linux-x86_64-rpm`, `windows-x86_64` (the setup `.exe`),
+   `windows-x86_64-msi`, `darwin-x86_64` and `darwin-aarch64`.
 
 4. [ ] **Test on a real Mac with macOS Sequoia.** Follow [the macOS guide](install/macos.md) word for
    word with the draft's `.dmg`, and correct any step or button name that differs. Then check that

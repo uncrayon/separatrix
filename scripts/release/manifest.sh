@@ -12,15 +12,15 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir"
 rm -f SHA256SUMS.txt latest.json.tmp SHA256SUMS.txt.tmp
 
-PLATFORMS='
-linux-x86_64    linux_x86_64.AppImage
-windows-x86_64  windows_x64-setup.exe
-darwin-x86_64   macos_universal.app.tar.gz
-darwin-aarch64  macos_universal.app.tar.gz
-'
+root=$(cd "$here/../.." && pwd)
 
+pubkey=$(node -p 'require(process.argv[1]).plugins?.updater?.pubkey ?? ""' "$root/app/src-tauri/tauri.conf.json")
 sigs=$(find . -maxdepth 1 -name '*.sig' | wc -l | tr -d ' ')
 if [ "$sigs" -eq 0 ]; then
+  if [ -n "$pubkey" ]; then
+    echo "error: tauri.conf.json has an updater pubkey, but no .sig files were built. Set bundle.createUpdaterArtifacts to true (docs/updater.md)." >&2
+    exit 1
+  fi
   rm -f latest.json
 else
   epoch=${SOURCE_DATE_EPOCH:-$(git -C "$here" log -1 --format=%ct)}
@@ -43,9 +43,7 @@ else
       printf '%s\n    "%s": {\n      "signature": "%s",\n      "url": "https://github.com/%s/releases/download/v%s/%s"\n    }' \
         "$sep" "$platform" "$signature" "$repo" "$ver" "$name"
       sep=','
-    done <<EOF
-$PLATFORMS
-EOF
+    done < <(awk 'NR>1 && $8!="-"{n=split($8,k,",");for(i=1;i<=n;i++)print k[i], $7}' "$here/assets.txt")
     printf '\n  }\n}\n'
   } >latest.json.tmp
   mv latest.json.tmp latest.json

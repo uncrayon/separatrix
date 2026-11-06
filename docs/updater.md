@@ -87,6 +87,10 @@ fails because it cannot sign the update files.
    "createUpdaterArtifacts": true
    ```
 
+   This makes the build sign each installer. With a public key but without this line, the Release
+   workflow and `scripts/release-check.sh` stop with an error, because the release would have no
+   update files.
+
 4. Commit `tauri.conf.json`. The public key is safe to publish.
 
 ## Check that the updater is on

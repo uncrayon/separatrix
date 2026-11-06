@@ -57,8 +57,13 @@ jobs:
       - name: Updater key is configured
         run: |
           pubkey=$(node -p 'require("./app/src-tauri/tauri.conf.json").plugins?.updater?.pubkey ?? ""')
+          artifacts=$(node -p 'require("./app/src-tauri/tauri.conf.json").bundle?.createUpdaterArtifacts ?? false')
           if [ -n "$pubkey" ] && [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             echo "::error::tauri.conf.json has an updater pubkey, but the TAURI_SIGNING_PRIVATE_KEY secret is empty. See docs/updater.md."
+            exit 1
+          fi
+          if [ -n "$pubkey" ] && [ "$artifacts" != true ]; then
+            echo "::error::tauri.conf.json has an updater pubkey, but bundle.createUpdaterArtifacts is $artifacts, not true, so no update would be signed. See docs/updater.md."
             exit 1
           fi
       - uses: dtolnay/rust-toolchain@stable

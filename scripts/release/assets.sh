@@ -23,7 +23,7 @@ ver=$(version)
 mkdir -p "$out"
 
 copied=0
-while read -r r_os r_arch r_variant r_target r_need r_path r_suffix; do
+while read -r r_os r_arch r_variant r_target r_need r_path r_suffix _; do
   [ "$r_os $r_arch $r_variant" = "$os $arch $variant" ] || continue
   dir="$root/target/release/bundle"
   [ "$r_target" = "-" ] || dir="$root/target/$r_target/release/bundle"

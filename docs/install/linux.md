@@ -138,13 +138,17 @@ The version you have is at the bottom right of the window.
 
 ![The status bar, with the version button v1.0.0 at its right end](images/linux-version-button.png)
 
-How you update depends on the file you installed.
+Separatrix checks for a new version after it starts. When one exists, the status bar shows
+**Update available** beside the version. Click the version, then click **Install and restart**. You
+can click the version at any time to check by hand. If you have unsaved changes, Separatrix asks
+whether to save them first.
 
-- **AppImage.** Separatrix checks for a new version after it starts. When one exists, the status
-  bar shows **Update available** beside the version. Click the version, then click
-  **Install and restart**. You can click the version at any time to check by hand.
-- **.deb or .rpm.** Download the new file from the releases page, check it, and install it with the
-  same command you used the first time. Your projects and recent files stay where they are.
+- **AppImage.** The update replaces the file in place.
+- **.deb or .rpm.** Separatrix updates the installed package, so it asks for your password, as the
+  first install did. You can also download the new file from the releases page, check it, and
+  install it with the same command you used the first time.
+
+Your projects and recent files stay where they are.
 
 ## Uninstall Separatrix
 
