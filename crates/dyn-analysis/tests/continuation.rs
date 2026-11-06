@@ -761,3 +761,64 @@ fn switching_at_a_hopf_is_refused() {
         Err(ContinuationError::CannotSwitch)
     );
 }
+
+#[test]
+fn branch_point_located_from_a_curved_branch() {
+    let sys = system("x_{n+1} = r*x_n*(1 - x_n)");
+    let o = ContinuationOptions {
+        ds: -0.04,
+        ds_max: 0.08,
+        ..opts(0, (0.5, 4.0), 0.04)
+    };
+    let b = run(&sys, &[3.2], &[0.6875], &o);
+    let bp = only(&b, SpecialKind::BranchPoint);
+    assert!((bp.p - 1.0).abs() <= 1e-9, "BP at r = {}", bp.p);
+    assert!(bp.x[0].abs() <= 1e-9, "BP at x = {}", bp.x[0]);
+}
+
+/// Every half of every doubled cycle from `r1` to `r3`, over the slider's
+/// whole range `[0, 4]`, where the cycles of `f^k` crowd the fixed points of
+/// `f^{2k}`.
+#[test]
+fn switched_cycles_stay_on_their_own_branch() {
+    let sys = system("x_{n+1} = r*x_n*(1 - x_n)");
+    let o = ContinuationOptions {
+        ds_max: 0.08,
+        ..opts(0, (0.0, 4.0), 0.04)
+    };
+    let mut at = only(
+        &run(&sys, &[2.8], &[1.0 - 1.0 / 2.8], &o),
+        SpecialKind::Flip,
+    )
+    .clone();
+    let mut flips = vec![at.p];
+    for _ in 0..3 {
+        let halves = [1.0, -1.0].map(|sign| {
+            let o = ContinuationOptions {
+                ds: sign * o.ds,
+                ..o.clone()
+            };
+            switch_branch(&sys, &[2.8], &at, &o).expect("the doubled cycle")
+        });
+        for b in &halves {
+            assert_eq!(kinds(b), [SpecialKind::Flip], "period {}", b.period);
+            for pt in &b.points {
+                assert!(
+                    pt.p >= at.p - 1e-9 && pt.p <= 4.0,
+                    "period {} at r = {}, below its flip at {}",
+                    b.period,
+                    pt.p,
+                    at.p
+                );
+            }
+        }
+        at = only(&halves[0], SpecialKind::Flip).clone();
+        flips.push(at.p);
+    }
+    for (r, want) in flips
+        .iter()
+        .zip([3.0, 1.0 + 6f64.sqrt(), 3.544_090_36, 3.564_407_27])
+    {
+        assert!((r - want).abs() <= 1e-8, "flip at {r}, want {want}");
+    }
+}

@@ -47,6 +47,15 @@ const GROW: f64 = 1.5;
 /// lands past a near crossing rather than creeping up to it in halving
 /// steps, which a factor of 1/2 does.
 const PROXIMITY: f64 = 1.5;
+/// The farthest the first point of a switched branch may land from the
+/// switch point, as a multiple of the offset `h`: the second branch crosses
+/// the hyperplane `h` along `d` at `h / cos θ`, `θ` its angle to `d`, so this
+/// takes branches up to 60° off `d`, and a point farther away is on another
+/// branch through the same region (another point of the old cycle).
+const SWITCH_REACH: f64 = 2.0;
+/// Below this residual of `f^k − x` (relative to `1 + |z|∞`) the first point
+/// after a flip of `f^k` is a point of a `k`-cycle, not of the new `2k`-cycle.
+const SWITCH_OLD_TOL: f64 = 1e-6;
 /// Bisection steps allowed to locate a special point.
 const MAX_BISECTION: usize = 200;
 
@@ -282,6 +291,13 @@ pub fn switch_branch(
         _ => return Err(ContinuationError::CannotSwitch),
     };
     let g = Residual::new(f, params, opts.param, period);
+    // At a flip every point of the old cycle is also a fixed point of
+    // `f^{2k}`: a first point that `f^k` already fixes is on one of those.
+    let old = (period != at.period).then(|| Residual::new(f, params, opts.param, at.period));
+    let on_old = |z: &[f64]| {
+        old.as_ref()
+            .is_some_and(|o| norm_inf(&o.linear(z).0) <= SWITCH_OLD_TOL * (1.0 + norm_inf(z)))
+    };
     let z_star: Vec<f64> = at.x.iter().copied().chain([at.p]).collect();
     let len = norm2(&at.tangent);
     let tau: Vec<f64> = at.tangent.iter().map(|t| t / len).collect();
@@ -314,6 +330,9 @@ pub fn switch_branch(
         let found = g.correct_along(&pred, &d).ok().and_then(|(z1, _)| {
             let w = diff(&z1, &z_star);
             let len = norm2(&w);
+            if len > SWITCH_REACH * h || on_old(&z1) {
+                return None;
+            }
             let dir: Vec<f64> = w.iter().map(|c| c / len).collect();
             let t1 = g.tangent(&z1, &dir)?;
             Some((z1, len, dir, t1))
@@ -1024,9 +1043,18 @@ impl<'a> Residual<'a> {
             {
                 break;
             }
-            let sigma = 0.5 * (lo.0 + hi.0);
-            let pred: Vec<f64> = za.iter().zip(dir).map(|(z, d)| z + sigma * d).collect();
-            let zm = match self.correct_along(&pred, dir) {
+            // Predicted from the bracket's own end along its tangent, not on
+            // the first secant: that chord stays as far off a curved branch
+            // as the bracket shrinks, and next to a branch point its
+            // corrector lands on the other branch, whose tests have other
+            // signs.
+            let half = 0.5 * (hi.0 - lo.0);
+            let pred: Vec<f64> = zl
+                .iter()
+                .zip(&lo.1.tangent)
+                .map(|(z, t)| z + half * t)
+                .collect();
+            let zm = match self.correct_along(&pred, &lo.1.tangent) {
                 Ok((zm, _)) => zm,
                 // A midpoint exactly on a branch point is a zero of `g` at
                 // which the bordered Jacobian is singular.
@@ -1042,6 +1070,10 @@ impl<'a> Residual<'a> {
                 // itself.
                 return self.point(0.0, &zm, lo.1.tangent.clone());
             };
+            let sigma = dot(dir, &diff(&zm, &za));
+            if !(sigma > lo.0 && sigma < hi.0) {
+                break;
+            }
             let mid = self.point(0.0, &zm, tm);
             let Some(v) = (detector.test)(self, &mid) else {
                 break;

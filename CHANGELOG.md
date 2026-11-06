@@ -249,6 +249,14 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- Continuation stays on the branch it follows where branches crowd. A special point is located
+  from the bracket's own end along its tangent rather than on the first secant, which near a
+  branch point let the corrector land on the other branch: the logistic map's transcritical point,
+  approached along `x* = 1 − 1/r`, was at `r = 1.000016`; it is now at `1` to 1e−9. After a flip of
+  `f^k`, the first point of the `2k`-cycle must lie within twice the offset of the flip and must
+  not be a fixed point of `f^k`: with the slider's whole range `r ∈ [0, 4]` and `ds = 0.04`, one
+  half of the 8-cycle switched at `r3` had landed on a point of the 4-cycle and followed it back
+  to `r = 3`, reporting a fold and two branch points that are not there.
 - A fixed-step run that needs exactly the step limit (h = 0.05 to T = 10⁴ with 200,000 steps)
   finishes at T instead of stopping a sliver short with "Step limit": fixed steps sit at
   t₀ + k·h rather than accumulating rounding by repeated addition.
