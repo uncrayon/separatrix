@@ -421,7 +421,7 @@ impl<'a> Stepper<'a> {
         let user_h = opts.h.abs();
         let h = if user_h > 0.0 && user_h.is_finite() {
             user_h
-        } else if s.method == Method::Dopri5 {
+        } else if s.method.is_adaptive() {
             if s.is_done() {
                 0.0
             } else {
@@ -564,9 +564,10 @@ impl<'a> Stepper<'a> {
         if !all_finite(&self.x) || !all_finite(&self.fx) {
             return StepOutcome::Failed(Status::NonFinite);
         }
-        match self.method {
-            Method::Dopri5 => self.step_adaptive(),
-            _ => self.step_fixed(),
+        if self.method.is_adaptive() {
+            self.step_adaptive()
+        } else {
+            self.step_fixed()
         }
     }
 

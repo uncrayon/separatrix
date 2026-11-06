@@ -4,6 +4,7 @@ import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
+import { METHODS } from "../state/methods";
 import { isReturnMap, searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
@@ -194,25 +195,18 @@ function timing(ms: number): { num: string; unit: string } {
   return { num: ms.toFixed(1), unit: "ms" };
 }
 
-const METHOD: Record<SolverSettings["method"], { short: string; long: string }> = {
-  dopri5: { short: "DOPRI5", long: "Dormand–Prince 5(4)" },
-  rk4: { short: "RK4", long: "Runge–Kutta 4" },
-  heun: { short: "Heun", long: "Heun" },
-  euler: { short: "Euler", long: "Euler" },
-};
-
 function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   if (kind === "map") {
     const n = Math.max(1, Math.round(s.tEnd));
     return { lead: "", num: String(n), tail: n === 1 ? " iterate" : " iterates", tip: `Iterating the map ${plural(n, "time")}` };
   }
-  const m = METHOD[s.method];
-  if (s.method === "dopri5") {
+  const m = METHODS[s.method];
+  if (m.adaptive) {
     const v = minus(fmt(s.rtol, 2));
-    return { lead: `${m.short} · rtol `, num: v, tail: "", tip: `${m.long}, relative tolerance ${v}` };
+    return { lead: `${m.short} · rtol `, num: v, tail: "", tip: `${m.label}, relative tolerance ${v}` };
   }
   const v = minus(fmt(s.h, 3));
-  return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.long}, step ${v}` };
+  return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.label}, step ${v}` };
 }
 
 function focusEquationLine(index: number) {

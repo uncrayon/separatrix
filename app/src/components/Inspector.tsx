@@ -16,6 +16,7 @@ import {
   withSubscript,
   texMinus,
 } from "../math/format";
+import { METHODS } from "../state/methods";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   COBWEB_FILL_ITERATES,
@@ -631,16 +632,10 @@ function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-const METHODS: (SelectOption<Method> & { about: string })[] = [
-  {
-    value: "dopri5",
-    label: "Dormand–Prince 5(4)",
-    about: "Dormand–Prince 5(4): adaptive step with error control.",
-  },
-  { value: "rk4", label: "RK4 · fixed step", about: "Classical Runge–Kutta: fourth order, fixed step." },
-  { value: "heun", label: "Heun", about: "Heun (improved Euler): second order, fixed step." },
-  { value: "euler", label: "Euler", about: "Forward Euler: first order, fixed step." },
-];
+const METHOD_OPTIONS: SelectOption<Method>[] = (Object.keys(METHODS) as Method[]).map((value) => ({
+  value,
+  label: METHODS[value].label,
+}));
 
 const positive = (v: number) => (v > 0 ? null : "Must be positive");
 
@@ -731,7 +726,7 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
     );
   }
   const s = state.solver;
-  const adaptive = s.method === "dopri5";
+  const adaptive = METHODS[s.method].adaptive;
   const timeOnAxis = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   return (
     <PanelSection title="Solver" id="solver-settings" open={open} onToggle={onToggle}>
@@ -739,13 +734,13 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
         ariaLabel="Integration method"
         describedBy={methodHint}
         value={s.method}
-        options={METHODS}
+        options={METHOD_OPTIONS}
         onChange={(method) =>
-          actions.setSolver({ method, h: method === "dopri5" ? 0 : s.h > 0 ? s.h : DEFAULT_FIXED_STEP })
+          actions.setSolver({ method, h: METHODS[method].adaptive ? 0 : s.h > 0 ? s.h : DEFAULT_FIXED_STEP })
         }
       />
       <p className="ds-panel-section-hint caption" id={methodHint}>
-        {METHODS.find((m) => m.value === s.method)?.about}
+        {METHODS[s.method].about}
       </p>
       <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
         {adaptive ? (

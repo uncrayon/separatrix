@@ -14,6 +14,7 @@ import type {
   TrajectoryRequest,
 } from "../api/types";
 import { DEFAULT_CAMERA, SECTION_MISFIT, SPACE_MISFIT } from "../api/ipc.generated.ts";
+import { METHODS } from "./methods.ts";
 import type { PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
@@ -1007,7 +1008,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
     }
   }
   const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
-  const fixedStep = s.solver.method !== "dopri5";
+  const fixedStep = !METHODS[s.solver.method].adaptive;
   const shown = displayRanges(s.view, sys.kind, s.plotAspect);
   const cobweb = isCobweb(s.view);
   const section = isSection(s.view) ? s.view.section : null;

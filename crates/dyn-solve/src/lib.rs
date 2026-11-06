@@ -75,6 +75,21 @@ pub enum Method {
     Dopri5,
 }
 
+impl Method {
+    /// Chooses its own step size from `rtol` and `atol` (Dopri5); the
+    /// others take the step `h` as given.
+    pub fn is_adaptive(self) -> bool {
+        matches!(self, Method::Dopri5)
+    }
+
+    /// Preserves the symplectic form of a Hamiltonian flow. Such a method
+    /// needs a separable `H(q, p) = T(p) + V(q)` with the state laid out as
+    /// `[q; p]`, which the caller must check.
+    pub fn is_symplectic(self) -> bool {
+        false
+    }
+}
+
 /// Solver settings.
 ///
 /// Serialized in camelCase to match `SolverOptions` in `app/src/api/types.ts`;

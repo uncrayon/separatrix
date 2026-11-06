@@ -6,7 +6,8 @@
 // `ProjectLoad` by name (states, parameters, axes), which the studio applies
 // once the lines have compiled (`applyProjectLoad` in state/model.ts).
 //
-// Node's unit tests import this module directly, so it has only type imports.
+// Node's unit tests import this module directly, so its one runtime import is
+// the method table, which has none of its own.
 
 import type {
   AxisRef,
@@ -22,6 +23,7 @@ import type {
   SectionSpec,
   SystemKind,
 } from "../api/types";
+import { METHODS } from "../state/methods.ts";
 import type { Camera, EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
 
 
@@ -30,13 +32,6 @@ type Obj = Record<string, unknown>;
 
 /** The method names `dyn_solve::Method` knows (mirrors `KNOWN_METHODS` in crates/project). */
 export const KNOWN_METHODS: readonly Method[] = ["euler", "heun", "rk4", "dopri5"];
-
-const METHOD_NAMES: Record<Method, string> = {
-  euler: "Euler",
-  heun: "Heun",
-  rk4: "Runge–Kutta 4",
-  dopri5: "Dormand–Prince 5(4)",
-};
 
 /**
  * A saved axis, by name. `next` is the state one iterate later (a cobweb's
@@ -450,7 +445,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     else {
       method = "dopri5";
       warnings.push(
-        `The solver method “${sv.method}” isn't available in this version, so ${METHOD_NAMES.dopri5} is used.`,
+        `The solver method “${sv.method}” isn't available in this version, so ${METHODS.dopri5.label} is used.`,
       );
     }
   }
