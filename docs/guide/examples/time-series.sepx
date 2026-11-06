@@ -1,0 +1,92 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "1.0.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=y",
+      "\\dot{y}=-x-\\mu\\left(x^2-1\\right)y"
+    ],
+    "states": [
+      "x",
+      "y"
+    ],
+    "params": [
+      {
+        "id": "mu",
+        "value": 1.5,
+        "min": 0.0,
+        "max": 5.0
+      }
+    ],
+    "template": "van-der-pol"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.1,
+        0.0
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    },
+    {
+      "id": "ic-2",
+      "x0": [
+        3.5,
+        4.0
+      ],
+      "t0": 0.0,
+      "color": 1,
+      "hidden": false
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "x_axis": {
+        "kind": "time"
+      },
+      "y_axis": {
+        "kind": "state",
+        "name": "x"
+      },
+      "x_range": [
+        -0.5,
+        30.0
+      ],
+      "y_range": [
+        -4.0,
+        4.0
+      ],
+      "slice": {
+        "states": {
+          "y": 0.0
+        },
+        "t": 0.0
+      },
+      "layers": {
+        "field": false,
+        "field_grid": 21,
+        "nullclines": false,
+        "fixed_points": true,
+        "backward": false
+      }
+    }
+  ],
+  "analyses": [],
+  "solver": {
+    "method": "dopri5",
+    "rtol": 1e-6,
+    "atol": 1e-9,
+    "h": 0.0,
+    "max_steps": 200000,
+    "t_end": 30.0,
+    "samples": 0
+  }
+}

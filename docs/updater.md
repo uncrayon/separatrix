@@ -57,7 +57,7 @@ The Release workflow signs the update files with two repository secrets.
 3. Click **New repository secret** again. Name it `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and type
    the password as its value.
 
-The build step of `.github/workflows/release.yml` must pass both secrets to `tauri-action` as
+Each bundle job in `.github/workflows/release.yml` already passes both secrets to the build as
 environment variables of the same names. Without them, a build with `createUpdaterArtifacts`
 fails because it cannot sign the update files.
 
@@ -95,8 +95,8 @@ fails because it cannot sign the update files.
    `PASS  updater-off-without-key: a minisign pubkey is configured, so the updater is on`. If it
    reads "is not a minisign public key", you pasted the wrong file or only part of it.
 2. Run the Release workflow. The draft release now has a `.sig` file beside each installer, and a
-   `latest.json` that lists them. `tauri-action` writes `latest.json` when the build made
-   signatures.
+   `latest.json` that lists them. `scripts/release/manifest.sh` writes `latest.json` when the
+   build made signatures.
 3. Publish the release as a full release, not a draft or a pre-release. The endpoint
    `releases/latest/download/latest.json` points at the newest full release only, so the app
    sees a draft or a pre-release as no update.

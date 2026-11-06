@@ -255,14 +255,23 @@ row_docs_links() {
 
 row_gates() {
   if [ "$SKIP_GATES" = 1 ]; then printf 'SKIP  gates: --skip-gates\n'; return; fi
-  local gate failed=()
+  # A claim row ends in PASS or has PASS before an info column. Rows that
+  # start "wrong:" are claims each gate requires to FAIL, so they don't count.
+  local gate out rc passed claims counts=() failed=()
   for gate in strogatz chaos continuation; do
-    bash "scripts/$gate-gate.sh" >/dev/null 2>&1 || failed+=("scripts/$gate-gate.sh")
+    out=$(bash "scripts/$gate-gate.sh" 2>&1)
+    rc=$?
+    passed=$(grep -E ' PASS( |$)' <<<"$out" | grep -vc 'wrong:')
+    claims=$((passed + $(grep -E ' FAIL( |$)' <<<"$out" | grep -vc 'wrong:')))
+    counts+=("$gate $passed/$claims")
+    if [ "$rc" -ne 0 ] || [ "$claims" -eq 0 ] || [ "$passed" -ne "$claims" ]; then
+      failed+=("scripts/$gate-gate.sh (exit $rc, $passed/$claims)")
+    fi
   done
   if [ ${#failed[@]} -gt 0 ]; then
-    fail gates "failed: ${failed[*]}"
+    fail gates "failed: $(joined "${failed[@]}")"
   else
-    pass gates "strogatz, chaos and continuation gates pass"
+    pass gates "$(joined "${counts[@]}" | sed 's/; /, /g')"
   fi
 }
 

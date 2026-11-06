@@ -2,8 +2,48 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.0.0] - Unreleased
+
+The first release of Separatrix, the desktop rewrite of the old Python tool.
+
+### Highlights
+- Type a flow or a map as you write it on the board, in LaTeX or plain text, and see its phase
+  portrait change as you drag a parameter.
+- Eight views: phase plane, time series, cobweb, Poincaré section, 3D, Lyapunov spectrum, orbit
+  diagram and continuation, with folds, Hopf points, branch points, flips and Neimark–Sacker
+  points marked.
+- A gallery of 31 examples from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition). Three
+  gates check the numbers on every change: the book's chapter 2–8 results, published Lyapunov
+  exponents, and closed-form bifurcation points.
+- Exports to LaTeX, SVG, PNG and CSV, `.sepx` project files to share with a class, and a
+  projector mode for the lecture hall.
+- Installers for Windows, macOS and Linux with SHA-256 checksums, an offline Windows installer
+  that bundles WebView2, and an updater that the owner switches on with a signing key.
+
 ### Added
+- The user guide, `docs/guide/`: a getting-started tutorial, entering equations, one page per
+  view, exports, project files, projector mode and keyboard shortcuts. Each view's page has a
+  screenshot from the real app and an example project in `docs/guide/examples/`.
+  `bash scripts/docs-screenshots.sh` opens each example in the release build under Xvfb and saves
+  `docs/media/<view>.png`. The README is rewritten for v1, and CONTRIBUTING.md lists the checks
+  and gates.
+- Install guides for Windows, macOS and Linux (`docs/install/`), written for readers who are not
+  software people: which file to download, how to check it against `SHA256SUMS.txt`, and the
+  first-launch steps for SmartScreen, Gatekeeper and an AppImage. The owner's release checklist
+  is `docs/release-checklist.md`, and the notice that retires the PyPI package is
+  `docs/pypi-deprecation.md`.
+- The Release workflow names each installer by OS and architecture
+  (`Separatrix_1.0.0_windows_x64-setup.exe`, `Separatrix_1.0.0_macos_universal.dmg`, …), attaches
+  `SHA256SUMS.txt`, and builds `Separatrix_1.0.0_windows_x64_offline-setup.exe` with WebView2
+  inside for a PC with neither WebView2 nor internet. Linux bundles are built on Ubuntu 22.04, and
+  the macOS dmg is universal. The workflow creates a draft release, and the owner publishes it. The
+  asset names live in one table, `scripts/release/assets.sh`, and `scripts/release/manifest.sh`
+  writes the checksums and, once updates are signed, `latest.json`.
+- One version, 1.0.0, in Cargo and `app/package.json`. `tauri.conf.json` inherits it, and a test
+  fails if they disagree or the version isn't one an MSI installer accepts.
+  `bash scripts/release-check.sh` prints PASS or FAIL for each release requirement: versions, a
+  guide page per view, the install guides, this changelog, the workflow, the updater staying off
+  without a key, the checklist, the docs' links, and the three gates.
 - Check for updates. The status bar's right end shows the version (`v1.0.0`); a click checks
   GitHub Releases and says "Separatrix is up to date", "Separatrix 1.0.1 is available" with
   Install and restart, or "Couldn't check for updates. You can keep working offline." The macOS
