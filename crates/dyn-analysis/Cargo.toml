@@ -19,4 +19,5 @@ ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 approx.workspace = true
+dyn-expr.workspace = true
 serde_json.workspace = true

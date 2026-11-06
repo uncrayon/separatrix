@@ -24,6 +24,11 @@ All notable changes to this project are documented in this file.
   `r2 = 1 + √6`, `r3 = 3.5440903`, `r4 = 3.5644073`, each within 1e−6) within stated tolerances.
   It prints `(r3 − r2)/(r4 − r3)` beside Feigenbaum's δ for information, and four wrong claims
   fail.
+- Evaluation benchmark (`cargo run --release -p dyn-analysis --example chaos_bench`): the
+  compiled Lorenz spectrum at the Lyapunov view's T = 10³ takes 98 ms (median of 7 runs, budget
+  500 ms), 3.2× the hand-written Rust field. Every chaos workload is inside its budget, so the
+  interpreter stays and no Cranelift JIT is built. `docs/performance.md` has the rule, the
+  numbers and the limiter.
 - 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
   least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
   the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).

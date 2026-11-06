@@ -55,6 +55,14 @@ bash scripts/chaos-gate.sh
 
 measures the Lyapunov spectra of three gallery templates through the same `compute_lyapunov` command the UI calls, and prints one row per published value with its measured value, its block uncertainty `±` and the tolerance. It exits non-zero if any row fails. The Lorenz system (σ = 10, r = 28, b = 8/3, RK4 at h = 0.01, T = 10⁴, τ = 0.1) reproduces Sprott's 0.9056, 0 and −14.5723 to 0.01, 0.01 and 0.02. A second run at h = 0.001 checks Σλ = −(σ + 1 + b) = −41/3 to 10⁻⁶. At h = 0.01 RK4 is 10⁻⁴ off that sum, an error that shrinks like h⁴. The Hénon map (a = 1.4, b = 0.3, 10⁶ iterates) reproduces 0.41922 and −1.62319 to 0.005, and Σλ = ln 0.3 to 10⁻⁹. The logistic map at r = 4 gives ln 2 to 0.005. An info column says whether each published value lies within 3·`±`. A test also hands the gate three wrong claims (Lorenz λ1 = 1.0, Lorenz Σλ = −13, Hénon λ1 = 0.5) and requires each to fail. `app/src-tauri/tests/chaos.rs` holds the claims.
 
+### Evaluation speed
+
+```bash
+cargo run --release -p dyn-analysis --example chaos_bench
+```
+
+times the chaos workloads (Lorenz Lyapunov spectra at T = 10⁴ and 10³, a logistic orbit diagram, the Hénon spectrum) on the compiled gallery systems and on the same systems written by hand in Rust. [docs/performance.md](docs/performance.md) records the budgets, the numbers, what limits each workload, and why the interpreter needs no JIT yet.
+
 ## License
 
 MIT
