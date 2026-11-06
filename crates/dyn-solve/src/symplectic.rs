@@ -47,7 +47,7 @@ pub(crate) fn splitting(method: Method) -> Option<&'static Splitting> {
     match method {
         Method::Verlet => Some(&VERLET),
         Method::Yoshida4 => Some(&YOSHIDA4),
-        Method::Euler | Method::Heun | Method::Rk4 | Method::Dopri5 => None,
+        Method::Euler | Method::Heun | Method::Rk4 | Method::Dopri5 | Method::Rosenbrock23 => None,
     }
 }
 

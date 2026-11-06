@@ -256,6 +256,13 @@ pub fn compute_lyapunov(
             method_name(req.solver.method)
         ));
     }
+    if f.kind() == SystemKind::Ode && req.solver.method == Method::Rosenbrock23 {
+        return Err(
+            "A Lyapunov run integrates the variational equations, which have no exact \
+             Jacobian for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+                .into(),
+        );
+    }
     let opts = dyn_analysis::LyapunovOptions {
         transient: req.transient,
         total: req.total,
@@ -669,6 +676,7 @@ fn method_name(m: Method) -> &'static str {
         Method::Dopri5 => "Dormand–Prince 5(4)",
         Method::Verlet => "Störmer–Verlet",
         Method::Yoshida4 => "Yoshida 4",
+        Method::Rosenbrock23 => "Rosenbrock 2(3)",
     }
 }
 
@@ -764,6 +772,7 @@ fn trajectory(
     };
     let energy = energy(system, p, tr, &sol);
     TrajectoryOut {
+        stiff: sol.stiff.then_some(true),
         t: sol.t,
         x: sol.x,
         status: sol.status,
@@ -2298,6 +2307,63 @@ mod tests {
     }
 
     #[test]
+    fn dormand_prince_flags_stiff_steps_and_rosenbrock_takes_few() {
+        let store = SystemStore::new();
+        let res = compile_system(
+            &store,
+            &CompileRequest {
+                source: "x' = mu*(y - x^3/3 + x); y' = -x/mu".into(),
+                format: InputFormat::Text,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let id = res.system_id.unwrap();
+        let run = |method: Method, mu: f64| {
+            let mut req = simple_request(id, 2);
+            req.params = vec![mu];
+            req.solver = SolverOptions {
+                method,
+                h: 0.0,
+                max_steps: 1_000_000,
+                ..req.solver
+            };
+            req.trajectories = vec![TrajectoryRequest {
+                x0: vec![2.0, 0.0],
+                t0: 0.0,
+                t1: 200.0,
+            }];
+            let out = compute_portrait(&store.get(id).unwrap(), &req).unwrap();
+            out.trajectories.into_iter().next().unwrap()
+        };
+        let explicit = run(Method::Dopri5, 1000.0);
+        assert_eq!(explicit.status, Status::Completed);
+        assert_eq!(explicit.stiff, Some(true));
+        let json = serde_json::to_value(&explicit).unwrap();
+        assert_eq!(json["stiff"], serde_json::json!(true));
+
+        let implicit = run(Method::Rosenbrock23, 1000.0);
+        assert_eq!(implicit.status, Status::Completed);
+        assert_eq!(implicit.stiff, None);
+        assert!(
+            implicit.stats.accepted * 10 <= explicit.stats.accepted,
+            "{} vs {}",
+            implicit.stats.accepted,
+            explicit.stats.accepted
+        );
+        let (a, b) = (explicit.x.len() - 2, implicit.x.len() - 2);
+        assert!(
+            (explicit.x[a] - implicit.x[b]).abs() < 1e-3,
+            "both end at the same point: {:?} vs {:?}",
+            &explicit.x[a..],
+            &implicit.x[b..]
+        );
+
+        let mild = run(Method::Dopri5, 1.0);
+        assert_eq!(mild.stiff, None);
+        assert!(serde_json::to_value(&mild).unwrap().get("stiff").is_none());
+    }
+
+    #[test]
     fn lyapunov_refuses_runs_it_cannot_measure() {
         let store = SystemStore::new();
         let id = compile_src(&store, "\\dot{x}=ax");
@@ -2386,6 +2452,18 @@ mod tests {
             compute_lyapunov(&system, &leapfrog).unwrap_err(),
             "A Lyapunov run integrates the variational equations, which Störmer–Verlet cannot \
              step; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+        );
+        let implicit = LyapunovRequest {
+            solver: SolverOptions {
+                method: Method::Rosenbrock23,
+                ..ok.solver
+            },
+            ..ok.clone()
+        };
+        assert_eq!(
+            compute_lyapunov(&system, &implicit).unwrap_err(),
+            "A Lyapunov run integrates the variational equations, which have no exact Jacobian \
+             for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
         );
         let at_the_limit = LyapunovRequest {
             total: 1e4,

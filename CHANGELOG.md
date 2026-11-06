@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Rosenbrock 2(3) for stiff systems: the L-stable implicit method of MATLAB's `ode23s`, adaptive,
+  with the exact Jacobian and its own dense output, so sampling and Poincaré sections work.
+  Dormand–Prince now runs Hairer's stiffness test. When its steps are held back by stability
+  rather than accuracy, the trajectory says so, and the Solver panel offers "Use Rosenbrock 2(3)"
+  while the status bar warns "Steps look stiff". On the relaxation oscillator at μ = 1000,
+  Rosenbrock 2(3) takes 4,366 steps where Dormand–Prince takes 1,585,080. Projects save the
+  method as `"rosenbrock23"`; Lyapunov runs refuse it. The chaos gate solves Robertson's reaction
+  to t = 40 within 1.6·10⁻⁷ of the published values.
 - Symplectic methods for Hamiltonian systems (Strogatz §6.5): Störmer–Verlet (leapfrog, order 2)
   and Yoshida 4 (order 4) integrate an `H(q, p)` that splits as `T(p) + V(q)`, and keep its energy
   error bounded over long runs where Runge–Kutta drifts. The method picker offers them only for

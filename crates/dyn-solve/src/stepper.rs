@@ -1,5 +1,6 @@
 use dyn_core::VectorField;
 
+use crate::rosenbrock::Rosenbrock;
 use crate::symplectic::splitting;
 use crate::{all_finite, blew_up, Method, SolverOptions, Stats, Status};
 
@@ -63,6 +64,42 @@ mod ctrl {
     pub const EXPO1: f64 = 0.2 - PI_BETA * 0.75;
 }
 
+/// What the step-size control of an adaptive method depends on.
+#[derive(Debug, Clone, Copy)]
+struct Control {
+    /// The order Hairer's starting-step guess assumes.
+    order: f64,
+    /// The exponent of the error in the step-size factor.
+    expo1: f64,
+    /// The PI controller's gain on the last accepted error (0: plain I).
+    beta: f64,
+}
+
+fn control(method: Method) -> Control {
+    match method {
+        Method::Rosenbrock23 => Control {
+            order: 3.0,
+            expo1: 1.0 / 3.0,
+            beta: 0.0,
+        },
+        _ => Control {
+            order: 5.0,
+            expo1: ctrl::EXPO1,
+            beta: ctrl::PI_BETA,
+        },
+    }
+}
+
+/// Hairer's stiffness test for DOPRI5: a step is stiff when
+/// `h·‖k7 − k6‖ / ‖x7 − x6‖`, an estimate of `h·|λ|` for the dominant
+/// eigenvalue, exceeds this, close to the edge of the method's stability
+/// region on the negative real axis.
+const STIFF_H_LAMBDA: f64 = 3.25;
+/// Stiff steps, without `STIFF_RESET` non-stiff ones in a row between
+/// them, before the run is reported stiff.
+const STIFF_STEPS: u32 = 15;
+const STIFF_RESET: u32 = 6;
+
 const MIN_REL_STEP: f64 = 1e-14;
 
 /// A fixed step this close to the remaining span is stretched to land on
@@ -114,7 +151,11 @@ fn fixed_stage_points(method: Method) -> &'static [(f64, Option<usize>)] {
     match method {
         Method::Heun => &[(1.0, None)],
         Method::Rk4 => &[(0.5, None), (0.5, Some(0)), (1.0, Some(1))],
-        Method::Euler | Method::Dopri5 | Method::Verlet | Method::Yoshida4 => &[],
+        Method::Euler
+        | Method::Dopri5
+        | Method::Verlet
+        | Method::Yoshida4
+        | Method::Rosenbrock23 => &[],
     }
 }
 
@@ -125,10 +166,10 @@ fn moves_outward_with_growing_slope(x0: f64, x1: f64, f0: f64, f1: f64) -> bool 
 
 /// The PI controller's step-size divisor for error `err`, given the error
 /// of the last accepted step: `(err^EXPO1, clamped divisor)`.
-fn pi_step_factor(err: f64, err_old: f64) -> (f64, f64) {
+fn pi_step_factor(err: f64, err_old: f64, c: Control) -> (f64, f64) {
     use ctrl::*;
-    let fac11 = err.powf(EXPO1);
-    let fac = fac11 / err_old.powf(PI_BETA);
+    let fac11 = err.powf(c.expo1);
+    let fac = fac11 / err_old.powf(c.beta);
     (
         fac11,
         (fac / SAFETY).clamp(1.0 / MAX_GROWTH, 1.0 / MAX_SHRINK),
@@ -222,6 +263,17 @@ impl DenseCoeffs {
         }
     }
 
+    /// Rosenbrock 2(3)'s own continuous extension.
+    fn rosenbrock(&mut self, h: f64, x: &[f64], x_new: &[f64], rb: &Rosenbrock) {
+        for i in 0..x.len() {
+            self.c0[i] = x[i];
+            self.c1[i] = x_new[i] - x[i];
+            self.c2[i] = rb.dense_c2(h, i);
+            self.c3[i] = 0.0;
+            self.c4[i] = 0.0;
+        }
+    }
+
     /// Dormand–Prince's fourth-order continuous extension.
     fn dopri5(
         &mut self,
@@ -260,6 +312,8 @@ enum Dense {
     Hermite,
     /// Dormand–Prince's own interpolant from the stages.
     Dopri5,
+    /// Rosenbrock 2(3)'s interpolant from its stages.
+    Rosenbrock,
 }
 
 /// What a fixed step evaluated before it overflowed.
@@ -340,6 +394,12 @@ pub struct Stepper<'a> {
     x_prev: Vec<f64>,
     f_prev: Vec<f64>,
 
+    stiff_steps: u32,
+    non_stiff_steps: u32,
+    stiff: bool,
+
+    rosenbrock: Option<Box<Rosenbrock>>,
+
     k: [Vec<f64>; 5],
     x_stage: Vec<f64>,
     x_new: Vec<f64>,
@@ -411,6 +471,10 @@ impl<'a> Stepper<'a> {
             last_rejected: false,
             x_prev: x0.to_vec(),
             f_prev: vec![0.0; n],
+            stiff_steps: 0,
+            non_stiff_steps: 0,
+            stiff: false,
+            rosenbrock: (opts.method == Method::Rosenbrock23).then(|| Box::new(Rosenbrock::new(n))),
             k: std::array::from_fn(|_| vec![0.0; n]),
             x_stage: vec![0.0; n],
             x_new: vec![0.0; n],
@@ -523,6 +587,17 @@ impl<'a> Stepper<'a> {
         self.f_prev.copy_from_slice(&self.fx);
     }
 
+    /// `true` once Dormand–Prince's steps have looked stiff: Hairer's test
+    /// (`h·‖k7 − k6‖ / ‖x7 − x6‖ > 3.25`) held on 15 accepted steps, with
+    /// fewer than 6 non-stiff steps in a row between any two of them. The
+    /// step size is then limited by stability, not accuracy, and an
+    /// implicit method such as [`Method::Rosenbrock23`] takes far fewer
+    /// steps. Stays `true` for the rest of the run; always `false` for the
+    /// other methods.
+    pub fn looks_stiff(&self) -> bool {
+        self.stiff
+    }
+
     /// Evaluate the interpolant of the last accepted step at time `t`,
     /// writing the state into `out`.
     ///
@@ -606,7 +681,7 @@ impl<'a> Stepper<'a> {
     /// Hairer's `HINIT`: guess a starting step from the size of `x`, `f`
     /// and a finite-difference estimate of the second derivative.
     fn initial_step(&mut self) -> f64 {
-        const ORDER: f64 = 5.0;
+        let order = control(self.method).order;
         let n = self.dim();
 
         let (mut dnf, mut dny) = (0.0, 0.0);
@@ -627,7 +702,7 @@ impl<'a> Stepper<'a> {
         let h1 = if der12 <= 1e-15 {
             (h * 1e-3).max(1e-6)
         } else {
-            (0.01 / der12).powf(1.0 / ORDER)
+            (0.01 / der12).powf(1.0 / order)
         };
         let h = (100.0 * h).min(h1).min(self.h_max);
         if h.is_finite() && h > 0.0 {
@@ -671,6 +746,10 @@ impl<'a> Stepper<'a> {
             Dense::Dopri5 => {
                 self.cont
                     .dopri5(h, &self.x, &self.x_new, &self.fx, &self.k, &self.f_new)
+            }
+            Dense::Rosenbrock => {
+                let rb = self.rosenbrock.as_deref().expect("Rosenbrock workspace");
+                self.cont.rosenbrock(h, &self.x, &self.x_new, rb)
             }
         }
         self.x_prev.copy_from_slice(&self.x);
@@ -856,7 +935,9 @@ impl<'a> Stepper<'a> {
                     x_new[i] = x[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
                 }
             }
-            Method::Dopri5 => unreachable!("Dopri5 is handled by step_adaptive"),
+            Method::Dopri5 | Method::Rosenbrock23 => {
+                unreachable!("adaptive methods are handled by step_adaptive")
+            }
             Method::Verlet | Method::Yoshida4 => unreachable!("split steps return above"),
         }
     }
@@ -870,6 +951,8 @@ impl<'a> Stepper<'a> {
 
     fn step_adaptive(&mut self) -> StepOutcome {
         use ctrl::*;
+        let control = control(self.method);
+        self.linearize();
         let mut last_rejection_nonfinite = false;
         loop {
             let mut h = self.h_next;
@@ -893,9 +976,9 @@ impl<'a> Stepper<'a> {
                 self.t + h
             };
 
-            self.dopri5_stages(h, t_new);
+            let solved = self.adaptive_stages(h, t_new);
             let err = self.scaled_rms_error(h);
-            if self.stages_non_finite(err) {
+            if !solved || self.stages_non_finite(err) {
                 self.stats.rejected += 1;
                 self.last_rejected = true;
                 last_rejection_nonfinite = true;
@@ -904,7 +987,7 @@ impl<'a> Stepper<'a> {
             }
             last_rejection_nonfinite = false;
 
-            let (fac11, fac) = pi_step_factor(err, self.err_old);
+            let (fac11, fac) = pi_step_factor(err, self.err_old, control);
             let mut h_new = h / fac;
 
             if err <= 1.0 {
@@ -919,11 +1002,86 @@ impl<'a> Stepper<'a> {
                 if adopts_proposal(lands_on_t_end, h_new, self.h_next) {
                     self.h_next = h_new;
                 }
-                return self.accept(t_new, h, Dense::Dopri5);
+                let dense = if self.rosenbrock.is_some() {
+                    Dense::Rosenbrock
+                } else {
+                    self.note_stiffness(h);
+                    Dense::Dopri5
+                };
+                return self.accept(t_new, h, dense);
             }
             self.stats.rejected += 1;
             self.last_rejected = true;
             self.h_next = h / (1.0 / MAX_SHRINK).min(fac11 / SAFETY);
+        }
+    }
+
+    /// Evaluate what an implicit method keeps fixed over the tries of one
+    /// step: the Jacobian (and `∂f/∂t`) at the current point.
+    fn linearize(&mut self) {
+        let Self {
+            f,
+            p,
+            t,
+            x,
+            stats,
+            rosenbrock,
+            ..
+        } = self;
+        if let Some(rb) = rosenbrock {
+            let (f, p) = (*f, *p);
+            rb.linearize(f, p, *t, x, |t, x, out| {
+                counted_eval(f, p, stats, t, x, out)
+            });
+        }
+    }
+
+    /// The stages of one try of an adaptive step: `x_new`, `f_new` and what
+    /// the error estimate needs. `false` when the Rosenbrock matrix
+    /// `I − h·d·J` is singular.
+    fn adaptive_stages(&mut self, h: f64, t_new: f64) -> bool {
+        let Some(rb) = self.rosenbrock.as_deref_mut() else {
+            self.dopri5_stages(h, t_new);
+            return true;
+        };
+        let Self {
+            f,
+            p,
+            t,
+            x,
+            fx,
+            x_new,
+            f_new,
+            stats,
+            ..
+        } = self;
+        let (f, p) = (*f, *p);
+        rb.stages(h, *t, x, fx, t_new, x_new, f_new, |t, x, out| {
+            counted_eval(f, p, stats, t, x, out)
+        })
+        .is_ok()
+    }
+
+    /// Hairer's stiffness test on an accepted Dormand–Prince step, before
+    /// it is committed: `x_stage` and `k[4]` are the sixth stage's point and
+    /// slope, `x_new` and `f_new` the seventh's. See [`Stepper::looks_stiff`].
+    fn note_stiffness(&mut self, h: f64) {
+        let (mut num, mut den) = (0.0, 0.0);
+        for i in 0..self.dim() {
+            num += (self.f_new[i] - self.k[4][i]).powi(2);
+            den += (self.x_new[i] - self.x_stage[i]).powi(2);
+        }
+        if den > 0.0 && h.abs() * (num / den).sqrt() > STIFF_H_LAMBDA {
+            self.non_stiff_steps = 0;
+            self.stiff_steps += 1;
+            if self.stiff_steps >= STIFF_STEPS {
+                self.stiff = true;
+            }
+        } else {
+            self.non_stiff_steps += 1;
+            if self.non_stiff_steps >= STIFF_RESET {
+                self.stiff_steps = 0;
+            }
         }
     }
 
@@ -986,13 +1144,17 @@ impl<'a> Stepper<'a> {
         let [_, k3, k4, k5, k6] = &self.k;
         let mut sum = 0.0;
         for i in 0..n {
-            let e = h
-                * (ERR_1 * k1[i]
-                    + ERR_3 * k3[i]
-                    + ERR_4 * k4[i]
-                    + ERR_5 * k5[i]
-                    + ERR_6 * k6[i]
-                    + ERR_7 * k7[i]);
+            let e = match self.rosenbrock.as_deref() {
+                Some(rb) => rb.error(h, i),
+                None => {
+                    h * (ERR_1 * k1[i]
+                        + ERR_3 * k3[i]
+                        + ERR_4 * k4[i]
+                        + ERR_5 * k5[i]
+                        + ERR_6 * k6[i]
+                        + ERR_7 * k7[i])
+                }
+            };
             let sk = self.atol + self.rtol * self.x[i].abs().max(self.x_new[i].abs());
             sum += ratio_or_zero(e, sk).powi(2);
         }

@@ -63,6 +63,7 @@ test("the Hamiltonian pendulum runs Störmer–Verlet and Yoshida 4 and reads ou
       ["euler", "Euler", false],
       ["verlet", "Störmer–Verlet", false],
       ["yoshida4", "Yoshida 4", false],
+      ["rosenbrock23", "Rosenbrock 2(3)", false],
     ]);
     assert.equal(await inspector(page).locator("[data-method-refusal]").count(), 0);
     const drift = inspector(page).locator("[data-energy-drift]");

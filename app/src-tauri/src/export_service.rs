@@ -595,6 +595,7 @@ mod tests {
             Method::Dopri5,
             Method::Verlet,
             Method::Yoshida4,
+            Method::Rosenbrock23,
         ];
         let names: Vec<String> = all
             .iter()
@@ -615,7 +616,8 @@ mod tests {
                 | Method::Rk4
                 | Method::Dopri5
                 | Method::Verlet
-                | Method::Yoshida4 => {}
+                | Method::Yoshida4
+                | Method::Rosenbrock23 => {}
             }
         }
     }

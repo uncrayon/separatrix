@@ -75,10 +75,10 @@ pub fn section(
     );
     let mut out = Crossings::new(skip, max_points);
     if !all_finite(x0) || !t0.is_finite() || !t1.is_finite() {
-        return out.finish(Status::NonFinite, Stats::default());
+        return out.finish(Status::NonFinite, Stats::default(), false);
     }
     if blew_up(x0) {
-        return out.finish(Status::BlewUp, Stats::default());
+        return out.finish(Status::BlewUp, Stats::default(), false);
     }
 
     let events: Vec<Event> = match *section {
@@ -134,7 +134,7 @@ pub fn section(
             StepOutcome::Failed(status) => break status,
         }
     };
-    out.finish(status, stepper.stats())
+    out.finish(status, stepper.stats(), stepper.looks_stiff())
 }
 
 struct Crossings {
@@ -168,12 +168,13 @@ impl Crossings {
         self.seen += 1;
     }
 
-    fn finish(self, status: Status, stats: Stats) -> Solution {
+    fn finish(self, status: Status, stats: Stats, stiff: bool) -> Solution {
         Solution {
             t: self.t,
             x: self.x,
             status,
             stats,
+            stiff,
         }
     }
 }

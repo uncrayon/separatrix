@@ -52,6 +52,8 @@ interface MockSystem {
   hamiltonian?: boolean;
   /** H(q, p) of a Hamiltonian system that splits as T(p) + V(q). */
   energy?: (x: number[], p: number[]) => number;
+  /** Whether the core's Dormand–Prince stiffness test fires on the template's runs at these parameters. */
+  stiffAt?: (p: number[]) => boolean;
   autonomous?: boolean;
   states: StateInfo[];
   params: ParamInfo[];
@@ -246,6 +248,8 @@ const SYSTEMS: Record<string, MockSystem> = {
       "\\dot{y} = -\\frac{x}{\\mu}",
     ],
     f: (_t, [x, y], [mu]) => [mu * (y - (x * x * x) / 3 + x), -x / mu],
+    // Measured with the core from the template's three start points over t ≤ 40: μ = 30 fires, μ = 20 does not.
+    stiffAt: ([mu]) => mu >= 30,
   },
   "saddle-node-2d": {
     kind: "ode",
@@ -587,16 +591,19 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
   const transient = req.transient ?? 0;
   const section = sys.kind === "ode" ? req.section : undefined;
-  const trajectories = req.trajectories.map((tr) =>
-    withEnergy(
+  // The preview has no Dormand–Prince to test, so it reports what the core measured (`stiffAt`).
+  const stiff = sys.kind === "ode" && req.solver.method === "dopri5" && (sys.stiffAt?.(p) ?? false);
+  const trajectories = req.trajectories.map((tr) => {
+    const out = withEnergy(
       sys,
       p,
       tr,
       section
         ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
         : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
-    ),
-  );
+    );
+    return stiff ? { ...out, stiff: true } : out;
+  });
   const graph =
     req.graphSamples === undefined
       ? undefined

@@ -62,7 +62,20 @@ export const METHODS: Record<Method, MethodInfo> = {
     adaptive: false,
     needs: "separableHamiltonian",
   },
+  rosenbrock23: {
+    label: "Rosenbrock 2(3)",
+    short: "Rosenbrock 2(3)",
+    about: "Rosenbrock 2(3), as MATLAB's ode23s: implicit and adaptive, for stiff systems. Uses the exact Jacobian.",
+    adaptive: true,
+    needs: "any",
+  },
 };
+
+/** The method the stiffness hint offers. */
+export const STIFF_METHOD: Method = "rosenbrock23";
+
+/** What the inspector and the status bar say when Dormand–Prince's steps look stiff (`TrajectoryOut.stiff`). */
+export const STIFF_HINT = "These steps look stiff: Dormand–Prince is limited by stability, not accuracy.";
 
 /**
  * Why the symplectic methods can't run `sys`, in the core's words; null when

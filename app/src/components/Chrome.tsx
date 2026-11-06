@@ -4,7 +4,7 @@ import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
-import { METHODS } from "../state/methods";
+import { METHODS, STIFF_HINT } from "../state/methods";
 import { isReturnMap, searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
@@ -24,7 +24,7 @@ import {
   IconWarning,
 } from "./icons";
 import { diagnosticLine } from "./diagnostics";
-import { sectionCounts } from "./runStatus";
+import { looksStiff, sectionCounts } from "./runStatus";
 
 type Theme = "dark" | "light";
 
@@ -336,6 +336,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
       )
     : [];
   const solverGaveUpIcs = [...new Set(solverGaveUpIcIds)].filter((id) => state.ics.some((ic) => ic.id === id));
+  const stiff = current && looksStiff(p.res, state.solver.method);
 
   const errors = state.diagnostics.filter((d) => d.severity === "error");
   const lines = state.equations.map((l) => l.source);
@@ -420,6 +421,20 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             <IconWarning />
             <span className="ds-statusbar-text">{plural(solverGaveUpIcs.length, "run")} stopped</span>
             <span className="ds-sr">. Select the trajectory to see why it stopped</span>
+          </button>
+        )}
+        {stiff && (
+          <button
+            type="button"
+            className="ds-statusbar-item ds-statusbar-item--button ds-statusbar-item--warn"
+            data-tooltip="Open solver settings"
+            data-tooltip-desc={STIFF_HINT}
+            data-stiff-status=""
+            onClick={focusSolverSettings}
+          >
+            <IconWarning />
+            <span className="ds-statusbar-text">Steps look stiff</span>
+            <span className="ds-sr">. {STIFF_HINT} Open solver settings</span>
           </button>
         )}
         {state.computeError && (

@@ -4,8 +4,8 @@
 //! equations, or by hand with [`dyn_core::FnField`]) into trajectories.
 //!
 //! * [`integrate`] solves `dx/dt = f(t, x; p)` from `t0` to `t1` (backwards
-//!   when `t1 < t0`) with one of six [`Method`]s, two of them symplectic
-//!   for separable Hamiltonians.
+//!   when `t1 < t0`) with one of seven [`Method`]s: two of them symplectic
+//!   for separable Hamiltonians, one implicit for stiff systems.
 //! * [`integrate_with_events`] does the same and also reports when given
 //!   functions `g(t, x)` cross zero (used for Poincaré sections, turning
 //!   points, ...).
@@ -18,7 +18,8 @@
 //!   stopping rules).
 //!
 //! The methods and the adaptive step-size control follow Hairer, Nørsett &
-//! Wanner, *Solving Ordinary Differential Equations I* (the DOPRI5 code).
+//! Wanner, *Solving Ordinary Differential Equations I* (the DOPRI5 code);
+//! [`Method::Rosenbrock23`] is Shampine & Reichelt's `ode23s`.
 //!
 //! # Example
 //!
@@ -41,7 +42,9 @@ use dyn_core::VectorField;
 use serde::{Deserialize, Serialize};
 
 mod events;
+mod lu;
 mod map;
+mod rosenbrock;
 mod sampling;
 mod section;
 mod stepper;
@@ -81,13 +84,19 @@ pub enum Method {
     /// Yoshida's fourth-order symplectic composition of three Verlet steps,
     /// fixed step. For a separable Hamiltonian only.
     Yoshida4,
+    /// Rosenbrock 2(3), Shampine & Reichelt's L-stable linearly implicit
+    /// method (MATLAB's `ode23s`), adaptive, for stiff systems. Each step
+    /// takes the field's Jacobian ([`VectorField::jacobian`]) and solves
+    /// with `I − h·d·J`; its step is limited by accuracy, never by the
+    /// fast decaying modes that hold back the explicit methods.
+    Rosenbrock23,
 }
 
 impl Method {
-    /// Chooses its own step size from `rtol` and `atol` (Dopri5); the
-    /// others take the step `h` as given.
+    /// Chooses its own step size from `rtol` and `atol` (Dopri5,
+    /// Rosenbrock23); the others take the step `h` as given.
     pub fn is_adaptive(self) -> bool {
-        matches!(self, Method::Dopri5)
+        matches!(self, Method::Dopri5 | Method::Rosenbrock23)
     }
 
     /// Preserves the symplectic form of a Hamiltonian flow, so the energy
@@ -113,9 +122,9 @@ pub struct SolverOptions {
     pub rtol: f64,
     /// Absolute tolerance (adaptive methods only).
     pub atol: f64,
-    /// Step size for the fixed-step methods; initial step size for
-    /// [`Method::Dopri5`]. `0` means "choose automatically": Hairer's
-    /// starting-step heuristic for Dopri5, `|t1 - t0| / 1000` for the
+    /// Step size for the fixed-step methods; initial step size for the
+    /// adaptive ones. `0` means "choose automatically": Hairer's
+    /// starting-step heuristic for those, `|t1 - t0| / 1000` for the
     /// fixed-step methods. The sign is ignored (the direction comes from
     /// `t1 - t0`).
     pub h: f64,
@@ -214,6 +223,9 @@ pub struct Solution {
     pub status: Status,
     /// Work counters.
     pub stats: Stats,
+    /// Dormand–Prince's steps looked stiff ([`Stepper::looks_stiff`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stiff: bool,
 }
 
 impl Solution {
@@ -320,6 +332,7 @@ pub fn integrate_with_events(
             x: vec![],
             status: Status::NonFinite,
             stats: Stats::default(),
+            stiff: false,
         };
         return (empty, hits);
     }
@@ -329,6 +342,7 @@ pub fn integrate_with_events(
             x: x0.to_vec(),
             status: Status::BlewUp,
             stats: Stats::default(),
+            stiff: false,
         };
         return (sol, hits);
     }
@@ -386,6 +400,10 @@ mod tests {
             "\"yoshida4\""
         );
         assert_eq!(
+            serde_json::to_string(&Method::Rosenbrock23).unwrap(),
+            "\"rosenbrock23\""
+        );
+        assert_eq!(
             serde_json::to_string(&Status::BlewUp).unwrap(),
             "\"blewUp\""
         );
@@ -413,6 +431,7 @@ mod tests {
             x: vec![1.0, 2.0, 3.0, 4.0],
             status: Status::Completed,
             stats: Stats::default(),
+            stiff: false,
         };
         assert_eq!(s.len(), 2);
         assert_eq!(s.dim(), 2);

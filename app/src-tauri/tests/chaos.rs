@@ -24,6 +24,17 @@
 //!   10³: the error oscillates instead of drifting. RK4 at h = 0.1 fails that
 //!   rule (its energy drifts), which a wrong claim checks.
 //!
+//! - Robertson's reaction (Hairer & Wanner, *Solving ODEs II*, §IV.1)
+//!   `x' = −0.04x + 1e4·yz`, `y' = 0.04x − 1e4·yz − 3e7·y²`, `z' = 3e7·y²`
+//!   from `(1, 0, 0)`, solved with Rosenbrock 2(3) at rtol 1e−8, atol 1e−14
+//!   through `service::compute_portrait`, reaches the SUNDIALS
+//!   `cvRoberts_dns` and Hairer–Wanner values at t = 40,
+//!   (7.158271e−1, 9.185535e−6, 2.841637e−1), within 1e−5 relative per
+//!   component. The reference is confirmed by Dormand–Prince at rtol 1e−11.
+//!   Dormand–Prince at rtol 1e−8 flags the run as stiff, and so it does on
+//!   the relaxation-oscillator template at μ = 1000, where Rosenbrock 2(3)
+//!   needs at most a tenth of its steps at equal rtol.
+//!
 //! The Σ row of Lorenz uses its own run with RK4 at h = 0.001: RK4's
 //! truncation error on `ln det Φ` puts Σλ about 1e−4 from −41/3 at
 //! h = 0.01, shrinking like h⁴ (see `crates/dyn-analysis/tests/lyapunov.rs`).
@@ -34,8 +45,9 @@ use std::time::Instant;
 
 use dyn_expr::CompiledSystem;
 use separatrix_lib::ipc::{
-    CompileRequest, InputFormat, LyapunovRequest, LyapunovResponse, Method, OrbitDiagramRequest,
-    OrbitDiagramResponse, Severity, SolverOptions, Status,
+    AxisRef, CompileRequest, InputFormat, LyapunovRequest, LyapunovResponse, Method,
+    OrbitDiagramRequest, OrbitDiagramResponse, PortraitRequest, Severity, SolverOptions, Status,
+    TrajectoryOut, TrajectoryRequest,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -149,6 +161,24 @@ enum Claim {
     EnergyGrowth {
         run: &'static EnergyRun,
     },
+    /// Component `index` of the run's state at its end time.
+    StiffEnd {
+        run: &'static StiffRun,
+        index: usize,
+    },
+    /// The accepted steps of `implicit` over those of `explicit`.
+    StepRatio {
+        implicit: &'static StiffRun,
+        explicit: &'static StiffRun,
+    },
+    /// The run's accepted steps.
+    Steps {
+        run: &'static StiffRun,
+    },
+    /// 1 when the run came back with `stiff: true`, else 0.
+    StiffHint {
+        run: &'static StiffRun,
+    },
 }
 
 /// What a claim says about its measured value.
@@ -157,6 +187,10 @@ enum Expect {
     Near { value: f64, tol: f64 },
     /// At most `bound`.
     AtMost { bound: f64 },
+    /// Within `tol·|value|` of a published `value`.
+    Relative { value: f64, tol: f64 },
+    /// The claim holds (measured 1).
+    Yes,
 }
 
 struct Check {
@@ -193,6 +227,75 @@ const PENDULUM_RK4: EnergyRun = EnergyRun {
     method: Method::Rk4,
     h: 0.1,
 };
+
+/// Where a stiff run's system comes from.
+enum Source {
+    Template {
+        id: &'static str,
+        params: &'static [(&'static str, f64)],
+    },
+    Text(&'static str),
+}
+
+/// One trajectory through `service::compute_portrait`.
+struct StiffRun {
+    label: &'static str,
+    source: Source,
+    x0: &'static [f64],
+    t1: f64,
+    method: Method,
+    rtol: f64,
+    atol: f64,
+}
+
+const ROBERTSON_SOURCE: &str =
+    "x' = -0.04*x + 1e4*y*z\ny' = 0.04*x - 1e4*y*z - 3e7*y^2\nz' = 3e7*y^2";
+/// Robertson at t = 40: SUNDIALS `cvRoberts_dns`, Hairer & Wanner.
+const ROBERTSON_40: [f64; 3] = [7.158_271e-1, 9.185_535e-6, 2.841_637e-1];
+
+const ROBERTSON: StiffRun = StiffRun {
+    label: "Robertson, Rosenbrock 2(3) rtol 1e-8 atol 1e-14, t = 40",
+    source: Source::Text(ROBERTSON_SOURCE),
+    x0: &[1.0, 0.0, 0.0],
+    t1: 40.0,
+    method: Method::Rosenbrock23,
+    rtol: 1e-8,
+    atol: 1e-14,
+};
+
+const ROBERTSON_REFERENCE: StiffRun = StiffRun {
+    label: "Robertson, Dormand–Prince rtol 1e-11 atol 1e-14, t = 40",
+    method: Method::Dopri5,
+    rtol: 1e-11,
+    ..ROBERTSON
+};
+
+const ROBERTSON_DOPRI5: StiffRun = StiffRun {
+    label: "Robertson, Dormand–Prince rtol 1e-8 atol 1e-14, t = 40",
+    method: Method::Dopri5,
+    ..ROBERTSON
+};
+
+const RELAXATION_DOPRI5: StiffRun = StiffRun {
+    label: "relaxation oscillator μ = 1000, Dormand–Prince rtol 1e-6, t = 3000",
+    source: Source::Template {
+        id: "relaxation-oscillator",
+        params: &[("mu", 1000.0)],
+    },
+    x0: &[2.0, 0.0],
+    t1: 3000.0,
+    method: Method::Dopri5,
+    rtol: 1e-6,
+    atol: 1e-9,
+};
+
+const RELAXATION_ROSENBROCK: StiffRun = StiffRun {
+    label: "relaxation oscillator μ = 1000, Rosenbrock 2(3) rtol 1e-6, t = 3000",
+    method: Method::Rosenbrock23,
+    ..RELAXATION_DOPRI5
+};
+
+const STIFF_MAX_STEPS: usize = 100_000_000;
 
 const LN_0_3: f64 = -1.203_972_804_325_936_1;
 const LN_2: f64 = std::f64::consts::LN_2;
@@ -334,6 +437,94 @@ const CHECKS: &[Check] = &[
         text: "Yoshida 4 last/first 1e3 periods",
         expect: Expect::AtMost { bound: 2.0 },
     },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON_REFERENCE,
+            index: 0,
+        },
+        text: "Robertson y1(40), Dopri5 1e-11",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[0],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON_REFERENCE,
+            index: 1,
+        },
+        text: "Robertson y2(40), Dopri5 1e-11",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[1],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON_REFERENCE,
+            index: 2,
+        },
+        text: "Robertson y3(40), Dopri5 1e-11",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[2],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON,
+            index: 0,
+        },
+        text: "Robertson y1(40), Rosenbrock 2(3)",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[0],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON,
+            index: 1,
+        },
+        text: "Robertson y2(40), Rosenbrock 2(3)",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[1],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffEnd {
+            run: &ROBERTSON,
+            index: 2,
+        },
+        text: "Robertson y3(40), Rosenbrock 2(3)",
+        expect: Expect::Relative {
+            value: ROBERTSON_40[2],
+            tol: 1e-5,
+        },
+    },
+    Check {
+        claim: Claim::StiffHint {
+            run: &ROBERTSON_DOPRI5,
+        },
+        text: "Robertson, Dopri5 1e-8 looks stiff",
+        expect: Expect::Yes,
+    },
+    Check {
+        claim: Claim::StepRatio {
+            implicit: &RELAXATION_ROSENBROCK,
+            explicit: &RELAXATION_DOPRI5,
+        },
+        text: "VdP μ = 1000 steps Ros23/Dopri5",
+        expect: Expect::AtMost { bound: 0.1 },
+    },
+    Check {
+        claim: Claim::StiffHint {
+            run: &RELAXATION_DOPRI5,
+        },
+        text: "VdP μ = 1000, Dopri5 looks stiff",
+        expect: Expect::Yes,
+    },
 ];
 
 const WRONG_CHECKS: &[Check] = &[
@@ -380,6 +571,13 @@ const WRONG_CHECKS: &[Check] = &[
         text: "wrong: RK4 h = 0.1 stays bounded",
         expect: Expect::AtMost { bound: 2.0 },
     },
+    Check {
+        claim: Claim::Steps {
+            run: &ROBERTSON_DOPRI5,
+        },
+        text: "wrong: Dopri5 1e-8 within 2,000 steps",
+        expect: Expect::AtMost { bound: 2000.0 },
+    },
 ];
 
 #[derive(Deserialize)]
@@ -408,11 +606,22 @@ fn compile(
         .iter()
         .find(|t| t.id == template)
         .unwrap_or_else(|| panic!("no template {template:?}"));
+    compile_source(label, &found.equations.join("\n"), found.format, values)
+}
+
+/// Compiles `source` through `service::compile_system`, as [`compile`] does
+/// a template.
+fn compile_source(
+    label: &str,
+    source: &str,
+    format: InputFormat,
+    values: &[(&str, f64)],
+) -> (u32, Arc<CompiledSystem>, Vec<f64>, Vec<String>) {
     let res = service::compile_system(
         store(),
         &CompileRequest {
-            source: found.equations.join("\n"),
-            format: found.format,
+            source: source.into(),
+            format,
         },
     );
     assert!(
@@ -421,7 +630,7 @@ fn compile(
                 .diagnostics
                 .iter()
                 .any(|d| d.severity == Severity::Error),
-        "{template} doesn't compile: {:?}",
+        "{label} doesn't compile: {:?}",
         res.diagnostics
     );
     let params = res
@@ -594,6 +803,78 @@ fn energy_errors(run: &'static EnergyRun) -> Arc<EnergyErrors> {
     e
 }
 
+/// Each run is computed once per test binary, whichever test asks first.
+fn stiff_run(run: &'static StiffRun) -> Arc<TrajectoryOut> {
+    static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<TrajectoryOut>>>> = OnceLock::new();
+    let runs = RUNS.get_or_init(Default::default);
+    if let Some(done) = runs.lock().unwrap().get(run.label) {
+        return done.clone();
+    }
+    let (system_id, system, params, _) = match run.source {
+        Source::Template { id, params } => compile(run.label, id, params),
+        Source::Text(src) => compile_source(run.label, src, InputFormat::Text, &[]),
+    };
+    let dim = run.x0.len();
+    let req = PortraitRequest {
+        request_id: 1,
+        system_id,
+        params,
+        x_axis: AxisRef::State { index: 0 },
+        y_axis: AxisRef::State { index: 1 },
+        x_range: (-1.0, 1.0),
+        y_range: (-1.0, 1.0),
+        base_state: vec![0.0; dim],
+        field_time: 0.0,
+        field_grid: 0,
+        nullclines: false,
+        fixed_points: false,
+        trajectories: vec![TrajectoryRequest {
+            x0: run.x0.to_vec(),
+            t0: 0.0,
+            t1: run.t1,
+        }],
+        solver: SolverOptions {
+            method: run.method,
+            rtol: run.rtol,
+            atol: run.atol,
+            h: 0.0,
+            h_max: None,
+            max_steps: STIFF_MAX_STEPS,
+        },
+        samples: 2,
+        graph_samples: None,
+        transient: None,
+        section: None,
+        z_axis: None,
+        z_range: None,
+    };
+    let out =
+        service::compute_portrait(&system, &req).unwrap_or_else(|e| panic!("{}: {e}", run.label));
+    let tr = out.trajectories.into_iter().next().expect("one trajectory");
+    let end: Vec<String> = tr.x[tr.x.len() - dim..]
+        .iter()
+        .map(|v| format!("{v:.9e}"))
+        .collect();
+    let end = end.join(", ");
+    println!(
+        "{}: {:?} at t = {}, {} steps ({} rejected), stiff {:?}, x = ({end}), {:.0} ms",
+        run.label,
+        tr.status,
+        tr.t.last().copied().unwrap_or(f64::NAN),
+        tr.stats.accepted,
+        tr.stats.rejected,
+        tr.stiff,
+        out.elapsed_ms
+    );
+    let tr = Arc::new(tr);
+    runs.lock().unwrap().insert(run.label, tr.clone());
+    tr
+}
+
+fn completed_at_end(run: &'static StiffRun, tr: &TrajectoryOut) -> bool {
+    tr.status == Status::Completed && tr.t.last() == Some(&run.t1)
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Verdict {
     Pass,
@@ -613,7 +894,8 @@ impl Row {
     fn delta(&self) -> Option<f64> {
         match *self.expect {
             Expect::Near { value, .. } => Some((self.measured - value).abs()),
-            Expect::AtMost { .. } => None,
+            Expect::Relative { value, .. } => Some((self.measured - value).abs() / value.abs()),
+            Expect::AtMost { .. } | Expect::Yes => None,
         }
     }
 }
@@ -641,10 +923,34 @@ fn evaluate(check: &'static Check) -> Row {
             let e = energy_errors(run);
             (e.last / e.first, None, e.completed)
         }
+        Claim::StiffEnd { run, index } => {
+            let tr = stiff_run(run);
+            let at = tr.x.len() - run.x0.len() + index;
+            (tr.x[at], None, completed_at_end(run, &tr))
+        }
+        Claim::StepRatio { implicit, explicit } => {
+            let (i, e) = (stiff_run(implicit), stiff_run(explicit));
+            (
+                i.stats.accepted as f64 / e.stats.accepted as f64,
+                None,
+                completed_at_end(implicit, &i) && completed_at_end(explicit, &e),
+            )
+        }
+        Claim::Steps { run } => {
+            let tr = stiff_run(run);
+            (tr.stats.accepted as f64, None, completed_at_end(run, &tr))
+        }
+        Claim::StiffHint { run } => {
+            let tr = stiff_run(run);
+            let flagged = if tr.stiff == Some(true) { 1.0 } else { 0.0 };
+            (flagged, None, completed_at_end(run, &tr))
+        }
     };
     let holds = match check.expect {
         Expect::Near { value, tol } => (measured - value).abs() <= tol,
         Expect::AtMost { bound } => measured <= bound,
+        Expect::Relative { value, tol } => (measured - value).abs() <= tol * value.abs(),
+        Expect::Yes => measured == 1.0,
     };
     Row {
         claim: check.text,
@@ -690,6 +996,21 @@ fn print_table(rows: &[Row]) {
                 format!("{value:.7}"),
                 format!("{:.9}", r.measured),
                 format!("{tol:.0e}"),
+            ),
+            Expect::Relative { value, tol } => (
+                format!("{value:.6e}"),
+                format!("{:.9e}", r.measured),
+                format!("{tol:.0e} rel"),
+            ),
+            Expect::Yes => (
+                "yes".to_string(),
+                if r.measured == 1.0 { "yes" } else { "no" }.to_string(),
+                "—".to_string(),
+            ),
+            Expect::AtMost { bound } if bound >= 1000.0 => (
+                "—".to_string(),
+                format!("{}", r.measured),
+                format!("≤ {bound}"),
             ),
             Expect::AtMost { bound } if bound >= 1.0 => (
                 "—".to_string(),

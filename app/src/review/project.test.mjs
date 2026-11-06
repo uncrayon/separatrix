@@ -192,7 +192,7 @@ function openFixture(doc, params = []) {
 test("unknown fields at every level survive the UI round trip", () => {
   const doc = fixture("unknown-fields.sepx");
   const { state, load } = openFixture(doc, ["k"]);
-  assert.match(load.warnings.join(" "), /rosenbrock23/);
+  assert.match(load.warnings.join(" "), /radau5/);
   const out = projectFromState(state, { loaded: doc });
   // What the UI changes: the unknown method falls back to dopri5 (with the
   // warning above), and the slice lists every state's value.
@@ -341,7 +341,7 @@ test("the solver: an unknown method falls back to dopri5 with a notice; missing 
   assert.match(load.warnings[0], /“rk45”/);
   const { applied } = openFixture(doc);
   assert.deepEqual(applied.solver, { ...DEFAULT_SOLVER, tEnd: 12 });
-  assert.deepEqual([...KNOWN_METHODS].sort(), ["dopri5", "euler", "heun", "rk4", "verlet", "yoshida4"]);
+  assert.deepEqual([...KNOWN_METHODS].sort(), ["dopri5", "euler", "heun", "rk4", "rosenbrock23", "verlet", "yoshida4"]);
 });
 
 test("dirty tracking ignores the export options and the app version", () => {

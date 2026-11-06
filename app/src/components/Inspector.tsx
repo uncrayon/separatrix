@@ -16,7 +16,7 @@ import {
   withSubscript,
   texMinus,
 } from "../math/format";
-import { METHODS, energyDriftText, methodFits, symplecticRefusal } from "../state/methods";
+import { METHODS, STIFF_HINT, STIFF_METHOD, energyDriftText, methodFits, symplecticRefusal } from "../state/methods";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   COBWEB_FILL_ITERATES,
@@ -57,7 +57,7 @@ import { systemNameOf } from "./systemName";
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
 import { dec, startPointParts } from "./startPoint";
-import { landedOnSource, stopText } from "./runStatus";
+import { landedOnSource, looksStiff, stopText } from "./runStatus";
 import { fixedPointGlyph } from "../canvas/draw";
 import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
@@ -666,6 +666,8 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
   const refusalHint = useId();
+  const stiffHint = useId();
+  const methodPicker = useId();
   const backHint = useId();
   const section = isSection(state.view);
   if (sys.kind === "map") {
@@ -738,10 +740,12 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
     disabled: !methodFits(value, sys),
   }));
   const drift = energyDrift(state);
+  const stiff = portraitFits(sys, state.shapeId, state.portrait) && looksStiff(state.portrait.res, s.method);
   const timeOnAxis = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   return (
     <PanelSection title="Solver" id="solver-settings" open={open} onToggle={onToggle}>
       <Select
+        id={methodPicker}
         ariaLabel="Integration method"
         describedBy={refusal ? `${methodHint} ${refusalHint}` : methodHint}
         value={s.method}
@@ -757,6 +761,26 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
         <p className="ds-panel-section-hint caption" id={refusalHint} data-method-refusal="">
           {refusal}
         </p>
+      )}
+      {stiff && (
+        <>
+          <p className="ds-panel-section-hint caption" id={stiffHint} data-stiff-hint="">
+            {STIFF_HINT}
+          </p>
+          <div>
+            <Button
+              size="sm"
+              aria-describedby={stiffHint}
+              onClick={() => {
+                actions.setSolver({ method: STIFF_METHOD, h: 0 });
+                // The button goes with the hint; keep focus on the method it chose.
+                requestAnimationFrame(() => document.getElementById(methodPicker)?.focus());
+              }}
+            >
+              Use {METHODS[STIFF_METHOD].label}
+            </Button>
+          </div>
+        </>
       )}
       <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
         {adaptive ? (

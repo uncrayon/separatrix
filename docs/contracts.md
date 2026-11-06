@@ -324,6 +324,69 @@ h = 0.05 keeps `max |ΔH|` at 2.65e−4 (claim ≤ 1e−3), Yoshida 4 at h = 0.1
 first 10³ (claim ≤ 2). RK4 at h = 0.1 gives 97.6 by the same rule, and the gate requires that
 claim to fail.
 
+### Stiff systems
+
+```rust
+impl Stepper<'_> { pub fn looks_stiff(&self) -> bool }   // dyn-solve
+pub struct Solution { /* … */ pub stiff: bool }
+```
+
+`Method::Rosenbrock23` (serde `"rosenbrock23"`) is the L-stable linearly implicit Rosenbrock 2(3)
+of MATLAB's `ode23s` (Shampine & Reichelt 1997), with `d = 1/(2 + √2)` and `e₃₂ = 6 + √2` written
+as decimal literals. Each step solves three systems with `W = I − h·d·J`, factored once per try by
+a dense LU with partial pivoting (`crates/dyn-solve/src/lu.rs`; dyn-solve has no linear-algebra
+dependency). `J` is `VectorField::jacobian`, exact forward-mode AD for a compiled system, taken
+once per accepted step; a rejected try only refactors `W`. `∂f/∂t` is a central difference with
+`δ = ε^{1/3}·max(1, |t|)`, taken only when the field reads `t` (2 more evaluations per step).
+A step costs 2 evaluations and one Jacobian. The new point is order 2 and the error estimate
+`h/6 (k1 − 2k2 + k3)` order 3, so the controller is an I-controller with exponent 1/3 and the
+starting step is Hairer's guess for order 3. It is adaptive like Dopri5 (`rtol`, `atol`, `h` as
+the first step, `h_max`). Its continuous extension `x + θ(x₁ − x) + θ(1 − θ)·h(k1 − k2)/(1 − 2d)`
+feeds `Stepper::interpolate`, so uniform sampling, events and Poincaré sections work. A singular
+`W` is rejected like a non-finite step: the step shrinks by 5, and a collapse reports
+`nonFinite`.
+
+`crates/dyn-solve/tests/stiff.rs` checks it. Halving a fixed `h` on `x' = −x` divides the error by
+4.02. On `y' = −1e6 (y − cos t)` at a fixed `h = 0.1`, an error of 1 off `cos t` is gone after one
+step (`R(∞) = 0`). What stays is the scheme's stiff-limit error `h²·(1/(8d) − 1/2)·y''`, at most
+7.35e−4 at h = 0.1 and 7.4e−6 at h = 0.01. Robertson's reaction reaches t = 40 at rtol 1e−8, atol
+1e−14 in 6,737 steps, within 1.6e−7 relative of the reference below. A plane section of the
+relaxation oscillator at μ = 1000 returns its crossings of `x = 0` half a period
+`(3 − 2 ln 2)μ/2` apart.
+
+`Stepper::looks_stiff` is Hairer's stiffness test from DOPRI5. After each accepted Dormand–Prince
+step, `h·‖k7 − k6‖ / ‖x7 − x6‖` estimates `h·|λ|` for the dominant eigenvalue from the last two
+stages. Above 3.25, at the edge of the method's stability region, the step counts as stiff. Six
+non-stiff steps in a row reset the count. After 15 stiff steps the flag is set and stays set for
+the run. The other methods never set it. Measured with Dopri5 at the default tolerances, the
+flag fires on the relaxation oscillator from μ = 30 (template start points, t ≤ 40), and not at
+μ = 20. A rejection-ratio rule was the alternative and would not work. On the stiff runs below,
+Dopri5 rejects 1 try in 10⁴, fewer than on the non-stiff Van der Pol at μ = 1 (1 in 9), because
+a step held back by stability is always accurate enough:
+
+| problem | method | accepted | rejected | looks stiff |
+| --- | --- | ---: | ---: | --- |
+| Van der Pol μ = 1000 (Liénard), t ≤ 3000, rtol 1e−6 | Dopri5 | 1,585,080 | 98 | yes |
+| | Rosenbrock23 | 4,366 | 54 | no |
+| Robertson, t ≤ 40, rtol 1e−8, atol 1e−14 | Dopri5 | 34,856 | 2 | yes |
+| | Rosenbrock23 | 6,737 | 2 | no |
+| Van der Pol μ = 1, t ≤ 40, rtol 1e−6 | Dopri5 | 267 | 30 | no |
+
+`TrajectoryOut.stiff?: boolean` is `true` when the flag fired, and absent otherwise. A section
+run reports it too. The UI shows "These steps look stiff: Dormand–Prince is limited by stability,
+not accuracy." in the Solver panel with a "Use Rosenbrock 2(3)" button, and a "Steps look stiff"
+warning in the status bar that opens the Solver panel. A Lyapunov run of a flow refuses
+Rosenbrock23 with a message, because the variational system it integrates has no exact Jacobian.
+
+The chaos gate solves Robertson (`x' = −0.04x + 1e4·yz`, `y' = 0.04x − 1e4·yz − 3e7·y²`,
+`z' = 3e7·y²` from `(1, 0, 0)`) through `compute_portrait`. The SUNDIALS `cvRoberts_dns` and
+Hairer–Wanner values at t = 40 are (7.158271e−1, 9.185535e−6, 2.841637e−1). Dopri5 at rtol 1e−11
+confirms them to 1.6e−7 relative, and Rosenbrock23 at rtol 1e−8 to the same (claim 1e−5 per
+component). Dopri5 at rtol 1e−8 flags that run as stiff and takes 34,856 steps, so the wrong
+claim "within 2,000 steps" fails. On the relaxation-oscillator template at μ = 1000, Rosenbrock23
+takes 0.0028 of Dopri5's steps at rtol 1e−6 (claim ≤ 0.1), and Dopri5 flags the run. At Robertson's
+rtol 1e−8 the ratio is only 0.19: an order-2 method pays for tight tolerances.
+
 ### Lyapunov spectrum
 
 ```rust

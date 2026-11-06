@@ -293,7 +293,7 @@ fn second_view_with_unknown_axis_kind_and_unknown_method_open_with_a_warning() {
     assert_eq!(p.solver.method, "dopri5");
     assert_eq!(
         opened.warnings,
-        ["The solver method \u{201c}rosenbrock23\u{201d} isn't available in this version of Separatrix, so Dormand\u{2013}Prince 5(4) is used."]
+        ["The solver method \u{201c}radau5\u{201d} isn't available in this version of Separatrix, so Dormand\u{2013}Prince 5(4) is used."]
     );
 }
 
@@ -1273,4 +1273,15 @@ fn symplectic_methods_are_known_and_written_back_byte_for_byte() {
         assert_eq!(opened.project.solver.method, method);
         assert_eq!(to_json(&opened.project, APP).unwrap(), text, "{method}");
     }
+}
+
+#[test]
+fn rosenbrock23_is_known_and_written_back_byte_for_byte() {
+    let text = fixture("rabbits-vs-sheep.sepx")
+        .replace("\"method\": \"dopri5\",", "\"method\": \"rosenbrock23\",");
+    assert!(text.contains("\"method\": \"rosenbrock23\""));
+    let opened = parse_named(&text, "stiff.sepx").unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(opened.project.solver.method, "rosenbrock23");
+    assert_eq!(to_json(&opened.project, APP).unwrap(), text);
 }

@@ -3,7 +3,8 @@
 // that lands exactly on an unstable fixed point; and what the status bar
 // says about a Poincaré section's crossings.
 
-import type { FixedPointOut, PortraitResponse, Status, TrajectoryOut } from "../api/types";
+import type { FixedPointOut, Method, PortraitResponse, Status, TrajectoryOut } from "../api/types";
+import { STIFF_METHOD } from "../state/methods";
 import { dec } from "./startPoint";
 
 export const STATUS_WORDS: Record<Exclude<Status, "completed">, { words: string; stopped: boolean }> = {
@@ -58,6 +59,15 @@ export function landedOnSource(
   if (!fp || !fp.eigenvalues.some(([re, im]) => Math.hypot(re, im) > 1)) return null;
   const at = dim === 1 ? `${name}* = ${dec(x[0], 3)}` : `(${x.map((v) => dec(v, 3)).join(", ")})`;
   return { n: out.t[k], at };
+}
+
+/**
+ * Dormand–Prince's stiffness test fired on a trajectory of `res` (the core
+ * sets `stiff` only then), and the method chosen now is not already the one
+ * the hint offers, whose portrait may still be on its way.
+ */
+export function looksStiff(res: PortraitResponse, method: Method): boolean {
+  return method !== STIFF_METHOD && res.trajectories.some((tr) => tr.stiff === true);
 }
 
 /**

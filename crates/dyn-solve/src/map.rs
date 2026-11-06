@@ -48,6 +48,7 @@ pub fn iterate_map(
         x: Vec::new(),
         status: Status::Completed,
         stats: Stats::default(),
+        stiff: false,
     };
     if !all_finite(x0) {
         sol.status = Status::NonFinite;

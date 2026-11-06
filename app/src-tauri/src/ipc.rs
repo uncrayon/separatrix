@@ -181,14 +181,14 @@ pub enum AxisRef {
 pub struct SolverOptions {
     /// Integration method.
     pub method: Method,
-    /// Relative tolerance (dopri5 only).
+    /// Relative tolerance (dopri5 and rosenbrock23 only).
     pub rtol: f64,
-    /// Absolute tolerance (dopri5 only).
+    /// Absolute tolerance (dopri5 and rosenbrock23 only).
     pub atol: f64,
     /// Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
-    /// dopri5 (0 = automatic).
+    /// dopri5 and rosenbrock23 (0 = automatic).
     pub h: f64,
-    /// Largest allowed step for dopri5; absent = no limit.
+    /// Largest allowed step for dopri5 and rosenbrock23; absent = no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub h_max: Option<f64>,
@@ -373,6 +373,12 @@ pub struct TrajectoryOut {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub energy: Option<EnergyOut>,
+    /// `true` when Dormand–Prince's steps looked stiff (Hairer's test): its
+    /// step was held back by stability, not accuracy, and `rosenbrock23`
+    /// would take far fewer. Absent otherwise, and for every other method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub stiff: Option<bool>,
 }
 
 /// The energy `H` along one trajectory of a Hamiltonian flow.

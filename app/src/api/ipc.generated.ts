@@ -6,7 +6,7 @@ export type SystemKind = "ode" | "map";
 
 export type Severity = "error" | "warning" | "info";
 
-export type Method = "euler" | "heun" | "rk4" | "dopri5" | "verlet" | "yoshida4";
+export type Method = "euler" | "heun" | "rk4" | "dopri5" | "verlet" | "yoshida4" | "rosenbrock23";
 
 export type Status = "completed" | "blewUp" | "maxSteps" | "stepTooSmall" | "nonFinite";
 
@@ -180,20 +180,20 @@ export type SolverOptions = {
  */
 method: Method, 
 /**
- * Relative tolerance (dopri5 only).
+ * Relative tolerance (dopri5 and rosenbrock23 only).
  */
 rtol: number, 
 /**
- * Absolute tolerance (dopri5 only).
+ * Absolute tolerance (dopri5 and rosenbrock23 only).
  */
 atol: number, 
 /**
  * Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
- * dopri5 (0 = automatic).
+ * dopri5 and rosenbrock23 (0 = automatic).
  */
 h: number, 
 /**
- * Largest allowed step for dopri5; absent = no limit.
+ * Largest allowed step for dopri5 and rosenbrock23; absent = no limit.
  */
 hMax?: number, 
 /**
@@ -412,7 +412,13 @@ stats: Stats,
 /**
  * How well a Hamiltonian flow kept its energy; absent for other systems.
  */
-energy?: EnergyOut, };
+energy?: EnergyOut, 
+/**
+ * `true` when Dormand–Prince's steps looked stiff (Hairer's test): its
+ * step was held back by stability, not accuracy, and `rosenbrock23`
+ * would take far fewer. Absent otherwise, and for every other method.
+ */
+stiff?: boolean, };
 
 export type EnergyOut = { 
 /**

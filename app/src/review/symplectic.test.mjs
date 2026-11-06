@@ -12,14 +12,14 @@ const flow = { kind: "ode", hamiltonian: false, separable: false };
 
 test("the table lists every method the core knows, and only those", () => {
   const rust = readFileSync(new URL("../../../crates/project/src/lib.rs", import.meta.url), "utf8");
-  const known = JSON.parse(/pub const KNOWN_METHODS: \[&str; \d+\] = (\[[^\]]*\]);/.exec(rust)[1]);
+  const known = JSON.parse(/pub const KNOWN_METHODS: \[&str; \d+\] = (\[[^\]]*\]);/.exec(rust)[1].replace(/,\s*\]$/, "]"));
   assert.deepEqual(Object.keys(METHODS).sort(), [...known].sort());
   assert.deepEqual([...KNOWN_METHODS].sort(), [...known].sort());
   assert.deepEqual(
     Object.entries(METHODS)
       .filter(([, m]) => m.adaptive)
       .map(([k]) => k),
-    ["dopri5"],
+    ["dopri5", "rosenbrock23"],
   );
   assert.equal(METHODS.verlet.short, "Störmer–Verlet");
   assert.equal(METHODS.yoshida4.label, "Yoshida 4");
@@ -31,7 +31,7 @@ test("the symplectic methods need a separable Hamiltonian; the others run anythi
     assert.equal(methodFits(m, coupled), false, m);
     assert.equal(methodFits(m, flow), false, m);
   }
-  for (const m of ["euler", "heun", "rk4", "dopri5"]) {
+  for (const m of ["euler", "heun", "rk4", "dopri5", "rosenbrock23"]) {
     for (const sys of [hamiltonian, coupled, flow]) assert.equal(methodFits(m, sys), true, m);
   }
   assert.equal(symplecticRefusal(hamiltonian), null);
