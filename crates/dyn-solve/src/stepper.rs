@@ -372,6 +372,11 @@ pub struct Stepper<'a> {
     x: Vec<f64>,
     fx: Vec<f64>,
     h_next: f64,
+    /// Fixed steps place `t` at `grid_t0 + grid_steps·h` rather than by
+    /// repeated addition, which drifts by about one ulp per step and would
+    /// leave a sliver step before `t_end` on long runs.
+    grid_t0: f64,
+    grid_steps: u64,
 
     t_prev: f64,
     h_last: f64,
@@ -453,6 +458,8 @@ impl<'a> Stepper<'a> {
             x: x0.to_vec(),
             fx: vec![0.0; n],
             h_next: 0.0,
+            grid_t0: t0,
+            grid_steps: 0,
             t_prev: t0,
             h_last: 0.0,
             cont: DenseCoeffs::new(n),
@@ -557,6 +564,12 @@ impl<'a> Stepper<'a> {
             self.dir = TimeDirection::from_to(self.t, t_end);
             self.h_next = self.dir.sign() * self.h_next.abs();
         }
+        self.restart_grid();
+    }
+
+    fn restart_grid(&mut self) {
+        self.grid_t0 = self.t;
+        self.grid_steps = 0;
     }
 
     /// Replace the current point. Keeps the step size, re-evaluates `f`
@@ -575,6 +588,7 @@ impl<'a> Stepper<'a> {
         self.last_rejected = false;
         self.x_prev.copy_from_slice(x);
         self.f_prev.copy_from_slice(&self.fx);
+        self.restart_grid();
     }
 
     /// `true` once Dormand–Prince's steps have looked stiff: Hairer's test
@@ -782,7 +796,7 @@ impl<'a> Stepper<'a> {
         let t_new = if lands_on_t_end {
             self.t_end
         } else {
-            self.t + h
+            self.grid_t0 + (self.grid_steps + 1) as f64 * h
         };
 
         self.fixed_stages(h);
@@ -806,8 +820,10 @@ impl<'a> Stepper<'a> {
             if !self.overflowed_while_growing(h, t_new, Endpoint::FEvaluated) {
                 return StepOutcome::Failed(Status::NonFinite);
             }
+            self.grid_steps += 1;
             return self.accept_overflowed_endpoint(t_new, h);
         }
+        self.grid_steps += 1;
         self.accept(t_new, h, Dense::Hermite)
     }
 

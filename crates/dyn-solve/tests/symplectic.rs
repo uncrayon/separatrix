@@ -173,3 +173,25 @@ fn verlet_costs_three_evaluations_a_step_and_yoshida_seven() {
         assert_eq!(sol.stats.evals, 1 + per_step * 10, "{method:?}");
     }
 }
+
+#[test]
+fn a_fixed_step_run_that_needs_exactly_max_steps_completes() {
+    for method in [Method::Rk4, Method::Verlet] {
+        let opts = SolverOptions {
+            max_steps: 200_000,
+            ..fixed(method, 0.05)
+        };
+        let sol = integrate(
+            &pendulum(),
+            &[],
+            0.0,
+            &[0.8, 0.0],
+            1e4,
+            &opts,
+            Sampling::Steps,
+        );
+        assert_eq!(sol.status, Status::Completed, "{method:?}");
+        assert_eq!(sol.stats.accepted, 200_000, "{method:?}");
+        assert_eq!(sol.last().unwrap().0, 1e4, "{method:?}");
+    }
+}
