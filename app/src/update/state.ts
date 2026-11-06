@@ -1,7 +1,6 @@
 import type { UpdateCheck } from "../api/types";
 
 export type UpdateState =
-  | { kind: "idle" }
   | { kind: "off" }
   | { kind: "checking" }
   | { kind: "upToDate" }
@@ -17,7 +16,8 @@ export type UpdateEvent =
 
 export const CHECK_FAILED = "Couldn't check for updates. You can keep working offline.";
 
-export const initialUpdateState: UpdateState = { kind: "idle" };
+/** The panel only shows once a check starts, so the first state is that check. */
+export const initialUpdateState: UpdateState = { kind: "checking" };
 
 export function updateReducer(state: UpdateState, event: UpdateEvent): UpdateState {
   if (state.kind === "installing" && event.type !== "installFailed") return state;
@@ -35,7 +35,6 @@ export function updateReducer(state: UpdateState, event: UpdateEvent): UpdateSta
         case "failed":
           return { kind: "failed", message: CHECK_FAILED };
       }
-      return state;
     case "install":
       return state.kind === "available" ? { kind: "installing", version: state.version } : state;
     case "installFailed":
@@ -45,7 +44,6 @@ export function updateReducer(state: UpdateState, event: UpdateEvent): UpdateSta
 
 export function updateMessage(state: UpdateState): string {
   switch (state.kind) {
-    case "idle":
     case "checking":
       return "Checking for updates…";
     case "off":

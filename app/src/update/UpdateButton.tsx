@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { checkForUpdate, installUpdate, listenUpdateEvents, startUpdateCheck } from "../api/client";
+import { getVersion } from "@tauri-apps/api/app";
+import { checkForUpdate, installUpdate, isTauri, listenUpdateEvents, startUpdateCheck } from "../api/client";
 import { errorText } from "../project/ipc";
 import { initialUpdateState, updateMessage, updateReducer } from "./state";
 
@@ -8,6 +9,8 @@ import { initialUpdateState, updateMessage, updateReducer } from "./state";
 export function UpdateButton({ beforeInstall }: { beforeInstall: () => Promise<boolean> }) {
   const [state, dispatch] = useReducer(updateReducer, initialUpdateState);
   const [open, setOpen] = useState(false);
+  // The running binary's version, which the update check compares against; the preview has only package.json's.
+  const [version, setVersion] = useState(__APP_VERSION__);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -18,6 +21,10 @@ export function UpdateButton({ beforeInstall }: { beforeInstall: () => Promise<b
       (result) => dispatch({ type: "checked", result }),
       (err) => dispatch({ type: "checked", result: { kind: "failed", message: errorText(err) } }),
     );
+  }, []);
+
+  useEffect(() => {
+    if (isTauri()) void getVersion().then(setVersion, () => {});
   }, []);
 
   useEffect(() => {
@@ -76,7 +83,7 @@ export function UpdateButton({ beforeInstall }: { beforeInstall: () => Promise<b
         onClick={() => (open && state.kind !== "checking" ? setOpen(false) : check())}
       >
         <span className="ds-statusbar-text">
-          <span className="ds-statusbar-num">v{__APP_VERSION__}</span>
+          <span className="ds-statusbar-num">v{version}</span>
           {available && <span className="ds-statusbar-strong"> · Update available</span>}
         </span>
         <span className="ds-sr">. Check for updates</span>

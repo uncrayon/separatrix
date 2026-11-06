@@ -93,6 +93,7 @@ pub async fn install_update<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
         .timeout(CHECK_TIMEOUT)
         .build()
         .map_err(failed)?;
+    // Checks again: the `Update` found earlier can't cross IPC.
     let Some(mut update) = updater.check().await.map_err(failed)? else {
         return Err("There is no newer version to install.".into());
     };
