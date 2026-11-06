@@ -31,6 +31,7 @@ import {
   buildPortraitJob,
   isCobweb,
   isLyapunov,
+  isContinuation,
   isOrbit,
   isReturnMap,
   isSection,
@@ -40,7 +41,7 @@ import {
   type MapRequestFields,
   type StudioSnapshot,
   type TrajectoryMeta,
-  type View,
+  type PlotView,
 } from "../state/model";
 
 export const EXPORT_MIN_SAMPLES = 2000;
@@ -77,7 +78,7 @@ export interface FigureJob {
   widthPx: number;
   heightPx: number;
   /** The view with the ranges the figure shows (equal scales applied). */
-  view: View;
+  view: PlotView;
   kind: "ode" | "map";
   dim: number;
   /** A cobweb plot: the graph of f, the diagonal and the staircases. */
@@ -183,6 +184,8 @@ export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   const v = s.view;
   if (isLyapunov(v)) return { x: sys.kind === "map" ? "n" : "t", y: "\\lambda" };
   if (isOrbit(v)) return { x: sys.params[v.param]?.latex ?? "r", y: sys.states[v.yAxis.index]?.latex ?? "x" };
+  if (isContinuation(v))
+    return { x: sys.params[v.param]?.latex ?? "r", y: v.yAxis.kind === "state" ? (sys.states[v.yAxis.index]?.latex ?? "x") : "\\lVert x \\rVert" };
   return viewAxisLabels(v, sys.states, sys.kind);
 }
 

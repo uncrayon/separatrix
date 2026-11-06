@@ -586,6 +586,25 @@ gate (`scripts/continuation-gate.sh`, see the README) checks this command agains
 derived in closed form or published, among them the logistic cascade `r2 … r4` to 1e−6 by
 switching at each flip, and its agreement with `period_doublings` to 1e−9.
 
+The studio's Branch view (View control: Continuation) sends one request per seed of the view
+(`buildContinuationJobs` in state/model.ts), each request's JSON its key: `range`, `ds`,
+`dsMax = 2·ds` and `maxPoints` from the Continuation panel, every parameter but the swept one from
+its slider, and the swept one from the seed (a point seed's `param`, a switch seed's `p`), so
+moving the swept slider asks for nothing. A run is kept while its job is still asked for, so the
+requests go one at a time and only for new keys. A seed is a fixed point at the slider's value
+then (the selected one, with Continue on a Fixed points row or "Continue from the selected fixed
+point", in the panel's direction), or, from Switch branch on a BP or PD row, the special point
+itself, followed `both` ways. A fresh Branch view starts from the selected fixed point, else from
+every fixed point found in the view. The plot draws each branch in `traj-(i mod 7 + 1)`, solid
+where it is stable and dashed where it is not, split at each special point; every member of a
+cycle; and each special point as a fixed-point glyph with its label (LP, H, BP, PD, NS, one table
+`SPECIAL_KINDS`). The inspector lists each bifurcation once in increasing `p` (both halves of a
+switched cycle, and two branches that cross, report the same one), for example `H  b = 0.346410
+(x, y) = (0.3464, 1.7321)  ω = 0.447214  ℓ₁ < 0, supercritical`. A click on a row, or on the plot
+near a branch vertex, sets the swept slider to that `p` exactly. The view asks for no portrait.
+The browser preview's stand-in (`mockContinuation` in api/mock.ts) follows dimension ≤ 3 with
+finite-difference Jacobians and no eigenvalue-count check or `ℓ₁`.
+
 ## IPC (Tauri commands)
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders

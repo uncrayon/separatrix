@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CompileRequest,
   CompileResponse,
+  ContinuationRequest,
+  ContinuationResponse,
   ConvertRequest,
   ConvertResponse,
   LyapunovRequest,
@@ -11,7 +13,7 @@ import type {
   PortraitRequest,
   PortraitResponse,
 } from "./types";
-import { mockCompile, mockConvert, mockLyapunov, mockOrbitDiagram, mockPortrait } from "./mock";
+import { mockCompile, mockContinuation, mockConvert, mockLyapunov, mockOrbitDiagram, mockPortrait } from "./mock";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -36,6 +38,10 @@ export function computeLyapunov(req: LyapunovRequest): Promise<LyapunovResponse>
 
 export function computeOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
   return isTauri() ? invoke<OrbitDiagramResponse>("compute_orbit_diagram", { req }) : mockOrbitDiagram(req);
+}
+
+export function computeContinuation(req: ContinuationRequest): Promise<ContinuationResponse> {
+  return isTauri() ? invoke<ContinuationResponse>("compute_continuation", { req }) : mockContinuation(req);
 }
 
 export interface Job<B, M> {

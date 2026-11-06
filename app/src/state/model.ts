@@ -1,6 +1,10 @@
 import type {
   AxisRef,
   CompileResponse,
+  ContinuationDirection,
+  ContinuationRequest,
+  ContinuationResponse,
+  ContinuationStart,
   ConvertResponse,
   Direction,
   FixedPointOut,
@@ -15,6 +19,8 @@ import type {
   PortraitResponse,
   SectionSpec,
   SolverOptions,
+  SpecialKindOut,
+  SpecialPointOut,
   StateInfo,
   SystemKind,
   TrajectoryRequest,
@@ -22,6 +28,7 @@ import type {
 import {
   DEFAULT_CAMERA,
   LYAPUNOV_MISFIT,
+  MAX_CONTINUATION_POINTS,
   MAX_ORBIT_COLUMNS,
   MAX_LYAPUNOV_ITERATES,
   MAX_RENORMALIZATIONS,
@@ -34,7 +41,7 @@ import {
 import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
-import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
+import type { LoadedAxis, LoadedSeed, LoadedView, ProjectLoad } from "../project/serialize";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -141,14 +148,44 @@ export type OrbitView = ViewBase & {
   param: number;
   orbit: OrbitSettings;
 };
+/** ‖x‖₂, the vertical measure of a branch plot that shows no single state. */
+export type NormAxis = { kind: "norm" };
+
+/**
+ * Where a branch of a continuation view starts: a fixed point (of `f^k` for
+ * a map), which the core corrects first, or a switch onto the second branch
+ * at a branch point or a flip.
+ */
+export type ContinuationSeed =
+  | { from: "point"; x: number[]; param: number; period: number; direction: ContinuationDirection }
+  | { from: "switch"; at: SpecialPointOut; direction: ContinuationDirection };
+
+export interface ContinuationSettings {
+  range: [number, number];
+  ds: number;
+  maxPoints: number;
+  seeds: ContinuationSeed[];
+}
+
+export type ContinuationView = Omit<ViewBase, "yAxis"> & {
+  kind: "continuation";
+  xAxis: TimeAxis;
+  yAxis: StateAxis | NormAxis;
+  param: number;
+  continuation: ContinuationSettings;
+};
+
 export type View =
   | (ViewBase & { kind?: "plane" })
   | (ViewBase & { kind: "cobweb" })
   | SectionView
   | SpaceView
   | LyapunovView
-  | OrbitView;
+  | OrbitView
+  | ContinuationView;
 export type ViewKind = NonNullable<View["kind"]>;
+/** A view whose two axes are a state or time: every view but the branch plot. */
+export type PlotView = Exclude<View, ContinuationView>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
@@ -156,17 +193,28 @@ export const isSection = (v: View): v is SectionView => v.kind === "section";
 export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
 export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
-export const isAnalysis = (v: View): v is LyapunovView | OrbitView => isLyapunov(v) || isOrbit(v);
+export const isContinuation = (v: View): v is ContinuationView => v.kind === "continuation";
+export const isAnalysis = (v: View): v is LyapunovView | OrbitView | ContinuationView =>
+  isLyapunov(v) || isOrbit(v) || isContinuation(v);
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov" | "orbit";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space", "lyapunov", "orbit"];
+export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov" | "orbit" | "continuation";
+export const VIEW_CHOICES: readonly ViewChoice[] = [
+  "phase",
+  "series",
+  "cobweb",
+  "section",
+  "space",
+  "lyapunov",
+  "orbit",
+  "continuation",
+];
 
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
-  ode: ["phase", "series", "section", "space", "lyapunov"],
-  map: ["phase", "series", "cobweb", "lyapunov", "orbit"],
+  ode: ["phase", "series", "section", "space", "lyapunov", "continuation"],
+  map: ["phase", "series", "cobweb", "lyapunov", "orbit", "continuation"],
 };
 
 export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
@@ -179,6 +227,7 @@ export function viewChoice(v: View): ViewChoice {
   if (isSpace(v)) return "space";
   if (isLyapunov(v)) return "lyapunov";
   if (isOrbit(v)) return "orbit";
+  if (isContinuation(v)) return "continuation";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
@@ -226,6 +275,14 @@ export function orbitAvailability(sys: SystemShape | null | undefined, name = "t
   return sys.params?.length ? { ok: true } : { ok: false, reason: `${needs}; ${name} has none.` };
 }
 
+export function continuationAvailability(sys: SystemShape | null | undefined, name = "this system"): Availability {
+  const needs = "Continuation follows a fixed point as a parameter changes";
+  if (!sys?.params?.length) return { ok: false, reason: `${needs}; ${name} has no parameter.` };
+  if (!sys.autonomous)
+    return { ok: false, reason: `${needs}; ${name} changes with ${sys.kind === "map" ? "$n$" : "$t$"}, so it has none.` };
+  return { ok: true };
+}
+
 export function spaceAvailability(sys: SystemShape | null | undefined, name = "This system"): Availability {
   const needs = "The 3D view needs a flow with at least 3 states.";
   if (sys?.kind === "map") return { ok: false, reason: `${needs} ${name} is a map.` };
@@ -241,6 +298,7 @@ export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   space: "3D view",
   lyapunov: "Lyapunov spectrum",
   orbit: "Orbit diagram",
+  continuation: "Continuation",
 };
 
 /**
@@ -256,6 +314,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   space: "3D",
   lyapunov: "λ",
   orbit: "Orbit",
+  continuation: "Branch",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -271,6 +330,7 @@ export function viewChoiceAvailability(
     space: spaceAvailability(sys, name),
     lyapunov: { ok: true },
     orbit: orbitAvailability(sys, name),
+    continuation: continuationAvailability(sys, name),
   };
 }
 
@@ -390,7 +450,7 @@ export function portraitGraph(res: PortraitResponse): [number, number][][] | und
 }
 
 /** The map's view a cobweb shows: both axes state 0, the same range on each. */
-export function cobwebView(range: [number, number]): View {
+export function cobwebView(range: [number, number]): PlotView {
   return {
     kind: "cobweb",
     xAxis: stateAxis(0),
@@ -768,6 +828,225 @@ export function doublingRows(
 
 const subscriptDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
 
+/**
+ * Each kind of special point on a branch: its label on the plot and in the
+ * inspector (Strogatz's and the standard abbreviations), its full name, the
+ * symbol of `SpecialPointOut::omega` when the kind has one, and whether the
+ * core can switch onto the second branch there.
+ */
+export interface SpecialKindInfo {
+  label: string;
+  name: string;
+  omega: "ω" | "θ" | null;
+  switches: boolean;
+}
+
+export const SPECIAL_KINDS: Record<SpecialKindOut, SpecialKindInfo> = {
+  fold: { label: "LP", name: "Fold (limit point)", omega: null, switches: false },
+  hopf: { label: "H", name: "Hopf bifurcation", omega: "ω", switches: false },
+  branchPoint: { label: "BP", name: "Branch point", omega: null, switches: true },
+  flip: { label: "PD", name: "Period doubling (flip)", omega: null, switches: true },
+  neimarkSacker: { label: "NS", name: "Neimark–Sacker bifurcation", omega: "θ", switches: false },
+};
+
+export const CONTINUATION_MAX_POINTS = 500;
+export { MAX_CONTINUATION_POINTS };
+
+/** The default first step: a hundredth of the range, to one significant digit. */
+export const continuationStep = ([lo, hi]: readonly [number, number]): number => Number(((hi - lo) / 100).toPrecision(1));
+
+/** The plot's horizontal range for a continuation range: 4 % of it on either side. */
+export function continuationXRange([lo, hi]: readonly [number, number]): [number, number] {
+  const pad = 0.04 * (hi - lo);
+  return [lo - pad, hi + pad];
+}
+
+export function continuationView(
+  params: readonly Pick<ParamState, "min" | "max">[],
+  yRange: [number, number],
+  param = 0,
+  seeds: ContinuationSeed[] = [],
+): ContinuationView {
+  const p = params[param];
+  const range: [number, number] = p && p.min < p.max ? [p.min, p.max] : [0, 1];
+  return {
+    kind: "continuation",
+    xAxis: TIME_AXIS,
+    yAxis: stateAxis(0),
+    xRange: continuationXRange(range),
+    yRange: [yRange[0], yRange[1]],
+    param,
+    continuation: { range, ds: continuationStep(range), maxPoints: CONTINUATION_MAX_POINTS, seeds },
+  };
+}
+
+export function continuationSettingsError(
+  s: Omit<ContinuationSettings, "seeds">,
+): { field: "range" | "ds" | "maxPoints"; message: string } | null {
+  const [lo, hi] = s.range;
+  if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return { field: "range", message: "From must be below To" };
+  if (!(Number.isFinite(s.ds) && s.ds > 0 && s.ds <= hi - lo))
+    return { field: "ds", message: "Must be positive and at most the range" };
+  if (!(Number.isInteger(s.maxPoints) && s.maxPoints >= 2 && s.maxPoints <= MAX_CONTINUATION_POINTS))
+    return { field: "maxPoints", message: `Must be a whole number from 2 to ${MAX_CONTINUATION_POINTS.toLocaleString("en-US")}` };
+  return null;
+}
+
+/** A point seed, or a switch at `at`: the whole second branch, followed both ways. */
+export const pointSeed = (x: readonly number[], param: number, direction: ContinuationDirection): ContinuationSeed => ({
+  from: "point",
+  x: x.slice(),
+  param,
+  period: 1,
+  direction,
+});
+export const switchSeed = (at: SpecialPointOut): ContinuationSeed => ({ from: "switch", at, direction: "both" });
+
+/** `seeds` with `seed` appended, unless an equal one is there already. */
+export function withSeed(seeds: readonly ContinuationSeed[], seed: ContinuationSeed): ContinuationSeed[] {
+  const key = JSON.stringify(seed);
+  return seeds.some((s) => JSON.stringify(s) === key) ? seeds.slice() : [...seeds, seed];
+}
+
+export interface ContinuationMeta {
+  key: string;
+  systemId: number;
+  /** The seed's position in the view's `continuation.seeds`. */
+  seed: number;
+}
+
+export type ContinuationJob = Job<Omit<ContinuationRequest, "requestId">, ContinuationMeta>;
+
+export type BranchRun = { ok: true; res: ContinuationResponse; roundTripMs: number } | { ok: false; error: string };
+
+/**
+ * The requests of a continuation view, one per seed that fits the system.
+ * Every parameter but the swept one comes from its slider; the swept one is
+ * the seed's own, so moving its slider asks for nothing.
+ */
+export function buildContinuationJobs(s: Pick<StudioSnapshot, "compiled" | "params" | "view">): ContinuationJob[] {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || !isContinuation(s.view) || !continuationAvailability(sys).ok)
+    return [];
+  const v = s.view;
+  const c = v.continuation;
+  if (v.param >= sys.params.length || s.params.length !== sys.params.length || continuationSettingsError(c)) return [];
+  const systemId = sys.systemId;
+  const dim = sys.states.length;
+  return c.seeds.flatMap((seed, i): ContinuationJob[] => {
+    const [x, p, start]: [number[], number, ContinuationStart] =
+      seed.from === "point"
+        ? [seed.x, seed.param, { kind: "point", x0: seed.x.slice(), period: seed.period }]
+        : [seed.at.x, seed.at.p, { kind: "switch", at: seed.at }];
+    if (x.length !== dim) return [];
+    const body: ContinuationJob["body"] = {
+      systemId,
+      params: s.params.map((q, j) => (j === v.param ? p : q.value)),
+      param: v.param,
+      range: [c.range[0], c.range[1]],
+      start,
+      direction: seed.direction,
+      ds: c.ds,
+      dsMax: 2 * c.ds,
+      maxPoints: c.maxPoints,
+    };
+    return [{ body, meta: { key: JSON.stringify(body), systemId, seed: i } }];
+  });
+}
+
+/** Each job of the view with its run, when it has come back. */
+export function shownBranches(
+  s: Parameters<typeof buildContinuationJobs>[0] & { branches: Readonly<Record<string, BranchRun>> },
+): { job: ContinuationJob; run: BranchRun | undefined }[] {
+  return buildContinuationJobs(s).map((job) => ({ job, run: s.branches[job.meta.key] }));
+}
+
+/**
+ * The special points of every branch, each bifurcation once (both halves of
+ * a switched cycle, and two branches that cross, report the same one), in
+ * increasing parameter.
+ */
+export function specialRows(runs: readonly (BranchRun | undefined)[]): { at: SpecialPointOut; branch: number }[] {
+  const rows: { at: SpecialPointOut; branch: number }[] = [];
+  runs.forEach((run, branch) => {
+    if (!run?.ok) return;
+    for (const at of run.res.branch.special) {
+      const same = rows.some(
+        (r) => r.at.kind === at.kind && r.at.period === at.period && Math.abs(r.at.p - at.p) <= 1e-7 * (1 + Math.abs(at.p)),
+      );
+      if (!same) rows.push({ at, branch });
+    }
+  });
+  return rows.sort((a, b) => a.at.p - b.at.p);
+}
+
+export function continuationSummary(
+  runs: readonly (BranchRun | undefined)[],
+): { elapsedMs: number; roundTripMs: number; points: number; special: number } {
+  let elapsedMs = 0;
+  let roundTripMs = 0;
+  let points = 0;
+  for (const run of runs) {
+    if (!run?.ok) continue;
+    elapsedMs += run.res.elapsedMs;
+    roundTripMs += run.roundTripMs;
+    points += run.res.branch.p.length;
+  }
+  return { elapsedMs, roundTripMs, points, special: specialRows(runs).length };
+}
+
+/** The value a branch plot draws for point `i`, cycle member `m`: a state, or ‖x‖₂. */
+export function branchValue(
+  b: Pick<ContinuationResponse["branch"], "x" | "period">,
+  dim: number,
+  axis: StateAxis | NormAxis,
+  i: number,
+  m: number,
+): number {
+  const at = (i * b.period + m) * dim;
+  if (axis.kind === "state") return b.x[at + axis.index];
+  let sum = 0;
+  for (let k = 0; k < dim; k++) sum += b.x[at + k] * b.x[at + k];
+  return Math.sqrt(sum);
+}
+
+/** Every branch point and cycle member in view, padded 8 %; null with nothing to fit. */
+export function fitBranchRanges(
+  runs: readonly (BranchRun | undefined)[],
+  dim: number,
+  axis: StateAxis | NormAxis,
+): { xRange: [number, number]; yRange: [number, number] } | null {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const run of runs) {
+    if (!run?.ok) continue;
+    const b = run.res.branch;
+    b.p.forEach((p, i) => {
+      for (let m = 0; m < b.period; m++) {
+        const y = branchValue(b, dim, axis, i, m);
+        if (Number.isFinite(p) && Number.isFinite(y) && Math.abs(y) < OUTLIER_CAP) {
+          xs.push(p);
+          ys.push(y);
+        }
+      }
+    });
+  }
+  const pad = (vs: number[]): [number, number] | null => {
+    if (!vs.length) return null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const v of vs) {
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    const d = 0.08 * (hi - lo || Math.max(1, Math.abs(lo)));
+    return [lo - d, hi + d];
+  };
+  const xRange = pad(xs);
+  const yRange = pad(ys);
+  return xRange && yRange ? { xRange, yRange } : null;
+}
+
 export interface Layers {
   field: boolean;
   fieldGrid: number;
@@ -816,7 +1095,7 @@ export function selectFixedPoint(x: readonly number[]): Selection {
 export const FIXED_POINT_MATCH_FRACTION = 0.1;
 
 /** Distance within which a recomputed fixed point is the selected one, in state units. */
-export function fixedPointMatchTolerance(view: View): number {
+export function fixedPointMatchTolerance(view: PlotView): number {
   const spans = (axes: [AxisRef, [number, number]][]) =>
     axes.map(([, [lo, hi]]) => Math.abs(hi - lo)).filter((v) => Number.isFinite(v) && v > 0);
   const all: [AxisRef, [number, number]][] = [
@@ -852,7 +1131,7 @@ export function nearestFixedPoint(
 export function selectedFixedPointIndex(
   sel: Selection,
   fps: readonly Pick<FixedPointOut, "x">[],
-  view: View,
+  view: PlotView,
 ): number | null {
   if (sel?.kind !== "fp") return null;
   const i = nearestFixedPoint(fps, sel.x, fixedPointMatchTolerance(view));
@@ -871,7 +1150,7 @@ export function selectedFixedPointIndex(
 export function trackSelection(
   sel: Selection,
   fps: readonly Pick<FixedPointOut, "x">[],
-  view: View,
+  view: PlotView,
   prev: readonly Pick<FixedPointOut, "x">[] = [],
 ): Selection {
   if (sel?.kind !== "fp") return sel;
@@ -898,7 +1177,7 @@ export interface PortraitMeta {
   shapeId: number;
   trajectories: TrajectoryMeta[];
   /** The view it was asked for, with the ranges as shown (equal scales on a flow's phase plane). */
-  view: View;
+  view: PlotView;
   /** Fixed points were asked for, so an empty list means there are none (not that the layer is hidden). */
   fixedPoints: boolean;
 }
@@ -1132,7 +1411,7 @@ export function shiftTimeAxes(v: View, dt: number): View {
  * The view a system opens in. With `solver`, a 1-D map's time series starts
  * at its transient T (its orbits begin at n = T).
  */
-export function defaultView(sys: CompileResponse, solver?: Pick<SolverSettings, "tEnd" | "transient">): View {
+export function defaultView(sys: CompileResponse, solver?: Pick<SolverSettings, "tEnd" | "transient">): PlotView {
   const dim = sys.states.length;
   // Strogatz ch. 10's first picture: a 1-D map opens as its cobweb.
   if (cobwebAvailability(sys).ok) return cobwebView([-0.1, 1.1]);
@@ -1155,7 +1434,7 @@ export function resolveAxis(name: string, states: StateInfo[]): AxisRef | null {
   return i >= 0 ? stateAxis(i) : null;
 }
 
-export function templateView(t: Template, sys: CompileResponse): View {
+export function templateView(t: Template, sys: CompileResponse): PlotView {
   if (t.view.kind === "space") {
     const axes = [t.view.x, t.view.y, t.view.z ?? ""].map((n) => resolveAxis(n, sys.states));
     const idx = axes.map((a) => (a?.kind === "state" ? a.index : -1));
@@ -1270,6 +1549,13 @@ export function adaptView(
   next?: Pick<CompileResponse, "kind" | "autonomous">,
 ): View | null {
   if (isLyapunov(view)) return view;
+  if (isContinuation(view)) {
+    const y = view.yAxis;
+    const k = y.kind === "state" ? newStates.findIndex((s) => s.name === oldStates[y.index]?.name) : 0;
+    if (k < 0) return null;
+    const continuation = { ...view.continuation, seeds: [] };
+    return { ...view, yAxis: y.kind === "state" ? stateAxis(k) : y, continuation };
+  }
   if (isOrbit(view)) {
     const k = newStates.findIndex((s) => s.name === oldStates[view.yAxis.index]?.name);
     const index = k >= 0 ? k : renamedSlot(view.yAxis.index, oldStates, newStates) ? view.yAxis.index : -1;
@@ -1305,11 +1591,11 @@ export function adaptView(
   return { ...view, xAxis, yAxis };
 }
 
-export function followOrbitParam(
-  view: OrbitView,
+export function followOrbitParam<V extends OrbitView | ContinuationView>(
+  view: V,
   oldParams: readonly Pick<ParamInfo, "name">[],
   newParams: readonly Pick<ParamInfo, "name">[],
-): OrbitView | null {
+): V | null {
   const k = newParams.findIndex((p) => p.name === oldParams[view.param]?.name);
   const index = k >= 0 ? k : oldParams.length === newParams.length && view.param < newParams.length ? view.param : -1;
   if (index < 0) return null;
@@ -1421,7 +1707,7 @@ export function isFlowPhasePlane(xAxis: AxisRef, yAxis: AxisRef, kind: SystemKin
  * the diagonal is at 45° and f's slope can be compared with it by eye).
  */
 export function hasEqualScales(view: View, kind: SystemKind | undefined): boolean {
-  if (isSpace(view)) return false;
+  if (isSpace(view) || isContinuation(view)) return false;
   return isCobweb(view) || isFlowPhasePlane(view.xAxis, view.yAxis, kind);
 }
 
@@ -1529,7 +1815,7 @@ export function clampTransient(t: number, tEnd: number): number {
  */
 export function liftPlotPoint(
   sys: Pick<CompileResponse, "kind" | "states"> | null,
-  view: View,
+  view: PlotView,
   baseState: readonly number[],
   fieldTime: number,
   px: number,
@@ -1574,7 +1860,9 @@ export function switchView(
   choice: ViewChoice,
   s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & {
     portrait?: PortraitState | null;
-    params?: readonly Pick<ParamState, "min" | "max">[];
+    params?: readonly (Pick<ParamState, "min" | "max"> & Partial<Pick<ParamState, "value">>)[];
+    selection?: Selection;
+    shapeId?: number;
   },
   memory: ViewMemory,
 ): View | null {
@@ -1609,6 +1897,15 @@ export function switchView(
   if (choice === "space") return spaceView([0, 1, 2], fromExtent);
   if (choice === "lyapunov") return lyapunovView(sys.kind ?? "ode");
   if (choice === "orbit") return orbitView(s.params ?? [], shownRange(0) ?? fromExtent(0));
+  if (choice === "continuation") {
+    const value = s.params?.[0]?.value;
+    const fps =
+      s.selection?.kind === "fp"
+        ? [s.selection.x]
+        : (searchedFixedPoints(sys, s.portrait ?? null, s.shapeId ?? -1) ?? []).map((fp) => fp.x);
+    const seeds = value === undefined ? [] : fps.map((x) => pointSeed(x, value, "both"));
+    return continuationView(s.params ?? [], shownRange(0) ?? fromExtent(0), 0, seeds);
+  }
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -1683,7 +1980,8 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov" || v.kind === "orbit") return null;
+  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov" || v.kind === "orbit" || v.kind === "continuation")
+    return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1774,9 +2072,64 @@ function loadOrbitView(v: LoadedView, sys: CompileResponse): OrbitView | string 
   return { ...orbitView([], v.yRange, param, state, settings), xRange: [v.xRange[0], v.xRange[1]] };
 }
 
+/** The notice when a saved continuation view can't be replayed for the system. */
+export const CONTINUATION_MISFIT = "The saved continuation can't be run as saved, so the default view is shown.";
+/** The notice for a saved seed that doesn't fit the system (`n` counts from 1). */
+export const continuationSeedMisfit = (n: number) =>
+  `The saved continuation's branch ${n} doesn't fit this system, so it was left out.`;
+
+const CONTINUATION_DIRECTIONS: readonly string[] = ["forward", "backward", "both"] satisfies ContinuationDirection[];
+
+/** A saved seed as the studio replays it, or null when it doesn't fit `sys` (or is of a kind this version lacks). */
+function loadedSeed(seed: LoadedSeed, sys: CompileResponse): ContinuationSeed | null {
+  const dim = sys.states.length;
+  const { x, param, direction } = seed;
+  const period = seed.period ?? 1;
+  if (!x || x.length !== dim || param === undefined || !direction || !CONTINUATION_DIRECTIONS.includes(direction)) return null;
+  if (!(Number.isInteger(period) && period >= 1)) return null;
+  const dir = direction as ContinuationDirection;
+  if (seed.from === "point") return { from: "point", x, param, period, direction: dir };
+  const kind = seed.kind as SpecialKindOut | undefined;
+  if (seed.from !== "switch" || !kind || !SPECIAL_KINDS[kind]?.switches || seed.tangent?.length !== dim + 1) return null;
+  const at: SpecialPointOut = { kind, index: 0, p: param, x, period, tangent: seed.tangent, eigenvalues: [], omega: null, lyapunov: null };
+  return { from: "switch", at, direction: dir };
+}
+
+function loadContinuationView(v: LoadedView, sys: CompileResponse): { view: ContinuationView; warnings: string[] } | string {
+  const c = v.continuation;
+  const x = v.xAxis;
+  const y = v.yAxis;
+  const param = x.kind === "param" ? sys.params.findIndex((p) => p.name === x.name) : -1;
+  const state = y.kind === "state" ? sys.states.findIndex((st) => st.name === y.name) : -1;
+  const settings =
+    c?.range && c.ds !== undefined && c.maxPoints !== undefined ? { range: c.range, ds: c.ds, maxPoints: c.maxPoints } : null;
+  if (!continuationAvailability(sys).ok || !settings || continuationSettingsError(settings) || param < 0) return CONTINUATION_MISFIT;
+  if ((y.kind !== "norm" && state < 0) || !v.xRange || !v.yRange) return CONTINUATION_MISFIT;
+  const warnings: string[] = [];
+  const seeds = (c?.seeds ?? []).flatMap((raw, i) => {
+    const seed = loadedSeed(raw, sys);
+    if (!seed) warnings.push(continuationSeedMisfit(i + 1));
+    return seed ? [seed] : [];
+  });
+  const view: ContinuationView = {
+    kind: "continuation",
+    xAxis: TIME_AXIS,
+    yAxis: y.kind === "norm" ? { kind: "norm" } : stateAxis(state),
+    xRange: [v.xRange[0], v.xRange[1]],
+    yRange: [v.yRange[0], v.yRange[1]],
+    param,
+    continuation: { ...settings, range: [settings.range[0], settings.range[1]], seeds },
+  };
+  return { view, warnings };
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
+  if (v?.kind === "continuation") {
+    const fit = loadContinuationView(v, sys);
+    return typeof fit === "string" ? null : fit.view;
+  }
   if (v?.kind === "lyapunov") {
     const fit = loadLyapunovView(v, sys);
     return typeof fit === "string" ? null : fit;
@@ -1850,8 +2203,11 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
     else if (load.view?.kind === "space") warnings.push(loadSpaceView(load.view, sys) as string);
     else if (load.view?.kind === "lyapunov") warnings.push(loadLyapunovView(load.view, sys) as string);
     else if (load.view?.kind === "orbit") warnings.push(loadOrbitView(load.view, sys) as string);
+    else if (load.view?.kind === "continuation") warnings.push(CONTINUATION_MISFIT);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
+  const fit = isContinuation(view) && load.view ? loadContinuationView(load.view, sys) : null;
+  if (fit && typeof fit !== "string") warnings.push(...fit.warnings);
   const slice = load.view?.slice ?? {};
   const baseState = sys.states.map((s) => (Number.isFinite(slice[s.name]) ? slice[s.name] : 0));
   const t = load.view?.t;

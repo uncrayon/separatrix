@@ -1,5 +1,16 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { AxisRef, Direction, FixedPointOut, Method, SectionSpec, SystemKind, TrajectoryOut } from "../api/types";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type {
+  AxisRef,
+  BranchStop,
+  ContinuationDirection,
+  Direction,
+  FixedPointOut,
+  Method,
+  SectionSpec,
+  SpecialPointOut,
+  SystemKind,
+  TrajectoryOut,
+} from "../api/types";
 import { MAX_SECTION_POINTS } from "../api/ipc.generated";
 import { Tex } from "../math/Tex";
 import { MathProse } from "../math/MathProse";
@@ -21,6 +32,17 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   COBWEB_FILL_ITERATES,
   DEFAULT_FIXED_STEP,
+  MAX_CONTINUATION_POINTS,
+  SPECIAL_KINDS,
+  continuationAvailability,
+  continuationSettingsError,
+  fitBranchRanges,
+  isContinuation,
+  pointSeed,
+  shownBranches,
+  specialRows,
+  switchSeed,
+  type ContinuationSeed,
   MAX_ITERATES,
   PALETTE_SIZE,
   VIEW_CHOICE_LABELS,
@@ -127,6 +149,7 @@ type SectionKey =
   | "section"
   | "lyapunov"
   | "orbit"
+  | "continuation"
   | "solver"
   | "fixedPoints"
   | "trajectories"
@@ -141,6 +164,7 @@ export function Inspector({ state, actions }: Props) {
     section: true,
     lyapunov: true,
     orbit: true,
+    continuation: true,
     solver: true,
     fixedPoints: true,
     trajectories: state.ics.length <= 5,
@@ -149,7 +173,9 @@ export function Inspector({ state, actions }: Props) {
 
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view);
+  const branch = isContinuation(state.view);
   const sel = state.selection;
+  const [direction, setDirection] = useState<ContinuationDirection>("both");
   const selKind = sel?.kind ?? null;
   const selId = sel ? (sel.kind === "ic" ? sel.id : sel.key) : null;
   useEffect(() => {
@@ -169,7 +195,7 @@ export function Inspector({ state, actions }: Props) {
         <p className="inspector-empty body ds-muted">Pick a template or type an equation to see its settings here.</p>
       ) : (
         <>
-          {!lyapunov && !orbit && (
+          {!lyapunov && !orbit && !branch && (
             <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
           )}
           <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
@@ -184,6 +210,16 @@ export function Inspector({ state, actions }: Props) {
           {orbit && (
             <OrbitSection state={state} actions={actions} open={open.orbit} onToggle={(v) => setOpen("orbit", v)} />
           )}
+          {branch && (
+            <ContinuationSection
+              state={state}
+              actions={actions}
+              open={open.continuation}
+              onToggle={(v) => setOpen("continuation", v)}
+              direction={direction}
+              onDirection={setDirection}
+            />
+          )}
           {isSection(state.view) && (
             <PoincareSection
               state={state}
@@ -192,23 +228,26 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("section", v)}
             />
           )}
-          {!(lyapunov && sys.kind === "map") && !orbit && (
+          {!(lyapunov && sys.kind === "map") && !orbit && !branch && (
             <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
           )}
-          {!lyapunov && !orbit && (
+          {!lyapunov && !orbit && !branch && (
             <FixedPointsSection
               state={state}
               actions={actions}
               open={open.fixedPoints}
               onToggle={(v) => setOpen("fixedPoints", v)}
+              direction={direction}
             />
           )}
-          <TrajectoriesSection
-            state={state}
-            actions={actions}
-            open={open.trajectories}
-            onToggle={(v) => setOpen("trajectories", v)}
-          />
+          {!branch && (
+            <TrajectoriesSection
+              state={state}
+              actions={actions}
+              open={open.trajectories}
+              onToggle={(v) => setOpen("trajectories", v)}
+            />
+          )}
           {sel?.kind === "ic" && (
             <SelectedTrajectorySection
               state={state}
@@ -336,10 +375,11 @@ const subDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃�
 function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const kind = sys.kind;
-  const view = state.view;
-  const cobweb = isCobweb(view);
-  const section = isSection(view);
-  const space = isSpace(view) ? view : null;
+  const shown = state.view;
+  const view = isContinuation(shown) ? null : shown;
+  const cobweb = !!view && isCobweb(view);
+  const section = !!view && isSection(view);
+  const space = view && isSpace(view) ? view : null;
   const reasonBase = useId();
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const choices = viewChoicesFor(sys);
@@ -358,22 +398,22 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const reasonIds = choices.filter((c) => !avail[c].ok)
     .map((c) => `${reasonBase}-${c}`)
     .join(" ");
-  const names = viewAxisLabels(view, sys.states, kind);
+  const names = view ? viewAxisLabels(view, sys.states, kind) : { x: "", y: "" };
   const options: SelectOption<string>[] = [
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
   ];
   // A return map's axes are one state at successive crossings, named xₖ and xₖ₊₁ as on the plot.
   const named = (axis: AxisRef, step: string) =>
-    isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}${step}` } : o)) : options;
+    view && isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}${step}` } : o)) : options;
   const sliceStates =
-    kind === "ode" && !section && !space && !isLyapunov(view)
+    view && kind === "ode" && !section && !space && !isLyapunov(view)
       ? sys.states
           .map((s, i) => ({ s, i }))
           .filter(({ i }) => !sameAxis(view.xAxis, { kind: "state", index: i }) && !sameAxis(view.yAxis, { kind: "state", index: i }))
       : [];
   const timeSlice =
-    kind === "ode" && !section && !space && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
+    !!view && kind === "ode" && !section && !space && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
   const hId = useId();
   const vId = useId();
   return (
@@ -383,7 +423,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           size="sm"
           fill
           ariaLabel="View"
-          value={viewChoice(view)}
+          value={viewChoice(shown)}
           options={viewOptions}
           onChange={actions.setViewKind}
           describedBy={reasonIds || undefined}
@@ -397,7 +437,11 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {isOrbit(view) ? (
+      {!view ? (
+        <p className="ds-panel-section-hint caption">
+          The parameter across and the measure up are set in the Continuation panel.
+        </p>
+      ) : isOrbit(view) ? (
         <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
           <div className="ds-panel-section-kv-row">
             <dt className="ds-panel-section-key body">
@@ -854,6 +898,263 @@ function OrbitSection({ state, actions, open, onToggle }: SectionProps) {
 }
 
 const sub = (n: number | string) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
+
+const DIRECTIONS: SegmentOption<ContinuationDirection>[] = [
+  { value: "forward", label: "Forward", title: "With the parameter increasing" },
+  { value: "backward", label: "Backward", title: "With the parameter decreasing" },
+  { value: "both", label: "Both", title: "Both ways from the start, joined into one branch" },
+];
+
+const BRANCH_STOPS: Record<BranchStop, string> = {
+  range: "the range's end",
+  maxPoints: "Max points",
+  stepTooSmall: "a step too small to go on",
+};
+
+/** "(x, y) = (0.3464, 1.7321)", or "x = 0.6667" for one state. */
+function stateText(names: readonly string[], x: readonly number[]): string {
+  return names.length === 1 ? `${names[0]} = ${dec(x[0], 4)}` : `(${names.join(", ")}) = (${x.map((v) => dec(v, 4)).join(", ")})`;
+}
+
+function specialText(at: SpecialPointOut, pName: string, names: readonly string[]): string {
+  const info = SPECIAL_KINDS[at.kind];
+  const parts = [`${pName} = ${dec(at.p, 6)}`, stateText(names, at.x)];
+  if (at.period > 1) parts.push(`period ${at.period}`);
+  if (info.omega && at.omega !== null) parts.push(`${info.omega} = ${dec(at.omega, 6)}`);
+  if (at.lyapunov !== null) parts.push(at.lyapunov < 0 ? "ℓ₁ < 0, supercritical" : "ℓ₁ > 0, subcritical");
+  return parts.join("  ");
+}
+
+const seedText = (seed: ContinuationSeed, pName: string, names: readonly string[]) =>
+  seed.from === "point"
+    ? `From ${stateText(names, seed.x)} at ${pName} = ${dec(seed.param, 4)}`
+    : `Switched at ${SPECIAL_KINDS[seed.at.kind].label} ${pName} = ${dec(seed.at.p, 6)}`;
+
+function ContinuationSection({
+  state,
+  actions,
+  open,
+  onToggle,
+  direction,
+  onDirection,
+}: SectionProps & { direction: ContinuationDirection; onDirection: (d: ContinuationDirection) => void }) {
+  const sys = state.compiled!;
+  const view = state.view;
+  const yId = useId();
+  const pId = useId();
+  if (!isContinuation(view)) return null;
+  const c = view.continuation;
+  const [lo, hi] = c.range;
+  const p = sys.params[view.param];
+  const pLatex = p?.latex ?? "p";
+  const pName = plainName(pLatex);
+  const names = sys.states.map((st) => plainName(st.latex));
+  const shown = shownBranches(state);
+  const runs = shown.map((b) => b.run);
+  const rows = specialRows(runs);
+  const value = state.params[view.param]?.value;
+  const fp = state.selection?.kind === "fp" && state.selection.x.length === sys.states.length ? state.selection.x : null;
+  const settingError = (patch: Partial<typeof c>) => {
+    const err = continuationSettingsError({ ...c, ...patch });
+    return err ? err.message : null;
+  };
+  const whole = (v: number) => v.toLocaleString("en-US");
+  const measure = view.yAxis.kind === "norm" ? "norm" : `s${view.yAxis.index}`;
+  return (
+    <PanelSection title="Continuation" id="continuation-settings" open={open} onToggle={onToggle}>
+      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+        <div className="ds-panel-section-kv-row">
+          <dt className="ds-panel-section-key body">
+            <label className="inspector-key-label" htmlFor={pId}>
+              Parameter
+            </label>
+          </dt>
+          <dd className="ds-panel-section-value ds-panel-section-value--field">
+            <Select
+              id={pId}
+              size="sm"
+              math
+              value={`p${view.param}`}
+              options={sys.params.map((q, i) => ({ value: `p${i}`, label: optionName(q.latex) }))}
+              onChange={(v) => actions.setContinuationParam(Number(v.slice(1)))}
+            />
+          </dd>
+        </div>
+        <FieldRow label="From" tip={`The lowest ${pName} a branch reaches`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={`${pLatex} =`} />}
+            value={lo}
+            onCommit={(v) => actions.setContinuation({ range: [v, hi] })}
+            validate={(v) => settingError({ range: [v, hi] })}
+            digits={6}
+            ariaLabel={`Lowest value of ${pName}`}
+          />
+        </FieldRow>
+        <FieldRow label="To" tip={`The highest ${pName} a branch reaches`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={`${pLatex} =`} />}
+            value={hi}
+            onCommit={(v) => actions.setContinuation({ range: [lo, v] })}
+            validate={(v) => settingError({ range: [lo, v] })}
+            digits={6}
+            ariaLabel={`Highest value of ${pName}`}
+          />
+        </FieldRow>
+        <FieldRow label="Δs" tip="The first step along the branch, in arclength; steps grow to twice it where the branch is straight">
+          <NumberField
+            size="sm"
+            lead={<Tex latex="\Delta s =" />}
+            value={c.ds}
+            onCommit={(v) => actions.setContinuation({ ds: v })}
+            validate={(v) => settingError({ ds: v })}
+            digits={6}
+            ariaLabel="First step in arclength"
+          />
+        </FieldRow>
+        <FieldRow label="Max points" tip={`The most points of a branch each way, up to ${whole(MAX_CONTINUATION_POINTS)}`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex="N =" />}
+            value={c.maxPoints}
+            onCommit={(v) => actions.setContinuation({ maxPoints: Math.round(v) })}
+            validate={(v) => settingError({ maxPoints: Math.round(v) })}
+            format={whole}
+            ariaLabel="Most points of a branch each way"
+          />
+        </FieldRow>
+        <div className="ds-panel-section-kv-row">
+          <dt className="ds-panel-section-key body">
+            <label className="inspector-key-label" htmlFor={yId}>
+              Vertical
+            </label>
+          </dt>
+          <dd className="ds-panel-section-value ds-panel-section-value--field">
+            <Select
+              id={yId}
+              size="sm"
+              math
+              value={measure}
+              options={[
+                ...sys.states.map((st, i) => ({ value: `s${i}`, label: optionName(st.latex) })),
+                { value: "norm", label: "‖x‖" },
+              ]}
+              onChange={(v) => {
+                const yAxis = v === "norm" ? ({ kind: "norm" } as const) : stateAxis(Number(v.slice(1)));
+                actions.setContinuationAxis(yAxis, fitBranchRanges(runs, sys.states.length, yAxis)?.yRange ?? view.yRange);
+              }}
+            />
+          </dd>
+        </div>
+      </dl>
+      <div className="inspector-continue">
+        <SegmentedControl
+          size="sm"
+          fill
+          ariaLabel="Direction"
+          value={direction}
+          options={DIRECTIONS}
+          onChange={onDirection}
+        />
+        <Button
+          size="sm"
+          disabled={!fp || value === undefined}
+          onClick={() => fp && value !== undefined && actions.addSeed(pointSeed(fp, value, direction))}
+        >
+          Continue from the selected fixed point
+        </Button>
+        <p className="ds-panel-section-hint caption" data-continue-from="">
+          {fp && value !== undefined
+            ? `From ${stateText(names, fp)} at ${pName} = ${dec(value, 4)}.`
+            : "Select a fixed point in the phase plane or the cobweb, or press Continue on a row of the Fixed points panel."}
+        </p>
+      </div>
+      <h3 className="ds-panel-section-subhead label">Branches</h3>
+      {shown.length === 0 ? (
+        <p className="ds-panel-section-hint caption">None yet.</p>
+      ) : (
+        <ul className="ds-traj-list" aria-label="Branches" data-branches="">
+          {shown.map(({ job, run }, k) => {
+            const seed = c.seeds[job.meta.seed];
+            const b = run?.ok ? run.res.branch : null;
+            const ends = b ? [b.end.first, b.end.last].filter((e): e is BranchStop => e !== null) : [];
+            const status = !run
+              ? "Computing…"
+              : !run.ok
+                ? run.error
+                : `Period ${b!.period} · ${whole(b!.p.length)} points · stopped at ${[...new Set(ends.map((e) => BRANCH_STOPS[e]))].join(" and ")}`;
+            return (
+              <li
+                key={job.meta.key}
+                className="ds-traj-row"
+                style={{ ["--traj" as string]: `var(--traj-${(job.meta.seed % PALETTE_SIZE) + 1})` }}
+                data-branch-index={k}
+              >
+                <span className="ds-traj-select inspector-branch">
+                  <span className="ds-traj-line">
+                    <span className="ds-traj-swatch" aria-hidden="true" />
+                    <span className="body-strong">Branch {k + 1}</span>
+                  </span>
+                  <span className="ds-traj-meta">
+                    <span className="numeric-sm">{seedText(seed, pName, names)}</span>
+                    <span className={cx("caption", run && !run.ok && "inspector-branch-error")}>{status}</span>
+                  </span>
+                </span>
+                <span className="ds-traj-actions">
+                  <IconButton size="sm" label={`Remove branch ${k + 1}`} tipAlign="end" onClick={() => actions.removeSeed(job.meta.seed)}>
+                    <IconTrash />
+                  </IconButton>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <h3 className="ds-panel-section-subhead label">Special points</h3>
+      {rows.length === 0 ? (
+        <p className="ds-panel-section-hint caption" data-special-points="">
+          {shown.some((b) => !b.run) ? "Computing…" : "None on these branches."}
+        </p>
+      ) : (
+        <ul className="ds-fp-list" aria-label="Special points" data-special-points="">
+          {rows.map(({ at }) => {
+            const info = SPECIAL_KINDS[at.kind];
+            const text = specialText(at, pName, names);
+            return (
+              <li key={`${at.kind}-${at.period}-${at.p}`} className="ds-fp-item" data-special-kind={at.kind}>
+                <button
+                  type="button"
+                  className="ds-fp-row"
+                  aria-label={`${info.name}: ${text}. Set ${pName} to it`}
+                  data-tooltip={`${info.name}: set ${pName} to ${dec(at.p, 6)}`}
+                  onClick={() => p && actions.setParam(p.name, at.p)}
+                >
+                  <FixedPointIcon kind="half" />
+                  <span className="ds-fp-row-text">
+                    <span className="ds-fp-class body-strong">{info.label}</span>
+                    <span className="ds-fp-eig numeric-sm inspector-special-text">{text}</span>
+                  </span>
+                </button>
+                {info.switches && (
+                  <div className="ds-fp-detail">
+                    <Button size="sm" onClick={() => actions.addSeed(switchSeed(at))}>
+                      Switch branch
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="ds-panel-section-hint caption">
+        LP fold, H Hopf, BP branch point, PD period doubling (flip), NS Neimark–Sacker. Solid where the fixed point is
+        stable, dashed where it is not. Click a row to set {pName} there.
+      </p>
+    </PanelSection>
+  );
+}
 
 function LyapunovSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
@@ -1339,8 +1640,15 @@ function EigenvectorSwitch({
   );
 }
 
-function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
+function FixedPointsSection({
+  state,
+  actions,
+  open,
+  onToggle,
+  direction,
+}: SectionProps & { direction: ContinuationDirection }) {
   const sys = state.compiled!;
+  const continues = continuationAvailability(sys).ok;
   const dim = sys.states.length;
   const p = state.portrait;
   const found = searchedFixedPoints(sys, p, state.shapeId);
@@ -1419,6 +1727,16 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
                         <FpHint fp={fp} kind={sys.kind} dim={dim} />
                       )}
                       {dim >= 2 && <EigenvectorSwitch fps={fps} index={i} kind={sys.kind} />}
+                      {continues && (
+                        <Button
+                          size="sm"
+                          data-fp-continue=""
+                          data-tooltip="Follow it as a parameter changes, in the Branch view"
+                          onClick={() => actions.continueFrom(fp.x, direction)}
+                        >
+                          Continue
+                        </Button>
+                      )}
                     </div>
                   )}
                 </li>

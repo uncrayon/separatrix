@@ -127,7 +127,7 @@ test("Lorenz: the Lyapunov view runs the first start point and reads out λ₁ �
     assert.equal(await page.getByRole("button", { name: "Lyapunov spectrum: t horizontal, λ vertical" }).count(), 1);
 
     const group = inspector(page).locator("[role=radiogroup][aria-label=View]");
-    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ"]);
+    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ", "Branch"]);
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.evaluate(() => (document.documentElement.dataset.theme = "light"));
     await page.waitForTimeout(200);
@@ -140,7 +140,7 @@ test("Lorenz: the Lyapunov view runs the first start point and reads out λ₁ �
         return range.getBoundingClientRect().width + pad <= el.getBoundingClientRect().width + 0.5;
       }),
     );
-    assert.deepEqual(fits, [true, true, true, true, true]);
+    assert.deepEqual(fits, [true, true, true, true, true, true]);
   } finally {
     await browser.close();
   }

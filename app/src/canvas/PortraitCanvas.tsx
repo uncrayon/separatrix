@@ -28,6 +28,7 @@ import {
   selectedFixedPointIndex,
   stateExtent,
   type View,
+  type PlotView,
 } from "../state/model";
 import { cobwebPx, diagonalSegment, orbitValues, pathsDist2, segDist2 } from "./cobweb";
 import { NumberField, Slider } from "../components/controls";
@@ -102,7 +103,9 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const tool = useCanvasTool();
   const showEigen = useShowEigenvectors();
 
-  const { compiled, view } = state;
+  const { compiled } = state;
+  // App draws the branch plot with BranchCanvas; every view shown here has a state or time on each axis.
+  const view = state.view as PlotView;
   const cobweb = isCobweb(view);
   const section = isSection(view);
   const returnMap = isReturnMap(view);

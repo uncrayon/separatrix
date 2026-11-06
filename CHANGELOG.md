@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- The Branch view (View control: Continuation; "Branch" on the control), the first place a student
+  sees continuation. It follows a fixed point of a flow, or of a map, as one parameter changes and
+  plots the parameter against a state or ‖x‖: each branch in its own trajectory colour, solid
+  where it is stable and dashed where it is not, every point of a cycle, and each special point as
+  a fixed-point glyph labelled LP, H, BP, PD or NS. The Continuation panel sets the parameter, its
+  range, Δs, Max points, the direction (Forward, Backward, Both) and the vertical measure, lists
+  the branches (period, points, how each end stopped) and the special points once each in
+  increasing parameter, with ω and the sign of ℓ₁ at a Hopf point. A click on a row, or on the plot
+  near a branch, sets the slider to that point's parameter. Branch points and flips carry Switch
+  branch, which follows the second branch both ways: for the logistic map the 2-, 4- and 8-cycles,
+  and r₁ … r₄ = 3.000000, 3.449490, 3.544090, 3.564407 in the list. A branch starts from the
+  selected fixed point (Continue on a Fixed points row, or Continue from the selected fixed point),
+  and a fresh view from every fixed point found. The View control is a 3 × 2 grid of equal segments
+  with six views for flows and maps alike, and the toolbar's axes menu offers the same. The status
+  bar reads "Continuation 4 ms" and "213 points · 2 special". Saved in `.sepx` as its seeds; a view
+  that can't be replayed opens with "The saved continuation can't be run as saved, so the default
+  view is shown." The browser preview follows branches with a small JavaScript stand-in. Export of
+  branch plots is not there yet, so Export… is off in this view.
 - Continuation views in `.sepx` (format version 1, additive). A view of `kind` `"continuation"` is a
   branch plot: a parameter across (`{ "kind": "param" }`), a state or the new axis kind
   `{ "kind": "norm" }` (‖x‖₂) up, and a `continuation` object with the parameter `range`, `ds`,

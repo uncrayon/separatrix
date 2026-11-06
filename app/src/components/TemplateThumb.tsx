@@ -18,7 +18,7 @@ import {
   templateView,
   trajectorySpans,
   type MapRequestFields,
-  type View,
+  type PlotView,
 } from "../state/model";
 import { templateSource, type Template } from "../templates";
 
@@ -31,7 +31,7 @@ const THUMB_GRAPH_SAMPLES = 256;
 interface Thumb {
   kind: SystemKind;
   dim: number;
-  view: View;
+  view: PlotView;
   res: PortraitResponse;
   icOf: number[];
 }
@@ -190,7 +190,7 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
     return;
   }
 
-  const at = (axis: View["xAxis"], tr: PortraitResponse["trajectories"][number], k: number) =>
+  const at = (axis: PlotView["xAxis"], tr: PortraitResponse["trajectories"][number], k: number) =>
     axis.kind === "time" ? tr.t[k] : tr.x[k * dim + axis.index];
   const isMap = kind === "map";
   const thin = dim >= 3 || isMap;

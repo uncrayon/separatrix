@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AxisRef, CompileResponse, Diagnostic, InputFormat, SectionSpec } from "../api/types";
+import type { AxisRef, CompileResponse, ContinuationDirection, Diagnostic, InputFormat, SectionSpec } from "../api/types";
 import {
   compileSystem,
+  computeContinuation,
   computeLyapunov,
   computeOrbitDiagram,
   computePortrait,
@@ -19,26 +20,35 @@ import {
   applyProjectLoad,
   adaptInitialConditions,
   adaptView,
+  buildContinuationJobs,
   buildLyapunovJob,
   buildOrbitJob,
   buildPortraitJob,
   clampCamera,
   clampTransient,
   cobwebAvailability,
+  continuationAvailability,
+  continuationView,
+  continuationXRange,
+  continuationStep,
   defaultView,
   followOrbitParam,
   isCobweb,
+  isContinuation,
   isLyapunov,
   isOrbit,
   isSection,
   isSpace,
   knownStateRange,
+  viewChoice,
   viewRequestKey,
   withSpaceAxis,
   withSection,
   liftPlotPoint,
   switchView,
   newIcColor,
+  pointSeed,
+  withSeed,
   conversionOutcome,
   planModeSwitch,
   resolveParam,
@@ -48,7 +58,11 @@ import {
   templateLines,
   templateView,
   trackSelection,
+  type BranchRun,
   type Camera,
+  type ContinuationSeed,
+  type ContinuationSettings,
+  type ContinuationView,
   type EquationLine,
   type InitialCondition,
   type Layers,
@@ -108,6 +122,8 @@ export interface StudioState extends StudioSnapshot {
   lyapunov: LyapunovState | null;
   orbit: OrbitState | null;
   orbitColumns: number;
+  /** The runs of the continuation view's requests, by job key (see {@link buildContinuationJobs}). */
+  branches: Record<string, BranchRun>;
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -171,6 +187,7 @@ export function useStudio() {
   const [lyapunov, setLyapunovState] = useState<LyapunovState | null>(null);
   const [orbit, setOrbitState] = useState<OrbitState | null>(null);
   const [orbitColumns, setOrbitColumnsState] = useState(0);
+  const [branches, setBranches] = useState<Record<string, BranchRun>>({});
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -202,6 +219,7 @@ export function useStudio() {
     lyapunov,
     orbit,
     orbitColumns,
+    branches,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -291,6 +309,43 @@ export function useStudio() {
     [],
   );
   useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
+
+  // One continuation request at a time, for the first job not yet run. A run
+  // is kept while its job is still asked for, so only a new seed or setting asks again.
+  const continuing = useRef(false);
+  const nextContinuationId = useRef(1);
+  const pumpContinuation = useCallback(async () => {
+    if (continuing.current) return;
+    continuing.current = true;
+    try {
+      for (;;) {
+        const cache = latest.current.branches;
+        const job = buildContinuationJobs(latest.current).find((j) => !(j.meta.key in cache));
+        if (!job) break;
+        const started = performance.now();
+        let run: BranchRun;
+        try {
+          const res = await computeContinuation({ ...job.body, requestId: nextContinuationId.current++ });
+          run = { ok: true, res, roundTripMs: performance.now() - started };
+        } catch (err) {
+          run = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        const wanted = new Set(buildContinuationJobs(latest.current).map((j) => j.meta.key));
+        const next: Record<string, BranchRun> = { [job.meta.key]: run };
+        for (const [k, v] of Object.entries(latest.current.branches)) if (wanted.has(k)) next[k] = v;
+        latest.current = { ...latest.current, branches: next };
+        setBranches(next);
+      }
+    } finally {
+      continuing.current = false;
+    }
+  }, []);
+  const continuationKey = buildContinuationJobs(state)
+    .map((j) => j.meta.key)
+    .join("\n");
+  useEffect(() => {
+    if (continuationKey) void pumpContinuation();
+  }, [pumpContinuation, continuationKey]);
 
   const viewKey = viewRequestKey(view);
   useEffect(() => {
@@ -409,7 +464,9 @@ export function useStudio() {
           setShapeId((n) => n + 1);
           const oldStates = old?.states ?? [];
           const adapted = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
-          const kept = adapted && isOrbit(adapted) ? followOrbitParam(adapted, old?.params ?? [], res.params) : adapted;
+          const swept = adapted && (isOrbit(adapted) || isContinuation(adapted));
+          const followed = swept ? followOrbitParam(adapted, old?.params ?? [], res.params) : adapted;
+          const kept = followed && isContinuation(followed) && !continuationAvailability(res).ok ? null : followed;
           const v = kept ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
@@ -420,6 +477,13 @@ export function useStudio() {
           const v = followOrbitParam(cur.view, old.params, res.params) ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
+        } else if (isContinuation(cur.view)) {
+          const followed = continuationAvailability(res).ok ? followOrbitParam(cur.view, old.params, res.params) : null;
+          if (followed !== cur.view) {
+            const v = followed ?? defaultView(res, cur.solver);
+            setViewState(v);
+            setHomeView(v);
+          }
         } else if (isCobweb(cur.view) && !cobwebAvailability(res).ok) {
           // The same map, now changing with n: f has no single graph, so the default view (a time series).
           const v = defaultView(res, cur.solver);
@@ -669,6 +733,7 @@ export function useStudio() {
 
   const setAxis = useCallback((which: "x" | "y", axis: AxisRef) => {
     const cur = latest.current;
+    if (isContinuation(cur.view)) return;
     const section = isSection(cur.view) ? cur.view : null;
     if (section && axis.kind === "time") return;
     const { xAxis, yAxis, xRange, yRange } = cur.view;
@@ -750,6 +815,96 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
+  /** Changes the continuation view, and its home view the same way. */
+  const updateContinuation = useCallback((f: (v: ContinuationView) => ContinuationView) => {
+    setViewState((v) => (isContinuation(v) ? f(v) : v));
+    setHomeView((v) => (isContinuation(v) ? f(v) : v));
+  }, []);
+
+  const setContinuation = useCallback(
+    (patch: Partial<Omit<ContinuationSettings, "seeds">>) =>
+      updateContinuation((v) => ({
+        ...v,
+        ...(patch.range ? { xRange: continuationXRange(patch.range) } : {}),
+        continuation: { ...v.continuation, ...patch },
+      })),
+    [updateContinuation],
+  );
+
+  /**
+   * Sweeps another parameter over its slider's range: each fixed point is
+   * followed again from that parameter's value now; a switch, which belongs
+   * to a special point of the old parameter, is dropped.
+   */
+  const setContinuationParam = useCallback(
+    (index: number) => {
+      const p = latest.current.params[index];
+      if (!p || !(p.min < p.max)) return;
+      const range: [number, number] = [p.min, p.max];
+      const rebase = (seeds: ContinuationSeed[]) =>
+        seeds.reduce<ContinuationSeed[]>(
+          (out, seed) => (seed.from === "point" ? withSeed(out, { ...seed, param: p.value }) : out),
+          [],
+        );
+      updateContinuation((v) =>
+        v.param === index
+          ? v
+          : {
+              ...v,
+              param: index,
+              xRange: continuationXRange(range),
+              continuation: { ...v.continuation, range, ds: continuationStep(range), seeds: rebase(v.continuation.seeds) },
+            },
+      );
+    },
+    [updateContinuation],
+  );
+
+  const setContinuationAxis = useCallback(
+    (yAxis: ContinuationView["yAxis"], yRange: [number, number]) => updateContinuation((v) => ({ ...v, yAxis, yRange })),
+    [updateContinuation],
+  );
+
+  const addSeed = useCallback(
+    (seed: ContinuationSeed) =>
+      updateContinuation((v) => ({ ...v, continuation: { ...v.continuation, seeds: withSeed(v.continuation.seeds, seed) } })),
+    [updateContinuation],
+  );
+
+  const removeSeed = useCallback(
+    (index: number) =>
+      updateContinuation((v) => ({
+        ...v,
+        continuation: { ...v.continuation, seeds: v.continuation.seeds.filter((_, i) => i !== index) },
+      })),
+    [updateContinuation],
+  );
+
+  /**
+   * Follows the fixed point at `x` from the swept parameter's value now: in
+   * the Branch view, which opens (as last left, else fresh) when it isn't shown.
+   */
+  const continueFrom = useCallback((x: number[], direction: ContinuationDirection) => {
+    const cur = latest.current;
+    const sys = cur.compiled;
+    if (!sys || !continuationAvailability(sys).ok) return;
+    let v: ContinuationView;
+    if (isContinuation(cur.view)) v = cur.view;
+    else {
+      const mem = viewMemory.current;
+      if (mem.shapeId !== cur.shapeId) viewMemory.current = { shapeId: cur.shapeId, views: {} };
+      const kept = viewMemory.current.views.continuation;
+      viewMemory.current.views[viewChoice(cur.view)] = cur.view;
+      const range = knownStateRange(0, [cur.view], cur.portrait?.res, sys.states.length);
+      v = kept && isContinuation(kept) ? kept : continuationView(cur.params, range);
+    }
+    const value = cur.params[v.param]?.value;
+    if (value === undefined) return;
+    const next = { ...v, continuation: { ...v.continuation, seeds: withSeed(v.continuation.seeds, pointSeed(x, value, direction)) } };
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
   const setOrbitColumns = useCallback((columns: number) => {
     setOrbitColumnsState((old) => (old === columns ? old : columns));
   }, []);
@@ -766,6 +921,7 @@ export function useStudio() {
 
   const liftPoint = useCallback((px: number, py: number, base?: InitialCondition) => {
     const cur = latest.current;
+    if (isContinuation(cur.view)) return { x0: cur.baseState.slice(), t0: cur.fieldTime };
     return liftPlotPoint(cur.compiled, cur.view, cur.baseState, cur.fieldTime, px, py, base);
   }, []);
 
@@ -852,6 +1008,12 @@ export function useStudio() {
       setOrbitParam,
       setOrbitRange,
       setOrbitColumns,
+      setContinuation,
+      setContinuationParam,
+      setContinuationAxis,
+      addSeed,
+      removeSeed,
+      continueFrom,
       setCamera,
       setSpaceAxis,
       setSlice,
@@ -888,6 +1050,12 @@ export function useStudio() {
       setOrbitParam,
       setOrbitRange,
       setOrbitColumns,
+      setContinuation,
+      setContinuationParam,
+      setContinuationAxis,
+      addSeed,
+      removeSeed,
+      continueFrom,
       setCamera,
       setSpaceAxis,
       setSlice,

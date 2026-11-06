@@ -979,7 +979,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const axisPlain = (i: 0 | 1) => {
     if (!sys) return "";
     const a = i === 0 ? state.view.xAxis : state.view.yAxis;
-    return latexToPlain(axisLatex(a, sys.states, kind));
+    return a.kind === "norm" ? "‖x‖" : latexToPlain(axisLatex(a, sys.states, kind));
   };
   const timeView = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   const viewWords = sys
