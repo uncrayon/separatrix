@@ -22,6 +22,9 @@ fail() { printf 'FAIL  %s: %s\n' "$1" "$2"; FAILS=$((FAILS + 1)); }
 # Prints the value at a property path of a JSON file, or nothing when absent.
 json() { node -e 'let v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const k of process.argv.slice(2)){if(v==null||typeof v!=="object"||!(k in v)){v=undefined;break}v=v[k]}if(v!==undefined)process.stdout.write(typeof v==="string"?v:JSON.stringify(v))' "$@"; }
 
+# Prints its arguments joined by "; ".
+joined() { local s; s=$(printf '%s; ' "$@"); printf '%s' "${s%; }"; }
+
 # Fails <row>, naming <file> and every required string it lacks.
 # Usage: require_strings <row> <file> <string>...
 require_strings() {
@@ -107,11 +110,55 @@ row_view_docs() {
   fi
 }
 
+# Published asset names at <version>, one "<os> <need> <name>" per line, from
+# the table in scripts/release/assets.sh. <need> is "always" or "updater".
+asset_names() {
+  awk -v v="$1" '/^ASSETS=/{p=1;next} p&&/^'"'"'/{exit}
+    p&&NF==7&&$1!~/^#/{print $1, $5, "Separatrix_" v "_" $7}' scripts/release/assets.sh
+}
+
+# Strings each install guide must contain: its first-launch steps and its
+# checksum command. A guide missing from this table fails.
+guide_strings() {
+  case "$1" in
+    windows) printf '%s\n' "More info" "Run anyway" "offline" "WebView2" "SHA-256" "Get-FileHash" ;;
+    macos) printf '%s\n' "Open Anyway" "Privacy & Security" "xattr -dr com.apple.quarantine" "SHA-256" "shasum -a 256" ;;
+    linux) printf '%s\n' "chmod +x" "AppImage" "apt install ./" "dnf install ./" "SHA-256" "sha256sum -c" ;;
+  esac
+}
+GUIDES=(windows macos linux)
+
+# Screenshots only the owner can take, one "<guide>.md|<what it shows>"
+# per line: each is a "> **Screenshot to add on a real <machine>:** ..." line.
+screenshot_placeholders() {
+  grep -HE '^ *> \*\*Screenshot to add on a real [^*]+:\*\* ' docs/install/*.md 2>/dev/null |
+    sed -E 's#^docs/install/([a-z]+\.md): *> \*\*[^*]+\*\* #\1|#' | LC_ALL=C sort
+}
+
 row_install_guides() {
-  require_strings install-guides docs/install/windows.md "More info" "Run anyway" "WebView2" "SHA-256" || return
-  require_strings install-guides docs/install/macos.md "Open Anyway" "Privacy & Security" "xattr" "SHA-256" || return
-  require_strings install-guides docs/install/linux.md "chmod +x" "AppImage" ".deb" ".rpm" "SHA-256" || return
-  pass install-guides "windows.md, macos.md and linux.md cover first launch and SHA-256 checks"
+  local ver os guide names strings name stray=() absent=() n
+  ver=$(json app/package.json version)
+  names=$(asset_names "$ver")
+  if [ -z "$names" ]; then fail install-guides "could not read the asset table in scripts/release/assets.sh"; return; fi
+  for os in "${GUIDES[@]}"; do
+    guide=docs/install/$os.md
+    strings=()
+    while IFS= read -r name; do strings+=("$name"); done < <(guide_strings "$os")
+    require_strings install-guides "$guide" "${strings[@]}" || return
+    while IFS= read -r name; do
+      grep -qxF "$name" < <(cut -d' ' -f3 <<<"$names") || stray+=("$guide names $name")
+    done < <(grep -oE 'Separatrix_[A-Za-z0-9._-]+' "$guide" | sed -E 's/\.+$//' | LC_ALL=C sort -u)
+    while read -r _ _ name; do
+      grep -qF "$name" "$guide" || absent+=("$guide does not name $name")
+    done < <(grep "^$os always " <<<"$names")
+  done
+  if [ ${#stray[@]} -gt 0 ]; then
+    fail install-guides "not an asset at $ver in scripts/release/assets.sh: $(joined "${stray[@]}")"
+    return
+  fi
+  if [ ${#absent[@]} -gt 0 ]; then fail install-guides "$(joined "${absent[@]}")"; return; fi
+  n=$(screenshot_placeholders | grep -c .)
+  pass install-guides "${GUIDES[*]} guides name the $ver assets, cover first launch and a checksum command; $n screenshot placeholders"
 }
 
 row_changelog() {
@@ -155,10 +202,29 @@ row_updater_off_without_key() {
   fi
 }
 
+# docs/release-checklist.md is an ordered list of owner steps, each with a
+# "Done when" line, and it lists every screenshot placeholder still in the
+# install guides as an open "- [ ] [<guide>.md](install/<guide>.md): <what>"
+# item. Ticking an item and replacing its placeholder keep the two in step.
 row_checklist() {
-  require_strings checklist docs/release-checklist.md \
+  local list=docs/release-checklist.md steps undone wanted listed missing extra
+  require_strings checklist "$list" \
     "Release workflow" "TAURI_SIGNING_PRIVATE_KEY" "Mac" "Windows" "PyPI" "beta" || return
-  pass checklist "docs/release-checklist.md lists the owner-only steps"
+  read -r steps undone < <(awk '/^[0-9]+\. \[[ x]\] /{if(n&&!d)u++;n++;d=0;next} /Done when/{d=1}
+    END{if(n&&!d)u++;print n+0, u+0}' "$list")
+  if [ "$steps" -eq 0 ]; then fail checklist "$list has no '1. [ ] ...' steps"; return; fi
+  if [ "$undone" -gt 0 ]; then fail checklist "$undone of $steps steps in $list have no 'Done when' line"; return; fi
+  wanted=$(screenshot_placeholders)
+  listed=$(sed -nE 's#^ *- \[ \] \[([a-z]+\.md)\]\(install/[a-z]+\.md\): #\1|#p' "$list" | LC_ALL=C sort)
+  missing=$(LC_ALL=C comm -23 <(printf '%s\n' "$wanted") <(printf '%s\n' "$listed") | grep .)
+  extra=$(LC_ALL=C comm -13 <(printf '%s\n' "$wanted") <(printf '%s\n' "$listed") | grep .)
+  if [ -n "$missing" ]; then
+    fail checklist "$list does not list these screenshot placeholders: $(tr '|\n' ' ;' <<<"$missing" | sed 's/;$//')"
+  elif [ -n "$extra" ]; then
+    fail checklist "$list lists placeholders the guides no longer have (tick them): $(tr '|\n' ' ;' <<<"$extra" | sed 's/;$//')"
+  else
+    pass checklist "$steps owner steps, each with 'Done when'; lists all $(grep -c . <<<"$wanted") screenshot placeholders"
+  fi
 }
 
 # Every relative link and image in the top-level docs and docs/ resolves, and
