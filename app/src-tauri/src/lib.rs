@@ -179,7 +179,7 @@ impl Drop for DialogTurn<'_> {
 
 impl DialogShowing {
     fn begin(&self) -> Option<DialogTurn<'_>> {
-        (!self.0.swap(true, Ordering::SeqCst)).then_some(DialogTurn(&self.0))
+        (!self.0.swap(true, Ordering::SeqCst)).then(|| DialogTurn(&self.0))
     }
 }
 
@@ -1120,6 +1120,10 @@ mod tests {
         let first = showing.begin();
         assert!(first.is_some());
         assert!(showing.begin().is_none(), "a second dialog while one shows");
+        assert!(
+            showing.begin().is_none(),
+            "a refused request leaves the first one's turn"
+        );
         drop(first);
         assert!(
             showing.begin().is_some(),
