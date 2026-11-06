@@ -38,7 +38,8 @@ pub enum Section {
 ///
 /// [`Solution::t`] holds the crossing times and [`Solution::x`] the crossing
 /// states (from the dense output; plane crossings are located with Brent's
-/// method as in [`integrate_with_events`](crate::integrate_with_events)).
+/// method as in [`integrate_with_events`](crate::integrate_with_events), and
+/// their held state is exactly the plane's `value`).
 /// The first `skip` crossings are dropped as transient. The run stops after
 /// `skip + max_points` crossings with [`Status::Completed`], or at `t1`, or
 /// for any reason [`integrate`](crate::integrate) stops, with the same
@@ -99,9 +100,11 @@ pub fn section(
         Section::Stroboscopic { .. } => Vec::new(),
     };
     let mut sampler = match *section {
-        Section::Plane { .. } => Sampler::Plane {
+        Section::Plane { state, value, .. } => Sampler::Plane {
             tracker: EventTracker::new(&events, t0, x0),
             hits: Vec::new(),
+            state,
+            value,
         },
         Section::Stroboscopic { period, phase } => {
             assert!(
@@ -179,6 +182,8 @@ enum Sampler<'e> {
     Plane {
         tracker: EventTracker<'e>,
         hits: Vec<EventHit>,
+        state: usize,
+        value: f64,
     },
     Stroboscopic(Strobe),
 }
@@ -186,12 +191,18 @@ enum Sampler<'e> {
 impl Sampler<'_> {
     fn take(&mut self, s: &Stepper, out: &mut Crossings) {
         match self {
-            Sampler::Plane { tracker, hits } => {
+            Sampler::Plane {
+                tracker,
+                hits,
+                state,
+                value,
+            } => {
                 tracker.after_step(s, hits);
-                for hit in hits.drain(..) {
+                for mut hit in hits.drain(..) {
                     if out.is_full() {
                         break;
                     }
+                    hit.x[*state] = *value;
                     out.push(hit.t, &hit.x);
                 }
             }

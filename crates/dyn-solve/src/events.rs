@@ -93,7 +93,10 @@ impl<'e> EventTracker<'e> {
                     s.interpolate(t, buf);
                     (event.g)(t, buf)
                 };
-                let tol = 1e-12 * ta.abs().max(tb.abs()).max(1.0);
+                // Relative to |t|, not 1e-12 · |t|: late in a long run the
+                // crossing time would be off by 1e-9, which a fast orbit turns
+                // into a visible distance from the plane.
+                let tol = 4.0 * f64::EPSILON * ta.abs().max(tb.abs()).max(1.0);
                 let bracket = Bracket::new(ta, tb, ga, gb).expect("a wanted crossing changes sign");
                 let t = brent(&mut g_dense, bracket, tol);
                 let mut x = vec![0.0; s.dim()];

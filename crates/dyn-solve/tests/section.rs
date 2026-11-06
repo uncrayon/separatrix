@@ -1,7 +1,7 @@
 use std::f64::consts::TAU;
 
 use dyn_core::{FnField, SystemKind};
-use dyn_solve::{section, Direction, Section, SolverOptions, Status};
+use dyn_solve::{section, Direction, Event, Section, SolverOptions, Status};
 
 fn tight() -> SolverOptions {
     SolverOptions {
@@ -246,4 +246,75 @@ fn a_blow_up_stops_the_section() {
     assert_eq!(sol.len(), 1, "x = 1/(1 − t) crosses 2 once, at t = 1/2");
     assert!((sol.t[0] - 0.5).abs() < 1e-6, "{}", sol.t[0]);
     assert!((sol.state(0)[0] - 2.0).abs() < 1e-9);
+}
+
+fn lorenz() -> FnField {
+    FnField::new(3, 3, SystemKind::Ode, |_t, x, p, o| {
+        o[0] = p[0] * (x[1] - x[0]);
+        o[1] = x[0] * (p[1] - x[2]) - x[1];
+        o[2] = x[0] * x[1] - p[2] * x[2];
+    })
+}
+const LORENZ_P: [f64; 3] = [10.0, 28.0, 8.0 / 3.0];
+const Z_27_RISING: Section = Section::Plane {
+    state: 2,
+    value: 27.0,
+    direction: Direction::Rising,
+};
+
+#[test]
+fn late_lorenz_crossings_lie_on_the_plane() {
+    let opts = SolverOptions {
+        max_steps: 1_000_000,
+        ..SolverOptions::default()
+    };
+    let x0 = [1.0, 1.0, 1.0];
+    let sol = section(
+        &lorenz(),
+        &LORENZ_P,
+        0.0,
+        &x0,
+        1000.0,
+        &opts,
+        &Z_27_RISING,
+        10,
+        100_000,
+    );
+    assert_eq!(sol.status, Status::Completed);
+    assert!(sol.len() > 1000, "{} crossings", sol.len());
+    assert!(sol.t.last().unwrap() > &990.0);
+    for i in 0..sol.len() {
+        assert_eq!(sol.state(i)[2], 27.0, "crossing {i} at t = {}", sol.t[i]);
+    }
+}
+
+#[test]
+fn late_lorenz_events_are_located_to_machine_precision() {
+    let opts = SolverOptions {
+        max_steps: 1_000_000,
+        ..SolverOptions::default()
+    };
+    let events = [Event {
+        g: Box::new(|_t, x| x[2] - 27.0),
+        direction: Direction::Rising,
+    }];
+    let x0 = [1.0, 1.0, 1.0];
+    let (_, hits) = dyn_solve::integrate_with_events(
+        &lorenz(),
+        &LORENZ_P,
+        0.0,
+        &x0,
+        1000.0,
+        &opts,
+        dyn_solve::Sampling::Uniform(2),
+        &events,
+    );
+    let late: Vec<_> = hits.iter().filter(|h| h.t > 900.0).collect();
+    assert!(late.len() > 100, "{} late hits", late.len());
+    let worst = late
+        .iter()
+        .map(|h| (h.x[2] - 27.0).abs())
+        .fold(0.0, f64::max);
+    println!("lorenz z = 27 after t = 900: max |z − 27| = {worst:.3e}");
+    assert!(worst < 1e-9, "max |z − 27| = {worst:e}");
 }

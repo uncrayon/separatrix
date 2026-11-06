@@ -153,8 +153,9 @@ pub fn section(f: &dyn VectorField, p: &[f64], t0: f64, x0: &[f64], t1: f64,
 `section` returns only the points where the orbit meets a Poincaré section: `t` holds the crossing
 times and `x` the crossing states, row-major. A `Plane` crossing is a sign change of
 `g = x[state] − value` in `direction`, judged in the direction of integration (so backwards in time
-when `t1 < t0`), located by Brent's method on the dense output as for events; starting on the plane
-is not a crossing. A `Stroboscopic` sample is the dense output at `t_k = phase + k·period`
+when `t1 < t0`), located by Brent's method on the dense output as for events (to within `4ε·max(|t|, 1)` in time,
+`ε` the machine epsilon), and its `x[state]` is exactly `value`; starting on the plane is not a
+crossing. A `Stroboscopic` sample is the dense output at `t_k = phase + k·period`
 for every integer `k` with `t_k` between `t0` and `t1` inclusive, computed with one multiply and one
 add and no library function, so the same samples are kept on every OS. The first `skip` crossings
 are dropped. The run stops at `skip + max_points` crossings (`Completed`), at `t1`, or for any

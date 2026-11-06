@@ -17,9 +17,7 @@ const ARMIJO_C1: f64 = 1e-4;
 const MIN_STEP_FRACTION: f64 = 1e-6;
 /// Relative damping of the Levenberg–Marquardt fallback step.
 const LM_DAMPING: f64 = 1e-12;
-/// Fixed points closer than this fraction of the search box diagonal are
-/// reported as one.
-pub const FIXED_POINT_MERGE_REL: f64 = 1e-6;
+const DEDUP_REL: f64 = 1e-6;
 const BOX_MARGIN: f64 = 0.05;
 const ESCAPE_WIDTHS: f64 = 10.0;
 
@@ -69,8 +67,8 @@ pub struct FixedPoint {
 /// Newton starts from a regular grid of `seeds_per_axis^dim` cell centres
 /// of the box when that is at most [`MAX_SEEDS`], otherwise from the first
 /// [`MAX_SEEDS`] points of a Halton sequence in the box. Points outside the
-/// box enlarged by 5% per side are dropped, and points closer than
-/// [`FIXED_POINT_MERGE_REL`] of the box diagonal are merged.
+/// box enlarged by 5% per side are dropped, and points closer than `1e-6`
+/// of the box diagonal are merged.
 ///
 /// A whole curve of fixed points (e.g. `x' = 0` in the plane) yields one
 /// point per seed that lands on it; in one dimension an interval of fixed
@@ -114,7 +112,7 @@ pub fn fixed_points_with_budget(
         .map(|(a, b)| (b - a) * (b - a))
         .sum::<f64>()
         .sqrt();
-    let dedup_tol = (FIXED_POINT_MERGE_REL * diag).max(1e-12);
+    let dedup_tol = (DEDUP_REL * diag).max(1e-12);
     let mut seed = vec![0.0; n];
 
     for k in 0..seed_count(n, seeds_per_axis, max_seeds) {

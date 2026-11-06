@@ -261,7 +261,7 @@ pub fn integrate(
 /// point. If its sign changed (in the requested [`Direction`], judged in the
 /// order the solver moves, i.e. backwards in time when `t1 < t0`), the
 /// crossing time is located with Brent's method on the dense output to about
-/// `1e-12 * max(1, |t|)`. Integration then continues normally. Hits are
+/// `4 * f64::EPSILON * max(1, |t|)`. Integration then continues normally. Hits are
 /// returned in the order they occur along the integration.
 ///
 /// Limitation: two crossings of the same `g` inside one step cancel out and
