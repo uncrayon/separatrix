@@ -6,14 +6,12 @@
 //! value 19.0784 and that DOPRI5 and RK4 agree on it.
 //!
 //! The section titles in [`STROGATZ_2E`] were checked against the 2nd
-//! edition's contents pages, as scanned by the Czech library cover service:
-//! <https://obalkyknih.cz/file/toc/452162/pdf>.
+//! edition's contents pages.
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::sync::{Arc, OnceLock};
 
-use dyn_analysis::FIXED_POINT_MERGE_REL;
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
 use separatrix_lib::ipc::{
@@ -61,7 +59,7 @@ const STROGATZ_2E: &[(&str, &str)] = &[
     ("6.8", "Index Theory"),
     ("7.1", "Examples"),
     ("7.2", "Ruling Out Closed Orbits"),
-    ("7.3", "Poincaré−Bendixson Theorem"),
+    ("7.3", "Poincaré–Bendixson Theorem"),
     ("7.4", "Liénard Systems"),
     ("7.5", "Relaxation Oscillations"),
     ("7.6", "Weakly Nonlinear Oscillators"),
@@ -104,11 +102,6 @@ const STROGATZ_2E: &[(&str, &str)] = &[
 ];
 
 const BISECTION_WIDTH: f64 = 1e-9;
-
-/// The transcritical template's view is `x ∈ [−2, 2]`, so its branches
-/// `x* = 0` and `x* = r` are found as one for `|r|` below
-/// `FIXED_POINT_MERGE_REL` times this.
-const TRANSCRITICAL_SEARCH_DIAGONAL: f64 = 4.0;
 
 struct Check {
     template: &'static str,
@@ -190,9 +183,27 @@ const APP_SOLVER: SolverOptions = SolverOptions {
     max_steps: 200_000,
 };
 
+const TIGHT_SOLVER: SolverOptions = SolverOptions {
+    method: Method::Dopri5,
+    rtol: 1e-10,
+    atol: 1e-12,
+    h: 0.0,
+    h_max: None,
+    max_steps: 1_000_000,
+};
+
 enum Observable {
-    FixedPointCount { search: &'static [(f64, f64)] },
-    StabilityOf { near: &'static [f64] },
+    FixedPointCount {
+        search: &'static [(f64, f64)],
+    },
+    /// The stability of the fixed point nearest `near`, found in `search`
+    /// (else the template's view). Near a transcritical point the two
+    /// branches are reported as one within the merge radius, which a small
+    /// box keeps far below the tolerance.
+    StabilityOf {
+        near: &'static [f64],
+        search: Option<&'static [(f64, f64)]>,
+    },
 }
 
 fn pendulum_energy(x: &[f64]) -> f64 {
@@ -380,7 +391,7 @@ const CHECKS: &[Check] = &[
     Check {
         template: "pendulum",
         section: "6.7",
-        book: "E = ω²/2 − cos θ conserved, rtol 1e−8 atol 1e−10",
+        book: "E = ω²/2 − cos θ drift ≤ 1e−6, rtol 1e−8 atol 1e−10",
         claim: Claim::EnergyDrift {
             params: &[],
             x0: &[1.0, 0.0],
@@ -394,7 +405,7 @@ const CHECKS: &[Check] = &[
     Check {
         template: "pendulum",
         section: "6.7",
-        book: "E = ω²/2 − cos θ, app default rtol 1e−6 atol 1e−9",
+        book: "E = ω²/2 − cos θ drift ≤ 5e−5, app default rtol 1e−6",
         claim: Claim::EnergyDrift {
             params: &[],
             x0: &[1.0, 0.0],
@@ -402,7 +413,7 @@ const CHECKS: &[Check] = &[
             t_end: 100.0,
             rtol: 1e-6,
             atol: 1e-9,
-            bound: None,
+            bound: Some(5e-5),
         },
     },
     Check {
@@ -469,7 +480,10 @@ const CHECKS: &[Check] = &[
         claim: Claim::Bifurcation {
             param: "b",
             bracket: (0.2, 0.6),
-            observable: Observable::StabilityOf { near: &[0.5, 1.5] },
+            observable: Observable::StabilityOf {
+                near: &[0.5, 1.5],
+                search: None,
+            },
             book: 0.346_410_161_513_775_46,
             tol: 1e-6,
         },
@@ -481,7 +495,10 @@ const CHECKS: &[Check] = &[
         claim: Claim::Bifurcation {
             param: "b",
             bracket: (0.6, 1.2),
-            observable: Observable::StabilityOf { near: &[0.9, 1.0] },
+            observable: Observable::StabilityOf {
+                near: &[0.9, 1.0],
+                search: None,
+            },
             book: 0.848_528_137_423_857,
             tol: 1e-6,
         },
@@ -546,9 +563,12 @@ const CHECKS: &[Check] = &[
         claim: Claim::Bifurcation {
             param: "r",
             bracket: (-1.0, 1.0),
-            observable: Observable::StabilityOf { near: &[0.0] },
+            observable: Observable::StabilityOf {
+                near: &[0.0],
+                search: Some(&[(-1e-3, 1e-3)]),
+            },
             book: 0.0,
-            tol: 2.0 * FIXED_POINT_MERGE_REL * TRANSCRITICAL_SEARCH_DIAGONAL,
+            tol: 1e-6,
         },
     },
     Check {
@@ -760,17 +780,7 @@ const CHECKS: &[Check] = &[
         book: "DOPRI5 rtol 1e−10 and RK4 h = 1e−4 agree on T",
         claim: Claim::PeriodsAgree {
             runs: [
-                relaxation_turns(
-                    120.0,
-                    SolverOptions {
-                        method: Method::Dopri5,
-                        rtol: 1e-10,
-                        atol: 1e-12,
-                        h: 0.0,
-                        h_max: None,
-                        max_steps: 1_000_000,
-                    },
-                ),
+                relaxation_turns(120.0, TIGHT_SOLVER),
                 relaxation_turns(
                     120.0,
                     SolverOptions {
@@ -789,7 +799,7 @@ const CHECKS: &[Check] = &[
     Check {
         template: "relaxation-oscillator",
         section: "7.5",
-        book: "μ ≫ 1 asymptote T ≈ μ(3 − 2 ln 2) = 16.14",
+        book: "μ = 10 vs μ ≫ 1 asymptote μ(3 − 2 ln 2): leading order",
         claim: Claim::Period {
             run: relaxation_turns(200.0, APP_SOLVER),
             book: 16.137_056_388_801_094,
@@ -830,7 +840,10 @@ const CHECKS: &[Check] = &[
         claim: Claim::Bifurcation {
             param: "mu",
             bracket: (-0.5, 0.5),
-            observable: Observable::StabilityOf { near: &[0.0, 0.0] },
+            observable: Observable::StabilityOf {
+                near: &[0.0, 0.0],
+                search: None,
+            },
             book: 0.0,
             tol: 1e-6,
         },
@@ -873,7 +886,10 @@ const CHECKS: &[Check] = &[
         claim: Claim::Bifurcation {
             param: "b",
             bracket: (2.0, 5.0),
-            observable: Observable::StabilityOf { near: &[2.0, 5.0] },
+            observable: Observable::StabilityOf {
+                near: &[2.0, 5.0],
+                search: None,
+            },
             book: 3.5,
             tol: 1e-6,
         },
@@ -926,7 +942,7 @@ const CHECKS: &[Check] = &[
                     phase: 0.0,
                 },
                 skip: 50,
-                solver: APP_SOLVER,
+                solver: TIGHT_SOLVER,
             },
             states: &[0, 1],
             book: 1.1,
@@ -1233,7 +1249,7 @@ fn evaluate(lab: &Lab, claim: &Claim) -> (String, String, f64, f64, Verdict) {
                 let found = |search| lab.fixed_points(lab.params(&[(param, value)]), search);
                 match observable {
                     Observable::FixedPointCount { search } => Some(found(Some(search)).len()),
-                    Observable::StabilityOf { near } => found(None)
+                    Observable::StabilityOf { near, search } => found(*search)
                         .iter()
                         .min_by(|a, b| distance(&a.x, near).total_cmp(&distance(&b.x, near)))
                         .map(|fp| usize::from(fp.stable)),
@@ -1537,4 +1553,92 @@ fn every_ch2_8_template_has_a_claim() {
         "templates with no claim: {}",
         unchecked.join(", ")
     );
+}
+
+const WRONG_CHECKS: &[Check] = &[
+    Check {
+        template: "pitchfork",
+        section: "3.4",
+        book: "wrong: pitchfork at r_c = 0.1",
+        claim: Claim::Bifurcation {
+            param: "r",
+            bracket: (-1.0, 1.0),
+            observable: Observable::FixedPointCount {
+                search: &[(-2.0, 2.0)],
+            },
+            book: 0.1,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "transcritical",
+        section: "3.2",
+        book: "wrong: exchange of stability at r_c = 1e−5",
+        claim: Claim::Bifurcation {
+            param: "r",
+            bracket: (-1.0, 1.0),
+            observable: Observable::StabilityOf {
+                near: &[0.0],
+                search: Some(&[(-1e-3, 1e-3)]),
+            },
+            book: 1e-5,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        template: "van-der-pol",
+        section: "7.1",
+        book: "wrong: μ = 1 period T = 6.0",
+        claim: Claim::Period {
+            run: VAN_DER_POL_TURNS,
+            book: 6.0,
+            tol: Some(1e-3),
+        },
+    },
+    Check {
+        template: "pendulum",
+        section: "6.7",
+        book: "wrong: drift ≤ 1e−9 at the app default",
+        claim: Claim::EnergyDrift {
+            params: &[],
+            x0: &[1.0, 0.0],
+            energy: pendulum_energy,
+            t_end: 100.0,
+            rtol: 1e-6,
+            atol: 1e-9,
+            bound: Some(1e-9),
+        },
+    },
+];
+
+#[test]
+fn wrong_claims_fail_the_gate() {
+    let templates = templates();
+    let store = SystemStore::new();
+    let mut rows = Vec::new();
+    for c in WRONG_CHECKS {
+        let template = templates
+            .iter()
+            .find(|t| t.id == c.template)
+            .unwrap_or_else(|| panic!("no template {:?}", c.template));
+        let (book, measured, delta, tol, pass) = evaluate(&Lab::new(&store, template), &c.claim);
+        rows.push(Row {
+            chapter: chapter_of(c.section).to_string(),
+            section: c.section,
+            template: c.template,
+            claim: c.book,
+            book,
+            measured,
+            delta,
+            tol,
+            pass,
+        });
+    }
+    print_table(&rows);
+    let passed: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.pass != Verdict::Fail)
+        .map(|r| r.claim)
+        .collect();
+    assert!(passed.is_empty(), "wrong claims not failed: {passed:?}");
 }
