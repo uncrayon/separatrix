@@ -51,7 +51,10 @@ use crate::latex_system::header_comments;
 use crate::latex_util::{
     bp, comment, define_color, fixed_trim, slug, tex_tick_label, BP_PER_PX, PX_PER_CM,
 };
-use crate::model::{Axis, Labels, Palette, Portrait, SystemKind, Theme, Viewport, PALETTE_SIZE};
+use crate::model::{
+    Axis, Labels, OrbitRun, Palette, Portrait, SystemKind, SystemMeta, Theme, Viewport,
+    PALETTE_SIZE,
+};
 use crate::num::shortest;
 use crate::raster;
 use crate::simplify::{finite_prefix, rdp_indices};
@@ -684,6 +687,477 @@ fn at_px(x: f64, y: f64) -> String {
     )
 }
 
+/// A figure's frame as the screen lays it out: ticks, axis lines, the
+/// tick labels kept clear of the axis names, and the names.
+struct Frame {
+    vp: Viewport,
+    tx: ticks::Ticks,
+    ty: ticks::Ticks,
+    axes: AxisLines,
+    names: AxisNames,
+    xn: String,
+    yn: String,
+    name_boxes: Vec<BoxPx>,
+    labels: Vec<TickLabel>,
+}
+
+impl Frame {
+    fn new(
+        vp: Viewport,
+        xn: String,
+        yn: String,
+        prefer_y_right: bool,
+        prefer_x_above: bool,
+    ) -> Frame {
+        let (tx, ty) = ticks::for_viewport(vp.width, vp.height, vp.x_range, vp.y_range);
+        let axes = axis_lines(&vp);
+        let names = axis_names(&vp, &axes);
+        let name_boxes = name_boxes(&names, &xn, &yn);
+        let labels = layout_labels(
+            &vp,
+            &tx,
+            &ty,
+            &axes,
+            prefer_y_right,
+            prefer_x_above,
+            &name_boxes,
+        );
+        Frame {
+            vp,
+            tx,
+            ty,
+            axes,
+            names,
+            xn,
+            yn,
+            name_boxes,
+            labels,
+        }
+    }
+
+    /// `\begin{tikzpicture}`, the axis with its grid and axis lines, and the
+    /// tick marks.
+    fn axis_begin(&self, theme: Theme) -> String {
+        let vp = &self.vp;
+        let mut axis_opts: Vec<String> = vec![
+            format!("width={}, height={}, scale only axis", bp(vp.width), bp(vp.height)),
+            format!(
+                "xmin={}, xmax={}, ymin={}, ymax={}",
+                shortest(vp.x_range.0),
+                shortest(vp.x_range.1),
+                shortest(vp.y_range.0),
+                shortest(vp.y_range.1)
+            ),
+            "enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false".into(),
+        ];
+        let list = |vs: &[f64]| {
+            vs.iter()
+                .map(|&v| shortest(v))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let xh = ticks::half_steps(vp.x_range.0, vp.x_range.1, self.tx.step);
+        let yh = ticks::half_steps(vp.y_range.0, vp.y_range.1, self.ty.step);
+        let x_minor: Vec<f64> = xh
+            .iter()
+            .copied()
+            .filter(|v| !self.tx.ticks.contains(v))
+            .collect();
+        let y_minor: Vec<f64> = yh
+            .iter()
+            .copied()
+            .filter(|v| !self.ty.ticks.contains(v))
+            .collect();
+        axis_opts.push(format!(
+            "xtick={{{}}}, ytick={{{}}}, xticklabels={{}}, yticklabels={{}}",
+            list(&self.tx.ticks),
+            list(&self.ty.ticks)
+        ));
+        axis_opts.push(format!(
+            "minor xtick={{{}}}, minor ytick={{{}}}",
+            list(&x_minor),
+            list(&y_minor)
+        ));
+        let grid = format!("sepxgrid, line width={}", bp(1.0));
+        axis_opts.push(format!(
+            "grid=both, every major grid/.style={{{grid}}}, every minor grid/.style={{{grid}}}, \
+             major tick length=0pt, minor tick length=0pt"
+        ));
+        axis_opts.push(format!(
+            "axis line style={{sepxaxis, line width={}}}",
+            bp(1.0)
+        ));
+        let x_line = if self.axes.x_axis_in_view {
+            "axis x line*=middle".to_string()
+        } else {
+            let side = if self.axes.y >= vp.bottom() {
+                "bottom"
+            } else {
+                "top"
+            };
+            format!("axis x line*={side}, x axis line style={{draw=none}}")
+        };
+        let y_line = if self.axes.y_axis_in_view {
+            "axis y line*=middle".to_string()
+        } else {
+            let side = if self.axes.x <= vp.left {
+                "left"
+            } else {
+                "right"
+            };
+            format!("axis y line*={side}, y axis line style={{draw=none}}")
+        };
+        axis_opts.push(format!("{x_line}, {y_line}"));
+        if theme == Theme::Dark {
+            axis_opts.push("axis background/.style={fill=sepxbg}".into());
+        }
+
+        let mut body = String::new();
+        // The halo: the label's box filled in the background colour, 1.5 px
+        // (1.125 bp) round the text; the negative outer sep keeps the anchors
+        // on the text itself.
+        body.push_str(
+            "\\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, \
+             fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]\n\\begin{axis}[\n",
+        );
+        for (i, o) in axis_opts.iter().enumerate() {
+            body.push_str("  ");
+            body.push_str(o);
+            body.push_str(if i + 1 < axis_opts.len() { ",\n" } else { "\n" });
+        }
+        body.push_str("]\n");
+
+        // Tick marks (below the x axis, left of the y axis; none at 0).
+        let mut marks = Vec::new();
+        if self.axes.y_axis_in_view {
+            for &v in &self.ty.ticks {
+                if v != 0.0 {
+                    let y = vp.sy(v);
+                    marks.push(format!(
+                        "{} -- {}",
+                        at_px(self.axes.x, y),
+                        at_px(self.axes.x - TICK_LEN, y)
+                    ));
+                }
+            }
+        }
+        if self.axes.x_axis_in_view {
+            for &v in &self.tx.ticks {
+                if v != 0.0 {
+                    let x = vp.sx(v);
+                    marks.push(format!(
+                        "{} -- {}",
+                        at_px(x, self.axes.y),
+                        at_px(x, self.axes.y + TICK_LEN)
+                    ));
+                }
+            }
+        }
+        if !marks.is_empty() {
+            body.push_str(&format!(
+                "\\draw[sepxaxis, line width={}, line cap=butt]\n  {};\n",
+                bp(1.0),
+                marks.join("\n  ")
+            ));
+        }
+        body
+    }
+
+    /// The tick labels, the axis names and the end of the picture.
+    fn axis_end(&self) -> String {
+        let mut body = String::new();
+        // Tick labels.
+        for l in &self.labels {
+            body.push_str(&format!(
+                "\\node[anchor={}, sepxlabel, font=\\footnotesize] at {} {{${}$}};\n",
+                l.anchor,
+                at_px(l.x, l.y),
+                l.tex
+            ));
+        }
+        // Axis self.names.
+        let (xa, xy) = if self.names.x_above {
+            ("south east", self.names.x_axis_y - 4.0)
+        } else {
+            ("north east", self.names.x_axis_y + 4.0)
+        };
+        body.push_str(&format!(
+            "\\node[anchor={xa}, sepxlabel] at {} {{${}$}};\n",
+            at_px(self.names.x_right, xy),
+            dyn_expr::portable_latex(&self.xn)
+        ));
+        body.push_str(&format!(
+            "\\node[anchor={}, sepxlabel] at {} {{${}$}};\n",
+            if self.names.y_right {
+                "north west"
+            } else {
+                "north east"
+            },
+            at_px(self.names.y_x, self.names.y_top),
+            dyn_expr::portable_latex(&self.yn)
+        ));
+        body.push_str("\\end{axis}\n\\end{tikzpicture}\n");
+        body
+    }
+}
+
+/// The `% Needs:` comment and the preamble of a standalone figure that
+/// uses the TikZ libraries `libs`. amsmath: axis names are state LaTeX
+/// (`\\dddot{x}` for a fourth-order system), which only amsmath defines.
+fn packages(libs: &[&str]) -> (String, String) {
+    let libs = libs.join(",");
+    (
+        comment(&format!(
+            "Needs: \\usepackage{{amsmath}} \\usepackage{{pgfplots}} \\pgfplotsset{{compat=1.18}} \\usetikzlibrary{{{libs}}}"
+        )),
+        format!(
+            "\\usepackage{{amsmath}}\n\\usepackage{{pgfplots}}\n\\pgfplotsset{{compat=1.18}}\n\\usetikzlibrary{{{libs}}}\n"
+        ),
+    )
+}
+
+/// The definitions a figure starts with (inside the document body of a
+/// standalone one): `\\sepxdir` for external files, then the colours.
+fn definitions(external: bool, colors: &[(String, String)]) -> String {
+    let mut defs = String::new();
+    if external {
+        defs.push_str(&comment(
+            "If you \\input this file from another folder, put \\def\\sepxdir{figures/} before it.",
+        ));
+        defs.push_str("\\providecommand{\\sepxdir}{}%\n");
+    }
+    for (name, hex) in colors {
+        defs.push_str(&define_color(name, hex));
+    }
+    defs
+}
+
+/// The comment header, then the definitions and the picture, wrapped in a
+/// `standalone` document when asked.
+fn finish(mut tex: String, preamble: &str, defs: &str, body: &str, standalone: bool) -> String {
+    if standalone {
+        tex.push_str("\\documentclass[border=2mm]{standalone}\n");
+        tex.push_str(preamble);
+        tex.push_str("\\begin{document}\n");
+        tex.push_str(defs);
+        tex.push_str(body);
+        tex.push_str("\\end{document}\n");
+    } else {
+        tex.push_str(defs);
+        tex.push_str(body);
+    }
+    tex
+}
+
+/// The size of a map iterate's dot: discs of radius 2.6 px, 1.3 px above
+/// 300 iterates, squares of half-side 0.75 px above 2,000.
+fn dot_size(count: usize) -> (f64, bool) {
+    if count > SQUARE_DOTS_ABOVE {
+        (0.75, true)
+    } else if count > 300 {
+        (1.3, false)
+    } else {
+        (2.6, false)
+    }
+}
+
+/// What [`orbit_figure`] needs.
+#[derive(Debug, Clone)]
+pub struct OrbitFigureInput<'a> {
+    /// The system's names, parameter values and source.
+    pub sys: &'a SystemMeta<'a>,
+    /// The diagram.
+    pub run: &'a OrbitRun,
+    /// The view's parameter range (across).
+    pub x_range: (f64, f64),
+    /// The view's state range (up).
+    pub y_range: (f64, f64),
+    /// Width of the plot box.
+    pub width_cm: f64,
+    /// Height of the plot box.
+    pub height_cm: f64,
+    /// Which theme the palette is.
+    pub theme: Theme,
+    /// The plot colours.
+    pub palette: &'a Palette,
+    /// Inline or external data.
+    pub placement: Placement,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// An orbit diagram (Strogatz §10.2) as a pgfplots figure with the screen's
+/// frame: the swept parameter across, the state up, every finite kept
+/// iterate a dot in `plot-fp` (sized as map iterates are). Above
+/// [`MAX_POINTS`] dots the iterates become a density PNG under vector axes,
+/// `<base>-points.png` drawn with `\\addplot graphics` (Save), or one in
+/// `k` is kept and the figure says it was thinned (Copy).
+pub fn orbit_figure(input: &OrbitFigureInput) -> FigureOutput {
+    let (sys, run, pal) = (input.sys, input.run, input.palette);
+    let d = &run.diagram;
+    let w = (input.width_cm * PX_PER_CM).max(10.0);
+    let h = (input.height_cm * PX_PER_CM).max(10.0);
+    let vp = Viewport::new(w, h, input.x_range, input.y_range);
+    let (upx, upy) = vp.units_per_px();
+    let param = sys.labels.params.get(run.param);
+    let state = sys.labels.states.get(run.state);
+    let frame = Frame::new(
+        vp,
+        param.map_or("r".to_string(), |p| p.latex.clone()),
+        state.map_or("x".to_string(), |s| s.latex.clone()),
+        false,
+        false,
+    );
+    let quant = Quantizer {
+        decimals: vec![
+            Quantizer::decimals_for(upx, vp.x_range.1 - vp.x_range.0, vp.x_range.0, vp.x_range.1),
+            Quantizer::decimals_for(upy, vp.y_range.1 - vp.y_range.0, vp.y_range.0, vp.y_range.1),
+        ],
+    };
+
+    let all: Vec<(f64, f64)> =
+        d.r.iter()
+            .enumerate()
+            .flat_map(|(j, &r)| {
+                let col = d.x.get(j * d.kept..(j + 1) * d.kept).unwrap_or(&[]);
+                col.iter().filter(|x| x.is_finite()).map(move |&x| (r, x))
+            })
+            .collect();
+    let (radius, square) = dot_size(all.len());
+    let grown = Rect {
+        x0: vp.x_range.0 - radius * upx,
+        x1: vp.x_range.1 + radius * upx,
+        y0: vp.y_range.0 - radius * upy,
+        y1: vp.y_range.1 + radius * upy,
+    };
+    let mut points: Vec<(f64, f64)> = all.into_iter().filter(|&q| grown.contains(q)).collect();
+    let mut notes: Vec<String> = Vec::new();
+    let mut thinned = false;
+    let mut layer: Option<Vec<u8>> = None;
+    let shown = points.len();
+    if shown > MAX_POINTS {
+        match &input.placement {
+            Placement::External { .. } => {
+                layer = Some(raster::density_png(
+                    d,
+                    vp.x_range,
+                    vp.y_range,
+                    (w, h),
+                    &pal.fp,
+                ));
+                points.clear();
+                notes.push(format!(
+                    "The iterates ({shown} points) are drawn as a density PNG under vector axes."
+                ));
+            }
+            Placement::Inline => {
+                let stride = shown.div_ceil(MAX_POINTS).max(2);
+                points = points.into_iter().step_by(stride).collect();
+                thinned = true;
+                notes.push(format!(
+                    "One iterate in {stride} is kept so the copied figure stays under 5,000 \
+                     points; Save… draws them all as an image."
+                ));
+            }
+        }
+    }
+
+    let mut tex = header_comments(
+        "orbit diagram",
+        sys.title,
+        sys.source_ref,
+        sys.lines,
+        sys.format,
+        &sys.labels
+            .params
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != run.param)
+            .map(|(_, q)| (q.name.clone(), q.value))
+            .collect::<Vec<_>>(),
+    );
+    let (needs, preamble) = packages(&["calc"]);
+    tex.push_str(&needs);
+    tex.push_str(&comment(&format!(
+        "Orbit diagram: {} from {} to {} in {} values; {} after the first {} iterates, {} kept for each.",
+        param.map_or("r", |p| p.name.as_str()),
+        d.r.first().map_or("?".into(), |&v| shortest(v)),
+        d.r.last().map_or("?".into(), |&v| shortest(v)),
+        d.r.len(),
+        state.map_or("x", |s| s.name.as_str()),
+        run.transient,
+        d.kept
+    )));
+    for n in &notes {
+        tex.push_str(&comment(n));
+    }
+    if thinned {
+        tex.push_str(&comment(
+            "Thinned: some iterates were left out of this copy (see above).",
+        ));
+    }
+    let external = match &input.placement {
+        Placement::External { base } => Some(file_base(base)),
+        Placement::Inline => None,
+    };
+    let colors: Vec<(String, String)> = vec![
+        ("sepxbg".into(), pal.bg.clone()),
+        ("sepxgrid".into(), pal.grid.clone()),
+        ("sepxaxis".into(), pal.axis.clone()),
+        ("sepxtick".into(), pal.tick.clone()),
+        ("sepxfp".into(), pal.fp.clone()),
+        ("sepxhalo".into(), pal.halo.clone()),
+    ];
+    let defs = definitions(external.is_some(), &colors);
+
+    let mut body = frame.axis_begin(input.theme);
+    let mut files: Vec<FigureFile> = Vec::new();
+    if let (Some(png), Some(base)) = (layer, &external) {
+        let file = format!("{base}-points.png");
+        body.push_str(&format!(
+            "\\addplot graphics[xmin={}, xmax={}, ymin={}, ymax={}] {{\\sepxdir {file}}};\n",
+            shortest(vp.x_range.0),
+            shortest(vp.x_range.1),
+            shortest(vp.y_range.0),
+            shortest(vp.y_range.1)
+        ));
+        files.push(FigureFile {
+            name: file,
+            bytes: png,
+        });
+    }
+    if !points.is_empty() {
+        let mut t = Table::new(&["x", "y"]);
+        t.rows.extend(points.iter().map(|&(a, b)| Some(vec![a, b])));
+        let data = table_text(&t, &quant, external.is_none());
+        let source = match &external {
+            None => format!("table[row sep=\\\\]{{\n{data}}}"),
+            Some(base) => {
+                let file = format!("{base}-orbit.dat");
+                files.push(FigureFile {
+                    name: file.clone(),
+                    bytes: data.into_bytes(),
+                });
+                format!("table {{\\sepxdir {file}}}")
+            }
+        };
+        body.push_str(&format!(
+            "\\addplot[sepxfp, only marks, mark={}, mark size={}, mark options={{draw opacity=0, fill=sepxfp}}] {source};\n",
+            if square { "square*" } else { "*" },
+            bp(radius)
+        ));
+    }
+    body.push_str(&frame.axis_end());
+
+    FigureOutput {
+        tex: finish(tex, &preamble, &defs, &body, input.standalone),
+        files,
+        points: points.len(),
+        thinned,
+        notes,
+    }
+}
+
 /// The figure.
 pub fn figure(input: &FigureInput) -> FigureOutput {
     let p = input.portrait;
@@ -727,9 +1201,6 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     };
 
     // Ticks, axes and labels.
-    let (tx, ty) = ticks::for_viewport(w, h, p.x_range, p.y_range);
-    let axes = axis_lines(&vp);
-    let names = axis_names(&vp, &axes);
     let cobweb = p.cobweb && is_map;
     let (xn, yn) = if cobweb {
         cobweb_axis_latex(input.labels)
@@ -742,23 +1213,16 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
             axis_latex(p.y_axis, p.x_axis, p.kind, input.labels),
         )
     };
-    let name_boxes = name_boxes(&names, &xn, &yn);
-    let labels = layout_labels(
-        &vp,
-        &tx,
-        &ty,
-        &axes,
-        p.x_axis == Axis::Time,
-        p.y_axis == Axis::Time,
-        &name_boxes,
-    );
+    let frame = Frame::new(vp, xn, yn, p.x_axis == Axis::Time, p.y_axis == Axis::Time);
     // The field clears the tick labels and, like the screen, the axis names
     // grown by 3 px.
-    let label_boxes: Vec<BoxPx> = labels
+    let label_boxes: Vec<BoxPx> = frame
+        .labels
         .iter()
         .map(|l| l.bx)
         .chain(
-            name_boxes
+            frame
+                .name_boxes
                 .iter()
                 .map(|b| [b[0] - 3.0, b[1] - 3.0, b[2] + 3.0, b[3] + 3.0]),
         )
@@ -1025,15 +1489,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                     });
                 }
             }
-            let count = shown.len();
-            let square = count > SQUARE_DOTS_ABOVE;
-            let r = if square {
-                0.75
-            } else if count > 300 {
-                1.3
-            } else {
-                2.6
-            };
+            let (r, square) = dot_size(shown.len());
             let grown = Rect {
                 x0: p.x_range.0 - r * upx,
                 x1: p.x_range.1 + r * upx,
@@ -1343,16 +1799,8 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     if half_marks {
         libs.push("plotmarks");
     }
-    // amsmath: axis names are state LaTeX (`\\dddot{x}` for a fourth-order
-    // system), which only amsmath defines.
-    let preamble = format!(
-        "\\usepackage{{amsmath}}\n\\usepackage{{pgfplots}}\n\\pgfplotsset{{compat=1.18}}\n\\usetikzlibrary{{{}}}\n",
-        libs.join(",")
-    );
-    tex.push_str(&comment(&format!(
-        "Needs: \\usepackage{{amsmath}} \\usepackage{{pgfplots}} \\pgfplotsset{{compat=1.18}} \\usetikzlibrary{{{}}}",
-        libs.join(",")
-    )));
+    let (needs, preamble) = packages(&libs);
+    tex.push_str(&needs);
     if is_map && p.transient > 0 {
         tex.push_str(&comment(&format!(
             "Transient: the first {} iterates are not drawn.",
@@ -1385,137 +1833,11 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         Placement::External { base } => Some(file_base(base)),
         Placement::Inline => None,
     };
-    // Definitions: inside the document body of a standalone figure.
-    let mut defs = String::new();
-    if external.is_some() {
-        defs.push_str(&comment(
-            "If you \\input this file from another folder, put \\def\\sepxdir{figures/} before it.",
-        ));
-        defs.push_str("\\providecommand{\\sepxdir}{}%\n");
-    }
     // Tick labels and axis names sit on a halo, as on screen.
     use_color("sepxhalo".into(), &pal.halo, &mut colors);
-    for (name, hex) in &colors {
-        defs.push_str(&define_color(name, hex));
-    }
+    let defs = definitions(external.is_some(), &colors);
 
-    let mut axis_opts: Vec<String> = vec![
-        format!("width={}, height={}, scale only axis", bp(w), bp(h)),
-        format!(
-            "xmin={}, xmax={}, ymin={}, ymax={}",
-            shortest(p.x_range.0),
-            shortest(p.x_range.1),
-            shortest(p.y_range.0),
-            shortest(p.y_range.1)
-        ),
-        "enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false".into(),
-    ];
-    let list = |vs: &[f64]| {
-        vs.iter()
-            .map(|&v| shortest(v))
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let xh = ticks::half_steps(p.x_range.0, p.x_range.1, tx.step);
-    let yh = ticks::half_steps(p.y_range.0, p.y_range.1, ty.step);
-    let x_minor: Vec<f64> = xh
-        .iter()
-        .copied()
-        .filter(|v| !tx.ticks.contains(v))
-        .collect();
-    let y_minor: Vec<f64> = yh
-        .iter()
-        .copied()
-        .filter(|v| !ty.ticks.contains(v))
-        .collect();
-    axis_opts.push(format!(
-        "xtick={{{}}}, ytick={{{}}}, xticklabels={{}}, yticklabels={{}}",
-        list(&tx.ticks),
-        list(&ty.ticks)
-    ));
-    axis_opts.push(format!(
-        "minor xtick={{{}}}, minor ytick={{{}}}",
-        list(&x_minor),
-        list(&y_minor)
-    ));
-    let grid = format!("sepxgrid, line width={}", bp(1.0));
-    axis_opts.push(format!(
-        "grid=both, every major grid/.style={{{grid}}}, every minor grid/.style={{{grid}}}, \
-         major tick length=0pt, minor tick length=0pt"
-    ));
-    axis_opts.push(format!(
-        "axis line style={{sepxaxis, line width={}}}",
-        bp(1.0)
-    ));
-    let x_line = if axes.x_axis_in_view {
-        "axis x line*=middle".to_string()
-    } else {
-        let side = if axes.y >= vp.bottom() {
-            "bottom"
-        } else {
-            "top"
-        };
-        format!("axis x line*={side}, x axis line style={{draw=none}}")
-    };
-    let y_line = if axes.y_axis_in_view {
-        "axis y line*=middle".to_string()
-    } else {
-        let side = if axes.x <= vp.left { "left" } else { "right" };
-        format!("axis y line*={side}, y axis line style={{draw=none}}")
-    };
-    axis_opts.push(format!("{x_line}, {y_line}"));
-    if input.theme == Theme::Dark {
-        axis_opts.push("axis background/.style={fill=sepxbg}".into());
-    }
-
-    let mut body = String::new();
-    // The halo: the label's box filled in the background colour, 1.5 px
-    // (1.125 bp) round the text; the negative outer sep keeps the anchors
-    // on the text itself.
-    body.push_str(
-        "\\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, \
-         fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]\n\\begin{axis}[\n",
-    );
-    for (i, o) in axis_opts.iter().enumerate() {
-        body.push_str("  ");
-        body.push_str(o);
-        body.push_str(if i + 1 < axis_opts.len() { ",\n" } else { "\n" });
-    }
-    body.push_str("]\n");
-
-    // Tick marks (below the x axis, left of the y axis; none at 0).
-    let mut marks = Vec::new();
-    if axes.y_axis_in_view {
-        for &v in &ty.ticks {
-            if v != 0.0 {
-                let y = vp.sy(v);
-                marks.push(format!(
-                    "{} -- {}",
-                    at_px(axes.x, y),
-                    at_px(axes.x - TICK_LEN, y)
-                ));
-            }
-        }
-    }
-    if axes.x_axis_in_view {
-        for &v in &tx.ticks {
-            if v != 0.0 {
-                let x = vp.sx(v);
-                marks.push(format!(
-                    "{} -- {}",
-                    at_px(x, axes.y),
-                    at_px(x, axes.y + TICK_LEN)
-                ));
-            }
-        }
-    }
-    if !marks.is_empty() {
-        body.push_str(&format!(
-            "\\draw[sepxaxis, line width={}, line cap=butt]\n  {};\n",
-            bp(1.0),
-            marks.join("\n  ")
-        ));
-    }
+    let mut body = frame.axis_begin(input.theme);
 
     let mut files: Vec<FigureFile> = Vec::new();
     let inline = external.is_none();
@@ -1551,52 +1873,10 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         });
     }
 
-    // Tick labels.
-    for l in &labels {
-        body.push_str(&format!(
-            "\\node[anchor={}, sepxlabel, font=\\footnotesize] at {} {{${}$}};\n",
-            l.anchor,
-            at_px(l.x, l.y),
-            l.tex
-        ));
-    }
-    // Axis names.
-    let (xa, xy) = if names.x_above {
-        ("south east", names.x_axis_y - 4.0)
-    } else {
-        ("north east", names.x_axis_y + 4.0)
-    };
-    body.push_str(&format!(
-        "\\node[anchor={xa}, sepxlabel] at {} {{${}$}};\n",
-        at_px(names.x_right, xy),
-        dyn_expr::portable_latex(&xn)
-    ));
-    body.push_str(&format!(
-        "\\node[anchor={}, sepxlabel] at {} {{${}$}};\n",
-        if names.y_right {
-            "north west"
-        } else {
-            "north east"
-        },
-        at_px(names.y_x, names.y_top),
-        dyn_expr::portable_latex(&yn)
-    ));
-    body.push_str("\\end{axis}\n\\end{tikzpicture}\n");
-
-    if input.standalone {
-        tex.push_str("\\documentclass[border=2mm]{standalone}\n");
-        tex.push_str(&preamble);
-        tex.push_str("\\begin{document}\n");
-        tex.push_str(&defs);
-        tex.push_str(&body);
-        tex.push_str("\\end{document}\n");
-    } else {
-        tex.push_str(&defs);
-        tex.push_str(&body);
-    }
+    body.push_str(&frame.axis_end());
 
     FigureOutput {
-        tex,
+        tex: finish(tex, &preamble, &defs, &body, input.standalone),
         files,
         points: total,
         thinned,

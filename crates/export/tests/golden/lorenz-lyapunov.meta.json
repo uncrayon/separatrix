@@ -1,0 +1,68 @@
+{
+  "format": "separatrix-lyapunov",
+  "format_version": 1,
+  "app_version": "0.2.0",
+  "title": "Lorenz equations",
+  "csv": "lorenz-equations-lyapunov.csv",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=\\sigma\\left(y-x\\right)",
+      "\\dot{y}=rx-y-xz",
+      "\\dot{z}=xy-bz"
+    ]
+  },
+  "params": [
+    {
+      "name": "sigma",
+      "value": 10.0
+    },
+    {
+      "name": "r",
+      "value": 28.0
+    },
+    {
+      "name": "b",
+      "value": 2.6666666666666665
+    }
+  ],
+  "columns": [
+    "t",
+    "lambda_1",
+    "lambda_2",
+    "lambda_3"
+  ],
+  "x0": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "t0": 0.0,
+  "transient": 100.0,
+  "total": 1000.0,
+  "interval": 0.1,
+  "blocks": 10,
+  "integrator": {
+    "method": "rk4",
+    "h": 0.01
+  },
+  "renormalizations": 10000,
+  "exponents": [
+    0.90561,
+    -0.00025,
+    -14.57196
+  ],
+  "uncertainty": [
+    0.00437,
+    0.00026,
+    0.001
+  ],
+  "sum": -13.6666,
+  "trace_average": -13.666666666666666,
+  "status": "completed",
+  "notes": [
+    "Rows are the running estimates after sampled renormalizations, in increasing time; the last row is the final estimate.",
+    "uncertainty is the standard error over the blocks; trace_average is what sum must equal (flow: the time average of tr J; map: the mean of ln |det J|)."
+  ]
+}

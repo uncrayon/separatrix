@@ -8,8 +8,10 @@ use dyn_expr::InputFormat;
 use separatrix_export::csv::{self, CsvInput};
 use separatrix_export::latex_figure::{figure, FigureInput, Placement, MAX_POINTS};
 use separatrix_export::{
-    Arrow, Axis, Classification, Direction, FixedPoint, Labels, ParamValue, Portrait, SectionSpec,
-    StateName, Status, SystemKind, Theme, Trajectory, TrajectoryTag,
+    lyapunov_latex, orbit_figure, raster, Arrow, Axis, Classification, Direction, FixedPoint,
+    Labels, LyapunovRun, LyapunovSpectrum, OrbitDiagram, OrbitFigureInput, OrbitRun, ParamValue,
+    Portrait, SectionSpec, SolverOptions, StateName, Status, SystemKind, SystemMeta, Theme,
+    Trajectory, TrajectoryTag,
 };
 
 fn labels(names: &[&str]) -> Labels {
@@ -608,4 +610,191 @@ fn a_stroboscopic_section_is_named_in_the_csv_metadata() {
     let note = meta["notes"][0].as_str().unwrap();
     assert!(note.contains("t0 is a row"), "{note}");
     assert!(!note.contains("the start point is not one"), "{note}");
+}
+
+fn map_meta<'a>(labels: &'a Labels, lines: &'a [String]) -> SystemMeta<'a> {
+    SystemMeta {
+        kind: SystemKind::Map,
+        labels,
+        title: "Henon map",
+        source_ref: None,
+        lines,
+        format: InputFormat::Text,
+    }
+}
+
+#[test]
+fn lyapunov_values_round_at_their_uncertainty_and_a_map_says_it_was_iterated() {
+    let labels = labels(&["x", "y"]);
+    let lines = vec!["x' = 1 - a*x^2 + y".to_string(), "y' = 0.3*x".to_string()];
+    let run = LyapunovRun {
+        spectrum: LyapunovSpectrum {
+            exponents: vec![0.90561, 0.4192, -1.6232],
+            uncertainty: vec![0.00437, 0.0012],
+            sum: -0.29839,
+            trace_average: -0.29839,
+            history_t: vec![],
+            history: vec![],
+            renormalizations: 100_000,
+            status: Status::Completed,
+            stats: Default::default(),
+        },
+        x0: vec![0.1, 0.1],
+        t0: 0.0,
+        transient: 1000.0,
+        total: 100_000.0,
+        interval: 1.0,
+        blocks: 10,
+        solver: SolverOptions::default(),
+    };
+    let tex = lyapunov_latex(&map_meta(&labels, &lines), &run);
+    assert!(
+        tex.contains("$\\lambda_{1}$ & \\num{0.906 +- 0.004} \\\\\n"),
+        "{tex}"
+    );
+    assert!(
+        tex.contains("$\\lambda_{2}$ & \\num{0.4192 +- 0.0012} \\\\\n"),
+        "{tex}"
+    );
+    // An exponent without an uncertainty has six significant digits and the
+    // caption says why there is no error.
+    assert!(
+        tex.contains("$\\lambda_{3}$ & \\num{-1.6232} \\\\\n"),
+        "{tex}"
+    );
+    assert!(tex.contains("No uncertainties"), "{tex}");
+    assert!(tex.contains("the map iterated $10^{5}$ times after a transient of $1000$ iterates"));
+    assert!(tex.contains("\\num{100000} renormalizations every iterate."));
+    assert!(tex.contains("$\\langle \\ln\\lvert\\det J\\rvert \\rangle$ & \\num{-0.29839}"));
+    assert!(!tex.contains("Runge"), "a map names no integrator");
+}
+
+/// A logistic diagram of `columns` × `kept` with the last column escaped
+/// after two iterates.
+fn big_orbit(columns: usize, kept: usize) -> OrbitRun {
+    let step = (4.0 - 2.6) / (columns - 1) as f64;
+    let r: Vec<f64> = (0..columns).map(|j| 2.6 + j as f64 * step).collect();
+    let mut x = Vec::with_capacity(columns * kept);
+    for &rj in &r {
+        let mut v: f64 = 0.3;
+        for _ in 0..200 {
+            v = rj * v * (1.0 - v);
+        }
+        for _ in 0..kept {
+            x.push(v);
+            v = rj * v * (1.0 - v);
+        }
+    }
+    for v in &mut x[(columns - 1) * kept + 2..] {
+        *v = f64::NAN;
+    }
+    OrbitRun {
+        param: 0,
+        state: 0,
+        x0: vec![0.3],
+        transient: 200,
+        diagram: OrbitDiagram { r, x, kept },
+    }
+}
+
+#[test]
+fn an_orbit_diagram_over_5000_points_is_a_png_layer_or_thinned() {
+    let labels = Labels {
+        states: vec![StateName {
+            name: "x".into(),
+            latex: "x".into(),
+        }],
+        params: vec![ParamValue {
+            name: "r".into(),
+            latex: "r".into(),
+            value: 3.2,
+        }],
+    };
+    let lines = vec!["x' = r*x*(1 - x)".to_string()];
+    let sys = SystemMeta {
+        title: "Logistic map",
+        ..map_meta(&labels, &lines)
+    };
+    let run = big_orbit(400, 50);
+    let finite = run.diagram.x.iter().filter(|v| v.is_finite()).count();
+    assert_eq!(finite, 399 * 50 + 2);
+    let pal = palette(Theme::Light);
+    let input = |placement| OrbitFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (2.6, 4.0),
+        y_range: (0.0, 1.0),
+        width_cm: 8.0,
+        height_cm: 6.0,
+        theme: Theme::Light,
+        palette: &pal,
+        placement,
+        standalone: false,
+    };
+    let saved = orbit_figure(&input(Placement::External {
+        base: "logistic.tex".into(),
+    }));
+    assert!(
+        saved.tex.contains(
+            "\\addplot graphics[xmin=2.6, xmax=4, ymin=0, ymax=1] {\\sepxdir logistic-points.png};"
+        ),
+        "{}",
+        saved.tex
+    );
+    assert!(
+        !saved.tex.contains("only marks"),
+        "no dots beside the layer"
+    );
+    assert_eq!(saved.points, 0);
+    assert!(!saved.thinned);
+    let names: Vec<&str> = saved.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["logistic-points.png"]);
+    let (rgba, w, h) = raster::decode_rgba(&saved.files[0].bytes).unwrap();
+    assert_eq!(
+        (w, h),
+        (400, 300),
+        "one pixel column per parameter value, the box's aspect"
+    );
+    let opaque = rgba.chunks(4).filter(|p| p[3] > 0).count();
+    assert!(opaque > 400 && opaque < 20_000, "{opaque} pixels drawn");
+    // r = 2.6 has the fixed point x* = 1 − 1/r = 0.6154, row 115.4: one
+    // fully dark pixel in column 0, nothing else there.
+    let row = 115;
+    let column0: Vec<usize> = (0..h as usize)
+        .filter(|&y| rgba[(y * w as usize) * 4 + 3] > 0)
+        .collect();
+    assert_eq!(column0, [row]);
+    assert_eq!(rgba[(row * w as usize) * 4 + 3], 255);
+    assert!(saved.notes.iter().any(|n| n.contains("density PNG")));
+
+    let copied = orbit_figure(&input(Placement::Inline));
+    assert!(copied.thinned);
+    assert!(
+        copied.points <= MAX_POINTS && copied.points > MAX_POINTS / 2,
+        "{}",
+        copied.points
+    );
+    assert!(copied.files.is_empty());
+    assert!(copied.tex.contains("% Thinned:"));
+    assert_eq!(
+        copied.notes,
+        ["One iterate in 4 is kept so the copied figure stays under 5,000 points; Save… draws them all as an image."]
+    );
+    assert!(copied.tex.contains("% One iterate in 4 is kept so the copied figure stays under 5,000 points; Save… draws them all as an image.\n"));
+
+    let small = big_orbit(10, 4);
+    let few = orbit_figure(&OrbitFigureInput {
+        run: &small,
+        ..input(Placement::Inline)
+    });
+    assert_eq!((few.points, few.thinned), (38, false));
+
+    let file = csv::orbit(&sys, &run, "0.2.0");
+    assert_eq!(
+        file.csv.lines().count(),
+        1 + finite,
+        "escaped iterates are left out"
+    );
+    assert!(file.csv.lines().nth(1).unwrap().starts_with("2.6,200,"));
+    assert!(file.csv.lines().last().unwrap().starts_with("4,201,"));
 }

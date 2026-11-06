@@ -1135,6 +1135,105 @@ suggestedName: string, };
 
 export type TextExtension = "tex" | "svg" | "csv";
 
+export type LyapunovExportRequest = { 
+/**
+ * The view's own request.
+ */
+run: LyapunovRequest, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type OrbitExportRequest = { 
+/**
+ * The diagram's request: the screen's for the CSV, one column per
+ * pixel of the PNG layer for a figure.
+ */
+diagram: OrbitDiagramRequest, 
+/**
+ * The system's title (comments, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type OrbitFigureRequest = { 
+/**
+ * The diagram and its names.
+ */
+orbit: OrbitExportRequest, 
+/**
+ * The view's parameter range (across).
+ */
+xRange: [number, number], 
+/**
+ * The view's state range (up).
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveOrbitFigureRequest = { 
+/**
+ * The figure.
+ */
+figure: OrbitFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
+export type SaveCsvFileRequest = { 
+/**
+ * The file and its metadata.
+ */
+file: CsvFileOut, 
+/**
+ * The system's title (as the export command was given it).
+ */
+title: string, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
 export type SaveTextRequest = { 
 /**
  * File name offered in the dialog.

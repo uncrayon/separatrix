@@ -174,6 +174,55 @@ pub fn to_exponential(v: f64, fraction_digits: usize) -> String {
     out
 }
 
+/// `v` rounded half away from zero at the `10^place` digit, from its exact
+/// decimal value, in plain notation (`fixed_at(1234.5, 1)` is `"1230"`,
+/// `fixed_at(0.90561, -3)` is `"0.906"`). A value that rounds to zero has
+/// no sign.
+fn fixed_at(v: f64, place: i32) -> String {
+    let s = if place <= 0 {
+        to_fixed(v, place.unsigned_abs() as usize)
+    } else if v == 0.0 {
+        "0".to_string()
+    } else {
+        let (digits, e) = exact_digits(v);
+        let keep = e - place + 1;
+        let r = if keep < 0 {
+            Vec::new()
+        } else {
+            round_half_up(&digits, keep as usize).0
+        };
+        if r.iter().all(|&d| d == 0) {
+            "0".to_string()
+        } else {
+            let sign = if v < 0.0 { "-" } else { "" };
+            format!("{sign}{}{}", digits_str(&r), "0".repeat(place as usize))
+        }
+    };
+    if s.starts_with('-') && s.bytes().all(|b| matches!(b, b'-' | b'0' | b'.')) {
+        s[1..].to_string()
+    } else {
+        s
+    }
+}
+
+/// A measured value and its standard error as siunitx writes them in
+/// `\num{0.906 +- 0.004}`: the error rounded half up to one significant
+/// digit (two when that digit is 1), and the value rounded at the same
+/// decimal place. Both are rounded from their exact decimal expansions,
+/// never through `log10`, so the text is the same on every platform. None
+/// when either is not finite or the error is not positive.
+pub fn with_uncertainty(v: f64, u: f64) -> Option<(String, String)> {
+    if !v.is_finite() || !u.is_finite() || u <= 0.0 {
+        return None;
+    }
+    let (digits, e) = exact_digits(u);
+    let sig = if digits[0] == 1 { 2 } else { 1 };
+    let (_, carried) = round_half_up(&digits, sig);
+    // 0.0096 rounds to 0.01: one digit, one place further up.
+    let place = e - (sig as i32 - 1) + i32::from(carried);
+    Some((fixed_at(v, place), fixed_at(u, place)))
+}
+
 fn trim_zeros(s: &str) -> String {
     if s.contains('.') {
         s.trim_end_matches('0').trim_end_matches('.').to_string()
@@ -341,6 +390,26 @@ mod tests {
         assert_eq!(to_exponential(123456.0, 2), "1.23e+5");
         assert_eq!(to_exponential(0.0, 2), "0.00e+0");
         assert_eq!(to_exponential(1e21, 0), "1e+21");
+    }
+
+    #[test]
+    fn values_round_at_the_uncertainty_place() {
+        let w = |v: f64, u: f64| {
+            let (a, b) = with_uncertainty(v, u).unwrap();
+            format!("{a} +- {b}")
+        };
+        assert_eq!(w(0.90561, 0.00437), "0.906 +- 0.004");
+        assert_eq!(w(0.4192, 0.0012), "0.4192 +- 0.0012");
+        assert_eq!(w(-14.57316, 0.0010), "-14.5732 +- 0.0010");
+        assert_eq!(w(0.123, 0.0096), "0.12 +- 0.01");
+        assert_eq!(w(0.1234, 0.0196), "0.123 +- 0.020");
+        assert_eq!(w(-0.00002, 0.00026), "0.0000 +- 0.0003");
+        assert_eq!(w(1234.5, 23.0), "1230 +- 20");
+        assert_eq!(w(1250.0, 160.0), "1250 +- 160");
+        assert_eq!(w(5.0, 950.0), "0 +- 1000");
+        assert_eq!(w(2.5, 0.5), "2.5 +- 0.5");
+        assert_eq!(with_uncertainty(1.0, 0.0), None);
+        assert_eq!(with_uncertainty(f64::NAN, 0.1), None);
     }
 
     #[test]

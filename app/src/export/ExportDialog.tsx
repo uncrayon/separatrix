@@ -1,12 +1,35 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { CsvFileOut, FigureLatexRequest, FixedPointOut, PortraitResponse, SystemKind } from "../api/types";
-import { drawFigure } from "../canvas/figure";
+import type {
+  CsvFileOut,
+  FigureLatexRequest,
+  FixedPointOut,
+  LyapunovResponse,
+  OrbitDiagramResponse,
+  OrbitFigureRequest,
+  PortraitResponse,
+  SystemKind,
+} from "../api/types";
+import { computeOrbitDiagram } from "../api/client";
+import { drawAnalysisFigure, drawFigure, type AnalysisFigure } from "../canvas/figure";
+import { lambdaName } from "../canvas/lyapunov";
 import { makeViewport } from "../canvas/viewport";
 import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "../components/controls";
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
 import { axisLatex, classificationTitle, fmt, latexToPlain } from "../math/format";
-import { hasNullclineLayer, isCobweb, isReturnMap, isSection, isSpace, systemTitle, type SpaceView } from "../state/model";
+import {
+  hasNullclineLayer,
+  isCobweb,
+  isReturnMap,
+  isSection,
+  isSpace,
+  lyapunovCurrent,
+  lyapunovValueText,
+  orbitColumns,
+  scientificText,
+  systemTitle,
+  type SpaceView,
+} from "../state/model";
 import { spaceNames } from "../canvas/space";
 import type { StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
@@ -18,22 +41,33 @@ import {
   exportCsv,
   exportFigureLatex,
   exportFixedPointsLatex,
+  exportLyapunovCsv,
+  exportLyapunovLatex,
+  exportOrbitCsv,
+  exportOrbitLatex,
   exportSystemLatex,
   saveCsv,
+  saveCsvFile,
   saveFigureLatex,
+  saveOrbitLatex,
   savePngFile,
   saveTextFile,
 } from "./commands";
 import { ExportPreview } from "./ExportPreview";
 import {
+  analysisKind,
   axisNames,
   buildCsvRequest,
   buildFigureJob,
+  buildLyapunovExport,
+  buildOrbitExport,
   exportPortraitRequest,
   exportScene,
   exportSpaceFigure,
   icProjectId,
+  orbitFigureRatio,
   screenPortrait,
+  type ExportSource,
   type FigureJob,
 } from "./job";
 import { SPACE_LATEX_REFUSAL } from "../api/ipc.generated";
@@ -84,6 +118,13 @@ const FORMATS: { value: ExportFormat; label: string }[] = [
   { value: "png", label: "PNG" },
   { value: "csv", label: "CSV" },
 ];
+
+const CONTENT_LABELS: Record<LatexContent, string> = {
+  figure: "Figure",
+  spectrum: "Spectrum",
+  equations: "Equations",
+  fixedPoints: "Fixed points",
+};
 
 const PALETTES: { value: ExportPalette; label: string }[] = [
   { value: "light", label: "Projector" },
@@ -246,6 +287,41 @@ function FixedPointsPreview({
   );
 }
 
+/** The spectrum table as it will be written: λᵢ with its error, then Σλ against its trace. */
+function SpectrumPreview({ res, kind }: { res: LyapunovResponse; kind: SystemKind }) {
+  const gap = res.sum - res.traceAverage;
+  return (
+    <table className="export-fp-table numeric-sm">
+      <thead>
+        <tr>
+          <th scope="col">Exponent</th>
+          <th scope="col">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {res.exponents.map((v, i) => (
+          <tr key={i}>
+            <td>{lambdaName(i)}</td>
+            <td>{lyapunovValueText(v, res.uncertainty[i])}</td>
+          </tr>
+        ))}
+        <tr>
+          <td>Σλ</td>
+          <td>{withMinus(fmt(res.sum, 6))}</td>
+        </tr>
+        <tr>
+          <td>{kind === "map" ? "⟨ln |det J|⟩" : "⟨tr J⟩"}</td>
+          <td>{withMinus(fmt(res.traceAverage, 6))}</td>
+        </tr>
+        <tr>
+          <td className="body">Difference</td>
+          <td>{scientificText(gap)}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
 function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): string {
   const [a, b, c] = spaceNames(v, states).map(latexToPlain);
   return `${a}, ${b} and ${c}`;
@@ -294,6 +370,9 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const returnMap = section && isReturnMap(state.view);
   const compiles = !!sys && state.compileOk;
   const timeDependent = !!sys && !sys.autonomous;
+  // A Lyapunov or orbit-diagram view exports its own run, not a portrait.
+  const chaos = sys ? analysisKind(state) : null;
+  const chaosWords = chaos === "lyapunov" ? "the Lyapunov view" : "the orbit diagram";
   const reasons = {
     field: kind === "map" ? "none: a map" : section ? "none: a Poincaré section" : space ? "none: a 3D view" : null,
     nullclines:
@@ -311,12 +390,27 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         : null,
   };
   const contentReason: Record<LatexContent, string | null> = {
-    figure: !sys ? "the equations have not compiled" : space ? SPACE_LATEX_REFUSAL : null,
+    figure: !sys
+      ? "the equations have not compiled"
+      : space
+        ? SPACE_LATEX_REFUSAL
+        : chaos === "lyapunov"
+          ? "LaTeX gives the spectrum as a table; export the running estimates as PNG or SVG"
+          : null,
+    spectrum: chaos === "lyapunov" ? null : "only the Lyapunov view has a spectrum",
     equations: compiles ? null : "the equations don't compile",
-    fixedPoints: !compiles ? "the equations don't compile" : timeDependent ? "the field changes with time" : null,
+    fixedPoints: !compiles
+      ? "the equations don't compile"
+      : chaos
+        ? `${chaosWords} shows no fixed points`
+        : timeDependent
+          ? "the field changes with time"
+          : null,
   };
-  const content: LatexContent =
-    ([opts.latexContent, "figure", "equations", "fixedPoints"] as const).find((c) => !contentReason[c]) ?? "figure";
+  // The Lyapunov view offers its table first; the other views have no table.
+  const contents: LatexContent[] =
+    chaos === "lyapunov" ? ["spectrum", "figure", "equations", "fixedPoints"] : ["figure", "equations", "fixedPoints"];
+  const content: LatexContent = [opts.latexContent, ...contents].find((c) => contents.includes(c) && !contentReason[c]) ?? contents[0];
   const format = opts.format;
   // Equations and Fixed points are not figures: no export portrait for them.
   const wantsFigure = format === "svg" || format === "png" || (format === "latex" && content === "figure");
@@ -349,6 +443,53 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   );
   const jobKey = job ? JSON.stringify(exportPortraitRequest(job)) : "";
 
+  const raster = pngRaster(opts.pngWidthPx, opts.pngHeightPx, opts.pngScale);
+  const source: ExportSource = { title: name, ...(ref ? { sourceRef: ref } : {}), lines, format: state.format };
+  const lyapunovReq = chaos === "lyapunov" ? buildLyapunovExport(state, source) : null;
+  const lyapunovRun = chaos === "lyapunov" && state.lyapunov && lyapunovCurrent(state) ? state.lyapunov.res : null;
+  // The orbit diagram of a figure has one column per pixel of its image; its CSV has the screen's columns.
+  const orbitRatio = orbitFigureRatio(format, raster.scale);
+  const orbitFigReq = chaos === "orbit" ? buildOrbitExport(state, source, orbitColumns(size.width, orbitRatio)) : null;
+  const orbitCsvReq = chaos === "orbit" ? buildOrbitExport(state, source, state.orbitColumns) : null;
+  const orbitKey = orbitFigReq ? JSON.stringify(orbitFigReq.diagram) : "";
+  const [orbitFig, setOrbitFig] = useState<{ key: string; res: OrbitDiagramResponse } | null>(null);
+  const [orbitError, setOrbitError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!orbitFigReq || !wantsFigure) return;
+    let live = true;
+    const key = orbitKey;
+    const timer = window.setTimeout(() => {
+      computeOrbitDiagram(orbitFigReq.diagram)
+        .then((res) => {
+          if (!live) return;
+          setOrbitFig({ key, res });
+          setOrbitError(null);
+        })
+        .catch((err) => live && setOrbitError(errorText(err)));
+    }, DEBOUNCE_MS);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbitKey, wantsFigure]);
+  const analysis: AnalysisFigure | null =
+    chaos === "lyapunov"
+      ? lyapunovRun && { kind: "lyapunov", res: lyapunovRun }
+      : chaos === "orbit" && orbitFig && orbitFig.key === orbitKey
+        ? { kind: "orbit", res: orbitFig.res, pixelRatio: orbitRatio }
+        : null;
+  const orbitLatexReq = (): OrbitFigureRequest | null =>
+    orbitFigReq && {
+      orbit: orbitFigReq,
+      xRange: state.view.xRange,
+      yRange: state.view.yRange,
+      widthCm: opts.widthCm,
+      heightCm: opts.heightCm,
+      theme: opts.palette,
+      standalone: opts.standalone,
+    };
+
   // The figure's portrait, recomputed by the core at the figure's aspect.
   const [fig, setFig] = useState<{ job: FigureJob; res: PortraitResponse } | null>(null);
   const [figError, setFigError] = useState<string | null>(null);
@@ -376,7 +517,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const scene = useMemo(() => (fig ? exportScene(fig.job, fig.res, state.ics) : null), [fig, state.ics]);
   const theme = exportTheme(opts.palette);
   const names = useMemo(() => axisNames(state), [state]);
-  const figReady = !!fig && !!job && fig.job === job;
+  const figReady = chaos ? !!analysis : !!fig && !!job && fig.job === job;
   const spaceFig = useMemo(
     () => (fig && scene && sys ? exportSpaceFigure(fig.job, scene, sys.states, EXPORT_FONTS) : null),
     [fig, scene, sys],
@@ -406,7 +547,10 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ? [sys?.systemId, state.params.map((p) => p.value), opts.notation, opts.numbered]
       : null,
     format === "latex" && content === "fixedPoints" ? [JSON.stringify(screenPortrait(state)), opts.digits] : null,
-    format === "csv" ? [JSON.stringify(csvReq()), opts.csvIcIds, opts.csvSamples] : null,
+    format === "csv" && !chaos ? [JSON.stringify(csvReq()), opts.csvIcIds, opts.csvSamples] : null,
+    chaos === "lyapunov" ? JSON.stringify(lyapunovReq) : null,
+    chaos === "orbit" && format === "csv" ? JSON.stringify(orbitCsvReq) : null,
+    chaos === "orbit" && format === "latex" ? JSON.stringify(orbitLatexReq()) : null,
     name,
     ref,
     lines,
@@ -421,11 +565,27 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     const key = snippetKey;
     const timer = window.setTimeout(async () => {
       try {
-        if (format === "csv") {
+        if (format === "csv" && chaos) {
+          const file =
+            chaos === "lyapunov"
+              ? lyapunovReq && (await exportLyapunovCsv(lyapunovReq))
+              : orbitCsvReq && (await exportOrbitCsv(orbitCsvReq));
+          if (!file) return;
+          if (live) setCsvFiles({ key, files: [file] });
+        } else if (format === "csv") {
           const req = csvReq();
           if (!req) return;
           const res = await exportCsv(req);
           if (live) setCsvFiles({ key, files: res.files });
+        } else if (content === "spectrum") {
+          if (!lyapunovReq) return;
+          const tex = await exportLyapunovLatex(lyapunovReq);
+          if (live) setSnip({ key, tex, notes: [] });
+        } else if (content === "figure" && chaos === "orbit") {
+          const req = orbitLatexReq();
+          if (!req) return;
+          const res = await exportOrbitLatex(req);
+          if (live) setSnip({ key, tex: res.tex, notes: res.notes });
         } else if (content === "figure") {
           const req = figureReq();
           if (!req) return;
@@ -517,11 +677,20 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const xRange = job?.portrait.xRange ?? null;
-  const yRange = job?.portrait.yRange ?? null;
+  const xRange = chaos ? state.view.xRange : job?.portrait.xRange ?? null;
+  const yRange = chaos ? state.view.yRange : job?.portrait.yRange ?? null;
   const transparent = (format === "svg" || format === "png") && opts.transparent;
 
   const drawTo = (ctx: CanvasRenderingContext2D) => {
+    if (analysis && xRange && yRange) {
+      const vp = makeViewport(size.width, size.height, xRange, yRange);
+      drawAnalysisFigure(ctx, size.width, size.height, vp, analysis, theme, {
+        background: !opts.transparent,
+        names,
+        fonts: EXPORT_FONTS,
+      });
+      return;
+    }
     if (!fig) return;
     const vp = makeViewport(fig.job.widthPx, fig.job.heightPx, fig.job.portrait.xRange, fig.job.portrait.yRange);
     drawFigure(ctx, fig.job.widthPx, fig.job.heightPx, vp, scene, theme, {
@@ -531,9 +700,29 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     });
   };
   const svgText = (): string | null => {
-    if (!fig) return null;
     const probe = document.createElement("canvas").getContext("2d");
     if (!probe) return null;
+    if (analysis && xRange && yRange)
+      return figureSvg(
+        {
+          widthPx: size.width,
+          heightPx: size.height,
+          widthCm: opts.widthCm,
+          heightCm: opts.heightCm,
+          xRange,
+          yRange,
+          scene: null,
+          theme,
+          names,
+          transparent: opts.transparent,
+          fonts: EXPORT_FONTS,
+          title: name,
+          desc: figureDesc,
+          analysis,
+        },
+        canvasMeasure(probe),
+      );
+    if (!fig) return null;
     return figureSvg(
       {
         widthPx: fig.job.widthPx,
@@ -554,7 +743,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       canvasMeasure(probe),
     );
   };
-  const raster = pngRaster(opts.pngWidthPx, opts.pngHeightPx, opts.pngScale);
   const pngDraw = async () =>
     fig && spaceFig
       ? spacePngDraw(spaceFig, fig.job.widthPx, fig.job.heightPx, raster.scale, theme, !opts.transparent)
@@ -598,7 +786,15 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   let secondary: Action | null = null;
   let footNote: ReactNode = null;
   if (format === "latex") {
-    const file = content === "figure" ? `${stem}.tex` : content === "equations" ? `${stem}-equations.tex` : `${stem}-fixed-points.tex`;
+    const file =
+      content === "figure"
+        ? `${stem}.tex`
+        : content === "spectrum"
+          ? `${stem}-lyapunov.tex`
+          : content === "equations"
+            ? `${stem}-equations.tex`
+            : `${stem}-fixed-points.tex`;
+    const withFiles = content === "figure";
     primary = {
       label: "Copy LaTeX",
       copyKey: "latex",
@@ -612,17 +808,24 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     };
     secondary = {
       label: "Save…",
-      ready: content === "figure" ? !!job : snipReady,
+      ready: content === "figure" ? (chaos === "orbit" ? !!orbitFigReq : !!job) : snipReady,
       act: () =>
         run(async () => {
-          if (content === "figure") {
+          if (content === "figure" && chaos === "orbit") {
+            const req = orbitLatexReq();
+            if (req) saveDone((await saveOrbitLatex(req, file))?.names);
+          } else if (content === "figure") {
             const req = figureReq();
             if (req) saveDone((await saveFigureLatex(req, file))?.names);
           } else if (snip) saveDone((await saveTextFile(file, "tex", snip.tex))?.names);
         }),
     };
     footNote =
-      content === "figure" ? (
+      withFiles && chaos === "orbit" ? (
+        <>
+          Save… writes <span className="ds-num">{file}</span> and its data file, a PNG above 5,000 points
+        </>
+      ) : withFiles ? (
         <>
           Save… writes <span className="ds-num">{file}</span> and its data files
         </>
@@ -683,6 +886,35 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         Save… writes <span className="ds-num">{stem}.png</span>
       </>
     );
+  } else if (chaos) {
+    const file = `${stem}-${chaos === "lyapunov" ? "lyapunov" : "orbit-diagram"}.csv`;
+    const ready = csvReady && !!csvFiles?.files.length;
+    primary = {
+      label: "Save…",
+      ready,
+      act: () =>
+        run(async () => {
+          const f = csvFiles?.files[0];
+          if (f) saveDone((await saveCsvFile(f, name, file))?.names);
+        }),
+    };
+    secondary = {
+      label: "Copy CSV",
+      copyKey: "csv",
+      ready,
+      act: () =>
+        run(async () => {
+          const f = csvFiles?.files[0];
+          if (!f) return;
+          await clipboardWriteText(f.csv);
+          copyDone("csv", "CSV");
+        }),
+    };
+    footNote = (
+      <>
+        Save… writes <span className="ds-num">{file}</span> and its .meta.json
+      </>
+    );
   } else {
     const any = csvCount > 0;
     primary = {
@@ -725,14 +957,18 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const crossingsShown = scene
     ? scene.trajectories.reduce((n, t) => n + Math.max(0, t.out.t.length - (returnMap ? 1 : 0)), 0)
     : 0;
-  const runWords = cobweb
+  const runWords = chaos
+    ? chaos === "lyapunov"
+      ? plural(sys?.states.length ?? 0, "running estimate")
+      : plural(orbitFigReq?.diagram.columns ?? 0, "parameter value")
+    : cobweb
     ? plural(trajectoriesShown, "orbit")
     : returnMap
       ? plural(crossingsShown, "pair of crossings", "pairs of crossings")
       : section
         ? plural(crossingsShown, "crossing")
         : trajectories(trajectoriesShown);
-  const layerWords = [
+  const layerWords = chaos ? [runWords] : [
     layers.field && "direction field",
     layers.nullclines && "nullclines",
     cobweb && "the graph of f",
@@ -750,7 +986,11 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   };
   const timeView = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   const viewWords = sys
-    ? cobweb
+    ? chaos === "lyapunov"
+      ? "Lyapunov spectrum"
+      : chaos === "orbit"
+        ? `orbit diagram of ${names ? latexToPlain(names.y) : "x"} against ${names ? latexToPlain(names.x) : "r"}`
+        : cobweb
       ? `cobweb of ${axisPlain(0)}`
       : space
         ? `3D view of ${spaceAxesPlain(state.view as SpaceView, sys.states)}`
@@ -888,7 +1128,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const includeGroup = (
     <fieldset className="ds-export-group">
       <legend className="ds-export-label">Include</legend>
-      {!cobweb && !section && !space && (
+      {!cobweb && !section && !space && !chaos && (
         <>
           <Check
             checked={opts.field}
@@ -904,12 +1144,14 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
           />
         </>
       )}
-      <Check
-        checked={opts.fixedPoints}
-        reason={reasons.fixedPoints}
-        label="Include fixed points"
-        onChange={(v) => update({ fixedPoints: v })}
-      />
+      {!chaos && (
+        <Check
+          checked={opts.fixedPoints}
+          reason={reasons.fixedPoints}
+          label="Include fixed points"
+          onChange={(v) => update({ fixedPoints: v })}
+        />
+      )}
       {format === "latex" && (
         <>
           <Check
@@ -965,8 +1207,9 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       fonts={EXPORT_FONTS}
       transparent={transparent}
       label={previewLabel}
-      busy={figBusy}
+      busy={chaos ? !analysis : figBusy}
       space={spaceFig}
+      analysis={analysis}
       caption={
         <>
           <span>Preview</span>
@@ -1016,6 +1259,30 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         </div>
       </div>
     );
+  } else if (format === "latex" && content === "spectrum") {
+    split = (
+      <div className="ds-export-split">
+        <figure className="ds-export-preview">
+          <div className="export-fp-preview">
+            {lyapunovRun && sys?.kind ? (
+              <SpectrumPreview res={lyapunovRun} kind={sys.kind} />
+            ) : (
+              <p className="ds-export-hint export-hint-flush">The Lyapunov run has not finished yet.</p>
+            )}
+          </div>
+          <figcaption className="ds-export-preview-cap">
+            <span>Preview</span>
+            <span>{plural(sys?.states.length ?? 0, "exponent")}</span>
+          </figcaption>
+        </figure>
+        <div className="ds-export-options">
+          <p className="ds-export-hint export-hint-flush">
+            Each exponent with its standard error over the blocks, as <code>\num{"{0.906 +- 0.004}"}</code> for siunitx;
+            the caption says how the run was made.
+          </p>
+        </div>
+      </div>
+    );
   } else if (format === "latex" && content === "fixedPoints") {
     const fps = state.portrait?.res.fixedPoints ?? [];
     split = (
@@ -1043,6 +1310,21 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
             />
           </fieldset>
         </div>
+      </div>
+    );
+  } else if (format === "csv" && chaos) {
+    const columns =
+      chaos === "lyapunov"
+        ? `${kind === "map" ? "n" : "t"}, ${(sys?.states ?? []).map((_, i) => `lambda_${i + 1}`).join(", ")}`
+        : `${names ? latexToPlain(names.x) : "r"}, n, ${names ? latexToPlain(names.y) : "x"}`;
+    split = (
+      <div className="ds-export-options export-csv-options">
+        <p className="ds-export-hint export-hint-flush">
+          Columns {columns};{" "}
+          {chaos === "lyapunov"
+            ? "one row per sampled renormalization, the last row the final estimate."
+            : `one row per kept iterate at each of the ${orbitCsvReq?.diagram.columns ?? 0} parameter values on screen.`}
+        </p>
       </div>
     );
   } else if (format === "csv") {
@@ -1113,13 +1395,16 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const contentHint =
     [
       space && contentReason.figure,
+      chaos === "lyapunov" && `Figure: ${contentReason.figure}.`,
+      chaos && compiles && `Fixed points: ${contentReason.fixedPoints}.`,
       contentReason.equations
         ? "Equations and Fixed points need equations that compile."
-        : contentReason.fixedPoints && "Fixed points: none, because the field changes with time.",
+        : !chaos && contentReason.fixedPoints && "Fixed points: none, because the field changes with time.",
     ]
       .filter(Boolean)
       .join(" ") || null;
   const figureContent = format === "svg" || format === "png" || (format === "latex" && content === "figure");
+  const csvWords = chaos === "lyapunov" ? "running estimates" : chaos === "orbit" ? "orbit diagram" : section ? "crossings" : "trajectories";
   const codeText =
     format === "csv"
       ? csvFiles && csvReady
@@ -1140,6 +1425,10 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ) : (
         "CSV"
       )
+    ) : content === "spectrum" ? (
+      <>
+        LaTeX, a <code>table</code> ready to paste
+      </>
     ) : content === "figure" ? (
       opts.standalone ? (
         "LaTeX, a standalone document"
@@ -1176,8 +1465,10 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                 ? `${name}, the equations as typed`
                 : format === "latex" && content === "fixedPoints"
                   ? `${name}, the fixed points in view`
-                  : format === "csv"
-                    ? `${name}, the ${section ? "crossings" : "trajectories"} as you see them now`
+                  : format === "latex" && content === "spectrum"
+                    ? `${name}, the Lyapunov spectrum`
+                    : format === "csv"
+                    ? `${name}, the ${csvWords} as you see ${chaos === "orbit" ? "it" : "them"} now`
                     : `${name}, ${viewWords}, as you see it now`}
             </p>
           </div>
@@ -1202,11 +1493,12 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                 ariaLabel="Content"
                 value={content}
                 describedBy={contentHint ? reasonId : undefined}
-                options={[
-                  { value: "figure", label: "Figure", disabled: !!contentReason.figure, title: space ? SPACE_LATEX_REFUSAL : undefined },
-                  { value: "equations", label: "Equations", disabled: !!contentReason.equations, title: contentReason.equations ?? undefined },
-                  { value: "fixedPoints", label: "Fixed points", disabled: !!contentReason.fixedPoints, title: contentReason.fixedPoints ?? undefined },
-                ]}
+                options={contents.map((c) => ({
+                  value: c,
+                  label: CONTENT_LABELS[c],
+                  disabled: !!contentReason[c],
+                  title: contentReason[c] ?? undefined,
+                }))}
                 onChange={(v) => update({ latexContent: v })}
               />
               {contentHint && (
@@ -1225,7 +1517,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
 
           {split}
 
-          {wantsFigure && figError && <Notice kind="error">{figError}</Notice>}
+          {wantsFigure && !chaos && figError && <Notice kind="error">{figError}</Notice>}
+          {wantsFigure && chaos === "orbit" && orbitError && <Notice kind="error">{orbitError}</Notice>}
           {snipError && showCode && <Notice kind="error">{snipError}</Notice>}
           {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 

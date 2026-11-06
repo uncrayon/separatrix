@@ -911,6 +911,95 @@ pub struct SaveCsvRequest {
     pub suggested_name: String,
 }
 
+/// Request of `export_lyapunov_latex` and `export_lyapunov_csv`: the
+/// Lyapunov view's run (the core measures it again, or reuses the last
+/// export's run of the same request) and the names to label it with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovExportRequest {
+    /// The view's own request.
+    pub run: LyapunovRequest,
+    /// The system's title (caption, label, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Request of `export_orbit_csv`: an orbit diagram (the core computes it
+/// again) and the names to label it with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitExportRequest {
+    /// The diagram's request: the screen's for the CSV, one column per
+    /// pixel of the PNG layer for a figure.
+    pub diagram: OrbitDiagramRequest,
+    /// The system's title (comments, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Request of `export_orbit_latex` (and the `figure` of
+/// `save_orbit_latex`): the diagram drawn in the view's ranges.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitFigureRequest {
+    /// The diagram and its names.
+    pub orbit: OrbitExportRequest,
+    /// The view's parameter range (across).
+    pub x_range: (f64, f64),
+    /// The view's state range (up).
+    pub y_range: (f64, f64),
+    /// Plot width in cm.
+    pub width_cm: f64,
+    /// Plot height in cm.
+    pub height_cm: f64,
+    /// Palette.
+    pub theme: ExportTheme,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// Request of `save_orbit_latex`: the `.tex` and its `.dat` or `.png` file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveOrbitFigureRequest {
+    /// The figure.
+    pub figure: OrbitFigureRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// Request of `save_csv_file`: one CSV with its `.meta.json`, as an export
+/// command returned it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCsvFileRequest {
+    /// The file and its metadata.
+    pub file: CsvFileOut,
+    /// The system's title (as the export command was given it).
+    pub title: String,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
 /// The kinds of text file `save_text_file` writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1031,6 +1120,11 @@ mod bindings {
             CsvResponse::decl(&cfg),
             SaveCsvRequest::decl(&cfg),
             TextExtension::decl(&cfg),
+            LyapunovExportRequest::decl(&cfg),
+            OrbitExportRequest::decl(&cfg),
+            OrbitFigureRequest::decl(&cfg),
+            SaveOrbitFigureRequest::decl(&cfg),
+            SaveCsvFileRequest::decl(&cfg),
             SaveTextRequest::decl(&cfg),
             ClipboardTextRequest::decl(&cfg),
         ];

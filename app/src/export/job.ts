@@ -13,6 +13,8 @@ import type {
   CsvRequest,
   ExportPortraitRequest,
   InputFormat,
+  LyapunovExportRequest,
+  OrbitExportRequest,
   PortraitRequest,
   PortraitResponse,
   TrajectoryTag,
@@ -24,8 +26,12 @@ import { viewAxisLabels } from "../math/format";
 import {
   COBWEB_GRAPH_SAMPLES,
   MAX_GRAPH_SAMPLES,
+  buildLyapunovJob,
+  buildOrbitJob,
   buildPortraitJob,
   isCobweb,
+  isLyapunov,
+  isOrbit,
   isReturnMap,
   isSection,
   isSpace,
@@ -174,7 +180,55 @@ export function exportSpaceFigure(
 export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   const sys = s.compiled;
   if (!sys || !sys.ok) return null;
-  return viewAxisLabels(s.view, sys.states, sys.kind);
+  const v = s.view;
+  if (isLyapunov(v)) return { x: sys.kind === "map" ? "n" : "t", y: "\\lambda" };
+  if (isOrbit(v)) return { x: sys.params[v.param]?.latex ?? "r", y: sys.states[v.yAxis.index]?.latex ?? "x" };
+  return viewAxisLabels(v, sys.states, sys.kind);
+}
+
+/** Which analysis view is shown, whose exports come from its own run instead of a portrait. */
+export function analysisKind(s: Pick<StudioSnapshot, "view">): "lyapunov" | "orbit" | null {
+  return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : null;
+}
+
+/** The names an export is labelled with: the system's title, where it comes from, its lines. */
+export interface ExportSource {
+  title: string;
+  sourceRef?: string;
+  lines: string[];
+  format: InputFormat;
+}
+
+/** The Lyapunov view's own run with the names to label it, or null when the view has nothing to run. */
+export function buildLyapunovExport(
+  s: Parameters<typeof buildLyapunovJob>[0],
+  source: ExportSource,
+): LyapunovExportRequest | null {
+  const job = buildLyapunovJob(s);
+  return job && { run: { ...job.body, requestId: 0 }, ...source };
+}
+
+/**
+ * Image pixels per CSS px an orbit diagram is computed at for a figure: one
+ * column per pixel of the PNG at its scale, of the SVG's embedded image at
+ * 2×, and of a LaTeX figure's 300-dpi layer.
+ */
+export function orbitFigureRatio(format: "latex" | "svg" | "png" | "csv", pngScale: number): number {
+  return format === "png" ? pngScale : format === "svg" ? 2 : 300 / 96;
+}
+
+/**
+ * The orbit view's diagram at `columns` columns across its range (the
+ * screen's own count for the CSV, a figure's for its image), with the
+ * names to label it, or null when the view has nothing to draw.
+ */
+export function buildOrbitExport(
+  s: Omit<Parameters<typeof buildOrbitJob>[0], "orbitColumns">,
+  source: ExportSource,
+  columns: number,
+): OrbitExportRequest | null {
+  const job = buildOrbitJob({ ...s, orbitColumns: columns });
+  return job && { diagram: { ...job.body, requestId: 0 }, ...source };
 }
 
 /** The screen's own request, with fixed points on (the fixed-point table). */

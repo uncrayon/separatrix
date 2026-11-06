@@ -5,7 +5,7 @@
 import type { ExportPalette } from "./theme";
 
 export type ExportFormat = "latex" | "svg" | "png" | "csv";
-export type LatexContent = "figure" | "equations" | "fixedPoints";
+export type LatexContent = "figure" | "spectrum" | "equations" | "fixedPoints";
 export type Notation = "dot" | "prime" | "leibniz";
 export type PngScale = 2 | 3 | 4;
 
@@ -100,7 +100,7 @@ export function readExportOptions(v: unknown): ExportOptions {
   const ids = Array.isArray(o.csvIcIds) && o.csvIcIds.every((x) => typeof x === "string") ? [...o.csvIcIds] : null;
   return {
     format: pick(o.format, ["latex", "svg", "png", "csv"], d.format),
-    latexContent: pick(o.latexContent, ["figure", "equations", "fixedPoints"], d.latexContent),
+    latexContent: pick(o.latexContent, ["figure", "spectrum", "equations", "fixedPoints"], d.latexContent),
     widthCm: inRange(o.widthCm, SIZE_MIN_CM, SIZE_MAX_CM, d.widthCm),
     heightCm: inRange(o.heightCm, SIZE_MIN_CM, SIZE_MAX_CM, d.heightCm),
     pngWidthPx: inRange(o.pngWidthPx, PNG_MIN_PX, PNG_MAX_PX, d.pngWidthPx, true),

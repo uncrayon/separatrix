@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
+  view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
+  as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,
+  `$\lambda_{1}$ & \num{0.906 +- 0.004}`, then Σλ against ⟨tr J⟩ and their difference. The error
+  is rounded to one significant digit (two when it starts with 1) and the value to the same place,
+  from the exact decimal value, so the text is the same on every platform. The caption names the
+  system and parameters, the integrator with its step or tolerances, the total time and the
+  transient, and the count and interval of the renormalizations. Its CSV is `t,lambda_1,…` with a
+  `.meta.json`, and its PNG and SVG are the view's plot. An orbit diagram's LaTeX figure has the
+  screen's frame and a dot per iterate up to 5,000; above that Save writes `<base>-points.png`, a
+  density image with one pixel column per parameter value under vector axes, and Copy keeps one
+  iterate in k. Its CSV is `r,n,x` for every finite iterate. Its SVG has vector axes with the
+  density as an embedded PNG. Figures ask the core for one column per pixel of their image (300
+  dpi for LaTeX). New commands: `export_lyapunov_latex`, `export_lyapunov_csv` (the core measures
+  the view's request again and keeps the last run), `export_orbit_latex`, `save_orbit_latex`,
+  `export_orbit_csv` and `save_csv_file`.
 - The orbit diagram (Strogatz §10.2, Figure 10.2.7): a new choice of the View control, Orbit, for
   maps with a parameter (disabled with the reason for a map without one). It sweeps a parameter,
   the first by default, over its slider's range, or over From and To in the inspector's Orbit

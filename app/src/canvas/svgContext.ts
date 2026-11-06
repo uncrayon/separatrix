@@ -382,6 +382,18 @@ export class SvgContext implements DrawContext, MathTextSink {
     );
   }
 
+  /** Unused: an image is always drawn pixel for pixel (`image-rendering: pixelated`). */
+  imageSmoothingEnabled = false;
+
+  /** A canvas (the orbit diagram's density) as an embedded PNG `data:` image. */
+  drawImage(image: CanvasImageSource, dx: number, dy: number, dw: number, dh: number): void {
+    if (!(typeof HTMLCanvasElement !== "undefined" && image instanceof HTMLCanvasElement)) return;
+    const a = this.st.globalAlpha;
+    this.body.push(
+      `<image x="${num(dx)}" y="${num(dy)}" width="${num(dw)}" height="${num(dh)}" preserveAspectRatio="none" style="image-rendering:pixelated"${this.opacity("opacity", a)} href="${image.toDataURL("image/png")}"/>`,
+    );
+  }
+
   /** The recorded drawing as a standalone SVG document. */
   toSvg(opts: SvgDocumentOptions): string {
     let open = this.st.groups;

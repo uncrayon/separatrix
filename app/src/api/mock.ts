@@ -18,12 +18,15 @@ import type {
   FigureLatexResponse,
   FixedPointOut,
   FixedPointsLatexRequest,
+  LyapunovExportRequest,
   LyapunovRequest,
   LyapunovResponse,
   NullclineOut,
   OpenedProject,
   OrbitDiagramRequest,
   OrbitDiagramResponse,
+  OrbitExportRequest,
+  OrbitFigureRequest,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
@@ -32,10 +35,12 @@ import type {
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
+  SaveCsvFileRequest,
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
   SaveFigureRequest,
+  SaveOrbitFigureRequest,
   SaveTextRequest,
   StateInfo,
   SystemKind,
@@ -48,6 +53,7 @@ import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
 import { MAX_SECTION_POINTS } from "./ipc.generated";
 import { METHODS } from "../state/methods";
+import { roundWithUncertainty } from "../state/model";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -1818,6 +1824,154 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
     files.push({ stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" });
   }
   return { files };
+}
+
+const mockSlug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "system";
+
+/** `export_lyapunov_latex`: the real table's rows and caption words, from the preview's own run. */
+export async function mockExportLyapunovLatex(req: LyapunovExportRequest): Promise<string> {
+  const sys = mockSystemOf(req.run.systemId);
+  const res = await mockLyapunov(req.run);
+  const cell = (v: number, u: number | undefined) => {
+    const r = roundWithUncertainty(v, u);
+    return r.error === null ? `\\num{${r.value}}` : `\\num{${r.value} +- ${r.error}}`;
+  };
+  const o = req.run.solver;
+  const how =
+    sys.kind === "map"
+      ? `the map iterated $${req.run.total}$ times after a transient of $${req.run.transient}$ iterates`
+      : `${METHODS[o.method].label.replace("–", "--")} with ${
+          METHODS[o.method].adaptive
+            ? `relative tolerance $${o.rtol}$ and absolute tolerance $${o.atol}$`
+            : `step $h = ${o.h}$`
+        }, total time $T = ${req.run.total}$ after a transient of $${req.run.transient}$`;
+  return [
+    `% Separatrix Lyapunov spectrum: ${req.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+    "\\begin{table}",
+    "\\centering",
+    "\\sisetup{uncertainty-mode = separate}",
+    `\\caption{Lyapunov spectrum of ${req.title}: ${how}, \\num{${res.renormalizations}} renormalizations every $\\tau = ${req.run.interval}$.}`,
+    "\\begin{tabular}{@{}ll@{}}",
+    "\\toprule",
+    "Exponent & Value \\\\",
+    "\\midrule",
+    ...res.exponents.map((v, i) => `$\\lambda_{${i + 1}}$ & ${cell(v, res.uncertainty[i])} \\\\`),
+    "\\midrule",
+    `$\\sum_i \\lambda_i$ & \\num{${Number(res.sum.toPrecision(6))}} \\\\`,
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\end{table}",
+    "",
+  ].join("\n");
+}
+
+/** `export_lyapunov_csv`: `t,lambda_1,…` from the preview's own run. */
+export async function mockExportLyapunovCsv(req: LyapunovExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.run.systemId);
+  const res = await mockLyapunov(req.run);
+  const n = res.exponents.length;
+  const header = [sys.kind === "map" ? "n" : "t", ...res.exponents.map((_, i) => `lambda_${i + 1}`)];
+  const rows = res.historyT.map((t, k) => [t, ...res.history.slice(k * n, (k + 1) * n)].map(String).join(","));
+  const stem = `${mockSlug(req.title)}-lyapunov`;
+  const meta = { format: "separatrix-lyapunov", format_version: 1, title: req.title, csv: `${stem}.csv`, columns: header, note: "Browser preview." };
+  return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
+}
+
+/** The finite iterates of a diagram as `[r, n, x]`. */
+function mockOrbitRows(req: OrbitExportRequest, res: OrbitDiagramResponse): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  const kept = req.diagram.kept;
+  res.r.forEach((r, j) => {
+    for (let k = 0; k < kept; k++) {
+      const x = res.x[j * kept + k];
+      if (x !== null && Number.isFinite(x)) out.push([r, req.diagram.transient + k, x]);
+    }
+  });
+  return out;
+}
+
+/** `export_orbit_csv`. */
+export async function mockExportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.diagram.systemId);
+  const res = await mockOrbitDiagram(req.diagram);
+  const header = [sys.params[req.diagram.param]?.name ?? "r", "n", sys.states[req.diagram.state]?.name ?? "x"];
+  const stem = `${mockSlug(req.title)}-orbit-diagram`;
+  const rows = mockOrbitRows(req, res).map((row) => row.map(String).join(","));
+  const meta = { format: "separatrix-orbit-diagram", format_version: 1, title: req.title, csv: `${stem}.csv`, columns: header, note: "Browser preview." };
+  return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
+}
+
+/** `export_orbit_latex` (inline) or, with a `base`, the saved figure: the 5,000-point rule as Rust applies it. */
+async function mockOrbitFigure(
+  req: OrbitFigureRequest,
+  base: string | null,
+): Promise<FigureLatexResponse & { files: string[] }> {
+  const res = await mockOrbitDiagram(req.orbit.diagram);
+  const [x0, x1] = req.xRange;
+  const [y0, y1] = req.yRange;
+  let pts = mockOrbitRows(req.orbit, res).filter(([r, , x]) => r >= x0 && r <= x1 && x >= y0 && x <= y1);
+  const notes: string[] = [];
+  const files: string[] = [];
+  let thinned = false;
+  let graphics = "";
+  const total = pts.length;
+  if (total > 5000) {
+    if (base !== null) {
+      files.push(`${base}-points.png`);
+      graphics = `\\addplot graphics[xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}] {\\sepxdir ${base}-points.png};`;
+      notes.push(`The iterates (${total} points) are drawn as a density PNG under vector axes.`);
+      pts = [];
+    } else {
+      const stride = Math.max(2, Math.ceil(total / 5000));
+      pts = pts.filter((_, i) => i % stride === 0);
+      thinned = true;
+      notes.push(`One iterate in ${stride} is kept so the copied figure stays under 5,000 points; Save… draws them all as an image.`);
+    }
+  }
+  const tex = [
+    `% Separatrix orbit diagram: ${req.orbit.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{pgfplots} \\pgfplotsset{compat=1.18} \\usetikzlibrary{calc}",
+    ...notes.map((n) => `% ${n}`),
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}]`,
+    ...(graphics ? [graphics] : []),
+    ...(pts.length ? [`\\addplot[only marks] coordinates {${pts.map(([r, , x]) => `(${r},${x})`).join(" ")}};`] : []),
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+    "",
+  ].join("\n");
+  return { tex, points: pts.length, thinned, notes, files };
+}
+
+export async function mockExportOrbitLatex(req: OrbitFigureRequest): Promise<FigureLatexResponse> {
+  const { tex, points, thinned, notes } = await mockOrbitFigure(req, null);
+  return { tex, points, thinned, notes };
+}
+
+export async function mockSaveOrbitLatex(req: SaveOrbitFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  const fig = await mockOrbitFigure(req.figure, mockSlug(name.replace(/\.tex$/i, "")));
+  mockSaved(name, fig.tex);
+  for (const f of fig.files) mockSaved(f, new Uint8Array([137, 80, 78, 71]));
+  return { names: [name, ...fig.files] };
+}
+
+export async function mockSaveCsvFile(req: SaveCsvFileRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "data", "csv").path);
+  if (chosen === null) return null;
+  const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
+  mockSaved(`${stem}.csv`, req.file.csv);
+  mockSaved(`${stem}.meta.json`, req.file.meta);
+  return { names: [`${stem}.csv`, `${stem}.meta.json`] };
 }
 
 function mockSaved(name: string, contents: string | Uint8Array): void {

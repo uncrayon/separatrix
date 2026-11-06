@@ -20,8 +20,9 @@ use separatrix_export::{
 
 use crate::ipc::{
     AxisRef, CsvFileOut, CsvRequest, CsvResponse, ExportPortraitRequest, ExportTheme,
-    FigureLatexRequest, FixedPointsLatexRequest, Notation, PortraitRequest, PortraitResponse,
-    SectionSpec, SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
+    FigureLatexRequest, FixedPointsLatexRequest, LyapunovExportRequest, LyapunovRequest,
+    LyapunovResponse, Notation, OrbitExportRequest, OrbitFigureRequest, PortraitRequest,
+    PortraitResponse, SectionSpec, SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
 };
 use crate::service;
 
@@ -37,10 +38,12 @@ pub fn figure_px(cm: f64) -> f64 {
 }
 
 /// The last export portrait, so the dialog's preview and its LaTeX for the
-/// same options share one computation.
+/// same options share one computation; and the last Lyapunov run, so its
+/// table, its CSV and their Save share one (a long run takes seconds).
 #[derive(Default)]
 pub struct ExportCache {
     last: Mutex<Option<(CacheKey, Arc<PortraitResponse>)>>,
+    lyapunov: Mutex<Option<(LyapunovRequest, Arc<LyapunovResponse>)>>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -66,6 +69,212 @@ impl ExportCache {
     fn put(&self, key: CacheKey, value: Arc<PortraitResponse>) {
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, value));
     }
+}
+
+/// [`service::compute_lyapunov`], or the last run of the same request
+/// (its `requestId` aside).
+pub fn lyapunov_run(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &LyapunovRequest,
+) -> Result<Arc<LyapunovResponse>, String> {
+    let mut key = req.clone();
+    key.request_id = 0;
+    let mut last = cache.lyapunov.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, v)) = last.as_ref() {
+        if *k == key {
+            return Ok(v.clone());
+        }
+    }
+    let out = Arc::new(service::compute_lyapunov(system, req)?);
+    *last = Some((key, out.clone()));
+    Ok(out)
+}
+
+/// What the export crate's Lyapunov table and CSV are built from.
+fn export_lyapunov(
+    req: &LyapunovRequest,
+    res: &LyapunovResponse,
+) -> separatrix_export::LyapunovRun {
+    let o = &req.solver;
+    separatrix_export::LyapunovRun {
+        spectrum: dyn_analysis::LyapunovSpectrum {
+            exponents: res.exponents.clone(),
+            uncertainty: res.uncertainty.clone(),
+            sum: res.sum,
+            trace_average: res.trace_average,
+            history_t: res.history_t.clone(),
+            history: res.history.clone(),
+            renormalizations: res.renormalizations,
+            status: res.status,
+            stats: res.stats,
+        },
+        x0: req.x0.clone(),
+        t0: req.t0,
+        transient: req.transient,
+        total: req.total,
+        interval: req.interval,
+        blocks: req.blocks,
+        solver: dyn_solve::SolverOptions {
+            method: o.method,
+            rtol: o.rtol,
+            atol: o.atol,
+            h: o.h,
+            h_max: o.h_max.unwrap_or(0.0),
+            max_steps: o.max_steps,
+        },
+    }
+}
+
+fn system_meta<'a>(
+    system: &CompiledSystem,
+    labels: &'a Labels,
+    title: &'a str,
+    source_ref: Option<&'a str>,
+    lines: &'a [String],
+    format: dyn_expr::InputFormat,
+) -> separatrix_export::SystemMeta<'a> {
+    let f: &dyn VectorField = system;
+    separatrix_export::SystemMeta {
+        kind: f.kind(),
+        labels,
+        title,
+        source_ref,
+        lines,
+        format,
+    }
+}
+
+/// The Lyapunov view's run as a booktabs table with siunitx uncertainties.
+pub fn lyapunov_latex(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &LyapunovExportRequest,
+) -> Result<String, String> {
+    let res = lyapunov_run(cache, system, &req.run)?;
+    let labels = Labels::from_info(&system.info, &req.run.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &req.title,
+        req.source_ref.as_deref(),
+        &req.lines,
+        req.format,
+    );
+    Ok(separatrix_export::lyapunov_latex(
+        &sys,
+        &export_lyapunov(&req.run, &res),
+    ))
+}
+
+/// The Lyapunov view's running estimates as a CSV and its `.meta.json`.
+pub fn lyapunov_csv(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &LyapunovExportRequest,
+) -> Result<CsvFileOut, String> {
+    let res = lyapunov_run(cache, system, &req.run)?;
+    let labels = Labels::from_info(&system.info, &req.run.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &req.title,
+        req.source_ref.as_deref(),
+        &req.lines,
+        req.format,
+    );
+    let f = separatrix_export::csv::lyapunov(&sys, &export_lyapunov(&req.run, &res), APP_VERSION);
+    Ok(CsvFileOut {
+        stem: f.stem,
+        csv: f.csv,
+        meta: f.meta,
+    })
+}
+
+/// [`service::compute_orbit_diagram`] as the export crate's run.
+fn orbit_run(
+    system: &CompiledSystem,
+    req: &crate::ipc::OrbitDiagramRequest,
+) -> Result<separatrix_export::OrbitRun, String> {
+    let res = service::compute_orbit_diagram(system, req)?;
+    Ok(separatrix_export::OrbitRun {
+        param: req.param,
+        state: req.state,
+        x0: req.x0.clone(),
+        transient: req.transient,
+        diagram: dyn_analysis::OrbitDiagram {
+            r: res.r,
+            x: res.x,
+            kept: req.kept,
+        },
+    })
+}
+
+/// An orbit diagram as a pgfplots figure: inline dots for Copy, or a
+/// `.dat` (or, above 5,000 points, the density PNG) for Save.
+pub fn orbit_latex(
+    system: &CompiledSystem,
+    req: &OrbitFigureRequest,
+    placement: Placement,
+) -> Result<separatrix_export::FigureOutput, String> {
+    if !(req.width_cm.is_finite() && req.height_cm.is_finite())
+        || req.width_cm <= 0.0
+        || req.height_cm <= 0.0
+    {
+        return Err(format!(
+            "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
+            req.width_cm, req.height_cm
+        ));
+    }
+    let o = &req.orbit;
+    let run = orbit_run(system, &o.diagram)?;
+    let labels = Labels::from_info(&system.info, &o.diagram.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &o.title,
+        o.source_ref.as_deref(),
+        &o.lines,
+        o.format,
+    );
+    let palette = palette(req.theme)?;
+    Ok(separatrix_export::orbit_figure(
+        &separatrix_export::OrbitFigureInput {
+            sys: &sys,
+            run: &run,
+            x_range: req.x_range,
+            y_range: req.y_range,
+            width_cm: req.width_cm,
+            height_cm: req.height_cm,
+            theme: match req.theme {
+                ExportTheme::Light => separatrix_export::Theme::Light,
+                ExportTheme::Dark => separatrix_export::Theme::Dark,
+            },
+            palette: &palette,
+            placement,
+            standalone: req.standalone,
+        },
+    ))
+}
+
+/// An orbit diagram as rows `r,n,x` and its `.meta.json`.
+pub fn orbit_csv(system: &CompiledSystem, req: &OrbitExportRequest) -> Result<CsvFileOut, String> {
+    let run = orbit_run(system, &req.diagram)?;
+    let labels = Labels::from_info(&system.info, &req.diagram.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &req.title,
+        req.source_ref.as_deref(),
+        &req.lines,
+        req.format,
+    );
+    let f = separatrix_export::csv::orbit(&sys, &run, APP_VERSION);
+    Ok(CsvFileOut {
+        stem: f.stem,
+        csv: f.csv,
+        meta: f.meta,
+    })
 }
 
 fn to_axis(a: AxisRef) -> separatrix_export::Axis {
@@ -1026,5 +1235,95 @@ mod tests {
         let dark = palette(ExportTheme::Dark).unwrap();
         assert_eq!(light.traj.len(), 7);
         assert_ne!(light.bg, dark.bg);
+    }
+
+    #[test]
+    fn chaos_exports_go_through_the_core_and_reuse_a_long_run() {
+        let (store, id, _) = logistic();
+        let system = store.get(id).unwrap();
+        let cache = ExportCache::new();
+        let run = LyapunovRequest {
+            request_id: 7,
+            system_id: id,
+            params: vec![4.0],
+            x0: vec![0.3],
+            t0: 0.0,
+            transient: 100.0,
+            total: 10_000.0,
+            interval: 1.0,
+            blocks: 10,
+            solver: request(id).solver,
+        };
+        let req = LyapunovExportRequest {
+            run: run.clone(),
+            title: "Logistic map".into(),
+            source_ref: None,
+            lines: vec!["x_{n+1}=rx_n\\left(1-x_n\\right)".into()],
+            format: InputFormat::Latex,
+        };
+        let tex = lyapunov_latex(&cache, &system, &req).unwrap();
+        assert!(tex.contains("$\\lambda_{1}$ & \\num{0.69"), "{tex}");
+        assert!(tex.contains("+-"), "{tex}");
+        assert!(tex.contains("the map iterated $10000$ times"), "{tex}");
+        let first = lyapunov_run(&cache, &system, &run).unwrap();
+        let again = lyapunov_run(
+            &cache,
+            &system,
+            &LyapunovRequest {
+                request_id: 8,
+                ..run.clone()
+            },
+        )
+        .unwrap();
+        assert!(Arc::ptr_eq(&first, &again), "the same run is measured once");
+        let csv = lyapunov_csv(&cache, &system, &req).unwrap();
+        assert_eq!(csv.stem, "logistic-map-lyapunov");
+        assert_eq!(csv.csv.lines().next(), Some("n,lambda_1"));
+
+        let diagram = crate::ipc::OrbitDiagramRequest {
+            request_id: 1,
+            system_id: id,
+            params: vec![2.8],
+            param: 0,
+            range: (2.8, 4.0),
+            columns: 300,
+            state: 0,
+            x0: vec![0.5],
+            transient: 500,
+            kept: 50,
+            doublings: false,
+        };
+        let orbit = OrbitExportRequest {
+            diagram,
+            title: "Logistic map".into(),
+            source_ref: None,
+            lines: req.lines.clone(),
+            format: InputFormat::Latex,
+        };
+        let csv = orbit_csv(&system, &orbit).unwrap();
+        assert_eq!(csv.csv.lines().count(), 1 + 300 * 50);
+        assert!(csv.csv.starts_with("r,n,x\n2.8,500,"));
+        let fig = OrbitFigureRequest {
+            orbit,
+            x_range: (2.798, 4.002),
+            y_range: (0.0, 1.0),
+            width_cm: 8.0,
+            height_cm: 6.0,
+            theme: ExportTheme::Light,
+            standalone: false,
+        };
+        let saved = orbit_latex(
+            &system,
+            &fig,
+            Placement::External {
+                base: "orbit".into(),
+            },
+        )
+        .unwrap();
+        assert!(saved.tex.contains("\\addplot graphics"), "{}", saved.tex);
+        assert_eq!(saved.files.len(), 1);
+        assert_eq!(saved.files[0].name, "orbit-points.png");
+        let copied = orbit_latex(&system, &fig, Placement::Inline).unwrap();
+        assert!(copied.thinned && copied.points <= 5000);
     }
 }

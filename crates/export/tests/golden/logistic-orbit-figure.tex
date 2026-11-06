@@ -1,0 +1,71 @@
+% Separatrix orbit diagram: Logistic map (Strogatz §10.2)
+%   x_{n+1} = r*x_n*(1 - x_n)
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{calc}
+% Orbit diagram: r from 2.8 to 3.7 in 10 values; x after the first 100 iterates, 4 kept for each.
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=2.75, xmax=3.75, ymin=0, ymax=1,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={3,3.5}, ytick={0,0.5,1}, xticklabels={}, yticklabels={},
+  minor xtick={2.75,3.25,3.75}, minor ytick={0.25,0.75},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=bottom, x axis line style={draw=none}, axis y line*=left, y axis line style={draw=none}
+]
+\addplot[sepxfp, only marks, mark=*, mark size=1.95bp, mark options={draw opacity=0, fill=sepxfp}] table[row sep=\\]{
+x y\\
+2.8 0.6429\\
+2.8 0.6429\\
+2.8 0.6429\\
+2.8 0.6429\\
+2.9 0.6552\\
+2.9 0.6552\\
+2.9 0.6552\\
+2.9 0.6552\\
+3 0.6886\\
+3 0.6433\\
+3 0.6884\\
+3 0.6435\\
+3.1 0.7646\\
+3.1 0.558\\
+3.1 0.7646\\
+3.1 0.558\\
+3.2 0.7995\\
+3.2 0.513\\
+3.2 0.7995\\
+3.2 0.513\\
+3.3 0.8236\\
+3.3 0.4794\\
+3.3 0.8236\\
+3.3 0.4794\\
+3.4 0.8422\\
+3.4 0.452\\
+3.4 0.8422\\
+3.4 0.452\\
+3.5 0.8269\\
+3.5 0.5009\\
+3.5 0.875\\
+3.5 0.3828\\
+3.6 0.8997\\
+3.6 0.3249\\
+3.6 0.7897\\
+3.6 0.5979\\
+3.7 0.4814\\
+3.7 0.9237\\
+3.7 0.2607\\
+3.7 0.7131\\
+};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(56.693bp,-162.954bp)$) {$3$};
+\node[anchor=south, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(170.079bp,-162.954bp)$) {$3.5$};
+\node[anchor=west, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(7.125bp,-85.039bp)$) {$0.5$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-167.079bp)$) {$r$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(6bp,-4.5bp)$) {$x$};
+\end{axis}
+\end{tikzpicture}

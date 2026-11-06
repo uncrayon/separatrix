@@ -16,7 +16,7 @@ A desktop app for exploring dynamical systems, built for students and professors
 - Continuation of equilibria (fold, Hopf, flip, Neimark–Sacker).
 - Symplectic integration for Hamiltonian systems, and an implicit solver for stiff ones, suggested when Dormand–Prince's steps look stiff.
 - A gallery of 31 examples from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), grouped by chapter, each citing the section it comes from (the opening slope field cites none). Every chapter 2–8 example reproduces a result of the book, checked by the Strogatz gate below.
-- Export to LaTeX, PNG, SVG and CSV. Shareable project files.
+- Export to LaTeX, PNG, SVG and CSV, the Lyapunov spectrum as a table with siunitx uncertainties and the orbit diagram as a figure. Shareable project files.
 - Windows, macOS and Linux. Works offline.
 
 ## Layout

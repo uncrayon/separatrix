@@ -7,9 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use dyn_analysis::Classification;
+pub use dyn_analysis::{Classification, LyapunovSpectrum, OrbitDiagram};
 pub use dyn_core::SystemKind;
-pub use dyn_solve::{Direction, Status};
+pub use dyn_expr::InputFormat;
+pub use dyn_solve::{Direction, Method, SolverOptions, Status};
 
 use crate::num::shortest;
 
@@ -313,6 +314,62 @@ impl Labels {
                 .collect(),
         }
     }
+}
+
+/// What every export of a system is labelled with: its kind, names and
+/// parameter values, and where it comes from.
+#[derive(Debug, Clone, Copy)]
+pub struct SystemMeta<'a> {
+    /// Flow or map.
+    pub kind: SystemKind,
+    /// State and parameter names, with the parameter values.
+    pub labels: &'a Labels,
+    /// The system's title (captions, labels, file names).
+    pub title: &'a str,
+    /// Where the system comes from (`"Strogatz §9.3"`).
+    pub source_ref: Option<&'a str>,
+    /// The lines as typed, for the comments and the metadata.
+    pub lines: &'a [String],
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// A measured Lyapunov spectrum and how it was measured
+/// (`dyn_analysis::lyapunov_spectrum`'s start and options).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LyapunovRun {
+    /// The result.
+    pub spectrum: LyapunovSpectrum,
+    /// The start point.
+    pub x0: Vec<f64>,
+    /// The start time (0 for maps).
+    pub t0: f64,
+    /// Time (flow) or iterates (map) run before measuring.
+    pub transient: f64,
+    /// Time or iterates measured.
+    pub total: f64,
+    /// Time or iterates between two renormalizations.
+    pub interval: f64,
+    /// Blocks the uncertainty is taken over.
+    pub blocks: usize,
+    /// The flow's integrator (a map is iterated and ignores it).
+    pub solver: SolverOptions,
+}
+
+/// An orbit diagram: the computed columns and how they were computed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrbitRun {
+    /// Index of the swept parameter in [`Labels::params`].
+    pub param: usize,
+    /// Index of the state recorded.
+    pub state: usize,
+    /// The start point of every column.
+    pub x0: Vec<f64>,
+    /// Iterates dropped before the kept ones: column `j`'s iterates are
+    /// `x_T … x_{T+kept−1}`.
+    pub transient: usize,
+    /// The columns.
+    pub diagram: OrbitDiagram,
 }
 
 /// The export's colour theme.
