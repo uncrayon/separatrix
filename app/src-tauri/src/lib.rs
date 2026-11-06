@@ -908,6 +908,7 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
         true,
         Some("CmdOrCtrl+Q"),
     )?;
+    // Title Case, as macOS menus are; the in-app button keeps the brand's sentence case.
     let check_updates = MenuItem::with_id(
         app,
         CHECK_UPDATES_MENU_ID,
