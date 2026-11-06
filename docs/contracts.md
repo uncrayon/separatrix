@@ -513,8 +513,9 @@ saddle's real pair `λ, −λ` is never a Hopf point), `det(D f^k + I)` (PD) and
 over complex pairs minus 1 (NS). LP and BP apply to flows and maps, H to flows, PD and NS to maps.
 A step is kept only when its change in the unstable count is the jump of the one test that changed
 sign, or zero when none did; otherwise it is halved, so a bifurcation between two points is never
-skipped. A sign change is located by bisection in arclength, with the corrector at each midpoint,
-to `|Δp| ≤ 1e−13 (1 + |p|)`, and the located point is inserted into `points` at `index`. At a
+skipped. A sign change is located by bisection to `|Δp| ≤ 1e−13 (1 + |p|)`, each midpoint
+predicted from the bracket's lower end along its own tangent and corrected there (not on the
+step's secant, whose corrector can land on the other branch next to a branch point), and the located point is inserted into `points` at `index`. At a
 special point the critical eigenvalues count as neutral: it is not `stable`, and its `unstable`
 count is the smaller of its two sides'.
 
@@ -539,8 +540,10 @@ kernel there is spanned by the old tangent and `(v, 0)` (`v` the eigenvector of 
 point is corrected on the hyperplane through `z* + h d` orthogonal to `d`, with `h = |ds|` (clamped
 to `[ds_min, ds_max]`). That hyperplane is parallel to the old tangent, so every point of it lies
 `h` from the old branch's tangent line and the correction cannot fall back onto the old branch to
-first order. `h` is halved up to 8 times when Newton's method fails there or the point lies outside
-`range`; then the branch continues as `continue_branch` does, away from `at`. `d` is oriented so
+first order. `h` is halved up to 8 times when Newton's method fails there, the point lies outside
+`range`, it lies more than `2h` from `at` (the new branch crosses the hyperplane at `h / cos θ`,
+`θ` its angle to `d`, so up to 60°), or, after a flip of `f^k`, `f^k` already fixes it to
+`1e−6 (1 + |z|∞)` (a point of the old cycle, which is also a fixed point of `f^{2k}`); then the branch continues as `continue_branch` does, away from `at`. `d` is oriented so
 that its largest component is positive for `ds > 0` and negative for `ds < 0`, which picks one half
 of the new branch (`x > 0` or `x < 0` of a pitchfork, either point of the 2-cycle). The branch
 starts at `at` itself, neutral (not `stable`, with the unstable count of the first new point), so
