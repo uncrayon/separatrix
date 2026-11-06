@@ -911,8 +911,8 @@ id: string,
  * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
  * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
  * `"continuation"` for a branch plot of fixed points against a
- * parameter (see `continuation`); absent for the phase plane and the time series, which the axes tell
- * apart.
+ * parameter (see `continuation`); absent for the phase plane and the
+ * time series, which the axes tell apart.
  */
 kind?: string, 
 /**
