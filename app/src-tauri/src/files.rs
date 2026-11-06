@@ -114,8 +114,24 @@ impl RecentList {
     }
 }
 
+/// `path` canonicalized, for de-duplication and for display: the gallery
+/// and the window title show it, so Windows' `\\?\C:\` verbatim prefix
+/// is dropped.
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    path.canonicalize()
+        .map(|c| without_verbatim_prefix(&c))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// `\\?\C:\dir\a.sepx` → `C:\dir\a.sepx`; any other path (a verbatim
+/// UNC path included) is kept as it is.
+fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    match path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if matches!(rest.as_bytes(), [d, b':', b'\\', ..] if d.is_ascii_alphabetic()) => {
+            PathBuf::from(rest)
+        }
+        _ => path.to_path_buf(),
+    }
 }
 
 fn save_recent(file: &Path, list: &MutexGuard<'_, RecentList>) -> std::io::Result<()> {
@@ -483,6 +499,30 @@ mod tests {
             recent(&["/w/a.sepx"]),
             "unknown keys are ignored"
         );
+    }
+
+    #[test]
+    fn a_windows_verbatim_drive_prefix_is_dropped() {
+        let cases = [
+            (
+                r"\\?\C:\Users\ada\pendulum.sepx",
+                r"C:\Users\ada\pendulum.sepx",
+            ),
+            (r"\\?\d:\x.sepx", r"d:\x.sepx"),
+            (
+                r"\\?\UNC\server\share\x.sepx",
+                r"\\?\UNC\server\share\x.sepx",
+            ),
+            (r"C:\plain.sepx", r"C:\plain.sepx"),
+            ("/home/ada/pendulum.sepx", "/home/ada/pendulum.sepx"),
+        ];
+        for (given, want) in cases {
+            assert_eq!(
+                without_verbatim_prefix(Path::new(given)),
+                PathBuf::from(want),
+                "{given}"
+            );
+        }
     }
 
     #[test]
