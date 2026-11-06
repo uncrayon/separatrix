@@ -127,6 +127,11 @@ test("nothing is asked for without a start point, outside the view, or with sett
   assert.equal(bad({ interval: 2.5 }, "map"), null, "a map renormalizes after whole iterates");
   assert.equal(model.lyapunovSettingsError({ transient: 0, total: 10, interval: 1, blocks: 10 }, "map"), null);
   assert.equal(model.lyapunovSettingsError({ transient: 0, total: 10, interval: 1, blocks: 11 }, "map").field, "blocks");
+  assert.equal(
+    model.lyapunovSettingsError({ transient: 1e12, total: 1e3, interval: 1, blocks: 10 }, "map").field,
+    "transient",
+    "a map's transient is iterated too, so it counts toward the iterate budget",
+  );
 });
 
 test("the Lyapunov view asks the core for no portrait", () => {

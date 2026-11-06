@@ -6,6 +6,7 @@ use dyn_analysis::{Axis, Plane};
 use dyn_core::{SystemKind, VectorField};
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
+use separatrix_project::ORBIT_TRANSIENT_MAX;
 
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
@@ -25,6 +26,9 @@ pub const MAX_ITERATES: usize = 1_000_000;
 pub const MAX_SECTION_POINTS: usize = 100_000;
 /// Most QR steps one `compute_lyapunov` request may ask for (`total / interval`).
 pub const MAX_RENORMALIZATIONS: usize = 10_000_000;
+/// Most iterates (`transient + total`) one `compute_lyapunov` request on a
+/// map may ask for; a flow is bounded by `solver.max_steps` instead.
+pub const MAX_LYAPUNOV_ITERATES: usize = 100_000_000;
 /// Running-estimate samples returned by `compute_lyapunov`.
 pub const LYAPUNOV_HISTORY: usize = 2000;
 
@@ -378,6 +382,11 @@ fn validate_orbit_diagram(f: &dyn VectorField, req: &OrbitDiagramRequest) -> Res
             "The diagram needs 2 to {MAX_ORBIT_COLUMNS} parameter values."
         ));
     }
+    if req.transient > ORBIT_TRANSIENT_MAX as usize {
+        return Err(format!(
+            "The transient can be at most {ORBIT_TRANSIENT_MAX} iterates."
+        ));
+    }
     if req.kept == 0 {
         return Err("Keep at least one iterate per parameter value.".into());
     }
@@ -426,6 +435,13 @@ fn validate_lyapunov(f: &dyn VectorField, req: &LyapunovRequest) -> Result<(), S
     }
     if !(req.total > 0.0 && req.total.is_finite()) {
         return Err(format!("The {span} must be a positive number."));
+    }
+    if is_map && req.transient.round() + req.total.round() > MAX_LYAPUNOV_ITERATES as f64 {
+        return Err(format!(
+            "That is {:.0} iterates; at most {MAX_LYAPUNOV_ITERATES} fit in one run. \
+             Shorten the transient or the number of iterates.",
+            req.transient.round() + req.total.round()
+        ));
     }
     if !(req.interval > 0.0 && req.interval.is_finite()) || (is_map && req.interval < 0.5) {
         return Err(format!("The {interval} must be a positive number."));
@@ -2145,6 +2161,14 @@ mod tests {
                 ..ok.clone()
             },
             OrbitDiagramRequest {
+                transient: ORBIT_TRANSIENT_MAX as usize + 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                transient: usize::MAX,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
                 kept: MAX_ORBIT_POINTS / MAX_ORBIT_COLUMNS + 1,
                 ..at_the_limit.clone()
             },
@@ -2444,6 +2468,31 @@ mod tests {
             },
             ..ok.clone()
         };
+        let henon = compile_src(&store, "x_{n+1}=1-ax_n^2+y_n\ny_{n+1}=bx_n");
+        let henon = store.get(henon).unwrap();
+        let map = LyapunovRequest {
+            params: vec![1.4, 0.3],
+            x0: vec![0.1, 0.1],
+            transient: 1e3,
+            total: 1e3,
+            interval: 1.0,
+            ..ok.clone()
+        };
+        assert!(compute_lyapunov(&henon, &map).is_ok());
+        assert_eq!(
+            compute_lyapunov(
+                &henon,
+                &LyapunovRequest {
+                    transient: 1e12,
+                    ..map.clone()
+                }
+            )
+            .unwrap_err(),
+            format!(
+                "That is 1000000001000 iterates; at most {MAX_LYAPUNOV_ITERATES} fit in one run. \
+                 Shorten the transient or the number of iterates."
+            )
+        );
         assert_eq!(
             compute_lyapunov(&system, &leapfrog).unwrap_err(),
             "A Lyapunov run integrates the variational equations, which Störmer–Verlet cannot \

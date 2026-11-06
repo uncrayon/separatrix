@@ -23,6 +23,7 @@ import {
   DEFAULT_CAMERA,
   LYAPUNOV_MISFIT,
   MAX_ORBIT_COLUMNS,
+  MAX_LYAPUNOV_ITERATES,
   MAX_RENORMALIZATIONS,
   ORBIT_MAX_KEPT,
   ORBIT_MAX_TRANSIENT,
@@ -433,6 +434,8 @@ export function lyapunovSettingsError(
     return { field: "transient", message: map ? "Must be a whole number, 0 or more" : "Must be 0 or more" };
   if (!(Number.isFinite(s.total) && s.total > 0 && whole(s.total)))
     return { field: "total", message: map ? "Must be a whole number above 0" : "Must be above 0" };
+  if (map && s.transient + s.total > MAX_LYAPUNOV_ITERATES)
+    return { field: "transient", message: `Transient and iterates together at most ${MAX_LYAPUNOV_ITERATES.toLocaleString("en-US")}` };
   if (!(Number.isFinite(s.interval) && s.interval > 0 && whole(s.interval)))
     return { field: "interval", message: map ? "Must be a whole number above 0" : "Must be above 0" };
   const k = renormalizations(s, kind);

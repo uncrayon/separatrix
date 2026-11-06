@@ -491,6 +491,7 @@ t0: number,
 transient: number, 
 /**
  * Time (flow) or iterates (map) measured after the transient, `> 0`.
+ * For a map, `transient + total` is at most `MAX_LYAPUNOV_ITERATES`.
  */
 total: number, 
 /**
@@ -1257,6 +1258,8 @@ text: string, };
 export const MAX_SECTION_POINTS = 100000;
 
 export const MAX_RENORMALIZATIONS = 10000000;
+
+export const MAX_LYAPUNOV_ITERATES = 100000000;
 
 export const MAX_ORBIT_COLUMNS = 4096;
 

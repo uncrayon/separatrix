@@ -438,6 +438,7 @@ pub struct LyapunovRequest {
     /// Time (flow) or iterates (map) run before measuring, `>= 0`.
     pub transient: f64,
     /// Time (flow) or iterates (map) measured after the transient, `> 0`.
+    /// For a map, `transient + total` is at most `MAX_LYAPUNOV_ITERATES`.
     pub total: f64,
     /// Flow: time `τ` between QR steps. Map: iterates per QR step. `> 0`,
     /// and `total / interval` at most `MAX_RENORMALIZATIONS`.
@@ -1144,6 +1145,10 @@ mod bindings {
             (
                 "MAX_RENORMALIZATIONS",
                 crate::service::MAX_RENORMALIZATIONS.to_string(),
+            ),
+            (
+                "MAX_LYAPUNOV_ITERATES",
+                crate::service::MAX_LYAPUNOV_ITERATES.to_string(),
             ),
             ("MAX_ORBIT_COLUMNS", MAX_ORBIT_COLUMNS.to_string()),
             (
