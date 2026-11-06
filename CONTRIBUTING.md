@@ -133,6 +133,18 @@ prints PASS or FAIL for each release requirement, including the three gates, and
 number of FAIL rows. `--skip-gates` skips the gates for a quick run. The owner's remaining steps
 are in [docs/release-checklist.md](docs/release-checklist.md).
 
+To check the Linux packages the way a professor gets them, run
+
+```sh
+bash scripts/smoke/linux-bundle.sh
+```
+
+It builds the .deb, .rpm and AppImage, names them and checks `SHA256SUMS.txt` with the release
+scripts, installs and removes the .deb, then starts the AppImage under Xvfb and opens one project by
+drag-and-drop and another with Open…. It needs 3 GB free, Xvfb, openbox, xdotool, ImageMagick,
+python-xlib, rpm, and root or sudo for `dpkg`. Screenshots land in `target/smoke-shots`, and the
+packages are deleted at the end.
+
 To refresh the user guide's screenshots, build the app with its bundled interface and run the
 screenshot script. It needs Xvfb and ImageMagick.
 
