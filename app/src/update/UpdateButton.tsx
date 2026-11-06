@@ -4,7 +4,8 @@ import { checkForUpdate, installUpdate, listenUpdateEvents, startUpdateCheck } f
 import { errorText } from "../project/ipc";
 import { initialUpdateState, updateMessage, updateReducer } from "./state";
 
-export function UpdateButton() {
+/** `beforeInstall` resolves true once unsaved work may be dropped (the document's save question). */
+export function UpdateButton({ beforeInstall }: { beforeInstall: () => Promise<boolean> }) {
   const [state, dispatch] = useReducer(updateReducer, initialUpdateState);
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -46,7 +47,8 @@ export function UpdateButton() {
     return () => window.removeEventListener("pointerdown", close);
   }, [open]);
 
-  const install = () => {
+  const install = async () => {
+    if (!(await beforeInstall())) return;
     dispatch({ type: "install" });
     installUpdate().catch((err) => dispatch({ type: "installFailed", message: errorText(err) }));
   };
@@ -86,7 +88,7 @@ export function UpdateButton() {
               {updateMessage(state)}
             </p>
             {available && (
-              <button type="button" className="ds-button ds-button--primary ds-button--sm" onClick={install}>
+              <button type="button" className="ds-button ds-button--primary ds-button--sm" onClick={() => void install()}>
                 Install and restart
               </button>
             )}

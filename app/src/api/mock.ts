@@ -1818,6 +1818,8 @@ export interface SepxMock {
   launchFiles: string[];
   recent?: string[];
   update?: UpdateCheck;
+  /** How many times Install and restart reached the backend. */
+  installs?: number;
   /** The last text copied. */
   clipboardText?: string;
   /** Size of the last image copied, in bytes. */
@@ -1941,7 +1943,9 @@ export async function mockCheckForUpdate(): Promise<UpdateCheck> {
 }
 
 export async function mockInstallUpdate(): Promise<void> {
-  throw new Error("Updates are off in this build.");
+  const m = sepxMock();
+  m.installs = (m.installs ?? 0) + 1;
+  if (m.update?.kind !== "available") throw new Error("Updates are off in this build.");
 }
 
 export async function mockSetDocumentState(req: DocumentStateRequest): Promise<void> {

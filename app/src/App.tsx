@@ -227,7 +227,7 @@ export default function App() {
           </main>
           <Inspector state={state} actions={actions} />
         </div>
-        <StatusBar state={state} actions={actions} />
+        <StatusBar state={state} actions={actions} beforeUpdate={doc.guard} />
       </div>
       {/* Outside `.app`, which is inert under a dialog: always there, so a
           new message is announced (errors assertively). */}

@@ -78,3 +78,46 @@ test("up to date, and a failed check, in plain words", async () => {
     }
   }
 });
+
+test("Install and restart asks about unsaved changes first; Cancel installs nothing", async () => {
+  const { browser, page } = await open({ kind: "available", version: "1.0.1", notes: null, date: null });
+  try {
+    const value = page.getByRole("textbox", { name: "Value of mu" });
+    await value.click();
+    await value.fill("2.75");
+    await value.press("Enter");
+    await page.waitForFunction(() => window.__sepxMock.document.dirty);
+    const installs = () => page.evaluate(() => window.__sepxMock.installs ?? 0);
+    const confirm = page.getByRole("alertdialog");
+
+    await versionButton(page).click();
+    await panel(page).getByRole("button", { name: "Install and restart" }).click();
+    await assert.doesNotReject(confirm.waitFor(), "the save question appears");
+    assert.match(await confirm.textContent(), /Save changes to “Van der Pol/);
+    assert.equal(await installs(), 0, "nothing installs while the question is open");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    await confirm.waitFor({ state: "detached" });
+    await page.waitForTimeout(200);
+    assert.equal(await installs(), 0, "Cancel installs nothing");
+    assert.equal(await page.evaluate(() => window.__sepxMock.document.dirty), true, "the edit is still there");
+
+    if (!(await panel(page).isVisible())) await page.locator("[data-update-button]").click();
+    await panel(page).getByRole("button", { name: "Install and restart" }).click();
+    await confirm.getByRole("button", { name: "Don't save" }).click();
+    await page.waitForFunction(() => window.__sepxMock.installs === 1);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Install and restart on a saved document installs without asking", async () => {
+  const { browser, page } = await open({ kind: "available", version: "1.0.1", notes: null, date: null });
+  try {
+    await versionButton(page).click();
+    await panel(page).getByRole("button", { name: "Install and restart" }).click();
+    await page.waitForFunction(() => window.__sepxMock.installs === 1);
+    await assert.doesNotReject(panel(page).getByText("Installing Separatrix 1.0.1…", { exact: true }).waitFor());
+  } finally {
+    await browser.close();
+  }
+});
