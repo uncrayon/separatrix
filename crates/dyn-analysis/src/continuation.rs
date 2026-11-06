@@ -16,12 +16,19 @@
 //!
 //! with the exact Jacobians of the field ([`VectorField::jacobian`] and
 //! [`VectorField::param_jacobian`]).
+//!
+//! Special points come from one table of test functions, [`DETECTORS`],
+//! each of which changes sign at its bifurcation, as in BifurcationKit.jl's
+//! event detection. A step is accepted only if its change in the unstable
+//! count is the jump of the one test that changed sign, or zero when none
+//! did; the sign change is then located by bisection in arclength.
 
 use std::f64::consts::PI;
 
 use dyn_core::{SystemKind, VectorField};
 
-use crate::linalg::{eigenvalues, lu_solve};
+use crate::eigvec::eigenvectors;
+use crate::linalg::{eigenvalues, lu_det, lu_solve};
 
 /// Newton iterations allowed per correction.
 const MAX_NEWTON: usize = 10;
@@ -33,6 +40,15 @@ const FAST: usize = 3;
 /// A correction in more iterations than this halves the next step.
 const SLOW: usize = 6;
 const GROW: f64 = 1.5;
+/// A step may reach this multiple of the predicted arclength `s*` to the
+/// next crossing of the stability boundary. Up to 2 it never steps over
+/// both crossings of a dip `d(s) = c (s − s₁)(s − s₂)`: from `L` before
+/// `s₁`, `s* = L (L + Δ) / (2L + Δ)` and `2 s* < L + Δ`. Above 1 the step
+/// lands past a near crossing rather than creeping up to it in halving
+/// steps, which a factor of 1/2 does.
+const PROXIMITY: f64 = 1.5;
+/// Bisection steps allowed to locate a special point.
+const MAX_BISECTION: usize = 200;
 
 /// How to follow a branch.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,9 +88,12 @@ pub struct BranchPoint {
     pub tangent: Vec<f64>,
     /// Eigenvalues `(re, im)` of `J` (flow) or `D f^k` (map).
     pub eigenvalues: Vec<(f64, f64)>,
-    /// Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map).
+    /// Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map). At a special
+    /// point the critical eigenvalues count as neutral, so it is the smaller
+    /// count of its two sides.
     pub unstable: usize,
-    /// Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map).
+    /// Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map). `false`
+    /// at a special point.
     pub stable: bool,
 }
 
@@ -94,10 +113,81 @@ pub enum BranchEnd {
 pub struct Branch {
     /// `k` of `f^k` for a map, 1 for a flow.
     pub period: usize,
-    /// The points in order of arclength, the corrected start first.
+    /// The points in order of arclength, the corrected start first. Each
+    /// special point is one of them.
     pub points: Vec<BranchPoint>,
+    /// The special points in order of arclength.
+    pub special: Vec<SpecialPoint>,
     /// Why the branch stopped.
     pub end: BranchEnd,
+}
+
+/// The bifurcations located on a branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpecialKind {
+    /// A limit point: the branch turns back in `p` (an eigenvalue `0` of a
+    /// flow, a multiplier `+1` of a map).
+    Fold,
+    /// A complex pair of eigenvalues of a flow crosses the imaginary axis.
+    Hopf,
+    /// Another branch crosses this one (pitchfork, transcritical).
+    BranchPoint,
+    /// A multiplier of a map passes through `−1` (period doubling).
+    Flip,
+    /// A complex pair of multipliers of a map crosses the unit circle.
+    NeimarkSacker,
+}
+
+impl SpecialKind {
+    /// The standard abbreviation: `LP`, `H`, `BP`, `PD`, `NS`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fold => "LP",
+            Self::Hopf => "H",
+            Self::BranchPoint => "BP",
+            Self::Flip => "PD",
+            Self::NeimarkSacker => "NS",
+        }
+    }
+
+    /// The name in prose.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Fold => "fold",
+            Self::Hopf => "Hopf",
+            Self::BranchPoint => "branch point",
+            Self::Flip => "flip",
+            Self::NeimarkSacker => "Neimark–Sacker",
+        }
+    }
+}
+
+/// A located bifurcation on a branch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecialPoint {
+    /// What it is.
+    pub kind: SpecialKind,
+    /// Its own entry in [`Branch::points`].
+    pub index: usize,
+    /// The parameter.
+    pub p: f64,
+    /// The state.
+    pub x: Vec<f64>,
+    /// `k` of `f^k`, as [`Branch::period`].
+    pub period: usize,
+    /// The unit tangent of the branch there.
+    pub tangent: Vec<f64>,
+    /// The eigenvalues there, the critical ones on the stability boundary.
+    pub eigenvalues: Vec<(f64, f64)>,
+    /// Hopf: the frequency `ω = Im λ`. Neimark–Sacker: the angle
+    /// `θ = arg μ` of the critical multiplier, in `(0, π)`.
+    pub omega: Option<f64>,
+    /// Hopf: the first Lyapunov coefficient `ℓ₁`, negative when the
+    /// bifurcation is supercritical. Kuznetsov's formula (Elements of
+    /// Applied Bifurcation Theory, §3.5) with `⟨p, q⟩ = 1` and
+    /// `⟨q, q⟩ = 1/2`, the scaling at which the normal form
+    /// `ṙ = μr + a r³, θ̇ = ω` has `ℓ₁ = a/ω`. `None` where a solve fails.
+    pub lyapunov: Option<f64>,
 }
 
 /// Why no branch could start.
@@ -148,20 +238,29 @@ pub fn continue_branch(
     })?;
     let mut seed = vec![0.0; n + 1];
     seed[n] = if opts.ds < 0.0 { -1.0 } else { 1.0 };
-    let mut tau = g.tangent(&z, &seed).ok_or(ContinuationError::Singular)?;
-    let mut points = vec![g.point(0.0, &z, tau.clone())];
+    let tau = g.tangent(&z, &seed).ok_or(ContinuationError::Singular)?;
+    let mut points = vec![g.point(0.0, &z, tau)];
+    let mut special = Vec::new();
     if !(lo..=hi).contains(&p0) {
         return Ok(Branch {
             period,
             points,
+            special,
             end: BranchEnd::Range,
         });
     }
 
+    let detectors: Vec<&Detector> = DETECTORS
+        .iter()
+        .filter(|d| d.applies_to.contains(&f.kind()))
+        .collect();
+    let test_all = |pt: &BranchPoint| -> Vec<Option<f64>> {
+        detectors.iter().map(|d| (d.test)(&g, pt)).collect()
+    };
+    let mut tests = test_all(&points[0]);
     let cos_max = cos(opts.max_angle);
     let mut h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
-    let mut dir = tau.clone();
-    let mut s = 0.0;
+    let mut dir = points[0].tangent.clone();
     let end = loop {
         if points.len() >= opts.max_points {
             break BranchEnd::MaxPoints;
@@ -169,6 +268,7 @@ pub fn continue_branch(
         if h < opts.ds_min {
             break BranchEnd::StepTooSmall;
         }
+        let last = points.last().expect("the start");
         let pred: Vec<f64> = z.iter().zip(&dir).map(|(a, d)| a + h * d).collect();
         let edge = if pred[n] > hi {
             Some(hi)
@@ -187,34 +287,393 @@ pub fn continue_branch(
             None => g.correct_along(&pred, &dir),
         };
         let accepted = corrected.ok().and_then(|(z_new, iters)| {
-            let t = g.tangent(&z_new, &tau)?;
-            (dot(&t, &tau) >= cos_max).then_some((z_new, iters, t))
+            let t = g.tangent(&z_new, &last.tangent)?;
+            (dot(&t, &last.tangent) >= cos_max).then_some((z_new, iters, t))
         });
         let Some((z_new, iters, t_new)) = accepted else {
             h /= 2.0;
             continue;
         };
-        let chord: Vec<f64> = z_new.iter().zip(&z).map(|(a, b)| a - b).collect();
-        let len = norm2(&chord);
-        s += len;
-        points.push(g.point(s, &z_new, t_new.clone()));
+        let mut next = g.point(0.0, &z_new, t_new);
+        let next_tests = test_all(&next);
+        let fired: Vec<(&Detector, f64)> = (0..detectors.len())
+            .filter_map(|i| match (tests[i], next_tests[i]) {
+                (Some(a), Some(b)) if a * b < 0.0 => Some((detectors[i], a)),
+                _ => None,
+            })
+            .collect();
+        let jump = next.unstable.abs_diff(last.unstable);
+        let explained = match fired[..] {
+            [] => jump == 0,
+            [(d, _)] => jump == d.jump,
+            _ => false,
+        };
+        if !explained {
+            h /= 2.0;
+            continue;
+        }
+        if points.len() + 1 + fired.len() > opts.max_points {
+            break BranchEnd::MaxPoints;
+        }
+        let len = dist(&z, &z_new);
+        let limit = proximity_limit(map, last, &next, len);
+        if let [(d, test_last)] = fired[..] {
+            let mut at = g.locate(last, &next, &dir, d, test_last);
+            at.s = last.s + dist(&z_of(last), &z_of(&at));
+            at.unstable = last.unstable.min(next.unstable);
+            at.stable = false;
+            let (omega, lyapunov) = (d.extras)(&g, &at);
+            special.push(SpecialPoint {
+                kind: d.kind,
+                index: points.len(),
+                p: at.p,
+                x: at.x.clone(),
+                period,
+                tangent: at.tangent.clone(),
+                eigenvalues: at.eigenvalues.clone(),
+                omega,
+                lyapunov,
+            });
+            points.push(at);
+        }
+        let prev = points.last().expect("the start");
+        next.s = prev.s + dist(&z_of(prev), &z_new);
+        points.push(next);
+        tests = next_tests;
         if edge.is_some() {
             break BranchEnd::Range;
         }
-        dir = chord.iter().map(|c| c / len).collect();
+        dir = diff(&z_new, &z).iter().map(|c| c / len).collect();
         z = z_new;
-        tau = t_new;
         if iters <= FAST {
             h = (h * GROW).min(opts.ds_max);
         } else if iters > SLOW {
             h = (h / 2.0).max(opts.ds_min);
         }
+        h = h.min(limit.max(opts.ds_min));
     };
     Ok(Branch {
         period,
         points,
+        special,
         end,
     })
+}
+
+/// A test function that changes sign at one kind of special point.
+struct Detector {
+    kind: SpecialKind,
+    applies_to: &'static [SystemKind],
+    /// The change of the unstable count across it, `±jump`.
+    jump: usize,
+    /// The signed test at a point; `None` where it is undefined (no
+    /// complex pair, for Hopf and Neimark–Sacker).
+    test: fn(&Residual, &BranchPoint) -> Option<f64>,
+    /// [`SpecialPoint::omega`] and [`SpecialPoint::lyapunov`] of the
+    /// located point.
+    extras: fn(&Residual, &BranchPoint) -> OmegaLyapunov,
+}
+
+type OmegaLyapunov = (Option<f64>, Option<f64>);
+
+/// Every special point a branch can carry. A fold or branch point of a map
+/// is one of `g = f^k − x` (a multiplier `+1`), so those two rows serve
+/// both kinds of system.
+const DETECTORS: &[Detector] = &[
+    Detector {
+        kind: SpecialKind::Fold,
+        applies_to: &[SystemKind::Ode, SystemKind::Map],
+        jump: 1,
+        test: |_, pt| pt.tangent.last().copied(),
+        extras: |_, _| (None, None),
+    },
+    Detector {
+        kind: SpecialKind::BranchPoint,
+        applies_to: &[SystemKind::Ode, SystemKind::Map],
+        jump: 1,
+        test: |g, pt| {
+            let (_, a) = g.linear(&z_of(pt));
+            Some(lu_det(&bordered(a, &pt.tangent)))
+        },
+        extras: |_, _| (None, None),
+    },
+    Detector {
+        kind: SpecialKind::Hopf,
+        applies_to: &[SystemKind::Ode],
+        jump: 2,
+        test: |_, pt| upper_pairs(pt).map(|(re, _)| re).reduce(f64::max),
+        extras: |g, pt| {
+            let pair = critical_pair(pt, |re, _| re.abs());
+            (
+                pair.map(|(_, im)| im),
+                pair.and_then(|l| first_lyapunov(g, pt, l)),
+            )
+        },
+    },
+    Detector {
+        kind: SpecialKind::Flip,
+        applies_to: &[SystemKind::Map],
+        jump: 1,
+        // det(D f^k + I) = Π (μ + 1): a complex pair adds |μ + 1|² > 0 and
+        // a pair that splits at μ < −1 two negative factors, so only a
+        // multiplier through −1 changes its sign.
+        test: |g, pt| {
+            let n = pt.x.len();
+            let (_, a) = g.linear(&z_of(pt));
+            let shifted: Vec<f64> = (0..n * n)
+                .map(|k| a[k / n * (n + 1) + k % n] + if k / n == k % n { 2.0 } else { 0.0 })
+                .collect();
+            Some(lu_det(&shifted))
+        },
+        extras: |_, _| (None, None),
+    },
+    Detector {
+        kind: SpecialKind::NeimarkSacker,
+        applies_to: &[SystemKind::Map],
+        jump: 2,
+        test: |_, pt| {
+            upper_pairs(pt)
+                .map(|(re, im)| (re * re + im * im).sqrt() - 1.0)
+                .reduce(f64::max)
+        },
+        extras: |_, pt| {
+            let pair = critical_pair(pt, |re, im| ((re * re + im * im).sqrt() - 1.0).abs());
+            (pair.map(|(re, im)| im.atan2(re)), None)
+        },
+    },
+];
+
+/// One eigenvalue `(re, im)` with `im > 0` per complex pair.
+fn upper_pairs(pt: &BranchPoint) -> impl Iterator<Item = (f64, f64)> + '_ {
+    pt.eigenvalues.iter().copied().filter(|&(_, im)| im > 0.0)
+}
+
+/// The pair (`im > 0`) nearest the stability boundary by `distance`.
+fn critical_pair(pt: &BranchPoint, distance: impl Fn(f64, f64) -> f64) -> Option<(f64, f64)> {
+    upper_pairs(pt).min_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
+}
+
+/// The longest next step: [`PROXIMITY`] times the arclength at which the
+/// nearest approaching eigenvalue reaches the stability boundary, its
+/// distance `d_i` (`|Re λ|`, or `||μ| − 1|`) extrapolated linearly along
+/// the secant `a → b` of length `len`, so that two crossings never fall
+/// inside one step and cancel in the count.
+fn proximity_limit(map: bool, a: &BranchPoint, b: &BranchPoint, len: f64) -> f64 {
+    let distances = |pt: &BranchPoint| {
+        let mut d: Vec<f64> = pt
+            .eigenvalues
+            .iter()
+            .map(|&(re, im)| {
+                if map {
+                    ((re * re + im * im).sqrt() - 1.0).abs()
+                } else {
+                    re.abs()
+                }
+            })
+            .collect();
+        d.sort_by(f64::total_cmp);
+        d
+    };
+    distances(a)
+        .iter()
+        .zip(distances(b))
+        .filter_map(|(da, db)| {
+            let rate = (db - da) / len;
+            (rate < 0.0 && db > TOL).then(|| PROXIMITY * db / -rate)
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The first Lyapunov coefficient at a Hopf point with critical eigenvalue
+/// `λ = (re, ω)`, by Kuznetsov's formula (Elements of Applied Bifurcation
+/// Theory, 3rd ed., §3.5, eq. 3.20):
+///
+/// ```text
+/// ℓ₁ = Re[⟨p, C(q,q,q̄)⟩ − 2⟨p, B(q, A⁻¹B(q,q̄))⟩ + ⟨p, B(q̄, (2iωI − A)⁻¹B(q,q))⟩] / 2ω
+/// ```
+///
+/// with `A q = iω q`, `Aᵀ p = −iω p`, `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`. `B` and
+/// `C` are central differences of the exact Jacobian; the complex solve goes
+/// through the real `2n` system.
+fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<f64> {
+    let n = pt.x.len();
+    let omega = lambda.1;
+    let params = g.params_at(pt.p);
+    let jac = |x: &[f64]| {
+        let mut j = vec![0.0; n * n];
+        g.power.jacobian(0.0, x, &params, &mut j);
+        j
+    };
+    let a = jac(&pt.x);
+    let k = pt.eigenvalues.iter().position(|&l| l == lambda)?;
+    let vector = |m: &[f64]| {
+        let v = eigenvectors(SystemKind::Ode, n, m, &pt.eigenvalues);
+        Some(C::new(v.re[k].clone()?, v.im[k].clone()?))
+    };
+    let transpose: Vec<f64> = (0..n * n).map(|i| a[i % n * n + i / n]).collect();
+    let q = vector(&a)?;
+    let q = q.scale(1.0 / (2.0 * q.dot_conj(&q).0).sqrt());
+    // w = p̄, so ⟨p, v⟩ = Σ wᵢ vᵢ.
+    let w = vector(&transpose)?;
+    let w = w.div(w.dot(&q));
+
+    let scale = 1.0 + norm_inf(&pt.x);
+    // J(x ± εĉ) with ĉ = c/|c|, and |c|.
+    let around = |c: &[f64], eps: f64| {
+        let len = norm2(c);
+        let at = |sign: f64| {
+            let x: Vec<f64> = (0..n).map(|i| pt.x[i] + sign * eps * c[i] / len).collect();
+            jac(&x)
+        };
+        (at(1.0), at(-1.0), len)
+    };
+    // DJ[c] u ≈ (J(x + εĉ) − J(x − εĉ)) u |c| / 2ε.
+    let b_real = |u: &[f64], c: &[f64]| -> Vec<f64> {
+        if c.iter().all(|v| *v == 0.0) {
+            return vec![0.0; n];
+        }
+        let eps = 1e-5 * scale;
+        let (jp, jm, len) = around(c, eps);
+        let d: Vec<f64> = (0..n * n)
+            .map(|i| (jp[i] - jm[i]) * len / (2.0 * eps))
+            .collect();
+        matvec(&d, u, n)
+    };
+    let b = |u: &C, v: &C| -> C {
+        let rr = b_real(&u.re, &v.re);
+        let ii = b_real(&u.im, &v.im);
+        let ri = b_real(&u.re, &v.im);
+        let ir = b_real(&u.im, &v.re);
+        C {
+            re: (0..n).map(|i| rr[i] - ii[i]).collect(),
+            im: (0..n).map(|i| ri[i] + ir[i]).collect(),
+        }
+    };
+    // D²J[c, c] ≈ (J(x + εĉ) − 2J(x) + J(x − εĉ)) |c|² / ε².
+    let d2j = |c: &[f64]| -> Vec<f64> {
+        if c.iter().all(|v| *v == 0.0) {
+            return vec![0.0; n * n];
+        }
+        let eps = 1e-4 * scale;
+        let (jp, jm, len) = around(c, eps);
+        (0..n * n)
+            .map(|i| (jp[i] - 2.0 * a[i] + jm[i]) * len * len / (eps * eps))
+            .collect()
+    };
+    // C(q, q, q̄) = D²J[q, q̄] q, and D²J[q, q̄] = D²J[Re q, Re q] + D²J[Im q, Im q].
+    let m: Vec<f64> = d2j(&q.re)
+        .iter()
+        .zip(d2j(&q.im))
+        .map(|(u, v)| u + v)
+        .collect();
+    let cqqq = C {
+        re: matvec(&m, &q.re, n),
+        im: matvec(&m, &q.im, n),
+    };
+    let h11 = lu_solve(&a, &b(&q, &q.conj()).re)?;
+    let minus_a: Vec<f64> = a.iter().map(|v| -v).collect();
+    let h20 = complex_solve(&minus_a, 2.0 * omega, &b(&q, &q))?;
+    let total =
+        w.dot(&cqqq).0 - 2.0 * w.dot(&b(&q, &C::real(h11))).0 + w.dot(&b(&q.conj(), &h20)).0;
+    let l1 = total / (2.0 * omega);
+    l1.is_finite().then_some(l1)
+}
+
+/// A complex vector as its real and imaginary parts.
+#[derive(Clone)]
+struct C {
+    re: Vec<f64>,
+    im: Vec<f64>,
+}
+
+impl C {
+    fn new(re: Vec<f64>, im: Vec<f64>) -> Self {
+        Self { re, im }
+    }
+    fn real(re: Vec<f64>) -> Self {
+        let im = vec![0.0; re.len()];
+        Self { re, im }
+    }
+    fn conj(&self) -> Self {
+        Self::new(self.re.clone(), self.im.iter().map(|v| -v).collect())
+    }
+    fn scale(&self, s: f64) -> Self {
+        Self::new(
+            self.re.iter().map(|v| v * s).collect(),
+            self.im.iter().map(|v| v * s).collect(),
+        )
+    }
+    /// `self / (re + i im)`.
+    fn div(&self, (re, im): (f64, f64)) -> Self {
+        let d = re * re + im * im;
+        let (cr, ci) = (re / d, -im / d);
+        Self::new(
+            (0..self.re.len())
+                .map(|i| self.re[i] * cr - self.im[i] * ci)
+                .collect(),
+            (0..self.re.len())
+                .map(|i| self.re[i] * ci + self.im[i] * cr)
+                .collect(),
+        )
+    }
+    /// `Σ selfᵢ vᵢ`, without conjugation.
+    fn dot(&self, v: &C) -> (f64, f64) {
+        (0..self.re.len()).fold((0.0, 0.0), |(r, i), k| {
+            (
+                r + self.re[k] * v.re[k] - self.im[k] * v.im[k],
+                i + self.re[k] * v.im[k] + self.im[k] * v.re[k],
+            )
+        })
+    }
+    /// `Σ conj(selfᵢ) vᵢ`.
+    fn dot_conj(&self, v: &C) -> (f64, f64) {
+        self.conj().dot(v)
+    }
+}
+
+/// Solve `(m + i·s·I) z = r` through the real `2n` system
+/// `[m, −sI; sI, m] [Re z; Im z] = [Re r; Im r]`.
+fn complex_solve(m: &[f64], s: f64, r: &C) -> Option<C> {
+    let n = r.re.len();
+    let big: Vec<f64> = (0..4 * n * n)
+        .map(|k| {
+            let (row, col) = (k / (2 * n), k % (2 * n));
+            let (bi, bj) = (row / n, col / n);
+            let (i, j) = (row % n, col % n);
+            let eye = if i == j { s } else { 0.0 };
+            match (bi, bj) {
+                (0, 0) | (1, 1) => m[i * n + j],
+                (0, 1) => -eye,
+                _ => eye,
+            }
+        })
+        .collect();
+    let rhs: Vec<f64> = r.re.iter().chain(&r.im).copied().collect();
+    let z = lu_solve(&big, &rhs)?;
+    Some(C::new(z[..n].to_vec(), z[n..].to_vec()))
+}
+
+fn matvec(m: &[f64], v: &[f64], n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|r| (0..n).map(|c| m[r * n + c] * v[c]).sum())
+        .collect()
+}
+
+fn diff(a: &[f64], b: &[f64]) -> Vec<f64> {
+    a.iter().zip(b).map(|(u, v)| u - v).collect()
+}
+
+/// `(x, p)` of a point.
+fn z_of(pt: &BranchPoint) -> Vec<f64> {
+    pt.x.iter().copied().chain([pt.p]).collect()
+}
+
+fn dist(a: &[f64], b: &[f64]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(u, v)| (u - v) * (u - v))
+        .sum::<f64>()
+        .sqrt()
 }
 
 /// `f^k` as a field. For `k = 1` it is `f` itself, so flows and maps share
@@ -367,6 +826,74 @@ impl Residual<'_> {
         let t = lu_solve(&bordered(a, border), &rhs)?;
         let len = norm2(&t);
         len.is_finite().then(|| t.iter().map(|v| v / len).collect())
+    }
+
+    /// The point between `a` and `b` where `detector`'s test (`test_a` at
+    /// `a`) changes sign, by bisection in arclength along the secant `dir`,
+    /// correcting at every midpoint, until `p` is known to
+    /// `1e−13 (1 + |p|)` and `z` to the Newton tolerance. Its `s` is left 0.
+    fn locate(
+        &self,
+        a: &BranchPoint,
+        b: &BranchPoint,
+        dir: &[f64],
+        detector: &Detector,
+        test_a: f64,
+    ) -> BranchPoint {
+        let za = z_of(a);
+        let (mut lo, mut hi) = (
+            (0.0, a.clone()),
+            (dot(dir, &diff(&z_of(b), &za)), b.clone()),
+        );
+        let mut best_test = (detector.test)(self, b).unwrap_or(f64::INFINITY).abs();
+        let mut best = b.clone();
+        if test_a.abs() < best_test {
+            (best, best_test) = (a.clone(), test_a.abs());
+        }
+        for _ in 0..MAX_BISECTION {
+            let (zl, zh) = (z_of(&lo.1), z_of(&hi.1));
+            let p_tol = 1e-13 * (1.0 + zl[zl.len() - 1].abs());
+            let z_tol = TOL * (1.0 + norm_inf(&zl));
+            if (zh[zh.len() - 1] - zl[zl.len() - 1]).abs() <= p_tol
+                && norm_inf(&diff(&zh, &zl)) <= z_tol
+            {
+                break;
+            }
+            let sigma = 0.5 * (lo.0 + hi.0);
+            let pred: Vec<f64> = za.iter().zip(dir).map(|(z, d)| z + sigma * d).collect();
+            let zm = match self.correct_along(&pred, dir) {
+                Ok((zm, _)) => zm,
+                // A midpoint exactly on a branch point is a zero of `g` at
+                // which the bordered Jacobian is singular.
+                Err(Fail::Singular)
+                    if norm_inf(&self.linear(&pred).0) <= TOL * (1.0 + norm_inf(&pred)) =>
+                {
+                    return self.point(0.0, &pred, lo.1.tangent.clone());
+                }
+                Err(_) => break,
+            };
+            let Some(tm) = self.tangent(&zm, &lo.1.tangent) else {
+                // The bordered Jacobian is singular only at the branch point
+                // itself.
+                return self.point(0.0, &zm, lo.1.tangent.clone());
+            };
+            let mid = self.point(0.0, &zm, tm);
+            let Some(v) = (detector.test)(self, &mid) else {
+                break;
+            };
+            if v.abs() < best_test {
+                (best, best_test) = (mid.clone(), v.abs());
+            }
+            if v == 0.0 {
+                break;
+            }
+            if (v > 0.0) == (test_a > 0.0) {
+                lo = (sigma, mid);
+            } else {
+                hi = (sigma, mid);
+            }
+        }
+        best
     }
 
     fn point(&self, s: f64, z: &[f64], tangent: Vec<f64>) -> BranchPoint {

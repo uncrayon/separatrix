@@ -13,6 +13,25 @@ All notable changes to this project are documented in this file.
   point of a branch that leaves the parameter range lies exactly on its edge. Each point carries
   its eigenvalues (of `J`, or of `D f^k` for a map), its unstable count and its stability. Not yet
   reachable from the app.
+- Special points on a continuation branch (`Branch::special`), each located by bisection in
+  arclength to `|Δp| ≤ 1e−13 (1 + |p|)` and inserted into the branch: folds (LP), Hopf points (H)
+  and branch points (BP) of flows, and folds, branch points, flips (PD) and Neimark–Sacker points
+  (NS) of maps. One table of signed test functions finds them: `ṗ` of the tangent, the determinant
+  of the bordered Jacobian, the largest `Re λ` of a complex pair (so a neutral saddle's real pair
+  `λ, −λ` is never a Hopf point), `det(D f^k + I)`, and the largest `|μ|` of a complex pair minus 1.
+  A step is kept only when its change in the unstable count is the jump of the one test that
+  changed sign (none: no change), so a Hopf point inside a step whose pair was still real at one
+  end is not missed. The next step is limited to 1.5 times the predicted arclength to the nearest
+  crossing of the stability boundary, so two close crossings are not stepped over together. A
+  Hopf point carries `ω = Im λ` and the first Lyapunov coefficient `ℓ₁` (Kuznetsov's formula,
+  with `⟨q, q⟩ = 1/2` so the normal form `ṙ = μr + ar³, θ̇ = ω` gives `ℓ₁ = a/ω`); a
+  Neimark–Sacker point its angle `θ = arg μ`. At a special point the critical eigenvalues count as
+  neutral, so it is not stable and its unstable count is the smaller of its two sides'. Checked
+  against the saddle-node, pitchfork and transcritical normal forms at `r = 0`, the Hopf normal
+  form (`ω = 1`, `ℓ₁ = ∓1`), Sel'kov's Hopf points `b = √0.12, √0.72` at `a = 0.08`, the
+  Brusselator's `b = 1 + a²`, the logistic map's flip at `r = 3`, Hénon's fold and flip at
+  `a = −(1 − b)²/4` and `3(1 − b)²/4`, and the delayed logistic map's Neimark–Sacker point at
+  `r = 2` with `θ = π/3`. Not yet reachable from the app.
 - Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
   view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
   as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,

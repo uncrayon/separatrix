@@ -20,7 +20,8 @@
 //! - [`continue_branch`]: a branch of equilibria of a flow, or of fixed
 //!   points of `f^k` for a map, followed through folds as one parameter
 //!   varies by pseudo-arclength continuation, with the eigenvalues and
-//!   stability of each point;
+//!   stability of each point and its located folds, Hopf, branch, flip and
+//!   Neimark–Sacker points ([`SpecialPoint`]);
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -56,6 +57,7 @@ mod slope;
 pub use classify::{classify, classify_jacobian, Classification, ABS_TOL, REL_TOL};
 pub use continuation::{
     continue_branch, Branch, BranchEnd, BranchPoint, ContinuationError, ContinuationOptions,
+    SpecialKind, SpecialPoint,
 };
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};

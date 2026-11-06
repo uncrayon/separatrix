@@ -45,6 +45,42 @@ pub(crate) fn lu_solve(a: &[f64], b: &[f64]) -> Option<Vec<f64>> {
     Some(b)
 }
 
+/// The determinant of a row-major square matrix by LU decomposition with
+/// partial pivoting: the product of the pivots, negated per row swap. `0`
+/// when a pivot is exactly zero; not finite when `a` is not.
+pub(crate) fn lu_det(a: &[f64]) -> f64 {
+    let n = (a.len() as f64).sqrt() as usize;
+    debug_assert_eq!(a.len(), n * n);
+    let mut a = a.to_vec();
+    let mut det = 1.0;
+    for k in 0..n {
+        let piv = (k..n).fold(k, |best, r| {
+            if a[r * n + k].abs() > a[best * n + k].abs() {
+                r
+            } else {
+                best
+            }
+        });
+        if a[piv * n + k] == 0.0 {
+            return 0.0;
+        }
+        if piv != k {
+            for c in 0..n {
+                a.swap(k * n + c, piv * n + c);
+            }
+            det = -det;
+        }
+        det *= a[k * n + k];
+        for r in k + 1..n {
+            let m = a[r * n + k] / a[k * n + k];
+            for c in k..n {
+                a[r * n + c] -= m * a[k * n + c];
+            }
+        }
+    }
+    det
+}
+
 /// Eigenvalues `(re, im)` of a real `n x n` row-major matrix.
 ///
 /// 1x1 and 2x2 use closed forms (exact and cheap); larger matrices use the
@@ -165,6 +201,15 @@ mod tests {
         for (u, v) in sol.iter().zip(x) {
             assert!((u - v).abs() < 1e-14);
         }
+    }
+
+    #[test]
+    fn lu_det_of_known_matrices() {
+        assert!((lu_det(&[0.0, 2.0, 1.0, 1.0, 1.0, 0.0, 2.0, 0.0, 3.0]) + 8.0).abs() < 1e-14);
+        assert_eq!(lu_det(&[2.0, 0.0, 0.0, 3.0]), 6.0);
+        assert_eq!(lu_det(&[0.0, 1.0, 1.0, 0.0]), -1.0);
+        assert_eq!(lu_det(&[1.0, 2.0, 2.0, 4.0]), 0.0);
+        assert_eq!(lu_det(&[]), 1.0);
     }
 
     #[test]
