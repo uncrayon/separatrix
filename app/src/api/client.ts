@@ -30,17 +30,14 @@ export function computePortrait(req: PortraitRequest): Promise<PortraitResponse>
   return isTauri() ? invoke<PortraitResponse>("compute_portrait", { req }) : mockPortrait(req);
 }
 
-/** The Lyapunov spectrum of one orbit; see `compute_lyapunov` in docs/contracts.md. */
 export function computeLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
   return isTauri() ? invoke<LyapunovResponse>("compute_lyapunov", { req }) : mockLyapunov(req);
 }
 
-/** A map's orbit diagram over one parameter's range; see `compute_orbit_diagram` in docs/contracts.md. */
 export function computeOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
   return isTauri() ? invoke<OrbitDiagramResponse>("compute_orbit_diagram", { req }) : mockOrbitDiagram(req);
 }
 
-/** A request without its `requestId`, which the scheduler numbers, and what the caller keeps with it. */
 export interface Job<B, M> {
   body: B;
   meta: M;
@@ -48,11 +45,7 @@ export interface Job<B, M> {
 
 export type PortraitJob<M> = Job<Omit<PortraitRequest, "requestId">, M>;
 
-/**
- * One request in flight at a time, the newest state asked for next (at most
- * one per frame), and a response older than one already delivered dropped.
- */
-export class RequestScheduler<B, R extends { requestId: number }, M> {
+export class LatestRequestScheduler<B, R extends { requestId: number }, M> {
   private nextId = 1;
   private newestDelivered = 0;
   private inFlight = false;

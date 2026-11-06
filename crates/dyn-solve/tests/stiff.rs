@@ -1,18 +1,9 @@
-//! Rosenbrock 2(3) on stiff problems, and Dormand–Prince's stiffness test.
-//!
-//! Van der Pol at μ = 1000 is written in the Liénard plane of the
-//! relaxation-oscillator template, `x' = μ(y − x³/3 + x)`, `y' = −x/μ`.
-//! Robertson's reaction (Hairer & Wanner, *Solving ODEs II*, §IV.1) is
-//! `y1' = −0.04y1 + 1e4y2y3`, `y2' = 0.04y1 − 1e4y2y3 − 3e7y2²`,
-//! `y3' = 3e7y2²` from `(1, 0, 0)`.
-
 use dyn_core::{FnField, SystemKind};
 use dyn_solve::{
     integrate, section, Direction, Method, Sampling, Section, SolverOptions, Status, StepOutcome,
     Stepper,
 };
 
-/// The relaxation oscillator with `p = [μ]`.
 fn lienard() -> FnField {
     FnField::new(2, 1, SystemKind::Ode, |_t, x, p, out| {
         out[0] = p[0] * (x[1] - x[0] * x[0] * x[0] / 3.0 + x[0]);
@@ -47,7 +38,6 @@ fn robertson() -> FnField {
     })
 }
 
-/// Robertson at t = 40 (SUNDIALS `cvRoberts_dns`; Hairer & Wanner).
 const ROBERTSON_40: [f64; 3] = [7.158271e-1, 9.185535e-6, 2.841637e-1];
 
 fn adaptive(method: Method, rtol: f64, atol: f64) -> SolverOptions {
@@ -60,8 +50,6 @@ fn adaptive(method: Method, rtol: f64, atol: f64) -> SolverOptions {
     }
 }
 
-/// Steps of exactly `h`: the tolerances are so loose that every try is
-/// accepted, and `h_max` stops the step from growing.
 fn fixed(h: f64) -> SolverOptions {
     SolverOptions {
         method: Method::Rosenbrock23,
@@ -92,7 +80,6 @@ fn run(f: &FnField, p: &[f64], x0: &[f64], t1: f64, opts: &SolverOptions) -> Cou
     }
 }
 
-/// One problem for Dormand–Prince and Rosenbrock 2(3) at the same tolerances.
 struct Case {
     name: &'static str,
     f: FnField,
@@ -199,8 +186,6 @@ fn rosenbrock_converges_at_order_2() {
     assert!((ratio - 4.0).abs() <= 0.5, "{ratio}");
 }
 
-/// `y' = −1e6 (y − cos t)` stepped with a fixed `h` from `y(0) = y0`: the
-/// largest `|y − cos t|` after the first step, and over `t ≤ 10`.
 fn stiff_tracking(h: f64, y0: f64) -> (f64, f64) {
     let f = FnField::new(1, 0, SystemKind::Ode, |t, y, _p, out| {
         out[0] = -1e6 * (y[0] - t.cos())
@@ -223,11 +208,6 @@ fn stiff_tracking(h: f64, y0: f64) -> (f64, f64) {
     (first, worst)
 }
 
-/// In the stiff limit `hλ → −∞` one step maps the error `e` off the slow
-/// solution `g = cos t` to `R(∞)·e + h²·g''·(1/(8d) − 1/2)`, and `R(∞) = 0`
-/// (L-stability). The second term, `0.0732·h²·|cos t|` at most, is the
-/// scheme's order-2 error in that limit: 7.3e−4 at `h = 0.1`, 7.3e−6 at
-/// `h = 0.01`.
 #[test]
 fn rosenbrock_is_l_stable() {
     let limit = |h: f64| h * h * (0.5 - (2.0 + std::f64::consts::SQRT_2) / 8.0);
@@ -292,7 +272,6 @@ fn a_plane_section_of_a_stiff_run_returns_crossings() {
         "x = 0 crossings, μ = 1000, t ≤ 3000: {:?} after {} steps",
         sol.t, sol.stats.accepted
     );
-    // Two jumps per period T ≈ (3 − 2 ln 2)μ ≈ 1614, the first a half period in.
     assert!(sol.len() >= 3, "{:?}", sol.t);
     for i in 0..sol.len() {
         assert_eq!(sol.state(i)[0], 0.0);

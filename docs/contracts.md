@@ -481,7 +481,7 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale. The same file
 carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`,
-`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, the `SECTION_MISFIT` and
+`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, `BLOW_UP_THRESHOLD`, `LYAPUNOV_HISTORY`, the `SECTION_MISFIT` and
 `SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states

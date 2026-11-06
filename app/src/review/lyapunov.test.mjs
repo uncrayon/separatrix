@@ -1,8 +1,3 @@
-// The Lyapunov view: its place in the View control, the compute_lyapunov
-// request built from the studio state, the readout's rounding, the drawing,
-// and the .sepx round trip. Expectations come from docs/contracts.md and the
-// unit brief, never from a run of the code under test.
-//
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports resolve to .ts through a module hook.
 
@@ -85,7 +80,6 @@ test("switching to the Lyapunov view opens it with the defaults for the system's
   assert.equal(flow.xAxis.kind, "time");
   const map = model.switchView("lyapunov", { compiled: henon, view: model.defaultView(henon), solver: model.DEFAULT_SOLVER }, {});
   assert.deepEqual(map.lyapunov, { transient: 1000, total: 100000, interval: 1, blocks: 10 });
-  // A map's transient (in the Iteration panel) never moves the Lyapunov view's axis.
   assert.equal(model.shiftTimeAxes(map, 50), map);
 });
 
@@ -210,7 +204,6 @@ test("drawLyapunov draws each estimate in its own trajectory colour, its final v
   }
   assert.equal((svg.match(/>λ</g) ?? []).length, 6, "λ₁, λ₂, λ₃, each with its halo");
   for (const d of ["1", "2", "3"]) assert.ok(svg.includes(`>${d}</tspan>`), `the subscript ${d}`);
-  // Labels sit just above their line, and two close values are kept apart.
   const rows = labelRows([sy(vp, 0.9), sy(vp, 0)], 18, 0, 400);
   assert.ok(rows[0] < sy(vp, 0.9) && rows[1] < sy(vp, 0));
   assert.ok(Math.abs(rows[1] - rows[0]) >= 18);
@@ -247,12 +240,10 @@ test("a Lyapunov view is saved as kind lyapunov with its run, and opens as it wa
   const applied = model.applyProjectLoad(load, sys, () => 1);
   assert.deepEqual(applied.warnings, []);
   assert.deepEqual(applied.view, view);
-  // Saving what was opened writes the same file, unknown keys kept.
   const reopened = { ...file, views: [{ ...v, lyapunov: { ...v.lyapunov, note: "kept" } }] };
   const again = projectFromState({ ...state, view: applied.view }, { loaded: reopened });
   assert.deepEqual(again.views[0], reopened.views[0]);
 
-  // Leaving the view drops the run from the file.
   const plane = projectFromState({ ...state, view: model.defaultView(sys) }, { loaded: reopened });
   assert.equal(plane.views[0].lyapunov, undefined);
   assert.equal(plane.views[0].kind, undefined);

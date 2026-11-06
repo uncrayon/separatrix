@@ -1308,7 +1308,6 @@ fn a_lyapunov_view_is_read_and_written_back() {
     assert!(text.contains(
         "\"y_range\": [\n        -16.0,\n        2.0\n      ],\n      \"lyapunov\": {\n        \"transient\": 100.0,\n        \"total\": 10000.0,\n        \"interval\": 0.1,\n        \"blocks\": 10\n      },\n      \"slice\": {"
     ));
-    // A key from a newer version inside the run is kept.
     let mut v = value(&fixture("lyapunov-view.sepx"));
     v["views"][0]["lyapunov"]["method"] = json!("qr-householder");
     let opened = parse(&v.to_string()).unwrap();
@@ -1361,27 +1360,23 @@ fn a_lyapunov_view_that_cannot_run_falls_back_to_the_default_view() {
     for (name, edit) in misfits {
         assert_eq!(warns(edit), [LYAPUNOV_MISFIT], "{name}");
     }
-    // A map whose iterates are whole numbers runs.
     assert!(warns(&|v| {
         v["system"]["kind"] = json!("map");
         v["views"][0]["lyapunov"]["interval"] = json!(1.0);
     })
     .is_empty());
-    // An exponent axis outside a Lyapunov view is an axis kind this view doesn't know.
     assert_eq!(
         warns(&|v| {
             v["views"][0].as_object_mut().unwrap().remove("kind");
         }),
         ["The y axis of the view \u{201c}main\u{201d} uses an axis kind (\u{201c}exponent\u{201d}) this version doesn't know, so the default view is used."]
     );
-    // A wrong type is a structural error with its path.
     let mut v = base.clone();
     v["views"][0]["lyapunov"]["blocks"] = json!("ten");
     assert!(parse(&v.to_string())
         .unwrap_err()
         .to_string()
         .contains("views[0].lyapunov.blocks"));
-    // JSON can't hold a non-finite run.
     let mut p = open("lyapunov-view.sepx").project;
     p.views[0].lyapunov.as_mut().unwrap().total = Some(f64::INFINITY);
     assert!(to_json(&p, APP)
@@ -1404,7 +1399,6 @@ fn an_orbit_diagram_is_read_and_written_back() {
     assert!(text.contains(
         "\"y_range\": [\n        -0.05,\n        1.05\n      ],\n      \"orbit\": {\n        \"transient\": 1000,\n        \"kept\": 200\n      },\n      \"slice\": {"
     ));
-    // A key from a newer version inside the columns is kept.
     let mut v = value(&fixture("orbit-view.sepx"));
     v["views"][0]["orbit"]["shading"] = json!("log");
     let opened = parse(&v.to_string()).unwrap();
@@ -1449,13 +1443,11 @@ fn an_orbit_diagram_that_cannot_be_drawn_falls_back_to_the_default_view() {
         assert_eq!(warns(edit), [ORBIT_MISFIT], "{name}");
     }
     assert!(warns(&|v| v["views"][0]["orbit"]["kept"] = json!(976)).is_empty());
-    // A parameter axis outside an orbit diagram is an axis kind the view doesn't know.
     let w = warns(&|v| {
         v["views"][0].as_object_mut().unwrap().remove("kind");
     });
     assert_eq!(w.len(), 1, "{w:?}");
     assert!(w[0].contains("(\u{201c}param\u{201d})"), "{w:?}");
-    // A half iterate is not a whole number: the file itself is refused.
     let mut v = base.clone();
     v["views"][0]["orbit"]["kept"] = json!(0.5);
     assert!(parse(&v.to_string()).is_err());

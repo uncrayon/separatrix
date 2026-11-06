@@ -853,7 +853,6 @@ function OrbitSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/** Plain-text subscripts: λ₁, x₀. */
 const sub = (n: number | string) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
 
 function LyapunovSection({ state, actions, open, onToggle }: SectionProps) {
@@ -992,7 +991,6 @@ function cobwebFillsIn(state: StudioState): boolean {
 
 const fillCache = new WeakMap<object, { key: string; fills: boolean }>();
 
-/** The largest energy drift over the drawn trajectories of a Hamiltonian flow; null when there is none to show. */
 function energyDrift(state: StudioState): number | null {
   const p = state.portrait;
   if (!state.compiled?.hamiltonian || !portraitFits(state.compiled, state.shapeId, p)) return null;
@@ -1112,7 +1110,6 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
               aria-describedby={stiffHint}
               onClick={() => {
                 actions.setSolver({ method: STIFF_METHOD, h: 0 });
-                // The button goes with the hint; keep focus on the method it chose.
                 requestAnimationFrame(() => document.getElementById(methodPicker)?.focus());
               }}
             >
@@ -1235,7 +1232,6 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-/** The methods `compute_lyapunov` integrates the variational equations with (service.rs refuses the others). */
 const LYAPUNOV_METHODS: readonly Method[] = ["dopri5", "rk4", "heun", "euler"];
 const LYAPUNOV_METHOD_HINT =
   "A Lyapunov run integrates the variational equations: the explicit Runge–Kutta methods only, not the symplectic or implicit ones.";

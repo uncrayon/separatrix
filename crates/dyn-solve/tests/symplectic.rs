@@ -1,12 +1,8 @@
-//! Störmer–Verlet and Yoshida 4 on separable Hamiltonians, state `[q; p]`:
-//! their order, their time symmetry, and bounded energy error.
-
 use dyn_core::{FnField, SystemKind};
 use dyn_solve::{
     integrate, section, Method, Sampling, Section, SolverOptions, Status, StepOutcome, Stepper,
 };
 
-/// `H = (p² + q²)/2`: `q(t) = cos t`, `p(t) = −sin t` from `(1, 0)`.
 fn oscillator() -> FnField {
     FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = x[1];
@@ -14,7 +10,6 @@ fn oscillator() -> FnField {
     })
 }
 
-/// `H = p²/2 − cos q`.
 fn pendulum() -> FnField {
     FnField::new(2, 0, SystemKind::Ode, |_t, x, _p, out| {
         out[0] = x[1];
@@ -87,7 +82,6 @@ fn forward_then_backward_returns_to_the_start() {
     }
 }
 
-/// The largest `|H − H₀|` over every step from `(1, 0)` to `t1`.
 fn max_energy_error(method: Method, h: f64, t1: f64) -> f64 {
     let f = pendulum();
     let x0 = [1.0, 0.0];

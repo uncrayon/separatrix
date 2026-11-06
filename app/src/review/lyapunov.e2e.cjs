@@ -34,7 +34,6 @@ async function commit(locator, value) {
   await locator.press("Enter");
 }
 
-/** Waits for a `compute_lyapunov` whose request and response satisfy `pred` (a JS expression in req, res). */
 async function waitRun(page, pred) {
   await page.waitForFunction(
     (src) => {
@@ -53,7 +52,6 @@ const viewRadio = (page, name) =>
 const readout = (page) => inspector(page).locator("[data-lyapunov-readout]");
 const statusSolver = (page) => page.locator(".statusbar button", { hasText: "·" });
 
-/** The readout as [label, value] pairs. */
 async function readoutRows(page) {
   return readout(page)
     .locator(".ds-panel-section-kv-row")
@@ -64,7 +62,6 @@ async function readoutRows(page) {
 
 const num = (text) => Number(text.replace("−", "-"));
 
-/** How many plot pixels are (close to) each trajectory colour. */
 async function colourCounts(page, n) {
   return page.evaluate((n) => {
     const css = getComputedStyle(document.documentElement);
@@ -108,7 +105,6 @@ test("Lorenz: the Lyapunov view runs the first start point and reads out λ₁ �
     );
     for (const [, v] of rows.slice(0, 3)) assert.match(v, /^−?\d+\.\d+ ± \d\.\d+$/, v);
     const [l1, l2, l3] = rows.slice(0, 3).map(([, v]) => num(v.split(" ± ")[0]));
-    // Published (Sprott): 0.9056, 0, −14.572; the preview's 1,000 time units get within a few hundredths.
     assert.ok(Math.abs(l1 - 0.9056) < 0.05, `λ₁ = ${l1}`);
     assert.ok(Math.abs(l2) < 0.05, `λ₂ = ${l2}`);
     assert.ok(Math.abs(l3 + 14.572) < 0.1, `λ₃ = ${l3}`);
@@ -123,16 +119,13 @@ test("Lorenz: the Lyapunov view runs the first start point and reads out λ₁ �
       (await statusSolver(page).locator(".ds-statusbar-text").innerText()).trim(),
       "10⁴ renormalizations · DOPRI5 · rtol 1e−6",
     );
-    // Three running estimates on the plot, one per trajectory colour.
     await page.waitForTimeout(300);
     const counts = await colourCounts(page, 3);
     assert.ok(counts.every((c) => c > 200), `pixels per colour: ${counts}`);
-    // No direction-field, fixed-point or tool controls in this view.
     assert.equal(await page.getByRole("button", { name: "Direction field" }).count(), 0);
     assert.equal(await inspector(page).getByRole("heading", { name: "Fixed points" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Lyapunov spectrum: t horizontal, λ vertical" }).count(), 1);
 
-    // Five views share the View control: every label fits its segment, in projector mode at 1,024 px too.
     const group = inspector(page).locator("[role=radiogroup][aria-label=View]");
     assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ"]);
     await page.setViewportSize({ width: 1024, height: 768 });
@@ -165,7 +158,6 @@ test("changing the run or the method asks for a new run; methods the core can't 
       (await statusSolver(page).locator(".ds-statusbar-text").innerText()).trim(),
       "20,000 renormalizations · DOPRI5 · rtol 1e−6",
     );
-    // More blocks than QR steps: the field says so and nothing is sent.
     const blocks = inspector(page).getByLabel("Blocks for the uncertainty", { exact: true });
     await commit(blocks, "30000");
     assert.match(await inspector(page).innerText(), /Must be a whole number from 2 to 20,000/);
@@ -232,7 +224,6 @@ test("the saved Lyapunov view opens with its run, and saving writes it back", as
       "10⁵ renormalizations · RK4 · h 0.01",
     );
     await readout(page).waitFor();
-    // Fitting the plot to the run leaves the document clean.
     assert.equal(await page.evaluate(() => window.__sepxMock.document.dirty), false);
     await page.evaluate(() => (window.__sepxMock.nextSavePath = "/mock/out.sepx"));
     await page.getByRole("button", { name: "Save as…" }).click();

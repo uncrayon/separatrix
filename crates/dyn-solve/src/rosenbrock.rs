@@ -1,30 +1,16 @@
-//! Rosenbrock 2(3): the L-stable linearly implicit scheme of MATLAB's
+//! Rosenbrock 2(3), the L-stable linearly implicit scheme of MATLAB's
 //! `ode23s` (L. F. Shampine & M. W. Reichelt, *The MATLAB ODE suite*, SIAM
-//! J. Sci. Comput. 18, 1997, §3.1), with `W = I − h·d·J`:
-//!
-//! ```text
-//! k1 = W⁻¹ (f(t, x) + h·d·∂f/∂t)
-//! k2 = W⁻¹ (f(t + h/2, x + h/2·k1) − k1) + k1
-//! x₁ = x + h·k2                                   (order 2)
-//! k3 = W⁻¹ (f(t + h, x₁) − e₃₂ (k2 − F1) − 2 (k1 − F0) + h·d·∂f/∂t)
-//! err = h/6 (k1 − 2 k2 + k3)                      (order 3)
-//! ```
-//!
-//! `J` is the field's own Jacobian, exact for compiled systems. `∂f/∂t` is
-//! a central difference, taken only when the field reads `t`. `J` and
-//! `∂f/∂t` are evaluated once per accepted step; a rejected step only
-//! refactors `W` for the smaller `h`.
+//! J. Sci. Comput. 18, 1997, §3.1).
+
+use std::f64::consts::SQRT_2;
 
 use dyn_core::VectorField;
 
 use crate::lu::{Lu, Singular};
 
-/// `d = 1/(2 + √2)`, written out so every platform steps with the same bits.
-pub(crate) const D: f64 = 0.292_893_218_813_452_5;
-/// `e₃₂ = 6 + √2`.
-const E32: f64 = 7.414_213_562_373_095;
+pub(crate) const D: f64 = 1.0 / (2.0 + SQRT_2);
+const E32: f64 = 6.0 + SQRT_2;
 
-/// The Jacobian at the start of the step, the factored `W` and the stages.
 pub(crate) struct Rosenbrock {
     jac: Vec<f64>,
     dfdt: Vec<f64>,
@@ -50,7 +36,6 @@ impl Rosenbrock {
         }
     }
 
-    /// `J = ∂f/∂x` and `∂f/∂t` at `(t, x)`, for every try of the next step.
     pub(crate) fn linearize(
         &mut self,
         f: &dyn VectorField,
@@ -74,8 +59,6 @@ impl Rosenbrock {
         }
     }
 
-    /// One try of the step `h` from `(t, x)` with `fx = f(t, x)`: the new
-    /// point in `x_new` and `f(t + h, x_new)` in `f_new`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn stages(
         &mut self,
@@ -126,13 +109,11 @@ impl Rosenbrock {
         Ok(())
     }
 
-    /// Component `i` of the error estimate of the last try.
     pub(crate) fn error(&self, h: f64, i: usize) -> f64 {
         h / 6.0 * (self.k1[i] - 2.0 * self.k2[i] + self.k3[i])
     }
 
-    /// The scheme's continuous extension, `x + h·(θ(1 − θ)/(1 − 2d)·k1 +
-    /// θ(θ − 2d)/(1 − 2d)·k2)` (`ntrp23s`), as `x + θ·(x₁ − x) + θ(1 − θ)·c2`.
+    /// The continuous extension of MATLAB's `ntrp23s`.
     pub(crate) fn dense_c2(&self, h: f64, i: usize) -> f64 {
         h * (self.k1[i] - self.k2[i]) / (1.0 - 2.0 * D)
     }

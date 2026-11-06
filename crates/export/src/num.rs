@@ -174,10 +174,6 @@ pub fn to_exponential(v: f64, fraction_digits: usize) -> String {
     out
 }
 
-/// `v` rounded half away from zero at the `10^place` digit, from its exact
-/// decimal value, in plain notation (`fixed_at(1234.5, 1)` is `"1230"`,
-/// `fixed_at(0.90561, -3)` is `"0.906"`). A value that rounds to zero has
-/// no sign.
 fn fixed_at(v: f64, place: i32) -> String {
     let s = if place <= 0 {
         to_fixed(v, place.unsigned_abs() as usize)
@@ -218,7 +214,6 @@ pub fn with_uncertainty(v: f64, u: f64) -> Option<(String, String)> {
     let (digits, e) = exact_digits(u);
     let sig = if digits[0] == 1 { 2 } else { 1 };
     let (_, carried) = round_half_up(&digits, sig);
-    // 0.0096 rounds to 0.01: one digit, one place further up.
     let place = e - (sig as i32 - 1) + i32::from(carried);
     Some((fixed_at(v, place), fixed_at(u, place)))
 }

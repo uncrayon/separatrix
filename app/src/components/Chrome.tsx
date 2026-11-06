@@ -224,7 +224,6 @@ function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.label}, step ${v}` };
 }
 
-/** The status bar's run summary in the Lyapunov view: `10⁵ renormalizations · RK4 · h 0.01`. */
 function lyapunovSummary(l: LyapunovSettings, s: SolverSettings, kind: SystemKind | undefined) {
   const k = renormalizations(l, kind);
   const count = `${countText(k)} ${k === 1 ? "renormalization" : "renormalizations"}`;
@@ -233,7 +232,6 @@ function lyapunovSummary(l: LyapunovSettings, s: SolverSettings, kind: SystemKin
   return { ...m, lead: `${count} · ${m.lead}`, tip: `Lyapunov run of ${k.toLocaleString("en-US")} QR steps, ${m.tip}` };
 }
 
-/** The status bar's summary in the orbit view: `1,200 columns · 200 iterates each`. */
 function orbitSummary(o: OrbitSettings, columns: number) {
   const n = (v: number) => v.toLocaleString("en-US");
   return {

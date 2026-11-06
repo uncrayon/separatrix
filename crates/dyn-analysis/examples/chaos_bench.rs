@@ -1,12 +1,3 @@
-//! Times the chaos workloads on the compiled (interpreted) gallery systems
-//! against the same systems written by hand in Rust. See docs/performance.md.
-//!
-//! ```sh
-//! cargo run --release -p dyn-analysis --example chaos_bench [-- RUNS [WORKLOAD]]
-//! ```
-//!
-//! `WORKLOAD` (`a`, `b`, `c` or `d`) runs that workload alone, for profiling.
-
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -17,7 +8,6 @@ use dyn_solve::{Method, SolverOptions, Status};
 
 const TEMPLATES_JSON: &str = include_str!("../../../app/src/templates/templates.json");
 
-/// The Lyapunov service's sample count, so the run does what the app does.
 const HISTORY: usize = 2000;
 
 fn template(id: &str) -> CompiledSystem {
@@ -39,7 +29,6 @@ fn template(id: &str) -> CompiledSystem {
         .unwrap_or_else(|| panic!("{id} compiles"))
 }
 
-/// Parameter values in the compiled system's order.
 fn params(sys: &CompiledSystem, values: &[(&str, f64)]) -> Vec<f64> {
     assert_eq!(sys.info.params.len(), values.len());
     sys.info
@@ -83,7 +72,6 @@ fn henon_native() -> FnField {
     .with_jacobian(|_n, x, p, j| j.copy_from_slice(&[-2.0 * p[0] * x[0], 1.0, p[1], 0.0]))
 }
 
-/// One timed run: its check value and the number of field evaluations.
 struct Outcome {
     check: f64,
     evals: usize,

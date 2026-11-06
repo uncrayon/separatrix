@@ -889,8 +889,6 @@ test("heads.json: drawHeads through a recording context matches the parity vecto
   assert.deepEqual(saved.cases, JSON.parse(JSON.stringify(cases)), "heads.json is out of date: run with UPDATE_VECTORS=1");
 });
 
-// --- the Lyapunov and orbit-diagram views ---------------------------------------
-
 const lorenz = {
   ...compiled,
   systemId: 4,
@@ -936,7 +934,6 @@ test("analysis views export their own run: the Lyapunov view's request, an orbit
   assert.equal(orbitFigureRatio("latex", 3), 300 / 96);
   const fig = buildOrbitExport(orbit, source, 945);
   assert.equal(fig.diagram.columns, 945);
-  // Column j sits at the centre of image pixel j of the view's range.
   const w = (4 - 2.8) / 945;
   assert.ok(Math.abs(fig.diagram.range[0] - (2.8 + w / 2)) < 1e-12 && Math.abs(fig.diagram.range[1] - (4 - w / 2)) < 1e-12);
   assert.equal(buildOrbitExport(orbit, source, 1), null, "fewer than 2 columns: nothing to draw");
@@ -982,14 +979,21 @@ test("SVG: an image drawn into the recorder is an embedded PNG, pixel for pixel"
   const image = Object.assign(new globalThis.HTMLCanvasElement(), { toDataURL: () => "data:image/png;base64,AAAA" });
   const ctx = new SvgContext(measure);
   ctx.globalAlpha = 0.5;
+  ctx.drawImage(image, 0, 0, 2, 2);
+  ctx.imageSmoothingEnabled = false;
   ctx.drawImage(image, 10, 20, 300, 200);
   ctx.drawImage({}, 0, 0, 1, 1);
   const svg = ctx.toSvg({ width: 400, height: 300 });
   assertWellFormedXml(svg);
   const images = svg.match(/<image [^>]*\/>/g) ?? [];
-  assert.equal(images.length, 1, "only a canvas becomes an image");
+  assert.equal(images.length, 2, "only a canvas becomes an image");
   assert.equal(
     images[0],
+    '<image x="0" y="0" width="2" height="2" preserveAspectRatio="none" opacity="0.5" href="data:image/png;base64,AAAA"/>',
+    "smoothed, as a canvas draws by default",
+  );
+  assert.equal(
+    images[1],
     '<image x="10" y="20" width="300" height="200" preserveAspectRatio="none" style="image-rendering:pixelated" opacity="0.5" href="data:image/png;base64,AAAA"/>',
   );
 });

@@ -34,11 +34,6 @@
   margin-bottom: var(--space-2);
 }
 
-/*
- * Five views share the row: each segment grows from its label's width (with
- * the narrow space-1 padding, so "Cobweb" fits beside "λ" and "Orbit" in
- * projector mode at 1,024 px), and the room left over is shared out.
- */
 .inspector .inspector-view-control .ds-segmented--fill .ds-segmented-item {
   flex: 1 1 auto;
   padding: 0 var(--space-1);

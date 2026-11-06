@@ -51,7 +51,7 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
-import { MAX_SECTION_POINTS } from "./ipc.generated";
+import { BLOW_UP_THRESHOLD, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
 import { METHODS } from "../state/methods";
 import { roundWithUncertainty } from "../state/model";
 
@@ -60,9 +60,7 @@ type Rhs = (t: number, x: number[], p: number[]) => number[];
 interface MockSystem {
   kind: SystemKind;
   hamiltonian?: boolean;
-  /** H(q, p) of a Hamiltonian system that splits as T(p) + V(q). */
   energy?: (x: number[], p: number[]) => number;
-  /** Whether the core's Dormand–Prince stiffness test fires on the template's runs at these parameters. */
   stiffAt?: (p: number[]) => boolean;
   autonomous?: boolean;
   states: StateInfo[];
@@ -258,7 +256,6 @@ const SYSTEMS: Record<string, MockSystem> = {
       "\\dot{y} = -\\frac{x}{\\mu}",
     ],
     f: (_t, [x, y], [mu]) => [mu * (y - (x * x * x) / 3 + x), -x / mu],
-    // Measured with the core from the template's three start points over t ≤ 40: μ = 30 fires, μ = 20 does not.
     stiffAt: ([mu]) => mu >= 30,
   },
   "saddle-node-2d": {
@@ -413,7 +410,6 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   return res;
 }
 
-/** `compute_lyapunov`; the request and response are kept in `__sepxMock.lastLyapunov` for the e2e tests. */
 export async function mockLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
   const started = performance.now();
   const sys = byId.get(req.systemId);
@@ -432,11 +428,6 @@ export async function mockLyapunov(req: LyapunovRequest): Promise<LyapunovRespon
   return res;
 }
 
-/**
- * `compute_orbit_diagram`, as `dyn_analysis::orbit_diagram` and
- * `period_doublings` compute it (the multiplier from a central difference);
- * the request and response are kept in `__sepxMock.lastOrbit` for the e2e tests.
- */
 export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
   const started = performance.now();
   const sys = byId.get(req.systemId);
@@ -455,7 +446,7 @@ export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitD
       if (k >= req.transient) x[j * req.kept + k - req.transient] = state[req.state];
       if (k + 1 === end) break;
       const next = sys.f(k, state, p);
-      if (!next.every((v) => Math.abs(v) <= BLOW_UP)) break;
+      if (!next.every((v) => Math.abs(v) <= BLOW_UP_THRESHOLD)) break;
       state = next;
     }
   });
@@ -470,9 +461,6 @@ export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitD
   sepxMock().lastOrbit = { req, res };
   return res;
 }
-
-/** `BLOW_UP_THRESHOLD` in dyn-core. */
-const BLOW_UP = 1e12;
 
 function mockDoublings(
   sys: MockSystem,
@@ -553,15 +541,6 @@ function mockDoublings(
   return found;
 }
 
-/** The core's history length (`LYAPUNOV_HISTORY` in service.rs). */
-const LYAPUNOV_HISTORY = 2000;
-
-/**
- * Benettin's method as `dyn_analysis::lyapunov_spectrum` runs it: Q (column
- * major) follows J(x)Q, re-orthonormalized by modified Gram–Schmidt (twice)
- * every interval, ln R_ii summed per block. The preview's flows step with
- * RK4 at h (0.01 for an adaptive method) and a central-difference Jacobian.
- */
 function lyapunovSpectrum(sys: MockSystem, req: LyapunovRequest): Omit<LyapunovResponse, "elapsedMs"> {
   const n = sys.states.length;
   const p = req.params;
@@ -587,7 +566,6 @@ function lyapunovSpectrum(sys: MockSystem, req: LyapunovRequest): Omit<LyapunovR
   let evals = 0;
   let accepted = 0;
   const bad = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
-  // Tangent flow (x, Φ, ∫tr J): RK4 on the n + n² + 1 variables.
   const tangent = (tt: number, y: number[]): number[] => {
     const xs = y.slice(0, n);
     const j = jac(tt, xs);
@@ -915,7 +893,6 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
   const transient = req.transient ?? 0;
   const section = sys.kind === "ode" ? req.section : undefined;
-  // The preview has no Dormand–Prince to test, so it reports what the core measured (`stiffAt`).
   const stiff = sys.kind === "ode" && req.solver.method === "dopri5" && (sys.stiffAt?.(p) ?? false);
   const trajectories = req.trajectories.map((tr) => {
     const out = withEnergy(
@@ -944,7 +921,6 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   };
 }
 
-/** `method_fits` in service.rs, with its messages. The preview integrates every method with RK4. */
 function methodError(sys: MockSystem, method: Method): string | null {
   if (METHODS[method].needs === "any" || sys.kind === "map") return null;
   if (!sys.hamiltonian) {
@@ -954,7 +930,6 @@ function methodError(sys: MockSystem, method: Method): string | null {
   return null;
 }
 
-/** `energy` in service.rs: H at the start and its largest drift over the samples. */
 function withEnergy(sys: MockSystem, p: number[], tr: TrajectoryRequest, out: TrajectoryOut): TrajectoryOut {
   if (!sys.energy) return out;
   const dim = sys.states.length;
@@ -1531,9 +1506,7 @@ export interface SepxMock {
   document: DocumentStateRequest;
   /** The last `compute_portrait` (the canvas's or a gallery thumbnail's; never the export dialog's). */
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
-  /** The last `compute_lyapunov`. */
   lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
-  /** The last `compute_orbit_diagram`. */
   lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
 }
 
@@ -1832,7 +1805,6 @@ const mockSlug = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "system";
 
-/** `export_lyapunov_latex`: the real table's rows and caption words, from the preview's own run. */
 export async function mockExportLyapunovLatex(req: LyapunovExportRequest): Promise<string> {
   const sys = mockSystemOf(req.run.systemId);
   const res = await mockLyapunov(req.run);
@@ -1871,7 +1843,6 @@ export async function mockExportLyapunovLatex(req: LyapunovExportRequest): Promi
   ].join("\n");
 }
 
-/** `export_lyapunov_csv`: `t,lambda_1,…` from the preview's own run. */
 export async function mockExportLyapunovCsv(req: LyapunovExportRequest): Promise<CsvFileOut> {
   const sys = mockSystemOf(req.run.systemId);
   const res = await mockLyapunov(req.run);
@@ -1883,7 +1854,6 @@ export async function mockExportLyapunovCsv(req: LyapunovExportRequest): Promise
   return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
 }
 
-/** The finite iterates of a diagram as `[r, n, x]`. */
 function mockOrbitRows(req: OrbitExportRequest, res: OrbitDiagramResponse): [number, number, number][] {
   const out: [number, number, number][] = [];
   const kept = req.diagram.kept;
@@ -1896,7 +1866,6 @@ function mockOrbitRows(req: OrbitExportRequest, res: OrbitDiagramResponse): [num
   return out;
 }
 
-/** `export_orbit_csv`. */
 export async function mockExportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
   const sys = mockSystemOf(req.diagram.systemId);
   const res = await mockOrbitDiagram(req.diagram);
@@ -1907,7 +1876,6 @@ export async function mockExportOrbitCsv(req: OrbitExportRequest): Promise<CsvFi
   return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
 }
 
-/** `export_orbit_latex` (inline) or, with a `base`, the saved figure: the 5,000-point rule as Rust applies it. */
 async function mockOrbitFigure(
   req: OrbitFigureRequest,
   base: string | null,

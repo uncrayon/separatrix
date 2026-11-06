@@ -165,7 +165,6 @@ fn compute<T: Scalar>(op: Op, r: impl Fn(Reg) -> T) -> T {
     }
 }
 
-/// The inputs a register's value depends on (see [`Program::reads`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
     pub low: bool,
@@ -182,7 +181,6 @@ impl Reads {
         }
     }
 
-    /// Depends on no state (a constant, parameters, or `t`).
     pub(crate) fn no_state(self) -> bool {
         !self.low && !self.high
     }
@@ -209,8 +207,6 @@ impl Program {
         self.insts.len()
     }
 
-    /// For every register, which inputs its value depends on: states below
-    /// `split`, states from `split` on, and `t`.
     pub(crate) fn reads(&self, split: usize) -> Vec<Reads> {
         let mut out: Vec<Reads> = Vec::with_capacity(self.insts.len());
         for &inst in &self.insts {

@@ -4,6 +4,7 @@ import type {
   FigureLatexRequest,
   FixedPointOut,
   LyapunovResponse,
+  OrbitDiagramRequest,
   OrbitDiagramResponse,
   OrbitFigureRequest,
   PortraitResponse,
@@ -287,7 +288,6 @@ function FixedPointsPreview({
   );
 }
 
-/** The spectrum table as it will be written: λᵢ with its error, then Σλ against its trace. */
 function SpectrumPreview({ res, kind }: { res: LyapunovResponse; kind: SystemKind }) {
   const gap = res.sum - res.traceAverage;
   return (
@@ -370,7 +370,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const returnMap = section && isReturnMap(state.view);
   const compiles = !!sys && state.compileOk;
   const timeDependent = !!sys && !sys.autonomous;
-  // A Lyapunov or orbit-diagram view exports its own run, not a portrait.
   const chaos = sys ? analysisKind(state) : null;
   const chaosWords = chaos === "lyapunov" ? "the Lyapunov view" : "the orbit diagram";
   const reasons = {
@@ -407,7 +406,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
           ? "the field changes with time"
           : null,
   };
-  // The Lyapunov view offers its table first; the other views have no table.
   const contents: LatexContent[] =
     chaos === "lyapunov" ? ["spectrum", "figure", "equations", "fixedPoints"] : ["figure", "equations", "fixedPoints"];
   const content: LatexContent = [opts.latexContent, ...contents].find((c) => contents.includes(c) && !contentReason[c]) ?? contents[0];
@@ -447,7 +445,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const source: ExportSource = { title: name, ...(ref ? { sourceRef: ref } : {}), lines, format: state.format };
   const lyapunovReq = chaos === "lyapunov" ? buildLyapunovExport(state, source) : null;
   const lyapunovRun = chaos === "lyapunov" && state.lyapunov && lyapunovCurrent(state) ? state.lyapunov.res : null;
-  // The orbit diagram of a figure has one column per pixel of its image; its CSV has the screen's columns.
   const orbitRatio = orbitFigureRatio(format, raster.scale);
   const orbitFigReq = chaos === "orbit" ? buildOrbitExport(state, source, orbitColumns(size.width, orbitRatio)) : null;
   const orbitCsvReq = chaos === "orbit" ? buildOrbitExport(state, source, state.orbitColumns) : null;
@@ -455,11 +452,11 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const [orbitFig, setOrbitFig] = useState<{ key: string; res: OrbitDiagramResponse } | null>(null);
   const [orbitError, setOrbitError] = useState<string | null>(null);
   useEffect(() => {
-    if (!orbitFigReq || !wantsFigure) return;
+    if (!orbitKey || !wantsFigure) return;
     let live = true;
     const key = orbitKey;
     const timer = window.setTimeout(() => {
-      computeOrbitDiagram(orbitFigReq.diagram)
+      computeOrbitDiagram(JSON.parse(key) as OrbitDiagramRequest)
         .then((res) => {
           if (!live) return;
           setOrbitFig({ key, res });
@@ -471,7 +468,6 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       live = false;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orbitKey, wantsFigure]);
   const analysis: AnalysisFigure | null =
     chaos === "lyapunov"

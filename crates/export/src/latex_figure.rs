@@ -668,8 +668,7 @@ struct Plot {
 #[derive(Debug, Clone)]
 struct Cloud {
     points: Vec<(f64, f64)>,
-    radius_px: f64,
-    square: bool,
+    dot: Dot,
     color: String,
 }
 
@@ -687,8 +686,6 @@ fn at_px(x: f64, y: f64) -> String {
     )
 }
 
-/// A figure's frame as the screen lays it out: ticks, axis lines, the
-/// tick labels kept clear of the axis names, and the names.
 struct Frame {
     vp: Viewport,
     tx: ticks::Ticks,
@@ -735,8 +732,6 @@ impl Frame {
         }
     }
 
-    /// `\begin{tikzpicture}`, the axis with its grid and axis lines, and the
-    /// tick marks.
     fn axis_begin(&self, theme: Theme) -> String {
         let vp = &self.vp;
         let mut axis_opts: Vec<String> = vec![
@@ -827,7 +822,6 @@ impl Frame {
         }
         body.push_str("]\n");
 
-        // Tick marks (below the x axis, left of the y axis; none at 0).
         let mut marks = Vec::new();
         if self.axes.y_axis_in_view {
             for &v in &self.ty.ticks {
@@ -863,10 +857,8 @@ impl Frame {
         body
     }
 
-    /// The tick labels, the axis names and the end of the picture.
     fn axis_end(&self) -> String {
         let mut body = String::new();
-        // Tick labels.
         for l in &self.labels {
             body.push_str(&format!(
                 "\\node[anchor={}, sepxlabel, font=\\footnotesize] at {} {{${}$}};\n",
@@ -875,7 +867,6 @@ impl Frame {
                 l.tex
             ));
         }
-        // Axis self.names.
         let (xa, xy) = if self.names.x_above {
             ("south east", self.names.x_axis_y - 4.0)
         } else {
@@ -916,8 +907,6 @@ fn packages(libs: &[&str]) -> (String, String) {
     )
 }
 
-/// The definitions a figure starts with (inside the document body of a
-/// standalone one): `\\sepxdir` for external files, then the colours.
 fn definitions(external: bool, colors: &[(String, String)]) -> String {
     let mut defs = String::new();
     if external {
@@ -932,8 +921,6 @@ fn definitions(external: bool, colors: &[(String, String)]) -> String {
     defs
 }
 
-/// The comment header, then the definitions and the picture, wrapped in a
-/// `standalone` document when asked.
 fn finish(mut tex: String, preamble: &str, defs: &str, body: &str, standalone: bool) -> String {
     if standalone {
         tex.push_str("\\documentclass[border=2mm]{standalone}\n");
@@ -949,16 +936,31 @@ fn finish(mut tex: String, preamble: &str, defs: &str, body: &str, standalone: b
     tex
 }
 
-/// The size of a map iterate's dot: discs of radius 2.6 px, 1.3 px above
-/// 300 iterates, squares of half-side 0.75 px above 2,000.
-fn dot_size(count: usize) -> (f64, bool) {
-    if count > SQUARE_DOTS_ABOVE {
+#[derive(Debug, Clone, Copy)]
+struct Dot {
+    radius_px: f64,
+    square: bool,
+}
+
+impl Dot {
+    fn mark(self) -> &'static str {
+        if self.square {
+            "square*"
+        } else {
+            "*"
+        }
+    }
+}
+
+fn dot_size(count: usize) -> Dot {
+    let (radius_px, square) = if count > SQUARE_DOTS_ABOVE {
         (0.75, true)
     } else if count > 300 {
         (1.3, false)
     } else {
         (2.6, false)
-    }
+    };
+    Dot { radius_px, square }
 }
 
 /// What [`orbit_figure`] needs.
@@ -1023,7 +1025,8 @@ pub fn orbit_figure(input: &OrbitFigureInput) -> FigureOutput {
                 col.iter().filter(|x| x.is_finite()).map(move |&x| (r, x))
             })
             .collect();
-    let (radius, square) = dot_size(all.len());
+    let dot = dot_size(all.len());
+    let radius = dot.radius_px;
     let grown = Rect {
         x0: vp.x_range.0 - radius * upx,
         x1: vp.x_range.1 + radius * upx,
@@ -1143,7 +1146,7 @@ pub fn orbit_figure(input: &OrbitFigureInput) -> FigureOutput {
         };
         body.push_str(&format!(
             "\\addplot[sepxfp, only marks, mark={}, mark size={}, mark options={{draw opacity=0, fill=sepxfp}}] {source};\n",
-            if square { "square*" } else { "*" },
+            dot.mark(),
             bp(radius)
         ));
     }
@@ -1489,7 +1492,8 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                     });
                 }
             }
-            let (r, square) = dot_size(shown.len());
+            let dot = dot_size(shown.len());
+            let r = dot.radius_px;
             let grown = Rect {
                 x0: p.x_range.0 - r * upx,
                 x1: p.x_range.1 + r * upx,
@@ -1519,15 +1523,14 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
             plots.push(Plot {
                 options: format!(
                     "{color}, only marks, mark={}, mark size={}, mark options={{draw opacity=0, fill={color}}}",
-                    if square { "square*" } else { "*" },
+                    dot.mark(),
                     bp(r)
                 ),
                 table: Some((name, t)),
                 curve: None,
                 cloud: Some(Cloud {
                     points: pts,
-                    radius_px: r,
-                    square,
+                    dot,
                     color: pal.traj[ci % pal.traj.len()].clone(),
                 }),
                 raw: String::new(),
@@ -1721,8 +1724,8 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                             .iter()
                             .map(|&(a, b)| (vp.sx(a), vp.sy(b)))
                             .collect(),
-                        radius_px: c.radius_px,
-                        square: c.square,
+                        radius_px: c.dot.radius_px,
+                        square: c.dot.square,
                         color: c.color.clone(),
                     })
                     .collect();

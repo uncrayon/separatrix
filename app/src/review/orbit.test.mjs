@@ -1,10 +1,3 @@
-// The orbit diagram view: its place in the View control, the
-// compute_orbit_diagram request built from the studio state (one column per
-// device pixel, centred on it), the click that sets the parameter, the
-// density binning, the doublings list and the .sepx round trip.
-// Expectations come from docs/contracts.md and the unit brief, never from a
-// run of the code under test.
-//
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports resolve to .ts through a module hook.
 
@@ -85,7 +78,6 @@ test("one column per device pixel, at most MAX_ORBIT_COLUMNS", () => {
 });
 
 test("column j is the j-th pixel's centre, and a click sets the r of the column under it", () => {
-  // r ∈ [2.8, 4] over 1,200 pixels: each is 0.001 wide, column j at 2.8 + (j + ½)·0.001.
   const xRange = [2.8, 4];
   const [lo, hi] = model.orbitRange(xRange, 1200);
   assert.ok(Math.abs(lo - 2.8005) < 1e-12 && Math.abs(hi - 3.9995) < 1e-12);
@@ -96,7 +88,6 @@ test("column j is the j-th pixel's centre, and a click sets the r of the column 
   assert.equal(at(2.8).column, 0);
   assert.equal(at(4).column, 1199, "the right edge is the last column");
   assert.equal(at(1).column, 0, "outside the range: the nearest column");
-  // The core's r_j = lo + j·(hi − lo)/(columns − 1), the same sum.
   const step = (hi - lo) / 1199;
   for (const j of [0, 17, 600, 1199]) assert.equal(at(2.8 + (j + 0.5) * 0.001).r, lo + j * step);
 });
@@ -199,8 +190,6 @@ test("Strogatz's r₁, r₂, … name the cascade the doublings start with, othe
 });
 
 test("iterates are binned per pixel, escaped and off-plot ones left out", () => {
-  // Two columns over r ∈ [0, 2] in a 2 × 4 grid over x ∈ [0, 1], rows from the top:
-  // x = 0.9 is row 0, 0.6 row 1, 0.1 row 3; 1.5 and −0.2 are off the plot.
   const res = { r: [0.5, 1.5], x: [0.1, 0.1, 0.9, null, 0.6, 1.5, -0.2, 0.6] };
   const h = orbitHistogram(res, { xRange: [0, 2], yRange: [0, 1] }, 2, 4);
   assert.deepEqual([...h.counts], [1, 0, 0, 2, 0, 0, 2, 0]);

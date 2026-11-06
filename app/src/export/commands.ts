@@ -92,7 +92,6 @@ export function exportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
   return isTauri() ? invoke<CsvFileOut>("export_orbit_csv", { req }) : mockExportOrbitCsv(req);
 }
 
-/** Saves one CSV an export command built, and its `.meta.json`. */
 export function saveCsvFile(file: CsvFileOut, title: string, suggestedName: string): Promise<SavedFiles | null> {
   const req = { file, title, suggestedName };
   return isTauri() ? invoke<SavedFiles | null>("save_csv_file", { req }) : mockSaveCsvFile(req);

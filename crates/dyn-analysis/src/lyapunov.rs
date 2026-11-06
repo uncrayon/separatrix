@@ -1,12 +1,5 @@
-//! The Lyapunov spectrum of a flow or a map by the Benettin (QR) method.
-//!
-//! A set of `n` tangent vectors is carried along the orbit and
-//! re-orthonormalised every `interval` by modified Gram–Schmidt (applied
-//! twice). The exponents are the time averages of `ln R_ii`, the stretch of
-//! each column before it was normalised (Benettin, Galgani, Giorgilli &
-//! Strelcyn, *Meccanica* 15, 1980). Flows integrate the variational
-//! equations `Φ' = J(x) Φ` with the field's own Jacobian (exact forward-mode
-//! AD for compiled systems); maps multiply `Q ← J(x_n) Q`.
+//! The Lyapunov spectrum by the Benettin (QR) method: Benettin, Galgani,
+//! Giorgilli & Strelcyn, *Meccanica* 15, 1980.
 
 use std::cell::RefCell;
 
@@ -121,28 +114,63 @@ fn add_stats(a: Stats, b: Stats) -> Stats {
     }
 }
 
-/// Column-major identity: `Q[j·n + i] = δ_ij`.
-fn identity(n: usize, q: &mut [f64]) {
-    q.fill(0.0);
-    for j in 0..n {
-        q[j * n + j] = 1.0;
+#[derive(Clone, Copy)]
+struct RowMajor<'a> {
+    n: usize,
+    a: &'a [f64],
+}
+
+impl RowMajor<'_> {
+    fn row(&self, i: usize) -> &[f64] {
+        &self.a[i * self.n..(i + 1) * self.n]
+    }
+
+    fn trace(&self) -> f64 {
+        (0..self.n).map(|i| self.a[i * self.n + i]).sum()
     }
 }
 
-/// Number of QR steps covering `total` with steps of `interval` (the last
-/// one may be shorter). A ratio within 1e-9 of an integer counts as that
-/// integer, so `1e4 / 0.1` is 100 000 steps, not 100 001.
+#[derive(Clone, Copy)]
+struct ColMajor<'a> {
+    n: usize,
+    a: &'a [f64],
+}
+
+impl ColMajor<'_> {
+    fn col(&self, j: usize) -> &[f64] {
+        &self.a[j * self.n..(j + 1) * self.n]
+    }
+}
+
+struct ColMajorMut<'a> {
+    n: usize,
+    a: &'a mut [f64],
+}
+
+impl ColMajorMut<'_> {
+    fn col_mut(&mut self, j: usize) -> &mut [f64] {
+        &mut self.a[j * self.n..(j + 1) * self.n]
+    }
+
+    fn set_identity(&mut self) {
+        self.a.fill(0.0);
+        for j in 0..self.n {
+            self.a[j * self.n + j] = 1.0;
+        }
+    }
+}
+
+const WHOLE_RATIO_SLACK: f64 = 1e-9;
+
 fn planned_steps(total: f64, interval: f64) -> usize {
     let ratio = total / interval;
     if ratio.is_finite() && ratio > 0.0 {
-        ((ratio - 1e-9).ceil() as usize).max(1)
+        ((ratio - WHOLE_RATIO_SLACK).ceil() as usize).max(1)
     } else {
         1
     }
 }
 
-/// Accumulates `ln R_ii` over the QR steps, per block, and the running
-/// estimates.
 struct Accumulator {
     n: usize,
     planned: usize,
@@ -179,12 +207,9 @@ impl Accumulator {
         }
     }
 
-    /// Orthonormalise the columns of `q` (column-major `n × n`) in place by
-    /// modified Gram–Schmidt applied twice, and record `ln R_ii` for a step
-    /// of length `dt` ending at `t`, over which `∫ tr J` (flow) or
-    /// `Σ ln |det J|` (map) was `trace`.
-    fn renormalize(&mut self, q: &mut [f64], dt: f64, trace: f64, t: f64) {
+    fn renormalize(&mut self, q: ColMajorMut, dt: f64, trace: f64, t: f64) {
         let n = self.n;
+        let q = q.a;
         let block = self.done * self.blocks / self.planned.max(1);
         let block = block.min(self.blocks - 1);
         for j in 0..n {
@@ -267,8 +292,6 @@ impl Accumulator {
     }
 }
 
-/// Step until `t_end`, failing once `stepper` has taken `max_steps`
-/// accepted steps.
 fn advance(stepper: &mut Stepper, max_steps: usize) -> Result<(), Status> {
     loop {
         if stepper.stats().accepted >= max_steps && !stepper.is_done() {
@@ -315,11 +338,12 @@ fn flow_spectrum(
         t = settle.t();
     }
 
-    let tangent = Tangent { f, n };
-    let s_at = n + n * n;
-    let mut z = vec![0.0; s_at + 1];
-    z[..n].copy_from_slice(&x);
-    identity(n, &mut z[n..s_at]);
+    let layout = TangentLayout { n };
+    let tangent = Tangent { f, layout };
+    let mut z = vec![0.0; layout.len()];
+    let (z_x, mut phi, _) = layout.split_mut(&mut z);
+    z_x.copy_from_slice(&x);
+    phi.set_identity();
     let t_start = t;
     let budget = solver.max_steps.saturating_sub(stats.accepted);
     let first_end = t_start + opts.interval.min(opts.total);
@@ -339,9 +363,9 @@ fn flow_spectrum(
         }
         z.copy_from_slice(stepper.x());
         let t_now = stepper.t();
-        let (phi, s) = z[n..].split_at_mut(n * n);
-        acc.renormalize(phi, t_now - t_last, s[0], t_now);
-        s[0] = 0.0;
+        let (_, phi, s) = layout.split_mut(&mut z);
+        acc.renormalize(phi, t_now - t_last, *s, t_now);
+        *s = 0.0;
         if !finite(&z) {
             status = Status::NonFinite;
             break;
@@ -401,7 +425,7 @@ fn map_spectrum(
     }
 
     let mut q = vec![0.0; n * n];
-    identity(n, &mut q);
+    ColMajorMut { n, a: &mut q }.set_identity();
     let mut jac = vec![0.0; n * n];
     let mut lu = vec![0.0; n * n];
     let mut jq = vec![0.0; n * n];
@@ -413,7 +437,11 @@ fn map_spectrum(
         f.jacobian(k as f64, &x, p, &mut jac);
         lu.copy_from_slice(&jac);
         log_det += ln_abs_det(n, &mut lu);
-        multiply(n, &jac, &q, &mut jq);
+        multiply(
+            RowMajor { n, a: &jac },
+            ColMajor { n, a: &q },
+            ColMajorMut { n, a: &mut jq },
+        );
         std::mem::swap(&mut q, &mut jq);
         since += 1;
         if let Err(s) = step(k, &mut x, &mut next, &mut stats) {
@@ -425,7 +453,12 @@ fn map_spectrum(
                 status = Status::NonFinite;
                 break;
             }
-            acc.renormalize(&mut q, since as f64, log_det, (k + 1) as f64);
+            acc.renormalize(
+                ColMajorMut { n, a: &mut q },
+                since as f64,
+                log_det,
+                (k + 1) as f64,
+            );
             since = 0;
             log_det = 0.0;
         }
@@ -433,20 +466,15 @@ fn map_spectrum(
     acc.finish(status, stats)
 }
 
-/// `out = J Q` for row-major `J` and column-major `Q`, `out` column-major.
-fn multiply(n: usize, jac: &[f64], q: &[f64], out: &mut [f64]) {
-    for c in 0..n {
-        let col = &q[c * n..(c + 1) * n];
-        for i in 0..n {
-            let row = &jac[i * n..(i + 1) * n];
-            out[c * n + i] = row.iter().zip(col).map(|(a, b)| a * b).sum();
+fn multiply(jac: RowMajor, q: ColMajor, mut out: ColMajorMut) {
+    for c in 0..q.n {
+        let col = q.col(c);
+        for (i, o) in out.col_mut(c).iter_mut().enumerate() {
+            *o = jac.row(i).iter().zip(col).map(|(a, b)| a * b).sum();
         }
     }
 }
 
-/// `ln |det A|` by Gaussian elimination with partial pivoting, destroying
-/// `a` (row-major `n × n`): the sum of `ln |u_ii|`, so a large determinant
-/// cannot overflow. `-∞` for a singular matrix.
 fn ln_abs_det(n: usize, a: &mut [f64]) -> f64 {
     let mut sum = 0.0;
     for c in 0..n {
@@ -473,8 +501,6 @@ fn ln_abs_det(n: usize, a: &mut [f64]) -> f64 {
     sum
 }
 
-/// Largest dimension whose Jacobian fits in the stack scratch of
-/// [`Tangent::eval`]; larger systems use a thread-local buffer.
 const STACK_DIM: usize = 16;
 
 thread_local! {
@@ -494,17 +520,41 @@ fn with_jacobian_scratch<R>(len: usize, run: impl FnOnce(&mut [f64]) -> R) -> R 
     }
 }
 
-/// The orbit with its tangent vectors and the integral of `tr J`:
-/// state `(x, Φ, s)` of length `n + n² + 1`, `Φ` column-major, with
-/// `x' = f(x)`, `Φ' = J(x) Φ`, `s' = tr J(x)`.
+#[derive(Clone, Copy)]
+struct TangentLayout {
+    n: usize,
+}
+
+impl TangentLayout {
+    fn len(self) -> usize {
+        self.n + self.n * self.n + 1
+    }
+
+    fn split(self, z: &[f64]) -> (&[f64], ColMajor<'_>) {
+        let (x, rest) = z.split_at(self.n);
+        let phi = ColMajor {
+            n: self.n,
+            a: &rest[..self.n * self.n],
+        };
+        (x, phi)
+    }
+
+    fn split_mut(self, z: &mut [f64]) -> (&mut [f64], ColMajorMut<'_>, &mut f64) {
+        let (x, rest) = z.split_at_mut(self.n);
+        let (phi, s) = rest.split_at_mut(self.n * self.n);
+        let phi = ColMajorMut { n: self.n, a: phi };
+        (x, phi, &mut s[0])
+    }
+}
+
 struct Tangent<'a> {
     f: &'a dyn VectorField,
-    n: usize,
+    layout: TangentLayout,
 }
 
 impl VectorField for Tangent<'_> {
     fn dim(&self) -> usize {
-        self.n + self.n * self.n + 1
+        self.layout.len()
     }
     fn n_params(&self) -> usize {
         self.f.n_params()
@@ -516,14 +566,15 @@ impl VectorField for Tangent<'_> {
         self.f.is_autonomous()
     }
     fn eval(&self, t: f64, z: &[f64], p: &[f64], out: &mut [f64]) {
-        let n = self.n;
-        let (x, phi) = z.split_at(n);
-        let (fx, rest) = out.split_at_mut(n);
+        let n = self.layout.n;
+        let (x, phi) = self.layout.split(z);
+        let (fx, dphi, ds) = self.layout.split_mut(out);
         self.f.eval(t, x, p, fx);
         with_jacobian_scratch(n * n, |jac| {
             self.f.jacobian(t, x, p, jac);
-            multiply(n, jac, &phi[..n * n], &mut rest[..n * n]);
-            rest[n * n] = (0..n).map(|i| jac[i * n + i]).sum();
+            let jac = RowMajor { n, a: jac };
+            multiply(jac, phi, dphi);
+            *ds = jac.trace();
         });
     }
 }

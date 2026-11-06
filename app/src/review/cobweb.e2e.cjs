@@ -240,10 +240,9 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     await page.keyboard.press("ArrowLeft");
     assert.equal(await viewRadio(page, "Time series").getAttribute("aria-checked"), "true");
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Time series");
-    // The Lyapunov view and the orbit diagram start a run when they open, so wait for each choice to be checked.
     const checked = (name) => viewRadio(page, name).and(page.locator('[aria-checked="true"]')).waitFor({ timeout: 5000 });
     await page.keyboard.press("ArrowLeft");
-    await checked("Orbit diagram"); // Phase plane is skipped, wrapping round to the last choice
+    await checked("Orbit diagram");
     await page.keyboard.press("Home");
     await checked("Time series");
     await page.keyboard.press("End");

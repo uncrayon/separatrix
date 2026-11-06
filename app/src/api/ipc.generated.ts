@@ -1260,6 +1260,10 @@ export const MAX_RENORMALIZATIONS = 10000000;
 
 export const MAX_ORBIT_COLUMNS = 4096;
 
+export const BLOW_UP_THRESHOLD = 1e12;
+
+export const LYAPUNOV_HISTORY = 2000;
+
 export const MAX_ORBIT_POINTS = 4000000;
 
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";

@@ -195,8 +195,6 @@ fn a_standalone_figure_is_its_axis_plus_the_border() {
     }
 }
 
-/// Compiles `tex` (a snippet) with its files in a minimal document and
-/// returns the text of the PDF (empty without `pdftotext`).
 fn compile_snippet(name: &str, tex: &str, files: &[(String, Vec<u8>)]) -> String {
     let dir = scratch(name);
     for (f, bytes) in files {

@@ -1,5 +1,3 @@
-// The method table and the symplectic methods' rules in the UI.
-
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

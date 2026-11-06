@@ -1,5 +1,6 @@
 use dyn_core::VectorField;
 
+use crate::lu::Singular;
 use crate::rosenbrock::Rosenbrock;
 use crate::symplectic::splitting;
 use crate::{all_finite, blew_up, Method, SolverOptions, Stats, Status};
@@ -64,14 +65,10 @@ mod ctrl {
     pub const EXPO1: f64 = 0.2 - PI_BETA * 0.75;
 }
 
-/// What the step-size control of an adaptive method depends on.
 #[derive(Debug, Clone, Copy)]
 struct Control {
-    /// The order Hairer's starting-step guess assumes.
     order: f64,
-    /// The exponent of the error in the step-size factor.
     expo1: f64,
-    /// The PI controller's gain on the last accepted error (0: plain I).
     beta: f64,
 }
 
@@ -90,13 +87,8 @@ fn control(method: Method) -> Control {
     }
 }
 
-/// Hairer's stiffness test for DOPRI5: a step is stiff when
-/// `h·‖k7 − k6‖ / ‖x7 − x6‖`, an estimate of `h·|λ|` for the dominant
-/// eigenvalue, exceeds this, close to the edge of the method's stability
-/// region on the negative real axis.
+/// Hairer's stiffness test for DOPRI5.
 const STIFF_H_LAMBDA: f64 = 3.25;
-/// Stiff steps, without `STIFF_RESET` non-stiff ones in a row between
-/// them, before the run is reported stiff.
 const STIFF_STEPS: u32 = 15;
 const STIFF_RESET: u32 = 6;
 
@@ -263,7 +255,6 @@ impl DenseCoeffs {
         }
     }
 
-    /// Rosenbrock 2(3)'s own continuous extension.
     fn rosenbrock(&mut self, h: f64, x: &[f64], x_new: &[f64], rb: &Rosenbrock) {
         for i in 0..x.len() {
             self.c0[i] = x[i];
@@ -312,7 +303,6 @@ enum Dense {
     Hermite,
     /// Dormand–Prince's own interpolant from the stages.
     Dopri5,
-    /// Rosenbrock 2(3)'s interpolant from its stages.
     Rosenbrock,
 }
 
@@ -976,9 +966,9 @@ impl<'a> Stepper<'a> {
                 self.t + h
             };
 
-            let solved = self.adaptive_stages(h, t_new);
+            let stages = self.adaptive_stages(h, t_new);
             let err = self.scaled_rms_error(h);
-            if !solved || self.stages_non_finite(err) {
+            if stages.is_err() || self.stages_non_finite(err) {
                 self.stats.rejected += 1;
                 self.last_rejected = true;
                 last_rejection_nonfinite = true;
@@ -1016,8 +1006,6 @@ impl<'a> Stepper<'a> {
         }
     }
 
-    /// Evaluate what an implicit method keeps fixed over the tries of one
-    /// step: the Jacobian (and `∂f/∂t`) at the current point.
     fn linearize(&mut self) {
         let Self {
             f,
@@ -1036,13 +1024,10 @@ impl<'a> Stepper<'a> {
         }
     }
 
-    /// The stages of one try of an adaptive step: `x_new`, `f_new` and what
-    /// the error estimate needs. `false` when the Rosenbrock matrix
-    /// `I − h·d·J` is singular.
-    fn adaptive_stages(&mut self, h: f64, t_new: f64) -> bool {
+    fn adaptive_stages(&mut self, h: f64, t_new: f64) -> Result<(), Singular> {
         let Some(rb) = self.rosenbrock.as_deref_mut() else {
             self.dopri5_stages(h, t_new);
-            return true;
+            return Ok(());
         };
         let Self {
             f,
@@ -1059,17 +1044,15 @@ impl<'a> Stepper<'a> {
         rb.stages(h, *t, x, fx, t_new, x_new, f_new, |t, x, out| {
             counted_eval(f, p, stats, t, x, out)
         })
-        .is_ok()
     }
 
-    /// Hairer's stiffness test on an accepted Dormand–Prince step, before
-    /// it is committed: `x_stage` and `k[4]` are the sixth stage's point and
-    /// slope, `x_new` and `f_new` the seventh's. See [`Stepper::looks_stiff`].
     fn note_stiffness(&mut self, h: f64) {
+        let (x6, k6) = (&self.x_stage, &self.k[4]);
+        let (x7, k7) = (&self.x_new, &self.f_new);
         let (mut num, mut den) = (0.0, 0.0);
         for i in 0..self.dim() {
-            num += (self.f_new[i] - self.k[4][i]).powi(2);
-            den += (self.x_new[i] - self.x_stage[i]).powi(2);
+            num += (k7[i] - k6[i]).powi(2);
+            den += (x7[i] - x6[i]).powi(2);
         }
         if den > 0.0 && h.abs() * (num / den).sqrt() > STIFF_H_LAMBDA {
             self.non_stiff_steps = 0;

@@ -1,6 +1,3 @@
-//! Orbit (bifurcation) diagrams of maps, and the period-doubling points of a
-//! one-dimensional map located from one (Strogatz §10.2–10.3).
-
 use dyn_core::{SystemKind, VectorField};
 use dyn_solve::BLOW_UP_THRESHOLD;
 
@@ -110,13 +107,10 @@ pub fn orbit_diagram(
     OrbitDiagram { r, x, kept }
 }
 
-/// Two kept iterates `P` apart agree when `|x_{n+P} − x_n| ≤ PERIOD_TOL·(1 + |x_n|)`.
 const PERIOD_TOL: f64 = 1e-7;
 
-/// The bisection on `r` stops once the bracket is this narrow.
 const R_TOL: f64 = 1e-12;
 
-/// Newton on `f^P(x) = x` stops once a step is at most `X_TOL·(1 + |x|)`.
 const X_TOL: f64 = 1e-14;
 
 const NEWTON_ITERS: usize = 50;
@@ -156,9 +150,9 @@ pub fn period_doublings(
     let mut params = p.to_vec();
     let mut multiplier = |r: f64, x: &mut f64, period: usize| {
         params[param] = r;
-        let (cycle, mu) = cycle(f, &params, *x, period)?;
-        *x = cycle;
-        Some(mu)
+        let cycle = cycle(f, &params, *x, period)?;
+        *x = cycle.point;
+        Some(cycle.multiplier)
     };
     let mut found = Vec::new();
     let mut previous: Option<(usize, usize)> = None;
@@ -208,8 +202,6 @@ pub fn period_doublings(
     found
 }
 
-/// The smallest `P ∈ {1, 2, 4, …}`, `2P ≤ column.len()`, with every iterate
-/// agreeing with the one `P` later.
 fn period_of(column: &[f64]) -> Option<usize> {
     let mut period = 1;
     while 2 * period <= column.len() {
@@ -225,34 +217,47 @@ fn period_of(column: &[f64]) -> Option<usize> {
     None
 }
 
-/// The point of the `period`-cycle of a 1-D map reached by Newton's method
-/// on `f^P(x) − x` from `seed`, and its multiplier `∏ f′(x_i)`.
-fn cycle(f: &dyn VectorField, p: &[f64], seed: f64, period: usize) -> Option<(f64, f64)> {
+struct Cycle {
+    point: f64,
+    multiplier: f64,
+}
+
+fn cycle(f: &dyn VectorField, p: &[f64], seed: f64, period: usize) -> Option<Cycle> {
     let mut x = seed;
     for _ in 0..NEWTON_ITERS {
-        let (image, mu) = orbit(f, p, x, period);
-        let dx = (image - x) / (mu - 1.0);
+        let fp = iterated(f, p, x, period);
+        let dx = (fp.value - x) / (fp.derivative - 1.0);
         x -= dx;
         if !x.is_finite() {
             return None;
         }
         if dx.abs() <= X_TOL * (1.0 + x.abs()) {
-            let (_, mu) = orbit(f, p, x, period);
-            return mu.is_finite().then_some((x, mu));
+            let multiplier = iterated(f, p, x, period).derivative;
+            return multiplier.is_finite().then_some(Cycle {
+                point: x,
+                multiplier,
+            });
         }
     }
     None
 }
 
-/// `f^P(x)` and `∏_{i<P} f′(x_i)` along the orbit from `x_0 = x`.
-fn orbit(f: &dyn VectorField, p: &[f64], x: f64, period: usize) -> (f64, f64) {
-    let (mut x, mut mu) = ([x], 1.0);
+struct Iterated {
+    value: f64,
+    derivative: f64,
+}
+
+fn iterated(f: &dyn VectorField, p: &[f64], x: f64, period: usize) -> Iterated {
+    let (mut x, mut derivative) = ([x], 1.0);
     let (mut next, mut slope) = ([0.0], [0.0]);
     for _ in 0..period {
         f.jacobian(0.0, &x, p, &mut slope);
         f.eval(0.0, &x, p, &mut next);
-        mu *= slope[0];
+        derivative *= slope[0];
         x = next;
     }
-    (x[0], mu)
+    Iterated {
+        value: x[0],
+        derivative,
+    }
 }

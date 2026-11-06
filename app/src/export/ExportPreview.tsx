@@ -20,16 +20,9 @@ interface Props {
   caption: ReactNode;
   busy: boolean;
   space?: SpaceFigure | null;
-  /** A Lyapunov or orbit-diagram view's figure, drawn instead of `scene`. */
   analysis?: AnalysisFigure | null;
 }
 
-/**
- * The exported figure, drawn by the same code as the PNG and SVG (drawFigure,
- * drawSpaceFigure for a 3D view, drawAnalysisFigure for a Lyapunov or
- * orbit-diagram view) at the figure's own size and scaled into the well, so
- * line weights and type sit as they will in the file.
- */
 export function ExportPreview({
   widthPx,
   heightPx,

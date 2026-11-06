@@ -284,7 +284,6 @@ test("a map: no direction field or nullclines, with the reason on the checkbox",
   }
 });
 
-/** The studio itself (not the harness) on `title`, in the View `view`. */
 async function openStudioView(title, view) {
   const browser = await chromium.launch();
   try {

@@ -656,8 +656,6 @@ fn lyapunov_values_round_at_their_uncertainty_and_a_map_says_it_was_iterated() {
         tex.contains("$\\lambda_{2}$ & \\num{0.4192 +- 0.0012} \\\\\n"),
         "{tex}"
     );
-    // An exponent without an uncertainty has six significant digits and the
-    // caption says why there is no error.
     assert!(
         tex.contains("$\\lambda_{3}$ & \\num{-1.6232} \\\\\n"),
         "{tex}"
@@ -669,8 +667,6 @@ fn lyapunov_values_round_at_their_uncertainty_and_a_map_says_it_was_iterated() {
     assert!(!tex.contains("Runge"), "a map names no integrator");
 }
 
-/// A logistic diagram of `columns` × `kept` with the last column escaped
-/// after two iterates.
 fn big_orbit(columns: usize, kept: usize) -> OrbitRun {
     let step = (4.0 - 2.6) / (columns - 1) as f64;
     let r: Vec<f64> = (0..columns).map(|j| 2.6 + j as f64 * step).collect();
@@ -757,8 +753,6 @@ fn an_orbit_diagram_over_5000_points_is_a_png_layer_or_thinned() {
     );
     let opaque = rgba.chunks(4).filter(|p| p[3] > 0).count();
     assert!(opaque > 400 && opaque < 20_000, "{opaque} pixels drawn");
-    // r = 2.6 has the fixed point x* = 1 − 1/r = 0.6154, row 115.4: one
-    // fully dark pixel in column 0, nothing else there.
     let row = 115;
     let column0: Vec<usize> = (0..h as usize)
         .filter(|&y| rgba[(y * w as usize) * 4 + 3] > 0)

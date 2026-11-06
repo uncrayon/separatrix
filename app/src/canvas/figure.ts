@@ -120,13 +120,11 @@ export function drawFigure(
   drawNames(ctx, names, th);
 }
 
-/** An axis name laid out, and the box it takes. */
 interface PlacedName {
   layout: MathLayout;
   box: Box;
 }
 
-/** The axis names where the screen puts them (none without `opts.names`). */
 function placeNames(ctx: DrawContext, vp: Viewport, opts: FigureOptions): PlacedName[] {
   if (!opts.names) return [];
   const fonts = opts.fonts ?? DEFAULT_FIGURE_FONTS;
@@ -146,21 +144,10 @@ function drawNames(ctx: DrawContext, names: PlacedName[], th: PlotTheme): void {
   }
 }
 
-/**
- * What a Lyapunov or orbit-diagram view exports: the view's run, or a
- * diagram computed with one column per device pixel of the image
- * (`pixelRatio` image pixels per CSS px).
- */
 export type AnalysisFigure =
   | { kind: "lyapunov"; res: LyapunovResponse }
   | { kind: "orbit"; res: Pick<OrbitDiagramResponse, "r" | "x">; pixelRatio: number };
 
-/**
- * Draws an analysis view's figure as its canvas draws the screen
- * (drawLyapunov, drawOrbit, without the orbit view's parameter marker), with
- * the axis names that canvas typesets over it. The tick labels keep clear of
- * the names.
- */
 export function drawAnalysisFigure(
   ctx: RasterContext,
   w: number,

@@ -1,15 +1,8 @@
-// The orbit diagram (Strogatz §10.2, Figure 10.2.7): for each parameter value
-// across, the iterates of one state after the transient, binned per device
-// pixel and drawn as a density, darker where the orbit visits more often,
-// with a vertical marker at the parameter's current value. Drawn through any
-// DrawContext that can also draw an image.
-
 import type { OrbitDiagramResponse } from "../api/types";
 import { drawScene, type Box, type DrawContext, type Scene } from "./draw";
 import type { PlotTheme } from "./theme";
 import { sx, type Viewport } from "./viewport";
 
-/** A DrawContext that can paint a raster, as a canvas's 2D context does. */
 export interface RasterContext extends DrawContext {
   imageSmoothingEnabled: boolean;
   drawImage(image: CanvasImageSource, dx: number, dy: number, dw: number, dh: number): void;
@@ -18,16 +11,10 @@ export interface RasterContext extends DrawContext {
 export interface OrbitHistogram {
   width: number;
   height: number;
-  /** Iterates per pixel, row by row from the top. */
   counts: Uint32Array;
   max: number;
 }
 
-/**
- * The diagram's iterates binned into a `width × height` grid over `vp`'s
- * ranges: column by r, row by x. Iterates outside the ranges, and the null
- * (escaped) ones, are left out.
- */
 export function orbitHistogram(
   res: Pick<OrbitDiagramResponse, "r" | "x">,
   vp: Pick<Viewport, "xRange" | "yRange">,
@@ -58,17 +45,14 @@ export function orbitHistogram(
   return { width, height, counts, max };
 }
 
-/** The faintest pixel's opacity: one visit in a column still reads on both themes. */
 const MIN_ALPHA = 0.3;
 
-/** A pixel visited `count` times, of `max` at most: transparent when 0, then log-scaled from {@link MIN_ALPHA} to 1. */
 export function densityAlpha(count: number, max: number): number {
   if (count <= 0) return 0;
   if (max <= 1) return 1;
   return MIN_ALPHA + (1 - MIN_ALPHA) * (Math.log(count) / Math.log(max));
 }
 
-/** RGBA pixels of `h` in the colour `rgb`, opacity from {@link densityAlpha}. */
 export function densityPixels(h: OrbitHistogram, rgb: readonly [number, number, number]): Uint8ClampedArray<ArrayBuffer> {
   const out = new Uint8ClampedArray(h.counts.length * 4);
   for (let i = 0; i < h.counts.length; i++) {
@@ -82,7 +66,6 @@ export function densityPixels(h: OrbitHistogram, rgb: readonly [number, number, 
   return out;
 }
 
-/** A CSS colour as RGB, read back from a 1-pixel canvas (any syntax the browser takes). */
 function cssRgb(color: string): [number, number, number] {
   const probe = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
   if (!probe) return [128, 128, 128];
@@ -92,7 +75,6 @@ function cssRgb(color: string): [number, number, number] {
   return [r, g, b];
 }
 
-/** A scene with nothing in it but the frame: grid, axes and ticks, the labels clear of `avoid`. */
 function frameOnly(avoid: Box[]): Scene {
   return {
     kind: "map",
@@ -116,20 +98,11 @@ function frameOnly(avoid: Box[]): Scene {
 }
 
 export interface OrbitDrawOptions {
-  /** Device pixels per CSS pixel: the density is binned per device pixel. */
   pixelRatio?: number;
-  /** The swept parameter's current value, marked by a vertical line. */
   marker?: number | null;
-  /** Boxes the tick labels keep clear of (the axis names, a toolbar). */
   avoid?: Box[];
 }
 
-/**
- * Draws the grid, axes and ticks of `vp`, then the diagram `res` as a
- * density in `plot-fp` over them (the plot's z-order puts data above the
- * frame), then the marker at the parameter's value in `accent`. The caller
- * fills the background.
- */
 export function drawOrbit(
   ctx: RasterContext,
   vp: Viewport,

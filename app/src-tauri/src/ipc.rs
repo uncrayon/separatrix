@@ -1146,6 +1146,14 @@ mod bindings {
                 crate::service::MAX_RENORMALIZATIONS.to_string(),
             ),
             ("MAX_ORBIT_COLUMNS", MAX_ORBIT_COLUMNS.to_string()),
+            (
+                "BLOW_UP_THRESHOLD",
+                format!("{:e}", dyn_solve::BLOW_UP_THRESHOLD),
+            ),
+            (
+                "LYAPUNOV_HISTORY",
+                crate::service::LYAPUNOV_HISTORY.to_string(),
+            ),
             ("MAX_ORBIT_POINTS", MAX_ORBIT_POINTS.to_string()),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),

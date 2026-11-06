@@ -16,12 +16,10 @@ interface Props {
 }
 
 const KEY_STEP = 0.05;
-/** A press that moves less than this many px is a click (it sets the parameter), not a pan. */
 const CLICK_SLOP = 3;
 
 const sameBox = (a: Box | null, b: Box | null) => (!a || !b ? a === b : a.every((v, i) => Math.abs(v - b[i]) < 0.5));
 
-// How long the last diagram took to draw, for the status bar's timing.
 let drawMs: number | null = null;
 const drawListeners = new Set<() => void>();
 function setDrawMs(ms: number | null) {
@@ -38,7 +36,6 @@ export function useOrbitDrawMs(): number | null {
   );
 }
 
-/** A map's orbit diagram: a parameter across, a state up; click to set the parameter, zoom and pan as on the phase plane. */
 export function OrbitCanvas({ state, actions, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -141,7 +138,6 @@ export function OrbitCanvas({ state, actions, toolbar }: Props) {
     return () => canvas.removeEventListener("wheel", onWheel);
   }, []);
 
-  /** Sets the swept parameter to the r of the column under `clientX`. */
   const setParamAt = (clientX: number) => {
     const canvas = canvasRef.current;
     if (!canvas || !param || columns < 2) return;

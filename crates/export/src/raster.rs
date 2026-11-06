@@ -120,8 +120,6 @@ pub fn points_png(w: f64, h: f64, dpi: f64, layers: &[Dots]) -> Vec<u8> {
     encode_png(&rgba, iw, ih, dpi)
 }
 
-/// The faintest visited pixel of a density image (the screen's
-/// `densityAlpha`): one iterate still reads on both themes.
 const DENSITY_MIN_ALPHA: f64 = 0.3;
 
 /// An orbit diagram's iterates as a density PNG of a `w` × `h` CSS-px plot

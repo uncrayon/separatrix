@@ -5,9 +5,6 @@
 // analysis) are written back as they were read. Opening turns the file into a
 // `ProjectLoad` by name (states, parameters, axes), which the studio applies
 // once the lines have compiled (`applyProjectLoad` in state/model.ts).
-//
-// Node's unit tests import this module directly, so its one runtime import is
-// the method table, which has none of its own.
 
 import type {
   AxisRef,
@@ -82,9 +79,7 @@ export interface LoadedView {
   yRange: [number, number] | null;
   zRange?: [number, number] | null;
   camera?: Partial<Camera>;
-  /** A Lyapunov view's run, the finite numbers only. */
   lyapunov?: Partial<LyapunovSettings>;
-  /** An orbit diagram's columns, the finite numbers only. */
   orbit?: Partial<OrbitSettings>;
   /** Slice values by state name. */
   slice: Record<string, number>;

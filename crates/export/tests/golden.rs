@@ -996,7 +996,6 @@ fn every_label_has_a_halo() {
     }
 }
 
-/// A template's lines, format and labels (its own parameter values).
 fn template_labels(id: &str, set: &[(&str, f64)]) -> (Template, Labels) {
     let t = template(id);
     let out = compile(&t.equations.join("\n"), t.format);
@@ -1016,8 +1015,6 @@ fn template_labels(id: &str, set: &[(&str, f64)]) -> (Template, Labels) {
     (t, labels)
 }
 
-/// A Lorenz run as the Lyapunov view makes one, written out by hand (no
-/// integration): RK4 at h = 0.01, T = 1000 after 100, τ = 0.1.
 fn lorenz_lyapunov_run() -> LyapunovRun {
     let exponents = vec![0.90561, -0.00025, -14.57196];
     LyapunovRun {
@@ -1078,9 +1075,6 @@ fn lorenz_lyapunov_table_and_csv() {
     check("lorenz-lyapunov.meta.json", &file.meta);
 }
 
-/// A logistic-map diagram of 10 columns, r = 2.8 … 3.7, with 4 iterates
-/// kept after 100: multiplications and subtractions only, so the same bits
-/// everywhere.
 fn logistic_orbit_run() -> OrbitRun {
     let (lo, hi, columns, transient, kept) = (2.8, 3.7, 10, 100, 4);
     let step = (hi - lo) / (columns - 1) as f64;

@@ -667,7 +667,6 @@ fn seeds_per_axis(dim: usize) -> usize {
     }
 }
 
-/// What the method picker and the refusals call each method.
 fn method_name(m: Method) -> &'static str {
     match m {
         Method::Euler => "Euler",
@@ -680,9 +679,6 @@ fn method_name(m: Method) -> &'static str {
     }
 }
 
-/// A symplectic method steps `[q; p]` as kicks and drifts, which is only
-/// right for a separable `H(q, p)`; the core trusts that, so it is checked
-/// here. A map ignores the method.
 fn method_fits(system: &CompiledSystem, method: Method) -> Result<(), String> {
     if !method.is_symplectic() || system.kind() == SystemKind::Map {
         return Ok(());

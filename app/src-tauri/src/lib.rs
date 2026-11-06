@@ -104,8 +104,6 @@ async fn compute_portrait(
     blocking(move || service::compute_portrait(&system, &req)).await
 }
 
-/// Measures the Lyapunov spectrum of one orbit: seconds of work for long
-/// runs, so it runs on a blocking worker thread.
 #[tauri::command]
 async fn compute_lyapunov(
     req: ipc::LyapunovRequest,
@@ -115,8 +113,6 @@ async fn compute_lyapunov(
     blocking(move || service::compute_lyapunov(&system, &req)).await
 }
 
-/// Iterates a map across a parameter range: up to millions of iterates, so
-/// it runs on a blocking worker thread.
 #[tauri::command]
 async fn compute_orbit_diagram(
     req: ipc::OrbitDiagramRequest,
@@ -503,7 +499,6 @@ async fn save_csv<R: Runtime>(
     .await
 }
 
-/// The Lyapunov view's spectrum as a booktabs table.
 #[tauri::command]
 async fn export_lyapunov_latex(
     req: ipc::LyapunovExportRequest,
@@ -515,7 +510,6 @@ async fn export_lyapunov_latex(
     blocking(move || export_service::lyapunov_latex(&cache, &system, &req)).await
 }
 
-/// The Lyapunov view's running estimates as a CSV and its metadata.
 #[tauri::command]
 async fn export_lyapunov_csv(
     req: ipc::LyapunovExportRequest,
@@ -527,7 +521,6 @@ async fn export_lyapunov_csv(
     blocking(move || export_service::lyapunov_csv(&cache, &system, &req)).await
 }
 
-/// An orbit diagram as a pgfplots figure with inline data (Copy).
 #[tauri::command]
 async fn export_orbit_latex(
     req: ipc::OrbitFigureRequest,
@@ -546,7 +539,6 @@ async fn export_orbit_latex(
     .await
 }
 
-/// Saves an orbit diagram as a `.tex` with its `.dat` (or density `.png`).
 #[tauri::command]
 async fn save_orbit_latex<R: Runtime>(
     app: AppHandle<R>,
@@ -582,7 +574,6 @@ async fn save_orbit_latex<R: Runtime>(
     .await
 }
 
-/// An orbit diagram as rows `r,n,x` and their metadata.
 #[tauri::command]
 async fn export_orbit_csv(
     req: ipc::OrbitExportRequest,
@@ -592,7 +583,6 @@ async fn export_orbit_csv(
     blocking(move || export_service::orbit_csv(&system, &req)).await
 }
 
-/// Saves one CSV an export command built, with its `.meta.json` beside it.
 #[tauri::command]
 async fn save_csv_file<R: Runtime>(
     app: AppHandle<R>,

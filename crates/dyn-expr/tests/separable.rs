@@ -1,6 +1,3 @@
-//! `CompiledSystem::is_separable`: which Hamiltonians split as T(p) + V(q),
-//! so a symplectic split-step method may integrate them.
-
 mod common;
 
 use common::*;

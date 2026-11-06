@@ -362,7 +362,6 @@ struct LyapunovMeta<'a> {
     total: f64,
     interval: f64,
     blocks: usize,
-    /// Flows only: maps are iterated.
     #[serde(skip_serializing_if = "Option::is_none")]
     integrator: Option<MetaIntegrator>,
     renormalizations: usize,

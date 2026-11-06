@@ -93,10 +93,7 @@ export function clampCamera(c: Partial<Camera>): Camera {
  * up) and whose ranges are kept at equal scales; `section` is a flow's
  * Poincaré section, its crossings plotted in two states, or as the return
  * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention);
- * `space` is the 3D view of a flow, three states in a box seen from `camera`;
- * `lyapunov` is the running estimates of the Lyapunov spectrum against t (or
- * n), where neither axis is a state; `orbit` is a map's orbit diagram, a
- * parameter across and one state up.
+ * `space` is the 3D view of a flow, three states in a box seen from `camera`.
  */
 interface ViewBase {
   xAxis: AxisRef;
@@ -117,11 +114,6 @@ export type SpaceView = Omit<ViewBase, "xAxis" | "yAxis"> & {
 };
 export type TimeAxis = Extract<AxisRef, { kind: "time" }>;
 
-/**
- * A Lyapunov run (Benettin's QR method, `compute_lyapunov`): `transient` time
- * (or iterates) before measuring, `total` measured, a QR step every
- * `interval` (τ, or iterates per step), and `blocks` for the ± spread.
- */
 export interface LyapunovSettings {
   transient: number;
   total: number;
@@ -129,7 +121,6 @@ export interface LyapunovSettings {
   blocks: number;
 }
 
-/** t (or n) across and λ up: `xRange` is the t-range, `yRange` the λ-range. */
 export type LyapunovView = ViewBase & {
   kind: "lyapunov";
   xAxis: TimeAxis;
@@ -137,20 +128,11 @@ export type LyapunovView = ViewBase & {
   lyapunov: LyapunovSettings;
 };
 
-/**
- * An orbit diagram's columns (`compute_orbit_diagram`): `transient` iterates
- * dropped, then `kept` iterates drawn, from the same start in every column.
- */
 export interface OrbitSettings {
   transient: number;
   kept: number;
 }
 
-/**
- * The parameter `param` (an index into the system's parameters) across over
- * `xRange`, the state `yAxis` up. The horizontal axis is typed as time, as
- * the Lyapunov view's are, so the axis helpers find no state across.
- */
 export type OrbitView = ViewBase & {
   kind: "orbit";
   xAxis: TimeAxis;
@@ -173,7 +155,6 @@ export const isSection = (v: View): v is SectionView => v.kind === "section";
 export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
 export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
-/** A view of a run of its own (not the portrait): neither axis is a state across a phase portrait. */
 export const isAnalysis = (v: View): v is LyapunovView | OrbitView => isLyapunov(v) || isOrbit(v);
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
@@ -238,7 +219,6 @@ export function planeSectionAvailability(sys: SystemShape | null | undefined, na
     : { ok: false, reason: `A plane section needs at least 2 states. ${name} has ${dim}; take a stroboscopic section.` };
 }
 
-/** The orbit diagram can show `sys`: a map with a parameter to sweep. */
 export function orbitAvailability(sys: SystemShape | null | undefined, name = "this system"): Availability {
   const needs = "The orbit diagram needs a map with a parameter";
   if (!sys || sys.kind !== "map") return { ok: false, reason: `${needs}; ${name} is a flow.` };
@@ -419,13 +399,11 @@ export function cobwebView(range: [number, number]): View {
   };
 }
 
-/** A Lyapunov run's settings when the view first opens, for a flow (time) and a map (iterates). */
 export const LYAPUNOV_DEFAULTS: Record<SystemKind, LyapunovSettings> = {
   ode: { transient: 100, total: 1000, interval: 0.1, blocks: 10 },
   map: { transient: 1000, total: 100_000, interval: 1, blocks: 10 },
 };
 
-/** The Lyapunov view of a `kind` system: t from the transient to its end across, λ in [−1, 1] until the run fits it. */
 export function lyapunovView(kind: SystemKind, settings: LyapunovSettings = LYAPUNOV_DEFAULTS[kind]): LyapunovView {
   const { transient, total } = settings;
   return {
@@ -438,11 +416,6 @@ export function lyapunovView(kind: SystemKind, settings: LyapunovSettings = LYAP
   };
 }
 
-/**
- * QR steps a run of `s` takes: total / interval, rounded up, as
- * `validate_lyapunov` counts them (a map's iterates are whole numbers; a
- * flow's ratio within 1e-9 of a whole number is that number).
- */
 export function renormalizations(s: Pick<LyapunovSettings, "total" | "interval">, kind: SystemKind | undefined): number {
   if (kind === "map") return Math.ceil(Math.round(s.total) / Math.max(1, Math.round(s.interval)));
   const r = s.total / s.interval;
@@ -450,7 +423,6 @@ export function renormalizations(s: Pick<LyapunovSettings, "total" | "interval">
   return Math.abs(r - k) <= 1e-9 * Math.max(1, r) ? k : Math.ceil(r);
 }
 
-/** Why the core would refuse `s`, by field (the core's own checks); null when it runs. */
 export function lyapunovSettingsError(
   s: LyapunovSettings,
   kind: SystemKind | undefined,
@@ -471,7 +443,6 @@ export function lyapunovSettingsError(
   return null;
 }
 
-/** The start point a Lyapunov run (and an orbit diagram) follows: the selected one, else the first that fits the system. */
 export function lyapunovStart(
   ics: readonly InitialCondition[],
   selection: Selection,
@@ -482,18 +453,9 @@ export function lyapunovStart(
   return picked ?? ics.find(fits) ?? null;
 }
 
-/** The most steps a Lyapunov request allows: the core's step counter is a usize, the run's own length bounds it. */
 const LYAPUNOV_MAX_STEPS = 1e9;
-/** Steps an adaptive method may take per renormalization interval before a run stops at the step limit. */
 const ADAPTIVE_STEPS_PER_INTERVAL = 100;
 
-/**
- * The integrator a Lyapunov run uses: the studio's, with a step limit that
- * covers the whole run (the transient too, which `maxSteps` counts in the
- * core). A fixed step needs (T₀ + T)/h steps plus one shortened step at each
- * QR time; an adaptive method gets {@link ADAPTIVE_STEPS_PER_INTERVAL} per
- * interval. The studio's own limit is kept when it is larger.
- */
 export function lyapunovSolver(solver: SolverSettings, settings: LyapunovSettings, kind: SystemKind | undefined): SolverOptions {
   const fixed = !METHODS[solver.method].adaptive;
   const h = fixed && solver.h <= 0 ? DEFAULT_FIXED_STEP : solver.h;
@@ -511,15 +473,12 @@ export function lyapunovSolver(solver: SolverSettings, settings: LyapunovSetting
 }
 
 export interface LyapunovMeta {
-  /** The request without its id, as JSON: a run on hand is current when the job now has the same key. */
   key: string;
   systemId: number;
   shapeId: number;
   kind: SystemKind;
-  /** The start point followed. */
   icId: number;
   settings: LyapunovSettings;
-  /** The integrator, as sent (a map ignores it). */
   solver: SolverOptions;
 }
 
@@ -531,7 +490,6 @@ export interface LyapunovState {
 
 export type LyapunovJob = Job<Omit<LyapunovRequest, "requestId">, LyapunovMeta>;
 
-/** The `compute_lyapunov` request of the Lyapunov view, or null when there is nothing to run (or a setting the core refuses). */
 export function buildLyapunovJob(
   s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "solver" | "shapeId"> & { selection: Selection },
 ): LyapunovJob | null {
@@ -567,8 +525,6 @@ export function buildLyapunovJob(
   };
 }
 
-/** The Lyapunov run on hand belongs to the system shown (the same shape, as {@link portraitFits}). */
-/** The run on hand is the one the view asks for now (not only one of the same system). */
 export function lyapunovCurrent(
   s: Parameters<typeof buildLyapunovJob>[0] & { lyapunov: LyapunovState | null },
 ): boolean {
@@ -584,11 +540,6 @@ export function lyapunovFits(
   return !!sys && !!l && l.meta.shapeId === shapeId && l.res.exponents.length === sys.states.length;
 }
 
-/**
- * Ranges that fit a run's running estimates: the measured t-span across, and
- * up the estimates after the first tenth of it (the first QR steps swing
- * widely before they settle), the final values and λ = 0.
- */
 export function fitLyapunovRanges(res: Pick<LyapunovResponse, "historyT" | "history" | "exponents">): {
   xRange: [number, number];
   yRange: [number, number];
@@ -622,12 +573,6 @@ export function fitLyapunovRanges(res: Pick<LyapunovResponse, "historyT" | "hist
 const MINUS = "\u2212";
 const withRealMinus = (text: string) => (Number(text) === 0 ? text.replace(/^-/, "") : text).replace(/^-/, MINUS);
 
-/**
- * An exponent and its standard error as printed: the error to one
- * significant digit (two when it starts with 1) and the value to the same
- * decimal place, `0.906 ± 0.004`; without an error, four significant
- * digits. The numbers alone, for LaTeX's `\num{0.906 +- 0.004}` too.
- */
 export function roundWithUncertainty(v: number, u: number | undefined): { value: string; error: string | null } {
   if (!Number.isFinite(v)) return { value: String(v), error: null };
   if (u === undefined || !(u > 0) || !Number.isFinite(u)) {
@@ -635,14 +580,14 @@ export function roundWithUncertainty(v: number, u: number | undefined): { value:
     return { value: text, error: null };
   }
   let d = -Math.floor(Math.log10(u));
-  // 0.0096 rounds up to 0.01, whose leading digit is one place up.
-  if (Math.round(u * 10 ** d) >= 10) d -= 1;
-  if (Math.round(u * 10 ** d) === 1) d += 1;
+  const carriesIntoNextDecade = Math.round(u * 10 ** d) >= 10;
+  if (carriesIntoNextDecade) d -= 1;
+  const leadsWithOne = Math.round(u * 10 ** d) === 1;
+  if (leadsWithOne) d += 1;
   const places = Math.max(0, Math.min(20, d));
   return { value: v.toFixed(places), error: u.toFixed(places) };
 }
 
-/** `λ₁ = 0.906 ± 0.004`'s numbers with real minus signs: `0.906 ± 0.004`. */
 export function lyapunovValueText(v: number, u: number | undefined): string {
   const r = roundWithUncertainty(v, u);
   return r.error === null ? withRealMinus(r.value) : `${withRealMinus(r.value)} ± ${r.error}`;
@@ -663,13 +608,11 @@ const SUPERSCRIPTS: Record<string, string> = {
 };
 const superscript = (e: number) => String(e).replace(/./g, (c) => SUPERSCRIPTS[c] ?? c);
 
-/** A count as prose: `10⁵` for a power of ten from 1,000 up, else `12,500`. */
 export function countText(n: number): string {
   const e = Math.round(Math.log10(n));
   return n >= 1000 && 10 ** e === n ? `10${superscript(e)}` : n.toLocaleString("en-US");
 }
 
-/** A small number in prose, to two significant digits: `1.0 × 10⁻⁴` (and `0` for zero). */
 export function scientificText(v: number): string {
   if (v === 0) return "0";
   if (!Number.isFinite(v)) return String(v);
@@ -677,20 +620,9 @@ export function scientificText(v: number): string {
   return `${withRealMinus(m)} × 10${superscript(Number(e))}`;
 }
 
-/** An orbit diagram's columns when the view first opens: settled after 1,000 iterates, 200 drawn. */
 export const ORBIT_DEFAULTS: OrbitSettings = { transient: 1000, kept: 200 };
-/**
- * A column drops at most {@link ORBIT_MAX_TRANSIENT} iterates (at the widest
- * plot 4·10⁸ iterates, a few seconds of work) and draws at most
- * {@link ORBIT_MAX_KEPT}, so many that every width fits `MAX_ORBIT_POINTS`
- * (crates/project's limits, which a saved view is checked against too).
- */
 export { ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT };
 
-/**
- * The orbit diagram of `sys` sweeping parameter `param` over its slider's
- * range, with the state `state` up over `yRange`.
- */
 export function orbitView(
   params: readonly Pick<ParamState, "min" | "max">[],
   yRange: [number, number],
@@ -710,26 +642,16 @@ export function orbitView(
   };
 }
 
-/** Columns for a plot `cssWidth` px wide: one per device pixel, 2 to {@link MAX_ORBIT_COLUMNS}. */
 export function orbitColumns(cssWidth: number, pixelRatio: number): number {
   const n = Math.round(cssWidth * pixelRatio);
   return Number.isFinite(n) ? Math.min(MAX_ORBIT_COLUMNS, Math.max(2, n)) : 2;
 }
 
-/**
- * The parameter range a diagram of `columns` columns asks for over the view's
- * `xRange`: the centres of the first and last column, so column j is the
- * j-th pixel's centre, r_j = lo + j·(hi − lo)/(columns − 1).
- */
 export function orbitRange(xRange: [number, number], columns: number): [number, number] {
   const half = (xRange[1] - xRange[0]) / (2 * columns);
   return [xRange[0] + half, xRange[1] - half];
 }
 
-/**
- * The column under `x` (a parameter value inside `xRange`) and its r, the
- * value `compute_orbit_diagram` iterated it at (the same sum as the core's).
- */
 export function orbitColumnAt(xRange: [number, number], columns: number, x: number): { column: number; r: number } {
   const [lo, hi] = orbitRange(xRange, columns);
   const f = (x - xRange[0]) / (xRange[1] - xRange[0]);
@@ -737,7 +659,6 @@ export function orbitColumnAt(xRange: [number, number], columns: number, x: numb
   return { column, r: lo + column * ((hi - lo) / (columns - 1)) };
 }
 
-/** Why the core would refuse `s` (or the studio caps it), by field; null when it runs. */
 export function orbitSettingsError(s: OrbitSettings): { field: keyof OrbitSettings; message: string } | null {
   if (!(Number.isInteger(s.transient) && s.transient >= 0 && s.transient <= ORBIT_MAX_TRANSIENT))
     return { field: "transient", message: `Must be a whole number from 0 to ${ORBIT_MAX_TRANSIENT.toLocaleString("en-US")}` };
@@ -746,16 +667,13 @@ export function orbitSettingsError(s: OrbitSettings): { field: keyof OrbitSettin
   return null;
 }
 
-/** The period-doubling points are asked for: they are defined for a one-dimensional autonomous map. */
 export const findsDoublings = (sys: Pick<CompileResponse, "states" | "autonomous">): boolean =>
   sys.states.length === 1 && sys.autonomous;
 
 export interface OrbitMeta {
-  /** The request without its id, as JSON: a diagram on hand is current when the job now has the same key. */
   key: string;
   systemId: number;
   shapeId: number;
-  /** The parameter swept and the state drawn. */
   param: number;
   state: number;
 }
@@ -768,12 +686,6 @@ export interface OrbitState {
 
 export type OrbitJob = Job<Omit<OrbitDiagramRequest, "requestId">, OrbitMeta>;
 
-/**
- * The `compute_orbit_diagram` request of the orbit view, or null when there
- * is nothing to draw (no start point, no plot width yet, a setting the core
- * refuses). The swept parameter's own value is not sent (each column
- * replaces it), so moving its slider asks for nothing.
- */
 export function buildOrbitJob(
   s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "shapeId"> & {
     selection: Selection;
@@ -806,7 +718,6 @@ export function buildOrbitJob(
   };
 }
 
-/** The diagram on hand belongs to the system shown, its parameter and its state. */
 export function orbitFits(
   sys: CompileResponse | null,
   shapeId: number,
@@ -816,16 +727,11 @@ export function orbitFits(
   return !!sys && !!o && isOrbit(view) && o.meta.shapeId === shapeId && o.meta.param === view.param && o.meta.state === view.yAxis.index;
 }
 
-/** The diagram on hand is the one the view asks for now. */
 export function orbitCurrent(s: Parameters<typeof buildOrbitJob>[0] & { orbit: OrbitState | null }): boolean {
   const job = buildOrbitJob(s);
   return !!job && s.orbit?.meta.key === job.meta.key;
 }
 
-/**
- * A vertical range that fits a diagram's finite iterates, padded by 8 % as
- * {@link fitRanges} pads, or null when it has none.
- */
 export function fitOrbitRange(res: Pick<OrbitDiagramResponse, "x">): [number, number] | null {
   let lo = Infinity;
   let hi = -Infinity;
@@ -839,13 +745,6 @@ export function fitOrbitRange(res: Pick<OrbitDiagramResponse, "x">): [number, nu
   return [lo - pad, hi + pad];
 }
 
-/**
- * The inspector's rows for the period-doubling points of the parameter
- * `name`: Strogatz's r₁, r₂, …
- * (the 2ⁿ⁻¹-cycle loses stability at rₙ) for the run of doublings 1 → 2 →
- * 4 → … the list starts with, each period twice the last; any other
- * doubling (a window's 3 → 6) named by its periods.
- */
 export function doublingRows(
   doublings: readonly { r: number; period: number }[],
   name = "r",
@@ -1397,11 +1296,6 @@ export function adaptView(
   return { ...view, xAxis, yAxis };
 }
 
-/**
- * An orbit diagram after a recompile: its parameter followed by name (a
- * renamed parameter in the same place keeps it). Null when the parameter is
- * gone; `view` itself when it is where it was.
- */
 export function followOrbitParam(
   view: OrbitView,
   oldParams: readonly Pick<ParamInfo, "name">[],
@@ -1665,8 +1559,7 @@ export type ViewMemory = Partial<Record<ViewChoice, View>>;
  * with the state's range, a phase plane of states 0 and 1 over their ranges
  * (else their extents in the portrait, as `setAxis` does), a 3D view of
  * states 0, 1 and 2 over their extents in the portrait, seen from
- * {@link DEFAULT_CAMERA}, an orbit diagram of the first parameter over its
- * slider's range with state 0 over its range now.
+ * {@link DEFAULT_CAMERA}.
  */
 export function switchView(
   choice: ViewChoice,
@@ -1846,7 +1739,6 @@ function loadSpaceView(v: LoadedView, sys: CompileResponse): SpaceView | string 
   return spaceView(idx as [number, number, number], (i) => ranges[idx.indexOf(i)]!, clampCamera(v.camera ?? {}));
 }
 
-/** A saved Lyapunov view: t (or n) across and the exponent up, with settings the core runs. */
 function loadLyapunovView(v: LoadedView, sys: CompileResponse): LyapunovView | string {
   const l = v.lyapunov;
   const kind = sys.kind ?? "ode";
@@ -1860,7 +1752,6 @@ function loadLyapunovView(v: LoadedView, sys: CompileResponse): LyapunovView | s
   return { ...lyapunovView(kind, settings), xRange: [v.xRange[0], v.xRange[1]], yRange: [v.yRange[0], v.yRange[1]] };
 }
 
-/** A saved orbit diagram: a parameter of `sys` across, one of its states up, columns the core draws. */
 function loadOrbitView(v: LoadedView, sys: CompileResponse): OrbitView | string {
   const o = v.orbit;
   const settings: OrbitSettings | null =

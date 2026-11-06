@@ -91,7 +91,6 @@ pub fn lyapunov_run(
     Ok(out)
 }
 
-/// What the export crate's Lyapunov table and CSV are built from.
 fn export_lyapunov(
     req: &LyapunovRequest,
     res: &LyapunovResponse,
@@ -191,7 +190,6 @@ pub fn lyapunov_csv(
     })
 }
 
-/// [`service::compute_orbit_diagram`] as the export crate's run.
 fn orbit_run(
     system: &CompiledSystem,
     req: &crate::ipc::OrbitDiagramRequest,

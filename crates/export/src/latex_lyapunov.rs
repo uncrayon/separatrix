@@ -18,7 +18,6 @@ use crate::model::{LyapunovRun, Method, Status, SystemKind, SystemMeta};
 use crate::num;
 use crate::words::{join_and, status_word};
 
-/// Significant digits of a value without an error, and of `Σλ` and its trace.
 const PLAIN_DIGITS: usize = 6;
 
 /// The integrator's name in a sentence, as the method picker names it.
@@ -34,17 +33,14 @@ pub fn method_words(m: Method) -> &'static str {
     }
 }
 
-/// `$\num{…}$`-free maths number for a caption: `0.01`, `10^{4}`.
 fn m(v: f64) -> String {
     num::tex(v, PLAIN_DIGITS)
 }
 
-/// A count as siunitx writes it (digits grouped from five on).
 fn count(n: usize) -> String {
     format!("\\num{{{n}}}")
 }
 
-/// The caption: how the spectrum was measured.
 fn caption(sys: &SystemMeta, run: &LyapunovRun) -> String {
     let map = sys.kind == SystemKind::Map;
     let s = &run.spectrum;

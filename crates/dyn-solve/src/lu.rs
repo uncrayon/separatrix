@@ -1,15 +1,9 @@
-//! Dense LU factorization with partial pivoting, for the small linear
-//! systems `(I − h·d·J)·k = b` of the Rosenbrock method.
-
-/// `P·A = L·U` of a square matrix, `L` unit lower triangular, stored in one
-/// row-major array.
 pub(crate) struct Lu {
     n: usize,
     a: Vec<f64>,
     piv: Vec<usize>,
 }
 
-/// A zero (or non-finite) pivot: the matrix is singular to working precision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Singular;
 
@@ -22,7 +16,6 @@ impl Lu {
         }
     }
 
-    /// Factor `I − c·J`, `J` row-major `n × n`.
     pub(crate) fn factor_shifted(&mut self, c: f64, jac: &[f64]) -> Result<(), Singular> {
         let n = self.n;
         for i in 0..n {
@@ -67,7 +60,6 @@ impl Lu {
         Ok(())
     }
 
-    /// Overwrite `b` with the solution of `A·x = b`.
     pub(crate) fn solve(&self, b: &mut [f64]) {
         let n = self.n;
         let a = &self.a;
@@ -105,7 +97,6 @@ mod tests {
 
     #[test]
     fn solves_a_system_that_needs_a_row_swap() {
-        // I − J = [[0, 2], [3, 1]]: the first pivot is zero without pivoting.
         let jac = [1.0, -2.0, -3.0, 0.0];
         let x = solve_shifted(1.0, &jac, &[4.0, 5.0]).unwrap();
         assert_eq!(x, vec![1.0, 2.0]);
@@ -113,7 +104,6 @@ mod tests {
 
     #[test]
     fn solves_a_3x3_system_to_rounding() {
-        // A = I − J = [[2, 1, 1], [4, -6, 0], [-2, 7, 2]], x = (1, 2, 3).
         let a = [2.0, 1.0, 1.0, 4.0, -6.0, 0.0, -2.0, 7.0, 2.0];
         let jac: Vec<f64> = (0..9)
             .map(|k| if k % 4 == 0 { 1.0 - a[k] } else { -a[k] })
@@ -126,7 +116,6 @@ mod tests {
 
     #[test]
     fn a_singular_matrix_is_reported() {
-        // I − J = [[1, 2], [2, 4]].
         let jac = [0.0, -2.0, -2.0, -3.0];
         assert_eq!(solve_shifted(1.0, &jac, &[1.0, 1.0]), Err(Singular));
         assert_eq!(solve_shifted(1.0, &[f64::NAN], &[1.0]), Err(Singular));

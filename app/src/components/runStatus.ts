@@ -61,11 +61,6 @@ export function landedOnSource(
   return { n: out.t[k], at };
 }
 
-/**
- * Dormand–Prince's stiffness test fired on a trajectory of `res` (the core
- * sets `stiff` only then), and the method chosen now is not already the one
- * the hint offers, whose portrait may still be on its way.
- */
 export function looksStiff(res: PortraitResponse, method: Method): boolean {
   return method !== STIFF_METHOD && res.trajectories.some((tr) => tr.stiff === true);
 }

@@ -322,7 +322,6 @@ function fitLyapunov(state: StudioState): { xRange: [number, number]; yRange: [n
   return lyapunovFits(state.compiled, state.shapeId, state.lyapunov) ? fitLyapunovRanges(state.lyapunov.res) : null;
 }
 
-/** The swept parameter's slider range across, the diagram's iterates up. */
 function fitOrbit(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const v = state.view;
   if (!isOrbit(v)) return null;

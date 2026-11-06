@@ -1,6 +1,5 @@
 // The SVG export: the figure drawn through the SVG recorder, so it is the
-// same scene as the screen and the PNG, with text kept as text. An orbit
-// diagram's density is the one raster: an embedded PNG under vector axes.
+// same scene as the screen and the PNG, with text kept as text.
 
 import type { Scene } from "../canvas/draw";
 import { drawAnalysisFigure, drawFigure, type AnalysisFigure, type FigureFonts } from "../canvas/figure";
@@ -26,7 +25,6 @@ export interface SvgFigure {
   title?: string;
   desc?: string;
   space?: SpaceFigure | null;
-  /** A Lyapunov or orbit-diagram view's figure, drawn instead of `scene`. */
   analysis?: AnalysisFigure | null;
 }
 

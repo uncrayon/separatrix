@@ -34,7 +34,6 @@ async function commit(locator, value) {
   await locator.press("Enter");
 }
 
-/** Waits for a `compute_orbit_diagram` whose request and response satisfy `pred` (a JS expression in req, res). */
 async function waitDiagram(page, pred) {
   await page.waitForFunction(
     (src) => {
@@ -44,7 +43,6 @@ async function waitDiagram(page, pred) {
     pred,
     { timeout: 30000 },
   );
-  // The canvas draws on the next frame after the response.
   await page.waitForTimeout(300);
   return page.evaluate(() => window.__sepxMock.lastOrbit);
 }
@@ -57,11 +55,6 @@ const doublings = (page) =>
     .locator("[data-orbit-doublings] .ds-panel-section-kv-row")
     .evaluateAll((rows) => rows.map((r) => [r.querySelector("dt").innerText.trim(), r.querySelector("dd").innerText.trim()]));
 
-/**
- * Clusters of inked pixels (far from the plot background) down the canvas
- * column at parameter `r`, over x in [yLo, yHi]: runs of inked pixels, gaps of
- * up to 2 px merged.
- */
 async function bandsAt(page, r, [yLo, yHi]) {
   return page.evaluate(
     ({ r, yLo, yHi }) => {
@@ -119,14 +112,12 @@ test("the logistic map's orbit diagram shows the period-doubling route and lists
       ["r₄", "3.564407"],
     ]);
 
-    // The marker sits at r = 3.2 now; move it out of the columns the bands are counted in.
     await commit(page.getByRole("textbox", { name: "Value of r", exact: true }), "2.9");
     await page.waitForTimeout(300);
     await page.evaluate(() => {
       const v = { xRange: [2.8, 4], yRange: [-0.05, 1.05] };
       window.__orbitTestView = v;
     });
-    // Strogatz §10.2: a 2-cycle at r = 3.2, a 4-cycle at 3.5, the period-3 window at 3.83.
     const band = [0.05, 1.0];
     assert.equal(await bandsAt(page, 3.2, band), 2);
     assert.equal(await bandsAt(page, 3.5, band), 4);
@@ -151,11 +142,9 @@ test("clicking the diagram sets r to its column, and zooming asks for the new ra
     const value = Number(await page.getByRole("textbox", { name: "Value of r", exact: true }).inputValue());
     const column = 1.2 / req.columns;
     assert.ok(Math.abs(value - 3.83) <= column, `r = ${value}, within one column (${column}) of 3.83`);
-    // The swept parameter's own value is not part of the request.
     await page.waitForTimeout(400);
     assert.equal(await page.evaluate(() => window.__sepxMock.lastOrbit.req.range[0]), req.range[0]);
 
-    // A drag pans, it doesn't set r.
     await page.mouse.move(at(3.0), box.y + 200);
     await page.mouse.down();
     await page.mouse.move(at(3.1), box.y + 200, { steps: 4 });

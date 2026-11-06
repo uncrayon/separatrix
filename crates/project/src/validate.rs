@@ -399,7 +399,6 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 // Checked above, with the view's kind.
                 "next" if cobweb || section => true,
                 "exponent" if lyapunov => true,
-                // Checked above, with the system's parameters.
                 "param" if orbit => true,
                 "state" => axis
                     .name

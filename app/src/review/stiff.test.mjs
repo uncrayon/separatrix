@@ -1,4 +1,3 @@
-// Rosenbrock 2(3) in the method table, and when the stiffness hint shows.
 // Node (>= 22.18) strips the types from the .ts modules; the app's
 // extensionless imports resolve to .ts through a module hook.
 

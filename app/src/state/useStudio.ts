@@ -6,7 +6,7 @@ import {
   computeOrbitDiagram,
   computePortrait,
   convertSource,
-  RequestScheduler,
+  LatestRequestScheduler,
 } from "../api/client";
 import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
@@ -104,11 +104,8 @@ export interface StudioState extends StudioSnapshot {
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
-  /** The last Lyapunov run (the Lyapunov view's), kept while other views are shown. */
   lyapunov: LyapunovState | null;
-  /** The last orbit diagram (the orbit view's), kept while other views are shown. */
   orbit: OrbitState | null;
-  /** Columns an orbit diagram asks for: the plot's width in device pixels (0 until the plot reports it). */
   orbitColumns: number;
   sourceTemplateId: string | null;
   computeError: string | null;
@@ -233,7 +230,7 @@ export function useStudio() {
 
   const scheduler = useMemo(
     () =>
-      new RequestScheduler(
+      new LatestRequestScheduler(
         computePortrait,
         () => buildPortraitJob(latest.current),
         (res, meta: PortraitMeta, roundTripMs) => {
@@ -252,7 +249,7 @@ export function useStudio() {
 
   const lyapunovScheduler = useMemo(
     () =>
-      new RequestScheduler(
+      new LatestRequestScheduler(
         computeLyapunov,
         () => buildLyapunovJob(latest.current),
         (res, meta: LyapunovMeta, roundTripMs) => {
@@ -267,7 +264,7 @@ export function useStudio() {
 
   const orbitScheduler = useMemo(
     () =>
-      new RequestScheduler(
+      new LatestRequestScheduler(
         computeOrbitDiagram,
         () => buildOrbitJob(latest.current),
         (res, meta: OrbitMeta, roundTripMs) => {
@@ -285,13 +282,11 @@ export function useStudio() {
     scheduler.request();
   }, [scheduler, compiled, params, viewKey, baseState, fieldTime, ics, layers, solver, plotAspect]);
 
-  // The run itself is the key: zooming the plot or a start point the run doesn't follow asks for nothing.
   const lyapunovKey = buildLyapunovJob(state)?.meta.key ?? null;
   useEffect(() => {
     if (lyapunovKey !== null) lyapunovScheduler.request();
   }, [lyapunovScheduler, lyapunovKey]);
 
-  // Zooming or panning across asks for the new range; moving the swept parameter's slider asks for nothing.
   const orbitKey = buildOrbitJob(state)?.meta.key ?? null;
   useEffect(() => {
     if (orbitKey !== null) orbitScheduler.request();
@@ -403,7 +398,6 @@ export function useStudio() {
           setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
         } else if (isOrbit(cur.view) && followOrbitParam(cur.view, old.params, res.params) !== cur.view) {
-          // The swept parameter moved in the list, or is gone (then the default view).
           const v = followOrbitParam(cur.view, old.params, res.params) ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
@@ -716,14 +710,12 @@ export function useStudio() {
     setHomeView((v) => (isOrbit(v) ? { ...v, orbit: { ...v.orbit, ...patch } } : v));
   }, []);
 
-  /** Sweeps the parameter over [lo, hi]; Reset view comes back to it. */
   const setOrbitRange = useCallback((lo: number, hi: number) => {
     if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return;
     setViewState((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
     setHomeView((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
   }, []);
 
-  /** Sweeps parameter `index` across its slider's range instead. */
   const setOrbitParam = useCallback((index: number) => {
     const cur = latest.current;
     const p = cur.params[index];

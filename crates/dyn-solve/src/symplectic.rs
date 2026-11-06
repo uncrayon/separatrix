@@ -1,17 +1,5 @@
-//! Symplectic split-step methods for a separable `H(q, p) = T(p) + V(q)`.
-//!
-//! The state is laid out `[q; p]` with `dof = dim / 2`, as `dyn-expr`
-//! builds a Hamiltonian field: `f = (∂H/∂p, −∂H/∂q)`. A step alternates
-//! kicks `p += c·h·ṗ(q)` and drifts `q += d·h·q̇(p)`. For a separable `H`
-//! the `ṗ` half of `f(q, ·)` does not depend on `p` and the `q̇` half of
-//! `f(·, p)` does not depend on `q`, so each half can be read from one
-//! evaluation of the whole field. The caller checks that `H` separates;
-//! these functions do not.
-
 use crate::Method;
 
-/// A symmetric composition `kick c₀, drift d₀, kick c₁, …, drift d_{m−1},
-/// kick c_m`, the coefficients in units of the step `h`.
 pub(crate) struct Splitting {
     kicks: &'static [f64],
     drifts: &'static [f64],
@@ -20,29 +8,22 @@ pub(crate) struct Splitting {
 /// Yoshida's `w₁ = 1/(2 − 2^{1/3})`, written out so that every platform
 /// steps with the same bits (no `cbrt` at run time).
 const W1: f64 = 1.3512071919596575;
-/// `w₀ = 1 − 2w₁`.
-const W0: f64 = -1.7024143839193153;
-/// `w₁/2`.
-const OUTER_KICK: f64 = 0.6756035959798288;
-/// `(w₀ + w₁)/2`.
-const INNER_KICK: f64 = -0.17560359597982883;
+const W0: f64 = 1.0 - 2.0 * W1;
+const OUTER_KICK: f64 = W1 / 2.0;
+const INNER_KICK: f64 = (W0 + W1) / 2.0;
 
-/// Störmer–Verlet (leapfrog), kick–drift–kick: order 2.
 const VERLET: Splitting = Splitting {
     kicks: &[0.5, 0.5],
     drifts: &[1.0],
 };
 
-/// Yoshida's fourth-order composition of three Verlet steps of sizes
-/// `w₁h, w₀h, w₁h` (H. Yoshida, *Construction of higher order symplectic
-/// integrators*, Phys. Lett. A 150, 1990; E. Forest & R. D. Ruth, Physica D
-/// 43, 1990).
+/// H. Yoshida, *Construction of higher order symplectic integrators*,
+/// Phys. Lett. A 150, 1990; E. Forest & R. D. Ruth, Physica D 43, 1990.
 const YOSHIDA4: Splitting = Splitting {
     kicks: &[OUTER_KICK, INNER_KICK, INNER_KICK, OUTER_KICK],
     drifts: &[W1, W0, W1],
 };
 
-/// The splitting of a symplectic method; `None` for the others.
 pub(crate) fn splitting(method: Method) -> Option<&'static Splitting> {
     match method {
         Method::Verlet => Some(&VERLET),
@@ -52,9 +33,6 @@ pub(crate) fn splitting(method: Method) -> Option<&'static Splitting> {
 }
 
 impl Splitting {
-    /// One step of size `h` from `(t, x)`, where `fx = f(t, x)`, into
-    /// `x_new`. Calls `eval(t, x, out)` twice per drift; `scratch` holds
-    /// its output.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn step(
         &self,

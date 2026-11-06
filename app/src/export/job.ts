@@ -186,12 +186,10 @@ export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   return viewAxisLabels(v, sys.states, sys.kind);
 }
 
-/** Which analysis view is shown, whose exports come from its own run instead of a portrait. */
 export function analysisKind(s: Pick<StudioSnapshot, "view">): "lyapunov" | "orbit" | null {
   return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : null;
 }
 
-/** The names an export is labelled with: the system's title, where it comes from, its lines. */
 export interface ExportSource {
   title: string;
   sourceRef?: string;
@@ -199,7 +197,6 @@ export interface ExportSource {
   format: InputFormat;
 }
 
-/** The Lyapunov view's own run with the names to label it, or null when the view has nothing to run. */
 export function buildLyapunovExport(
   s: Parameters<typeof buildLyapunovJob>[0],
   source: ExportSource,
@@ -208,20 +205,10 @@ export function buildLyapunovExport(
   return job && { run: { ...job.body, requestId: 0 }, ...source };
 }
 
-/**
- * Image pixels per CSS px an orbit diagram is computed at for a figure: one
- * column per pixel of the PNG at its scale, of the SVG's embedded image at
- * 2×, and of a LaTeX figure's 300-dpi layer.
- */
 export function orbitFigureRatio(format: "latex" | "svg" | "png" | "csv", pngScale: number): number {
   return format === "png" ? pngScale : format === "svg" ? 2 : 300 / 96;
 }
 
-/**
- * The orbit view's diagram at `columns` columns across its range (the
- * screen's own count for the CSV, a figure's for its image), with the
- * names to label it, or null when the view has nothing to draw.
- */
 export function buildOrbitExport(
   s: Omit<Parameters<typeof buildOrbitJob>[0], "orbitColumns">,
   source: ExportSource,

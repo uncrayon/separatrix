@@ -19,7 +19,6 @@ const KEY_STEP = 0.05;
 
 const sameBox = (a: Box | null, b: Box | null) => (!a || !b ? a === b : a.every((v, i) => Math.abs(v - b[i]) < 0.5));
 
-/** The running estimates of the Lyapunov spectrum against t (or n): zoom and pan as on the phase plane. */
 export function LyapunovCanvas({ state, actions, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -71,7 +70,6 @@ export function LyapunovCanvas({ state, actions, toolbar }: Props) {
     if (names.length !== nameBoxes.length || names.some((b, i) => !sameBox(b, nameBoxes[i]))) setNameBoxes(names);
   });
 
-  // Each new run is fitted once; zooming and panning after that are the user's.
   useEffect(() => {
     if (!run || fitted.current === run) return;
     fitted.current = run;
@@ -172,7 +170,6 @@ export function LyapunovCanvas({ state, actions, toolbar }: Props) {
   const time = kind === "map" ? "n" : "t";
   const axes = axisLines(vp);
   const right = vp.left + vp.width;
-  // Below the axis: each λᵢ's name sits above its dashed line at the right edge, λ = 0 among them.
   const xNameTop = vp.top + vp.height - axes.Y > 28 ? axes.Y + 4 : axes.Y - 24;
   const yNameTop = toolbarBox && axes.X + 8 < toolbarBox[2] ? toolbarBox[3] + 6 : vp.top + 6;
   const res = run?.res;

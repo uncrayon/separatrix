@@ -1,43 +1,7 @@
-//! The chaos gate: the gallery's Lorenz, Hénon and logistic templates,
-//! compiled from source and measured through `service::compute_lyapunov`
-//! (the path the UI calls), reproduce published Lyapunov exponents.
-//!
-//! - Lorenz (σ = 10, r = 28, b = 8/3): λ ≈ 0.9056, 0, −14.5723 (Sprott,
-//!   *Chaos and Time-Series Analysis*, Oxford 2003, appendix A), and
-//!   Σλ = −(σ + 1 + b) = −41/3 exactly, since `tr J` is constant.
-//! - Hénon (a = 1.4, b = 0.3): λ ≈ 0.41922, −1.62319 (Sprott, appendix A),
-//!   and Σλ = ln |det J| = ln 0.3 exactly.
-//! - Logistic map at r = 4: λ = ln 2 (Strogatz, §10.5).
-//! - Logistic map period doublings, located from its orbit diagram through
-//!   `service::compute_orbit_diagram`: r1 = 3, r2 = 1 + √6 (Strogatz §10.3),
-//!   r3 ≈ 3.5440903 and r4 ≈ 3.5644073 (Strogatz Table 10.2.1 gives them to
-//!   fewer digits). The ratio (r3 − r2)/(r4 − r3) is printed next to
-//!   Feigenbaum's δ = 4.669… for information only: three doublings are too
-//!   few for it to converge.
-//!
-//! - The pendulum `H = p²/2 − cos q` from `(q, p) = (1, 0)` (the
-//!   `hamiltonian-pendulum` template, period `2π / AGM(1, cos ½) ≈ 6.70`),
-//!   stepped with `dyn_solve::Stepper` over 10⁵ periods with `H` read after
-//!   every step: Störmer–Verlet at h = 0.05 keeps `max |ΔH| ≤ 1e−3` and
-//!   Yoshida 4 at h = 0.1 keeps it `≤ 1e−4`. For both, the largest `|ΔH|`
-//!   over the last 10³ periods is at most twice the largest over the first
-//!   10³: the error oscillates instead of drifting. RK4 at h = 0.1 fails that
-//!   rule (its energy drifts), which a wrong claim checks.
-//!
-//! - Robertson's reaction (Hairer & Wanner, *Solving ODEs II*, §IV.1)
-//!   `x' = −0.04x + 1e4·yz`, `y' = 0.04x − 1e4·yz − 3e7·y²`, `z' = 3e7·y²`
-//!   from `(1, 0, 0)`, solved with Rosenbrock 2(3) at rtol 1e−8, atol 1e−14
-//!   through `service::compute_portrait`, reaches the SUNDIALS
-//!   `cvRoberts_dns` and Hairer–Wanner values at t = 40,
-//!   (7.158271e−1, 9.185535e−6, 2.841637e−1), within 1e−5 relative per
-//!   component. The reference is confirmed by Dormand–Prince at rtol 1e−11.
-//!   Dormand–Prince at rtol 1e−8 flags the run as stiff, and so it does on
-//!   the relaxation-oscillator template at μ = 1000, where Rosenbrock 2(3)
-//!   needs at most a tenth of its steps at equal rtol.
-//!
-//! The Σ row of Lorenz uses its own run with RK4 at h = 0.001: RK4's
-//! truncation error on `ln det Φ` puts Σλ about 1e−4 from −41/3 at
-//! h = 0.01, shrinking like h⁴ (see `crates/dyn-analysis/tests/lyapunov.rs`).
+//! Published values: Lorenz and Hénon exponents from Sprott, *Chaos and
+//! Time-Series Analysis*, Oxford 2003, appendix A; the logistic map's
+//! λ = ln 2 at r = 4 (Strogatz §10.5) and its doublings r1 = 3, r2 = 1 + √6
+//! (Strogatz §10.3); Strogatz Table 10.2.1 gives r3 and r4 to fewer digits.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -148,48 +112,35 @@ enum Claim {
     Sum {
         run: &'static Run,
     },
-    /// The `k`-th period doubling (from 1) of `LOGISTIC_DIAGRAM`.
     Doubling {
         k: usize,
     },
-    /// The largest `|H − H₀|` over every step of the run.
     EnergyError {
         run: &'static EnergyRun,
     },
-    /// The largest `|H − H₀|` over the last `WINDOW_PERIODS` periods over
-    /// the largest over the first: about 1 while the error stays bounded.
     EnergyGrowth {
         run: &'static EnergyRun,
     },
-    /// Component `index` of the run's state at its end time.
     StiffEnd {
         run: &'static StiffRun,
         index: usize,
     },
-    /// The accepted steps of `implicit` over those of `explicit`.
     StepRatio {
         implicit: &'static StiffRun,
         explicit: &'static StiffRun,
     },
-    /// The run's accepted steps.
     Steps {
         run: &'static StiffRun,
     },
-    /// 1 when the run came back with `stiff: true`, else 0.
     StiffHint {
         run: &'static StiffRun,
     },
 }
 
-/// What a claim says about its measured value.
 enum Expect {
-    /// Within `tol` of a published `value`.
     Near { value: f64, tol: f64 },
-    /// At most `bound`.
     AtMost { bound: f64 },
-    /// Within `tol·|value|` of a published `value`.
     Relative { value: f64, tol: f64 },
-    /// The claim holds (measured 1).
     Yes,
 }
 
@@ -199,8 +150,6 @@ struct Check {
     expect: Expect,
 }
 
-/// The pendulum `H = p²/2 − cos q` from `(q, p) = (1, 0)`, stepped over
-/// `PERIODS` periods with the Stepper, `H` read after every step.
 struct EnergyRun {
     label: &'static str,
     method: Method,
@@ -228,7 +177,6 @@ const PENDULUM_RK4: EnergyRun = EnergyRun {
     h: 0.1,
 };
 
-/// Where a stiff run's system comes from.
 enum Source {
     Template {
         id: &'static str,
@@ -237,7 +185,6 @@ enum Source {
     Text(&'static str),
 }
 
-/// One trajectory through `service::compute_portrait`.
 struct StiffRun {
     label: &'static str,
     source: Source,
@@ -250,7 +197,8 @@ struct StiffRun {
 
 const ROBERTSON_SOURCE: &str =
     "x' = -0.04*x + 1e4*y*z\ny' = 0.04*x - 1e4*y*z - 3e7*y^2\nz' = 3e7*y^2";
-/// Robertson at t = 40: SUNDIALS `cvRoberts_dns`, Hairer & Wanner.
+/// Robertson's reaction (Hairer & Wanner, *Solving ODEs II*, §IV.1) at
+/// t = 40: SUNDIALS `cvRoberts_dns`.
 const ROBERTSON_40: [f64; 3] = [7.158_271e-1, 9.185_535e-6, 2.841_637e-1];
 
 const ROBERTSON: StiffRun = StiffRun {
@@ -299,7 +247,7 @@ const STIFF_MAX_STEPS: usize = 100_000_000;
 
 const LN_0_3: f64 = -1.203_972_804_325_936_1;
 const LN_2: f64 = std::f64::consts::LN_2;
-const R2: f64 = 3.449_489_742_783_178; // 1 + √6
+const ONE_PLUS_SQRT_6: f64 = 3.449_489_742_783_178;
 const FEIGENBAUM_DELTA: f64 = 4.669_201_609_102_99;
 
 const CHECKS: &[Check] = &[
@@ -397,7 +345,7 @@ const CHECKS: &[Check] = &[
         claim: Claim::Doubling { k: 2 },
         text: "logistic r2 = 1 + √6",
         expect: Expect::Near {
-            value: R2,
+            value: ONE_PLUS_SQRT_6,
             tol: 1e-6,
         },
     },
@@ -593,9 +541,6 @@ fn store() -> &'static SystemStore {
     STORE.get_or_init(SystemStore::new)
 }
 
-/// Compiles a gallery template through `service::compile_system`, as the UI
-/// does when the student opens it, with the parameters in `values`. Also
-/// returns the parameter names, in the order of the values.
 fn compile(
     label: &str,
     template: &str,
@@ -609,8 +554,6 @@ fn compile(
     compile_source(label, &found.equations.join("\n"), found.format, values)
 }
 
-/// Compiles `source` through `service::compile_system`, as [`compile`] does
-/// a template.
 fn compile_source(
     label: &str,
     source: &str,
@@ -649,7 +592,6 @@ fn compile_source(
     (id, store().get(id).expect("stored"), params, names)
 }
 
-/// Each run is measured once per test binary, whichever test asks first.
 fn spectrum(run: &'static Run) -> Arc<LyapunovResponse> {
     static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<LyapunovResponse>>>> = OnceLock::new();
     let runs = RUNS.get_or_init(Default::default);
@@ -680,7 +622,6 @@ fn spectrum(run: &'static Run) -> Arc<LyapunovResponse> {
     out
 }
 
-/// `LOGISTIC_DIAGRAM`, computed once per test binary, whichever test asks first.
 fn logistic_diagram() -> &'static OrbitDiagramResponse {
     static DIAGRAM: OnceLock<OrbitDiagramResponse> = OnceLock::new();
     DIAGRAM.get_or_init(|| {
@@ -724,7 +665,6 @@ fn doubling(k: usize) -> f64 {
         .map_or(f64::NAN, |d| d.r)
 }
 
-/// The pendulum's period from `(q0, 0)`: `T = 2π / AGM(1, cos(q0/2))`.
 fn pendulum_period(q0: f64) -> f64 {
     let (mut a, mut b) = (1.0f64, (q0 / 2.0).cos());
     while (a - b).abs() > 1e-15 {
@@ -733,8 +673,6 @@ fn pendulum_period(q0: f64) -> f64 {
     2.0 * std::f64::consts::PI / a
 }
 
-/// The largest `|H − H₀|` of one run: over all of it, its first
-/// `WINDOW_PERIODS` periods and its last.
 struct EnergyErrors {
     all: f64,
     first: f64,
@@ -742,7 +680,6 @@ struct EnergyErrors {
     completed: bool,
 }
 
-/// Each run is stepped once per test binary, whichever test asks first.
 fn energy_errors(run: &'static EnergyRun) -> Arc<EnergyErrors> {
     static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<EnergyErrors>>>> = OnceLock::new();
     let runs = RUNS.get_or_init(Default::default);
@@ -803,7 +740,6 @@ fn energy_errors(run: &'static EnergyRun) -> Arc<EnergyErrors> {
     e
 }
 
-/// Each run is computed once per test binary, whichever test asks first.
 fn stiff_run(run: &'static StiffRun) -> Arc<TrajectoryOut> {
     static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<TrajectoryOut>>>> = OnceLock::new();
     let runs = RUNS.get_or_init(Default::default);
@@ -890,7 +826,6 @@ struct Row {
 }
 
 impl Row {
-    /// `|measured − published|` for a `Near` claim.
     fn delta(&self) -> Option<f64> {
         match *self.expect {
             Expect::Near { value, .. } => Some((self.measured - value).abs()),
@@ -1078,4 +1013,9 @@ fn wrong_claims_fail() {
         .map(|r| r.claim)
         .collect();
     assert!(passed.is_empty(), "wrong claims not failed: {passed:?}");
+}
+
+#[test]
+fn one_plus_sqrt_6_is_written_out_exactly() {
+    assert_eq!(ONE_PLUS_SQRT_6, 1.0 + 6f64.sqrt());
 }

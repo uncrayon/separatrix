@@ -1,8 +1,3 @@
-// The Lyapunov view (Strogatz §9.3, §10.5): the running estimate of each
-// exponent λᵢ against t (or n), its final value dashed across the plot and
-// λ₁ … λₙ beside it. Drawn through any DrawContext, so the screen, the PNG
-// and the SVG share it.
-
 import type { LyapunovResponse } from "../api/types";
 import { drawScene, type Box, type DrawContext, type Scene } from "./draw";
 import { DEFAULT_FIGURE_FONTS, type FigureFonts } from "./figure";
@@ -13,11 +8,9 @@ import { sx, sy, type Viewport } from "./viewport";
 const CLAMP = 1e5;
 const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
 
-/** Subscript digits for λ₁ … λₙ in prose. */
 export const lambdaName = (i: number): string =>
   `λ${String(i + 1).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)])}`;
 
-/** The running estimate of λ_{i+1} in px: x, y pairs. */
 export function lyapunovPx(vp: Viewport, res: Pick<LyapunovResponse, "historyT" | "history" | "exponents">, i: number): Float64Array {
   const n = res.exponents.length;
   const m = res.historyT.length;
@@ -32,7 +25,6 @@ export function lyapunovPx(vp: Viewport, res: Pick<LyapunovResponse, "historyT" 
   return pts.subarray(0, k);
 }
 
-/** Where the λ labels go: right-aligned at the plot's right edge, above each final value, kept apart and inside. */
 export function labelRows(finals: readonly number[], height: number, top: number, bottom: number): number[] {
   const order = finals.map((y, i) => ({ y, i })).sort((a, b) => a.y - b.y);
   const rows = new Array<number>(finals.length);
@@ -45,7 +37,6 @@ export function labelRows(finals: readonly number[], height: number, top: number
   return rows;
 }
 
-/** A scene with nothing in it but the boxes the tick labels keep clear of: t across, ticks below the λ = 0 line. */
 function frameOnly(avoid: Box[]): Scene {
   return {
     kind: "ode",
@@ -68,12 +59,6 @@ function frameOnly(avoid: Box[]): Scene {
   };
 }
 
-/**
- * Draws the grid, axes and ticks of `vp` (tick labels clear of `avoid`:
- * the axis names, a toolbar), then each exponent's running estimate in
- * `traj-i`, its final value dashed, and λᵢ at the right edge. The caller
- * fills the background.
- */
 export function drawLyapunov(
   ctx: DrawContext,
   vp: Viewport,
