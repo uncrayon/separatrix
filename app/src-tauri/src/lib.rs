@@ -59,6 +59,7 @@ pub mod updater;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use export_service::ExportCache;
@@ -162,6 +163,26 @@ impl LastDir {
     }
 }
 
+/// Whether a file dialog is showing. On Linux the dialog isn't modal, so a
+/// second Open… would stack another one and the last to close would win.
+#[derive(Default)]
+struct DialogShowing(AtomicBool);
+
+/// Clears [`DialogShowing`] when the dialog's call ends.
+struct DialogTurn<'a>(&'a AtomicBool);
+
+impl Drop for DialogTurn<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl DialogShowing {
+    fn begin(&self) -> Option<DialogTurn<'_>> {
+        (!self.0.swap(true, Ordering::SeqCst)).then_some(DialogTurn(&self.0))
+    }
+}
+
 enum DialogKind {
     Open,
     Save,
@@ -169,6 +190,7 @@ enum DialogKind {
 
 /// Shows a file dialog over the main window, on a blocking thread, starting
 /// in `dir` (or the last folder used). `filter` is (name, extensions).
+/// While one is showing, another request returns `None`, as if cancelled.
 async fn file_dialog<R: Runtime>(
     app: &AppHandle<R>,
     kind: DialogKind,
@@ -176,6 +198,10 @@ async fn file_dialog<R: Runtime>(
     file_name: Option<String>,
     dir: Option<PathBuf>,
 ) -> Result<Option<PathBuf>, String> {
+    let showing = app.state::<DialogShowing>();
+    let Some(_turn) = showing.begin() else {
+        return Ok(None);
+    };
     let dir = dir.or_else(|| app.state::<LastDir>().get());
     let app2 = app.clone();
     let picked = blocking(move || {
@@ -965,6 +991,7 @@ pub fn run() {
         .manage(DocState::default())
         .manage(GrantedPaths::default())
         .manage(LastDir::default())
+        .manage(DialogShowing::default())
         // First, so a second instance exits before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let paths = files::project_paths_from_args(
@@ -1084,8 +1111,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::body_bytes;
+    use super::{body_bytes, DialogShowing};
     use tauri::ipc::InvokeBody;
+
+    #[test]
+    fn one_file_dialog_at_a_time() {
+        let showing = DialogShowing::default();
+        let first = showing.begin();
+        assert!(first.is_some());
+        assert!(showing.begin().is_none(), "a second dialog while one shows");
+        drop(first);
+        assert!(
+            showing.begin().is_some(),
+            "free again once the first closes"
+        );
+    }
 
     #[test]
     fn image_bytes_arrive_raw_or_as_a_json_array() {
