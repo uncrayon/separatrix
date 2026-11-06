@@ -24,6 +24,7 @@ export type {
   CsvResponse,
   Diagnostic,
   Direction,
+  DoublingOut,
   DocumentStateRequest,
   ExportPortraitRequest,
   ExportTheme,
@@ -38,6 +39,8 @@ export type {
   Notation,
   NullclineOut,
   OpenedProject,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
@@ -75,3 +78,5 @@ export type {
   TrajectoryRequest,
   TrajectoryTag,
 } from "./ipc.generated";
+
+export { MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS } from "./ipc.generated";

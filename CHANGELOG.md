@@ -11,9 +11,19 @@ All notable changes to this project are documented in this file.
   carries the running estimates against `t`. The `compute_lyapunov` command exposes it to the UI
   and refuses `τ ≤ 0`, `total ≤ 0`, `blocks < 2` and runs of more than 10⁷ QR steps with a
   message.
+- Orbit diagrams of maps (Strogatz §10.2): `dyn_analysis::orbit_diagram` iterates a map across
+  a range of one parameter and keeps the iterates after a transient, with NaN once an orbit
+  escapes. `dyn_analysis::period_doublings` locates the period-doubling points of a
+  one-dimensional map from the diagram: it follows each `P`-cycle by Newton's method and bisects
+  for the multiplier `∏ f′(x_i) = −1`. The `compute_orbit_diagram` command exposes both, up to
+  4096 parameter values and 4·10⁶ points, and refuses flows, indices outside the system, an
+  invalid range, and doublings of a map with more than one state.
 - Chaos gate (`scripts/chaos-gate.sh`): the Lorenz, Hénon and logistic templates reproduce
   published exponents (Lorenz 0.9056, 0, −14.5723 and Σλ = −41/3; Hénon 0.41922, −1.62319 and
-  Σλ = ln 0.3; logistic `r = 4` ln 2) within stated tolerances, and three wrong claims fail.
+  Σλ = ln 0.3; logistic `r = 4` ln 2) and the logistic period doublings (`r1 = 3`,
+  `r2 = 1 + √6`, `r3 = 3.5440903`, `r4 = 3.5644073`, each within 1e−6) within stated tolerances.
+  It prints `(r3 − r2)/(r4 − r3)` beside Feigenbaum's δ for information, and four wrong claims
+  fail.
 - 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
   least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
   the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).

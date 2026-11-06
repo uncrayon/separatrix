@@ -533,6 +533,89 @@ stats: Stats,
  */
 elapsedMs: number, };
 
+export type OrbitDiagramRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order; the swept one
+ * is replaced column by column.
+ */
+params: Array<number>, 
+/**
+ * Index of the swept parameter.
+ */
+param: number, 
+/**
+ * First and last parameter value, both included, `lo < hi`.
+ */
+range: [number, number], 
+/**
+ * Parameter values across `range`, `2..=MAX_ORBIT_COLUMNS`.
+ */
+columns: number, 
+/**
+ * Index of the state recorded.
+ */
+state: number, 
+/**
+ * Full initial state vector, the same for every column.
+ */
+x0: Array<number>, 
+/**
+ * Iterates discarded in each column.
+ */
+transient: number, 
+/**
+ * Iterates kept in each column, `>= 1`, with `columns · kept` at most
+ * `MAX_ORBIT_POINTS`.
+ */
+kept: number, 
+/**
+ * Also locate the period-doubling points (1-D maps only).
+ */
+doublings: boolean, };
+
+export type DoublingOut = { 
+/**
+ * Value of the swept parameter.
+ */
+r: number, 
+/**
+ * Period of the cycle that loses stability.
+ */
+period: number, };
+
+export type OrbitDiagramResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The parameter values, `r_j = lo + j·(hi − lo)/(columns − 1)`.
+ */
+r: Array<number>, 
+/**
+ * `columns · kept` iterates, column by column: column `j` is
+ * `x[j·kept .. (j + 1)·kept]`. `null` from the iterate where the orbit
+ * left `BLOW_UP_THRESHOLD` (or stopped being finite) on.
+ */
+x: Array<number | null>, 
+/**
+ * The period-doubling points in increasing `r`: present exactly when
+ * `doublings` was requested.
+ */
+doublings?: Array<DoublingOut>, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.
@@ -1031,6 +1114,10 @@ text: string, };
 export const MAX_SECTION_POINTS = 100000;
 
 export const MAX_RENORMALIZATIONS = 10000000;
+
+export const MAX_ORBIT_COLUMNS = 4096;
+
+export const MAX_ORBIT_POINTS = 4000000;
 
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 

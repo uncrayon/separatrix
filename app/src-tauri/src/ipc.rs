@@ -458,6 +458,77 @@ pub struct LyapunovResponse {
     pub elapsed_ms: f64,
 }
 
+/// Most parameter values (columns) one `compute_orbit_diagram` request may ask for.
+pub const MAX_ORBIT_COLUMNS: usize = 4096;
+/// Most kept iterates (`columns · kept`) one `compute_orbit_diagram` request may ask for.
+pub const MAX_ORBIT_POINTS: usize = 4_000_000;
+
+/// Request of the `compute_orbit_diagram` command: the orbit diagram of a
+/// map over a range of one parameter (`dyn_analysis::orbit_diagram`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitDiagramRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order; the swept one
+    /// is replaced column by column.
+    pub params: Vec<f64>,
+    /// Index of the swept parameter.
+    pub param: usize,
+    /// First and last parameter value, both included, `lo < hi`.
+    pub range: (f64, f64),
+    /// Parameter values across `range`, `2..=MAX_ORBIT_COLUMNS`.
+    pub columns: usize,
+    /// Index of the state recorded.
+    pub state: usize,
+    /// Full initial state vector, the same for every column.
+    pub x0: Vec<f64>,
+    /// Iterates discarded in each column.
+    pub transient: usize,
+    /// Iterates kept in each column, `>= 1`, with `columns · kept` at most
+    /// `MAX_ORBIT_POINTS`.
+    pub kept: usize,
+    /// Also locate the period-doubling points (1-D maps only).
+    pub doublings: bool,
+}
+
+/// A period-doubling point: the `period`-cycle loses stability at `r`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct DoublingOut {
+    /// Value of the swept parameter.
+    pub r: f64,
+    /// Period of the cycle that loses stability.
+    pub period: usize,
+}
+
+/// Response of the `compute_orbit_diagram` command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitDiagramResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// The parameter values, `r_j = lo + j·(hi − lo)/(columns − 1)`.
+    pub r: Vec<f64>,
+    /// `columns · kept` iterates, column by column: column `j` is
+    /// `x[j·kept .. (j + 1)·kept]`. `null` from the iterate where the orbit
+    /// left `BLOW_UP_THRESHOLD` (or stopped being finite) on.
+    #[cfg_attr(test, ts(type = "Array<number | null>"))]
+    pub x: Vec<f64>,
+    /// The period-doubling points in increasing `r`: present exactly when
+    /// `doublings` was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub doublings: Option<Vec<DoublingOut>>,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
 // ---------------------------------------------------------------------
 // Project files (`.sepx`). The project itself is `ProjectFile` from
 // `separatrix-project`, whose keys are snake_case on the wire (the one
@@ -892,6 +963,9 @@ mod bindings {
             PortraitResponse::decl(&cfg),
             LyapunovRequest::decl(&cfg),
             LyapunovResponse::decl(&cfg),
+            OrbitDiagramRequest::decl(&cfg),
+            DoublingOut::decl(&cfg),
+            OrbitDiagramResponse::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),
@@ -948,6 +1022,8 @@ mod bindings {
                 "MAX_RENORMALIZATIONS",
                 crate::service::MAX_RENORMALIZATIONS.to_string(),
             ),
+            ("MAX_ORBIT_COLUMNS", MAX_ORBIT_COLUMNS.to_string()),
+            ("MAX_ORBIT_POINTS", MAX_ORBIT_POINTS.to_string()),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             (

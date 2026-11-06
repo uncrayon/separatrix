@@ -9,9 +9,10 @@ use dyn_solve::Sampling;
 
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
-    ConvertedLineOut, Diagnostic, FixedPointOut, LyapunovRequest, LyapunovResponse, NullclineOut,
-    ParamInfo, PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, StateInfo,
-    TrajectoryOut, TrajectoryRequest,
+    ConvertedLineOut, Diagnostic, DoublingOut, FixedPointOut, LyapunovRequest, LyapunovResponse,
+    NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo, PortraitRequest,
+    PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
+    MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -272,6 +273,110 @@ pub fn compute_lyapunov(
         stats: s.stats,
         elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
     })
+}
+
+/// The orbit diagram of a map over one parameter's range (see
+/// [`dyn_analysis::orbit_diagram`]), with its period-doubling points when
+/// asked (see [`dyn_analysis::period_doublings`]).
+pub fn compute_orbit_diagram(
+    system: &CompiledSystem,
+    req: &OrbitDiagramRequest,
+) -> Result<OrbitDiagramResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_orbit_diagram(f, req)?;
+    let opts = dyn_analysis::OrbitDiagramOptions {
+        param: req.param,
+        range: req.range,
+        columns: req.columns,
+        state: req.state,
+        transient: req.transient,
+        kept: req.kept,
+    };
+    let diagram = dyn_analysis::orbit_diagram(f, &req.params, &req.x0, &opts);
+    let doublings = req.doublings.then(|| {
+        dyn_analysis::period_doublings(f, &req.params, req.param, &diagram, usize::MAX)
+            .into_iter()
+            .map(|d| DoublingOut {
+                r: d.r,
+                period: d.period,
+            })
+            .collect()
+    });
+    Ok(OrbitDiagramResponse {
+        request_id: req.request_id,
+        r: diagram.r,
+        x: diagram.x,
+        doublings,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+fn validate_orbit_diagram(f: &dyn VectorField, req: &OrbitDiagramRequest) -> Result<(), String> {
+    if f.kind() != SystemKind::Map {
+        return Err("Orbit diagrams are for maps; this system is a flow.".into());
+    }
+    if req.params.len() != f.n_params() {
+        return Err(format!(
+            "Expected {} parameter value(s) but got {}.",
+            f.n_params(),
+            req.params.len()
+        ));
+    }
+    if req.param >= f.n_params() {
+        return Err(if f.n_params() == 0 {
+            "This map has no parameter to sweep.".into()
+        } else {
+            format!(
+                "Parameter {} doesn't exist; the map has {}.",
+                req.param,
+                f.n_params()
+            )
+        });
+    }
+    let (lo, hi) = req.range;
+    if !(lo.is_finite() && hi.is_finite() && lo < hi) {
+        return Err("The parameter range must be finite, with its start below its end.".into());
+    }
+    if req.state >= f.dim() {
+        return Err(format!(
+            "State {} doesn't exist; the map has {}.",
+            req.state,
+            f.dim()
+        ));
+    }
+    if req.x0.len() != f.dim() {
+        return Err(format!(
+            "The starting point has {} coordinate(s) but the map has {}.",
+            req.x0.len(),
+            f.dim()
+        ));
+    }
+    if !req.x0.iter().all(|v| v.is_finite()) {
+        return Err("The starting point must be finite.".into());
+    }
+    if !(2..=MAX_ORBIT_COLUMNS).contains(&req.columns) {
+        return Err(format!(
+            "The diagram needs 2 to {MAX_ORBIT_COLUMNS} parameter values."
+        ));
+    }
+    if req.kept == 0 {
+        return Err("Keep at least one iterate per parameter value.".into());
+    }
+    if req.columns.saturating_mul(req.kept) > MAX_ORBIT_POINTS {
+        return Err(format!(
+            "That is {} points; at most {MAX_ORBIT_POINTS} fit in one diagram. \
+             Keep fewer iterates or use fewer parameter values.",
+            req.columns.saturating_mul(req.kept)
+        ));
+    }
+    if req.doublings && f.dim() != 1 {
+        return Err("Period doublings are located for one-dimensional maps only.".into());
+    }
+    if req.doublings && !f.is_autonomous() {
+        return Err("Period doublings need a map that doesn't depend on n.".into());
+    }
+    Ok(())
 }
 
 fn validate_lyapunov(f: &dyn VectorField, req: &LyapunovRequest) -> Result<(), String> {
@@ -1875,6 +1980,160 @@ mod tests {
         );
         assert_eq!(json["lines"][1]["converted"], false);
         assert_eq!(json["lines"][1]["error"], true);
+    }
+
+    #[test]
+    fn orbit_diagrams_refuse_what_they_cannot_draw() {
+        let store = SystemStore::new();
+        let logistic = compile_src(&store, "x_{n+1}=rx_n\\left(1-x_n\\right)");
+        let system = store.get(logistic).unwrap();
+        let ok = OrbitDiagramRequest {
+            request_id: 9,
+            system_id: logistic,
+            params: vec![3.2],
+            param: 0,
+            range: (2.5, 3.2),
+            columns: 2,
+            state: 0,
+            x0: vec![0.1],
+            transient: 1000,
+            kept: 4,
+            doublings: true,
+        };
+        let out = compute_orbit_diagram(&system, &ok).unwrap();
+        assert_eq!(out.request_id, 9);
+        assert_eq!(out.r, [2.5, 3.2]);
+        assert_eq!(out.x.len(), 8);
+        assert!(
+            out.x[..4].iter().all(|x| (x - 0.6).abs() < 1e-12),
+            "{:?}",
+            out.x
+        );
+        let doublings = out.doublings.as_deref().unwrap();
+        assert_eq!(doublings.len(), 1, "{doublings:?}");
+        assert_eq!(doublings[0].period, 1);
+        assert!((doublings[0].r - 3.0).abs() < 1e-9, "{doublings:?}");
+        let json = serde_json::to_value(
+            compute_orbit_diagram(
+                &system,
+                &OrbitDiagramRequest {
+                    range: (4.5, 5.0),
+                    transient: 100,
+                    doublings: false,
+                    ..ok.clone()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            json["x"].as_array().unwrap().iter().all(|x| x.is_null()),
+            "{json}"
+        );
+        assert!(json.get("doublings").is_none(), "{json}");
+
+        let at_the_limit = OrbitDiagramRequest {
+            columns: MAX_ORBIT_COLUMNS,
+            kept: MAX_ORBIT_POINTS / MAX_ORBIT_COLUMNS,
+            transient: 0,
+            doublings: false,
+            ..ok.clone()
+        };
+        assert!(compute_orbit_diagram(&system, &at_the_limit).is_ok());
+        let refused = [
+            OrbitDiagramRequest {
+                param: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                range: (3.2, 2.5),
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                range: (2.5, f64::INFINITY),
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                state: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                columns: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                columns: MAX_ORBIT_COLUMNS + 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                kept: 0,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                kept: MAX_ORBIT_POINTS / MAX_ORBIT_COLUMNS + 1,
+                ..at_the_limit.clone()
+            },
+            OrbitDiagramRequest {
+                x0: vec![f64::NAN],
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                params: vec![],
+                ..ok.clone()
+            },
+        ];
+        for req in &refused {
+            assert!(
+                compute_orbit_diagram(&system, req).is_err(),
+                "{req:?} was accepted"
+            );
+        }
+
+        let henon = compile_src(&store, "x_{n+1}=1-ax_n^2+y_n\ny_{n+1}=bx_n");
+        let henon_req = OrbitDiagramRequest {
+            system_id: henon,
+            params: vec![1.4, 0.3],
+            x0: vec![0.0, 0.0],
+            state: 1,
+            range: (1.0, 1.4),
+            ..ok.clone()
+        };
+        let system = store.get(henon).unwrap();
+        assert!(compute_orbit_diagram(&system, &henon_req).is_err());
+        assert!(compute_orbit_diagram(
+            &system,
+            &OrbitDiagramRequest {
+                doublings: false,
+                ..henon_req
+            }
+        )
+        .is_ok());
+
+        let driven = compile_src(&store, "x_{n+1}=\\frac{x_n}{2}+an");
+        let driven_req = OrbitDiagramRequest {
+            system_id: driven,
+            params: vec![0.5],
+            ..ok.clone()
+        };
+        let system = store.get(driven).unwrap();
+        assert!(compute_orbit_diagram(&system, &driven_req).is_err());
+        assert!(compute_orbit_diagram(
+            &system,
+            &OrbitDiagramRequest {
+                doublings: false,
+                ..driven_req
+            }
+        )
+        .is_ok());
+
+        let flow = compile_src(&store, "\\dot{x}=ax");
+        let flow_req = OrbitDiagramRequest {
+            system_id: flow,
+            params: vec![0.5],
+            doublings: false,
+            ..ok.clone()
+        };
+        assert!(compute_orbit_diagram(&store.get(flow).unwrap(), &flow_req).is_err());
     }
 
     #[test]

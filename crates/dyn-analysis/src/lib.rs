@@ -14,6 +14,9 @@
 //!   poles, jumps and the edges of its domain (the cobweb view);
 //! - [`lyapunov_spectrum`]: the Lyapunov exponents of a flow or a map by
 //!   Benettin's QR method, with a block standard error and the trace check;
+//! - [`orbit_diagram`]: the orbit (bifurcation) diagram of a map over a
+//!   parameter range, and [`period_doublings`]: the period-doubling points
+//!   of a one-dimensional map located from it;
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -41,6 +44,7 @@ mod graph;
 mod linalg;
 mod lyapunov;
 mod nullcline;
+mod orbit;
 mod plane;
 mod slope;
 
@@ -51,5 +55,6 @@ pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
 pub use linalg::eigenvalues;
 pub use lyapunov::{lyapunov_spectrum, LyapunovOptions, LyapunovSpectrum};
 pub use nullcline::{nullclines, Nullcline, JUMP_FACTOR};
+pub use orbit::{orbit_diagram, period_doublings, Doubling, OrbitDiagram, OrbitDiagramOptions};
 pub use plane::{Axis, Plane};
 pub use slope::{slope_field, Arrow};

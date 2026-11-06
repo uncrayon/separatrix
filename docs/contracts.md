@@ -320,6 +320,45 @@ map runs `transient` iterates, then `Q ← J(x_n) Q` and `x_{n+1} = f(x_n)` for 
 `Tangent::eval` does not allocate. The Jacobian scratch is on the stack for `n ≤ 16` and a
 thread-local buffer above.
 
+### Orbit diagrams
+
+```rust
+pub struct OrbitDiagramOptions { pub param: usize, pub range: (f64, f64), pub columns: usize,
+                                 pub state: usize, pub transient: usize, pub kept: usize }
+pub struct OrbitDiagram { pub r: Vec<f64>, pub x: Vec<f64> /* columns × kept, by column */,
+                          pub kept: usize }
+pub fn orbit_diagram(f: &dyn VectorField, p: &[f64], x0: &[f64],
+                     opts: &OrbitDiagramOptions) -> OrbitDiagram;
+pub struct Doubling { pub r: f64, pub period: usize /* the cycle that loses stability */ }
+pub fn period_doublings(f: &dyn VectorField, p: &[f64], param: usize,
+                        diagram: &OrbitDiagram, max: usize) -> Vec<Doubling>;
+```
+
+`orbit_diagram` iterates the map `x_{n+1} = f(n, x_n)` from `x0` at each of `columns` parameter
+values, `r_j = lo + j·step` with `step = (hi − lo)/(columns − 1)` (one multiplication and one
+addition, so the same bits on every platform; one column is `[lo]`). `p[param]` is replaced by
+`r_j` and the other parameters are kept. Column `j` is `x[j·kept .. (j + 1)·kept]`, the values of
+state `state` at `x_T … x_{T+kept−1}` (`x_0 = x0`, `T = transient`). From the first iterate with a
+component beyond `BLOW_UP_THRESHOLD` or not finite, the rest of the column is NaN. The columns
+run one after another on one thread (rayon is not a dependency; the evaluation-speed measurement
+decides whether one core is enough).
+
+`period_doublings` works on one-dimensional autonomous maps and is empty for anything else. It
+labels each column with the smallest `P ∈ {1, 2, 4, …}` (`2P ≤ kept`) such that every kept
+iterate agrees with the one `P` later, `|x_{n+P} − x_n| ≤ 1e−7·(1 + |x_n|)`, and skips columns
+with no label. A column labelled `P` followed by one labelled `2P` marks a doubling of the
+`P`-cycle. The labels alone don't bracket it. Just below a doubling the orbit still alternates
+about the `P`-cycle, decaying so slowly that it repeats at lag `2P` within the tolerance. On the
+logistic map with 2000 columns over `[2.8, 3.57]` and a 2000-iterate transient, 8 columns below
+`r1 = 3` already read period 2. So the `P`-cycle is followed column by column, from the column
+before the last `P` column, by Newton's method on `f^P(x) = x`. The first seed is that column's
+last kept iterate, and each later one is the previous column's cycle point. The walk stops when
+the multiplier `μ_P(r) = ∏ f′(x_i)` (from `VectorField::jacobian`, exact for compiled systems)
+drops to −1 or below. The last two columns bracket the doubling, which is located by bisection on
+`μ_P(r) + 1` to a bracket of 1e−12. A doubling is skipped when the walk starts at or below −1,
+never gets there, or Newton fails. On the logistic map (above, `kept = 64`) it finds `r1 … r5`
+with `r1` and `r2 = 1 + √6` within 1e−13.
+
 ## IPC (Tauri commands)
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
@@ -328,7 +367,8 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 `app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale. The same file
-carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`, the `SECTION_MISFIT` and
+carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`,
+`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, the `SECTION_MISFIT` and
 `SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
@@ -342,6 +382,7 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `convert_source` | `{ lines: string[], from, to }` (`ConvertRequest`) | `{ lines: { source, converted, error, note? }[] }` (`ConvertResponse`) |
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
 | `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
+| `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,
@@ -357,6 +398,17 @@ fit the system, a non-finite start, a negative transient, `total ≤ 0` or `inte
 half an iterate for a map), more than `MAX_RENORMALIZATIONS = 10⁷` QR steps (`total / interval`),
 `blocks < 2`, and more blocks than QR steps. A long run takes seconds. The command runs on a
 blocking worker thread and the UI drops stale responses by `requestId`.
+
+`compute_orbit_diagram` takes `OrbitDiagramRequest { requestId, systemId, params, param, range:
+[lo, hi], columns, state, x0, transient, kept, doublings }` and returns `OrbitDiagramResponse {
+requestId, r, x, doublings?: { r, period }[], elapsedMs }`. That is `orbit_diagram` (above), and
+`period_doublings` with no limit when `doublings` is true; `doublings` is absent otherwise. `x`
+is `columns · kept` values, column by column, with `null` (JSON has no NaN) from the iterate where
+the orbit escaped. The command refuses a flow, a parameter index or state index outside the
+system, a range that is not finite with `lo < hi`, a parameter count or starting point that
+doesn't fit, a non-finite start, `columns` outside `2..=MAX_ORBIT_COLUMNS = 4096`, `kept = 0`,
+more than `MAX_ORBIT_POINTS = 4·10⁶` points (`columns · kept`), and `doublings` on a map with more
+than one state or one that depends on `n`. It runs on a blocking worker thread.
 
 ### Cobweb plots and transients
 
