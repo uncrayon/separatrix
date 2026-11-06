@@ -78,6 +78,12 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
 pub const SPACE_LATEX_REFUSAL: &str =
     "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 
+/// `compute_export_portrait`: [`service::compute_portrait`], then every
+/// curve cut at its first non-finite point and simplified with RDP at
+/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates, a section's
+/// crossings and a 3D view's trajectories are only cut; the graph of a
+/// cobweb's `f` is simplified like the nullclines).
+/// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
     system: &CompiledSystem,
