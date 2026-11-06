@@ -1,3 +1,18 @@
+//! Repairs that keep a file openable, each with a warning for the user.
+//!
+//! Only the structure is a hard error (see [`crate::check`]); everything
+//! here is fixed in place: duplicate or empty ids, slider ranges, colors,
+//! solver settings (the transient too), the field grid, `x0` lengths, and
+//! the seeds of a continuation view whose state or tangent length doesn't
+//! fit the system, which are left out. View ranges, axes and a cobweb,
+//! section, 3D, Lyapunov or orbit view that doesn't fit the system are only
+//! reported: the UI falls back to the default view for a primary view whose
+//! range isn't usable (see [`range_ok`]), whose cobweb axes are wrong (see
+//! [`cobweb_axes_ok`]), whose section doesn't fit (see [`section_misfit`]),
+//! whose 3D axes don't (see [`space_misfit`]), whose Lyapunov run can't be
+//! run (see [`lyapunov_misfit`]) or whose orbit diagram can't be drawn (see
+//! [`orbit_misfit`]).
+
 use std::collections::HashSet;
 
 use crate::schema::{default_atol, default_method, default_rtol, default_t_end};

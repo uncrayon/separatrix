@@ -22,11 +22,12 @@ All notable changes to this project are documented in this file.
   a fixed-point glyph labelled LP, H, BP, PD or NS. The Continuation panel sets the parameter, its
   range, Δs, Max points, the direction (Forward, Backward, Both) and the vertical measure, lists
   the branches (period, points, how each end stopped) and the special points once each in
-  increasing parameter, with ω and the sign of ℓ₁ at a Hopf point. A click on a row, or on the plot
+  increasing parameter, with ω and ℓ₁ (and super- or subcritical) at a Hopf point. A click on a row, or on the plot
   near a branch, sets the slider to that point's parameter. Branch points and flips carry Switch
-  branch, which follows the second branch both ways: for the logistic map the 2-, 4- and 8-cycles,
+  branch, which follows the second branch both ways (a point already switched at reads "Followed
+  as Branch k" instead): for the logistic map the 2-, 4- and 8-cycles,
   and r₁ … r₄ = 3.000000, 3.449490, 3.544090, 3.564407 in the list. A branch starts from the
-  selected fixed point (Continue on a Fixed points row, or Continue from the selected fixed point),
+  selected fixed point (Continue on a Fixed points row, or Continue from selection),
   and a fresh view from every fixed point found. The View control is a 3 × 2 grid of equal segments
   with six views for flows and maps alike, and the toolbar's axes menu offers the same. The status
   bar reads "Continuation 4 ms" and "213 points · 2 special". Saved in `.sepx` as its seeds; a view
@@ -46,11 +47,12 @@ All notable changes to this project are documented in this file.
   `[g_x | g_p]` orthogonal to the old tangent, corrected on a hyperplane parallel to the old
   branch so it cannot fall back onto it. At a flip of `f^k` it follows the `2k`-cycle born there
   as fixed points of `f^{2k}`. The switch point is self-contained, so a saved project can replay
-  it without the parent branch. Switching at any other kind of point is refused. The continuation
-  gate gains six rows: the switched pitchfork branch `r = x²` with both signs of `x`, the switched
+  it without the parent branch. Switching at any other kind of point is refused. Six rows of the
+  continuation gate check it: the switched pitchfork branch `r = x²` with both signs of `x`, the switched
   transcritical branch `x = r`, the logistic cascade `r2 = 1 + √6`, `r3` and `r4` to 1e−6 by
   switching at each flip, and `r1 … r4` within 1e−9 of `period_doublings` (measured: 1.4e−13). It
-  also prints the Feigenbaum estimate `(r3 − r2)/(r4 − r3)`, and two more wrong claims must fail.
+  also prints the Feigenbaum estimate `(r3 − r2)/(r4 − r3)`, and two of its wrong claims are about
+  switching.
 - Pseudo-arclength continuation in the core (`dyn_analysis::continue_branch`), modelled on
   BifurcationKit.jl (MIT). It follows a branch of equilibria of a flow, or of fixed points of `f^k`
   for a map, as one parameter varies, through folds. Each step predicts along the tangent (first
@@ -58,14 +60,15 @@ All notable changes to this project are documented in this file.
   Jacobians. The step grows after fast corrections and halves after slow or failed ones, or when
   successive tangents turn by more than the angle limit, so the branch does not jump. The last
   point of a branch that leaves the parameter range lies exactly on its edge. Each point carries
-  its eigenvalues (of `J`, or of `D f^k` for a map), its unstable count and its stability. Not yet
-  reachable from the app.
+  its eigenvalues (of `J`, or of `D f^k` for a map), its unstable count and its stability.
 - Special points on a continuation branch (`Branch::special`), each located by bisection in
   arclength to `|Δp| ≤ 1e−13 (1 + |p|)` and inserted into the branch: folds (LP), Hopf points (H)
   and branch points (BP) of flows, and folds, branch points, flips (PD) and Neimark–Sacker points
   (NS) of maps. One table of signed test functions finds them: `ṗ` of the tangent, the determinant
-  of the bordered Jacobian, the largest `Re λ` of a complex pair (so a neutral saddle's real pair
-  `λ, −λ` is never a Hopf point), `det(D f^k + I)`, and the largest `|μ|` of a complex pair minus 1.
+  of the bordered Jacobian, `Re λ` of each complex pair (so a neutral saddle's real pair `λ, −λ` is
+  never a Hopf point), `det(D f^k + I)`, and `|μ| − 1` of each complex pair. The per-pair values
+  are ranked, so one pair crossing is seen while another pair sits further out, and a test that is
+  exactly 0 at the start (the Hopf normal form started at `μ = 0`) puts the special point there.
   A step is kept only when its change in the unstable count is the jump of the one test that
   changed sign (none: no change), so a Hopf point inside a step whose pair was still real at one
   end is not missed. The next step is limited to 1.5 times the predicted arclength to the nearest
@@ -78,7 +81,7 @@ All notable changes to this project are documented in this file.
   form (`ω = 1`, `ℓ₁ = ∓1`), Sel'kov's Hopf points `b = √0.12, √0.72` at `a = 0.08`, the
   Brusselator's `b = 1 + a²`, the logistic map's flip at `r = 3`, Hénon's fold and flip at
   `a = −(1 − b)²/4` and `3(1 − b)²/4`, and the delayed logistic map's Neimark–Sacker point at
-  `r = 2` with `θ = π/3`. Not yet reachable from the app.
+  `r = 2` with `θ = π/3`.
 - The `compute_continuation` command (docs/contracts.md, Continuation): a branch through a start
   point, followed forward, backward or both ways (joined into one polyline through the start), as
   flat arrays of parameters, cycles, stability and unstable counts, with its special points (kind,
@@ -86,11 +89,11 @@ All notable changes to this project are documented in this file.
   refuses, with a message, a system that depends on `t` or `n`, a missing or out-of-range
   parameter, an empty or non-finite range, a start that doesn't fit, a period of 0 (or above 1 for
   a flow), `ds ≤ 0`, `dsMax < ds` and more than `MAX_CONTINUATION_POINTS = 20000` points per
-  direction. No view sends it yet.
-- The continuation gate, `bash scripts/continuation-gate.sh`: 21 bifurcation values derived in
-  closed form, reproduced through `compute_continuation` and printed as a table, from the
+  direction.
+- The continuation gate, `bash scripts/continuation-gate.sh`: 27 rows of bifurcation values derived
+  in closed form or published, reproduced through `compute_continuation` and printed as a table, from the
   saddle-node fold at `r = 0` to the delayed logistic map's Neimark–Sacker point at `r = 2`,
-  `θ = π/3`. Five wrong claims must fail.
+  `θ = π/3`, and the logistic cascade r₁ … r₄ to 1e−6. Seven wrong claims must fail.
 - Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
   view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
   as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,
@@ -277,6 +280,9 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- An apostrophe in a document title separates words in LaTeX labels and export file names
+  (`Sel'kov glycolysis` → `sel-kov-glycolysis`, as the app suggests) instead of reading as a
+  prime (`sel-primekov-glycolysis`). State names keep `theta'` → `theta-prime`.
 - Continuation stays on the branch it follows where branches crowd. A special point is located
   from the bracket's own end along its tangent rather than on the first secant, which near a
   branch point let the corrector land on the other branch: the logistic map's transcritical point,

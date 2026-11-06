@@ -9,7 +9,7 @@
 use dyn_expr::InputFormat;
 use serde::Serialize;
 
-use crate::latex_util::slug;
+use crate::latex_util::title_slug;
 use crate::model::{
     ContinuationRun, Labels, LyapunovRun, Method, OrbitRun, SectionSpec, SystemKind, SystemMeta,
     Trajectory,
@@ -280,7 +280,7 @@ pub fn files(input: &CsvInput) -> Vec<CsvFile> {
             order.push(&t.tag.ic_id);
         }
     }
-    let base = slug(input.title, "system");
+    let base = title_slug(input.title);
     let columns: Vec<String> = input.labels.states.iter().map(|s| s.name.clone()).collect();
     let mut stems: Vec<String> = Vec::new();
     ids.iter()
@@ -398,7 +398,7 @@ pub fn lyapunov(sys: &SystemMeta, run: &LyapunovRun, app_version: &str) -> CsvFi
         csv.push_str(&cells.join(","));
         csv.push('\n');
     }
-    let stem = format!("{}-lyapunov", slug(sys.title, "system"));
+    let stem = format!("{}-lyapunov", title_slug(sys.title));
     let o = &run.solver;
     let integrator = (sys.kind == SystemKind::Ode).then(|| {
         let adaptive = o.method.is_adaptive();
@@ -492,7 +492,7 @@ pub fn orbit(sys: &SystemMeta, run: &OrbitRun, app_version: &str) -> CsvFile {
             }
         }
     }
-    let stem = format!("{}-orbit-diagram", slug(sys.title, "system"));
+    let stem = format!("{}-orbit-diagram", title_slug(sys.title));
     let meta = pretty(&OrbitMeta {
         format: "separatrix-orbit-diagram",
         format_version: 1,
@@ -626,7 +626,7 @@ pub fn continuation(sys: &SystemMeta, run: &ContinuationRun, app_version: &str) 
             special: br.special.len(),
         });
     }
-    let stem = format!("{}-continuation", slug(sys.title, "system"));
+    let stem = format!("{}-continuation", title_slug(sys.title));
     let meta = pretty(&ContinuationMeta {
         format: "separatrix-continuation",
         format_version: 1,

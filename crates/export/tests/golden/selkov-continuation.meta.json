@@ -3,8 +3,8 @@
   "format_version": 1,
   "app_version": "0.2.0",
   "title": "Sel'kov glycolysis",
-  "csv": "sel-primekov-glycolysis-continuation.csv",
-  "special_csv": "sel-primekov-glycolysis-continuation-special.csv",
+  "csv": "sel-kov-glycolysis-continuation.csv",
+  "special_csv": "sel-kov-glycolysis-continuation-special.csv",
   "system": {
     "kind": "ode",
     "input_format": "latex",

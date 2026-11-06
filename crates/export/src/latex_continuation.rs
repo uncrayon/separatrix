@@ -26,7 +26,7 @@ use crate::latex_figure::{
     Placement, Quantizer, Table, FP_HALO_R, MAX_POINTS,
 };
 use crate::latex_system::header_comments;
-use crate::latex_util::{bp, comment, escape_text, packages_comment, slug, PX_PER_CM};
+use crate::latex_util::{bp, comment, escape_text, packages_comment, title_slug, PX_PER_CM};
 use crate::model::{
     BranchMeasure, ContinuationRun, Palette, SpecialKind, SystemKind, SystemMeta, Theme, Viewport,
     PALETTE_SIZE,
@@ -442,7 +442,7 @@ pub fn special_points_table(sys: &SystemMeta, run: &ContinuationRun) -> String {
     tex.push_str(&format!("\\caption{{{caption}}}\n"));
     tex.push_str(&format!(
         "\\label{{tab:{}-special-points}}\n",
-        slug(sys.title, "system")
+        title_slug(sys.title)
     ));
     tex.push_str(&format!(
         "\\begin{{tabular}}{{@{{}}{}@{{}}}}\n\\toprule\n{} \\\\\n\\midrule\n",

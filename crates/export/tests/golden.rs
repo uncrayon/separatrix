@@ -1322,7 +1322,7 @@ fn selkov_branch_plot_special_points_and_csv() {
     assert!(table.contains("\\num{0.848528}"));
 
     let csv = csv::continuation(&sys, &run, "0.2.0");
-    assert_eq!(csv.file.stem, "sel-primekov-glycolysis-continuation");
+    assert_eq!(csv.file.stem, "sel-kov-glycolysis-continuation");
     assert_eq!(
         csv.file.csv.lines().next(),
         Some("branch,period,point,b,x,y,stable,unstable")

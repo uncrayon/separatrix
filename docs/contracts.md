@@ -557,14 +557,14 @@ alone with `Range`; no point at any offset gives `NoSecondBranch`. Only `+ − �
 choose `d` and its sign.
 
 `compute_continuation` takes `ContinuationRequest { requestId, systemId, params, param, range:
-[lo, hi], start: { kind: "point", x0, period } | { kind: "switch", at: SpecialPointOut },
+[lo, hi], start: { kind: "point", x0, period } | { kind: "switch", at: SwitchPoint { kind, p, x, period, tangent } },
 direction: "forward" | "backward" | "both", ds, dsMax, maxPoints }` and returns `ContinuationResponse { requestId, branch, elapsedMs }` with
 `branch: BranchOut { period, p, x, stable, unstable, special, end: { first, last } }`. That is
 `continue_branch` (start `point`) or `switch_branch` (start `switch`) with `ds_min = 1e−8` and
 `max_angle = 0.3`, and `ds` signed by the direction: `forward` starts with `p` increasing,
 `backward` decreasing, or for a switch `forward` and `backward` take the halves for `ds > 0` and
 `ds < 0`, so `both` gives the whole second branch through the switch point. A switch seed is
-self-contained: only its `kind`, `p`, `x`, `period` and `tangent` are read, so a saved project
+self-contained: it carries only the `kind`, `p`, `x`, `period` and `tangent` of a special point, so a saved project
 replays it without the branch it came from, and `params[param]` is replaced by its `p`. `both` runs backward and forward from
 the same start and joins them into one polyline: the backward half reversed, then the forward half,
 with the shared start once, the special indices shifted to match and the backward tangents negated,

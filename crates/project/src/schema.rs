@@ -131,8 +131,8 @@ pub struct ProjectView {
     /// (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
     /// is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
     /// `"continuation"` for a branch plot of fixed points against a
-    /// parameter (see `continuation`); absent for the phase plane and the time series, which the axes tell
-    /// apart.
+    /// parameter (see `continuation`); absent for the phase plane and the
+    /// time series, which the axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
