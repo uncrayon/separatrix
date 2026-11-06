@@ -88,7 +88,7 @@ test("the logistic map: PD, then Switch branch three times, lists r1 … r4 in i
       rows.filter(([kind]) => kind === "flip").map(([, text]) => /period (\d+)/.exec(text)?.[1] ?? "1"),
       ["1", "2", "4", "8"],
     );
-    assert.equal(await page.getByRole("button", { name: /^Export/ }).isDisabled(), true, "no branch plot export yet");
+    assert.equal(await page.getByRole("button", { name: /^Export/ }).isDisabled(), false, "the branch plot exports");
   } finally {
     await browser.close();
   }

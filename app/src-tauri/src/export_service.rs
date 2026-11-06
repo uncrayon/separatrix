@@ -19,10 +19,12 @@ use separatrix_export::{
 };
 
 use crate::ipc::{
-    AxisRef, CsvFileOut, CsvRequest, CsvResponse, ExportPortraitRequest, ExportTheme,
-    FigureLatexRequest, FixedPointsLatexRequest, LyapunovExportRequest, LyapunovRequest,
-    LyapunovResponse, Notation, OrbitExportRequest, OrbitFigureRequest, PortraitRequest,
-    PortraitResponse, SectionSpec, SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
+    AxisRef, BranchAxis, ContinuationExportRequest, ContinuationFigureRequest, ContinuationLatex,
+    ContinuationRequest, ContinuationResponse, CsvFileOut, CsvRequest, CsvResponse,
+    ExportPortraitRequest, ExportTheme, FigureLatexRequest, FixedPointsLatexRequest,
+    LyapunovExportRequest, LyapunovRequest, LyapunovResponse, Notation, OrbitExportRequest,
+    OrbitFigureRequest, PortraitRequest, PortraitResponse, SectionSpec, SpecialKindOut,
+    SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
 };
 use crate::service;
 
@@ -39,12 +41,17 @@ pub fn figure_px(cm: f64) -> f64 {
 
 /// The last export portrait, so the dialog's preview and its LaTeX for the
 /// same options share one computation; and the last Lyapunov run, so its
-/// table, its CSV and their Save share one (a long run takes seconds).
+/// table, its CSV and their Save share one (a long run takes seconds); and
+/// the last branch plot's branches, so its figure, table and CSV share them.
 #[derive(Default)]
 pub struct ExportCache {
     last: Mutex<Option<(CacheKey, Arc<PortraitResponse>)>>,
     lyapunov: Mutex<Option<(LyapunovRequest, Arc<LyapunovResponse>)>>,
+    continuation: Mutex<Option<(Vec<ContinuationRequest>, Arc<BranchResults>)>>,
 }
+
+/// Each branch request's response, or why it could not be followed.
+type BranchResults = Vec<Result<ContinuationResponse, String>>;
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
@@ -187,6 +194,7 @@ pub fn lyapunov_csv(
         stem: f.stem,
         csv: f.csv,
         meta: f.meta,
+        special: None,
     })
 }
 
@@ -272,6 +280,187 @@ pub fn orbit_csv(system: &CompiledSystem, req: &OrbitExportRequest) -> Result<Cs
         stem: f.stem,
         csv: f.csv,
         meta: f.meta,
+        special: None,
+    })
+}
+
+/// The branch plot's requests followed by the core, or the last export's
+/// branches for the same requests (their `requestId`s aside).
+fn continuation_results(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &ContinuationExportRequest,
+) -> Arc<BranchResults> {
+    let key: Vec<ContinuationRequest> = req
+        .branches
+        .iter()
+        .map(|b| ContinuationRequest {
+            request_id: 0,
+            ..b.request.clone()
+        })
+        .collect();
+    let mut last = cache.continuation.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, v)) = last.as_ref() {
+        if *k == key {
+            return v.clone();
+        }
+    }
+    let out: Arc<BranchResults> = Arc::new(
+        key.iter()
+            .map(|r| service::compute_continuation(system, r))
+            .collect(),
+    );
+    *last = Some((key, out.clone()));
+    out
+}
+
+fn special_kind(kind: SpecialKindOut) -> dyn_analysis::SpecialKind {
+    match kind {
+        SpecialKindOut::Fold => dyn_analysis::SpecialKind::Fold,
+        SpecialKindOut::Hopf => dyn_analysis::SpecialKind::Hopf,
+        SpecialKindOut::BranchPoint => dyn_analysis::SpecialKind::BranchPoint,
+        SpecialKindOut::Flip => dyn_analysis::SpecialKind::Flip,
+        SpecialKindOut::NeimarkSacker => dyn_analysis::SpecialKind::NeimarkSacker,
+    }
+}
+
+/// The branches that could be followed, in the view's order with their
+/// colors. A branch the screen could not follow either is left out, as the
+/// plot leaves it out; with none left, the first branch's reason.
+fn continuation_run(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &ContinuationExportRequest,
+) -> Result<separatrix_export::ContinuationRun, String> {
+    if req.branches.is_empty() {
+        return Err(
+            "There are no branches to export yet. Continue from a fixed point in the Continuation panel first."
+                .into(),
+        );
+    }
+    let results = continuation_results(cache, system, req);
+    let branches: Vec<separatrix_export::BranchRun> = req
+        .branches
+        .iter()
+        .zip(results.iter())
+        .filter_map(|(b, res)| res.as_ref().ok().map(|r| (b.color, &r.branch)))
+        .map(|(color, b)| separatrix_export::BranchRun {
+            period: b.period,
+            color,
+            p: b.p.clone(),
+            x: b.x.clone(),
+            stable: b.stable.clone(),
+            unstable: b.unstable.clone(),
+            special: b
+                .special
+                .iter()
+                .map(|sp| separatrix_export::SpecialRow {
+                    kind: special_kind(sp.kind),
+                    index: sp.index,
+                    p: sp.p,
+                    x: sp.x.clone(),
+                    omega: sp.omega,
+                    lyapunov: sp.lyapunov,
+                })
+                .collect(),
+        })
+        .collect();
+    if branches.is_empty() {
+        if let Some(Err(e)) = results.first() {
+            return Err(e.clone());
+        }
+    }
+    Ok(separatrix_export::ContinuationRun {
+        param: req.param,
+        range: req.range,
+        y_measure: match req.y_axis {
+            BranchAxis::State { index } => separatrix_export::BranchMeasure::State { index },
+            BranchAxis::Norm => separatrix_export::BranchMeasure::Norm,
+        },
+        branches,
+    })
+}
+
+/// A branch plot as a pgfplots figure (inline for Copy, `.dat` files for
+/// Save), or its special points as a booktabs table.
+pub fn continuation_latex(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &ContinuationFigureRequest,
+    placement: Placement,
+) -> Result<separatrix_export::FigureOutput, String> {
+    let c = &req.continuation;
+    let run = continuation_run(cache, system, c)?;
+    let labels = Labels::from_info(&system.info, &c.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &c.title,
+        c.source_ref.as_deref(),
+        &c.lines,
+        c.format,
+    );
+    if req.content == ContinuationLatex::SpecialPoints {
+        return Ok(separatrix_export::FigureOutput {
+            tex: separatrix_export::special_points_table(&sys, &run),
+            files: Vec::new(),
+            points: run.special_points().len(),
+            thinned: false,
+            notes: Vec::new(),
+        });
+    }
+    if !(req.width_cm.is_finite() && req.height_cm.is_finite())
+        || req.width_cm <= 0.0
+        || req.height_cm <= 0.0
+    {
+        return Err(format!(
+            "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
+            req.width_cm, req.height_cm
+        ));
+    }
+    let palette = palette(req.theme)?;
+    Ok(separatrix_export::continuation_figure(
+        &separatrix_export::ContinuationFigureInput {
+            sys: &sys,
+            run: &run,
+            x_range: req.x_range,
+            y_range: req.y_range,
+            width_cm: req.width_cm,
+            height_cm: req.height_cm,
+            theme: match req.theme {
+                ExportTheme::Light => separatrix_export::Theme::Light,
+                ExportTheme::Dark => separatrix_export::Theme::Dark,
+            },
+            palette: &palette,
+            placement,
+            standalone: req.standalone,
+        },
+    ))
+}
+
+/// A branch plot's points as a CSV with its `.meta.json`, and its special
+/// points as `<stem>-special.csv`.
+pub fn continuation_csv(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &ContinuationExportRequest,
+) -> Result<CsvFileOut, String> {
+    let run = continuation_run(cache, system, req)?;
+    let labels = Labels::from_info(&system.info, &req.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &req.title,
+        req.source_ref.as_deref(),
+        &req.lines,
+        req.format,
+    );
+    let out = separatrix_export::csv::continuation(&sys, &run, APP_VERSION);
+    Ok(CsvFileOut {
+        stem: out.file.stem,
+        csv: out.file.csv,
+        meta: out.file.meta,
+        special: Some(out.special),
     })
 }
 
@@ -618,6 +807,7 @@ pub fn csv(system: &CompiledSystem, req: &CsvRequest) -> Result<CsvResponse, Str
                 stem: f.stem,
                 csv: f.csv,
                 meta: f.meta,
+                special: None,
             })
             .collect(),
     })
@@ -662,8 +852,10 @@ pub fn display_name(path: &Path) -> String {
 /// `.csv` path): with one initial condition, `<chosen>.csv` and
 /// `<chosen stem>.meta.json`; with several, `<chosen stem>-<ic>.csv`
 /// (and `.meta.json`) for each, `<ic>` being the part of the export's own
-/// stem after the system's title. The metadata's `csv` key is rewritten
-/// to the name actually written. Returns `(path, contents)` pairs.
+/// stem after the system's title. A branch plot's special points go to
+/// `<stem>-special.csv` beside its CSV. The metadata's `csv` (and
+/// `special_csv`) key is rewritten to the name actually written. Returns
+/// `(path, contents)` pairs.
 pub fn csv_save_plan(chosen: &Path, title: &str, files: &[CsvFileOut]) -> Vec<(PathBuf, String)> {
     let dir = chosen.parent().map(Path::to_path_buf).unwrap_or_default();
     let chosen_stem = chosen
@@ -689,6 +881,21 @@ pub fn csv_save_plan(chosen: &Path, title: &str, files: &[CsvFileOut]) -> Vec<(P
             1,
         );
         out.push((dir.join(&csv_name), f.csv.clone()));
+        let meta = match &f.special {
+            Some(special) => {
+                let special_name = format!("{stem}-special.csv");
+                out.push((dir.join(&special_name), special.clone()));
+                meta.replacen(
+                    &format!("\"special_csv\": \"{}-special.csv\"", f.stem),
+                    &format!(
+                        "\"special_csv\": {}",
+                        serde_json::to_string(&special_name).unwrap_or_default()
+                    ),
+                    1,
+                )
+            }
+            None => meta,
+        };
         out.push((dir.join(format!("{stem}.meta.json")), meta));
     }
     out
@@ -1166,6 +1373,7 @@ mod tests {
             stem: "lorenz-trajectory-1".into(),
             csv: "t,x\n".into(),
             meta: "{\n  \"csv\": \"lorenz-trajectory-1.csv\",\n  \"x\": 1\n}\n".into(),
+            special: None,
         }];
         let plan = csv_save_plan(Path::new("/d/run.csv"), "Lorenz", &one);
         assert_eq!(plan[0].0, Path::new("/d/run.csv"));
@@ -1176,6 +1384,7 @@ mod tests {
             stem: "lorenz-trajectory-2".into(),
             csv: String::new(),
             meta: "{\n  \"csv\": \"lorenz-trajectory-2.csv\"\n}\n".into(),
+            special: None,
         });
         let plan = csv_save_plan(Path::new("/d/run.csv"), "Lorenz", &two);
         let names: Vec<_> = plan.iter().map(|(p, _)| p.clone()).collect();
@@ -1323,5 +1532,130 @@ mod tests {
         assert_eq!(saved.files[0].name, "orbit-points.png");
         let copied = orbit_latex(&system, &fig, Placement::Inline).unwrap();
         assert!(copied.thinned && copied.points <= 5000);
+    }
+
+    #[test]
+    fn branch_plot_exports_follow_the_view_and_share_one_run() {
+        use crate::ipc::{BranchExport, ContinuationDirection, ContinuationStart};
+        let store = SystemStore::new();
+        let res = service::compile_system(
+            &store,
+            &CompileRequest {
+                source: "\\dot{x}=-x+ay+x^2y\n\\dot{y}=b-ay-x^2y".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        let id = res.system_id.unwrap();
+        let system = store.get(id).unwrap();
+        let branch = |b: f64, request_id: u64, color: u8| BranchExport {
+            request: ContinuationRequest {
+                request_id,
+                system_id: id,
+                params: vec![0.08, b],
+                param: 1,
+                range: (0.0, 1.5),
+                start: ContinuationStart::Point {
+                    x0: vec![b, b / (0.08 + b * b)],
+                    period: 1,
+                },
+                direction: ContinuationDirection::Both,
+                ds: 0.015,
+                ds_max: 0.03,
+                max_points: 500,
+            },
+            color,
+        };
+        let mut req = ContinuationExportRequest {
+            system_id: id,
+            params: vec![0.08, 0.6],
+            param: 1,
+            range: (0.0, 1.5),
+            y_axis: BranchAxis::State { index: 0 },
+            branches: vec![branch(0.6, 3, 2)],
+            title: "Sel'kov glycolysis".into(),
+            source_ref: Some("Strogatz §7.3".into()),
+            lines: vec!["\\dot{x}=-x+ay+x^2y".into(), "\\dot{y}=b-ay-x^2y".into()],
+            format: InputFormat::Latex,
+        };
+        let cache = ExportCache::new();
+        let first = continuation_results(&cache, &system, &req);
+        let mut again = req.clone();
+        again.branches[0].request.request_id = 9;
+        assert!(Arc::ptr_eq(
+            &first,
+            &continuation_results(&cache, &system, &again)
+        ));
+
+        let mut fig = ContinuationFigureRequest {
+            continuation: req.clone(),
+            content: ContinuationLatex::Figure,
+            x_range: (-0.06, 1.56),
+            y_range: (-0.1, 1.6),
+            width_cm: 8.0,
+            height_cm: 6.4,
+            theme: ExportTheme::Light,
+            standalone: false,
+        };
+        let copied = continuation_latex(&cache, &system, &fig, Placement::Inline).unwrap();
+        assert!(copied.files.is_empty());
+        assert_eq!(copied.tex.matches("{H};").count(), 2, "{}", copied.tex);
+        assert!(copied.tex.contains("\\definecolor{sepxtraj3}"));
+        assert!(copied.tex.contains("% Branch 1, unstable (dashed)"));
+        let saved = continuation_latex(
+            &cache,
+            &system,
+            &fig,
+            Placement::External {
+                base: "branches".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.files.len(), 3);
+
+        fig.content = ContinuationLatex::SpecialPoints;
+        let table = continuation_latex(&cache, &system, &fig, Placement::Inline).unwrap();
+        assert_eq!(table.points, 2);
+        assert!(table.tex.contains("H & \\num{0.346410}"), "{}", table.tex);
+        assert!(table.tex.contains("H & \\num{0.848528}"));
+
+        let csv = continuation_csv(&cache, &system, &req).unwrap();
+        assert!(csv
+            .csv
+            .starts_with("branch,period,point,b,x,y,stable,unstable\n"));
+        let special = csv.special.clone().unwrap();
+        assert_eq!(special.lines().count(), 3);
+        let plan = csv_save_plan(Path::new("/d/selkov.csv"), &req.title, &[csv]);
+        let names: Vec<_> = plan.iter().map(|(p, _)| p.clone()).collect();
+        assert_eq!(
+            names,
+            [
+                PathBuf::from("/d/selkov.csv"),
+                PathBuf::from("/d/selkov-special.csv"),
+                PathBuf::from("/d/selkov.meta.json")
+            ]
+        );
+        assert!(plan[2].1.contains("\"csv\": \"selkov.csv\""));
+        assert!(plan[2]
+            .1
+            .contains("\"special_csv\": \"selkov-special.csv\""));
+
+        // A branch the core cannot follow is left out, as the plot leaves
+        // it out; with none left, its reason is the error.
+        let mut off = branch(0.6, 0, 0);
+        off.request.start = ContinuationStart::Point {
+            x0: vec![0.6, 0.6],
+            period: 2,
+        };
+        off.request.max_points = 1;
+        req.branches.push(off.clone());
+        let run = continuation_run(&cache, &system, &req).unwrap();
+        assert_eq!(run.branches.len(), 1);
+        assert_eq!(run.branches[0].color, 2);
+        req.branches = vec![off];
+        assert!(continuation_run(&cache, &system, &req).is_err());
+        req.branches.clear();
+        assert!(continuation_csv(&cache, &system, &req)
+            .unwrap_err()
+            .starts_with("There are no branches to export yet."));
     }
 }

@@ -1072,6 +1072,11 @@ pub struct CsvFileOut {
     pub csv: String,
     /// The `.meta.json` contents.
     pub meta: String,
+    /// A branch plot's special points, written beside it as
+    /// `<stem>-special.csv`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub special: Option<String>,
 }
 
 /// Response of `export_csv`.
@@ -1165,6 +1170,113 @@ pub struct OrbitFigureRequest {
 pub struct SaveOrbitFigureRequest {
     /// The figure.
     pub figure: OrbitFigureRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// What the vertical axis of a branch plot shows.
+///
+/// On the wire: `{ "kind": "state", "index": 1 }` or `{ "kind": "norm" }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BranchAxis {
+    /// State variable number `index`.
+    State {
+        /// Index into the state vector.
+        index: usize,
+    },
+    /// The norm ‖x‖₂ of the state.
+    Norm,
+}
+
+/// One branch of a branch plot: its request and its color.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct BranchExport {
+    /// The view's request for the branch.
+    pub request: ContinuationRequest,
+    /// Palette index (taken mod 7), as the plot colors the branch.
+    pub color: u8,
+}
+
+/// Request of `export_continuation_csv` (and the `continuation` of a
+/// figure): the branch plot's requests, which the core follows again (or
+/// the last export's run of the same requests is reused), and the names to
+/// label them with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationExportRequest {
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// The sliders' parameter values (the swept one's is each branch's own).
+    pub params: Vec<f64>,
+    /// Index of the swept parameter.
+    pub param: usize,
+    /// The parameter interval the branches are followed in.
+    pub range: (f64, f64),
+    /// The vertical axis.
+    pub y_axis: BranchAxis,
+    /// The branches, in the view's order.
+    pub branches: Vec<BranchExport>,
+    /// The system's title (caption, label, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Which LaTeX a branch plot exports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ContinuationLatex {
+    /// The pgfplots figure.
+    Figure,
+    /// The booktabs table of the special points.
+    SpecialPoints,
+}
+
+/// Request of `export_continuation_latex` (and the `figure` of
+/// `save_continuation_latex`): the branch plot drawn in the view's ranges,
+/// or its special points as a table (which ignores the size and colors).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationFigureRequest {
+    /// The branches and their names.
+    pub continuation: ContinuationExportRequest,
+    /// The figure or the table.
+    pub content: ContinuationLatex,
+    /// The view's parameter range (across).
+    pub x_range: (f64, f64),
+    /// The view's range up.
+    pub y_range: (f64, f64),
+    /// Plot width in cm.
+    pub width_cm: f64,
+    /// Plot height in cm.
+    pub height_cm: f64,
+    /// Palette.
+    pub theme: ExportTheme,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// Request of `save_continuation_latex`: the `.tex` and, for the figure,
+/// its `.dat` files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveContinuationFigureRequest {
+    /// The figure or table.
+    pub figure: ContinuationFigureRequest,
     /// File name offered in the dialog.
     pub suggested_name: String,
 }
@@ -1318,6 +1430,12 @@ mod bindings {
             OrbitExportRequest::decl(&cfg),
             OrbitFigureRequest::decl(&cfg),
             SaveOrbitFigureRequest::decl(&cfg),
+            BranchAxis::decl(&cfg),
+            BranchExport::decl(&cfg),
+            ContinuationExportRequest::decl(&cfg),
+            ContinuationLatex::decl(&cfg),
+            ContinuationFigureRequest::decl(&cfg),
+            SaveContinuationFigureRequest::decl(&cfg),
             SaveCsvFileRequest::decl(&cfg),
             SaveTextRequest::decl(&cfg),
             ClipboardTextRequest::decl(&cfg),

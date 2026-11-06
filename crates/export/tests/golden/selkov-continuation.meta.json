@@ -1,0 +1,67 @@
+{
+  "format": "separatrix-continuation",
+  "format_version": 1,
+  "app_version": "0.2.0",
+  "title": "Sel'kov glycolysis",
+  "csv": "sel-primekov-glycolysis-continuation.csv",
+  "special_csv": "sel-primekov-glycolysis-continuation-special.csv",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=-x+ay+x^2y",
+      "\\dot{y}=b-ay-x^2y"
+    ]
+  },
+  "params": [
+    {
+      "name": "a",
+      "value": 0.08
+    },
+    {
+      "name": "b",
+      "value": 0.6
+    }
+  ],
+  "columns": [
+    "branch",
+    "period",
+    "point",
+    "b",
+    "x",
+    "y",
+    "stable",
+    "unstable"
+  ],
+  "special_columns": [
+    "branch",
+    "point",
+    "type",
+    "period",
+    "b",
+    "x",
+    "y",
+    "omega",
+    "lyapunov"
+  ],
+  "swept": "b",
+  "range": [
+    0.0,
+    1.5
+  ],
+  "branches": [
+    {
+      "branch": 1,
+      "period": 1,
+      "points": 33,
+      "rows": 33,
+      "special": 2
+    }
+  ],
+  "notes": [
+    "One row per point of each branch in arclength order, point counted from 0; a point of a k-cycle of a map is k rows, x, f(x), …, f^(k-1)(x).",
+    "stable: every eigenvalue has Re < 0 (flow) or every multiplier |mu| < 1 (map); unstable: how many do not. A special point is neutral: not stable, with the smaller count of its two sides.",
+    "The special CSV names each point by branch and point; omega is the frequency at a Hopf point (H) and the angle arg mu at a Neimark-Sacker point (NS); lyapunov is the first Lyapunov coefficient at H, with <p, q> = 1 and <q, q> = 1/2.",
+    "The swept parameter's value in params is the slider's; each branch starts at its own value."
+  ]
+}

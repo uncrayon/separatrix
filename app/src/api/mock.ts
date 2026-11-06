@@ -7,6 +7,8 @@ import type {
   ClipboardTextRequest,
   CompileRequest,
   CompileResponse,
+  ContinuationExportRequest,
+  ContinuationFigureRequest,
   ContinuationRequest,
   ContinuationResponse,
   ConvertRequest,
@@ -39,6 +41,7 @@ import type {
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
+  SaveContinuationFigureRequest,
   SaveCsvFileRequest,
   SaveCsvRequest,
   SavedFiles,
@@ -2260,13 +2263,137 @@ export async function mockSaveOrbitLatex(req: SaveOrbitFigureRequest): Promise<S
   return { names: [name, ...fig.files] };
 }
 
+const MOCK_SPECIAL_LABELS: Record<SpecialKindOut, string> = {
+  fold: "LP",
+  hopf: "H",
+  branchPoint: "BP",
+  flip: "PD",
+  neimarkSacker: "NS",
+};
+
+/** The branches the core would follow for a branch-plot export (failures left out, as on screen). */
+async function mockBranches(req: ContinuationExportRequest): Promise<ContinuationResponse["branch"][]> {
+  if (req.branches.length === 0)
+    throw "There are no branches to export yet. Continue from a fixed point in the Continuation panel first.";
+  const out: ContinuationResponse["branch"][] = [];
+  for (const b of req.branches) {
+    try {
+      out.push((await mockContinuation(b.request)).branch);
+    } catch {
+      // Left out, as the plot leaves it out.
+    }
+  }
+  return out;
+}
+
+export async function mockExportContinuationLatex(req: ContinuationFigureRequest): Promise<FigureLatexResponse> {
+  const c = req.continuation;
+  const sys = mockSystemOf(c.systemId);
+  const dim = sys.states.length;
+  const branches = await mockBranches(c);
+  if (req.content === "specialPoints") {
+    const rows = branches.flatMap((b) => b.special).sort((a, b) => a.p - b.p);
+    const tex = [
+      `% Separatrix special points: ${c.title}`,
+      PREVIEW_NOTE,
+      "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+      "\\begin{table}",
+      "\\centering",
+      "\\begin{tabular}{@{}lll@{}}",
+      "\\toprule",
+      `Type & $${sys.params[c.param]?.latex ?? "r"}$ & $\\omega$ \\\\`,
+      "\\midrule",
+      ...rows.map(
+        (r) => `${MOCK_SPECIAL_LABELS[r.kind]} & \\num{${r.p.toFixed(6)}} & ${r.omega === null ? "--" : `\\num{${r.omega.toFixed(6)}}`} \\\\`,
+      ),
+      "\\bottomrule",
+      "\\end{tabular}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+    return { tex, points: rows.length, thinned: false, notes: [] };
+  }
+  const value = (b: ContinuationResponse["branch"], i: number) => {
+    const x = b.x.slice(i * b.period * dim, i * b.period * dim + dim);
+    return c.yAxis.kind === "state" ? x[c.yAxis.index] : Math.sqrt(x.reduce((a, v) => a + v * v, 0));
+  };
+  const plots = branches.flatMap((b, k) =>
+    [true, false].flatMap((stable) => {
+      const pts = b.p.flatMap((p, i) => (b.stable[i] === stable ? [`(${p},${value(b, i)})`] : []));
+      return pts.length
+        ? [`% Branch ${k + 1}, ${stable ? "stable (solid)" : "unstable (dashed)"}`, `\\addplot[${stable ? "solid" : "dashed"}] coordinates {${pts.join(" ")}};`]
+        : [];
+    }),
+  );
+  const tex = [
+    `% Separatrix branch plot: ${c.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{pgfplots} \\pgfplotsset{compat=1.18} \\usetikzlibrary{calc}",
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[xmin=${req.xRange[0]}, xmax=${req.xRange[1]}, ymin=${req.yRange[0]}, ymax=${req.yRange[1]}]`,
+    ...plots,
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+    "",
+  ].join("\n");
+  return { tex, points: branches.reduce((n, b) => n + b.p.length, 0), thinned: false, notes: [] };
+}
+
+export async function mockSaveContinuationLatex(req: SaveContinuationFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  mockSaved(name, (await mockExportContinuationLatex(req.figure)).tex);
+  return { names: [name] };
+}
+
+export async function mockExportContinuationCsv(req: ContinuationExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.systemId);
+  const dim = sys.states.length;
+  const branches = await mockBranches(req);
+  const param = sys.params[req.param]?.name ?? "r";
+  const names = sys.states.map((s) => s.name);
+  const header = ["branch", "period", "point", param, ...names, "stable", "unstable"];
+  const rows = branches.flatMap((b, k) =>
+    b.p.flatMap((p, i) =>
+      Array.from({ length: b.period }, (_, m) =>
+        [k + 1, b.period, i, p, ...b.x.slice((i * b.period + m) * dim, (i * b.period + m + 1) * dim), b.stable[i], b.unstable[i]].join(","),
+      ),
+    ),
+  );
+  const special = [
+    ["branch", "point", "type", "period", param, ...names, "omega", "lyapunov"].join(","),
+    ...branches.flatMap((b, k) =>
+      b.special.map((s) => [k + 1, s.index, MOCK_SPECIAL_LABELS[s.kind], b.period, s.p, ...s.x, s.omega ?? "", s.lyapunov ?? ""].join(",")),
+    ),
+  ];
+  const stem = `${mockSlug(req.title)}-continuation`;
+  const meta = {
+    format: "separatrix-continuation",
+    format_version: 1,
+    title: req.title,
+    csv: `${stem}.csv`,
+    special_csv: `${stem}-special.csv`,
+    columns: header,
+    note: "Browser preview.",
+  };
+  return {
+    stem,
+    csv: [header.join(","), ...rows].join("\n") + "\n",
+    meta: JSON.stringify(meta, null, 2) + "\n",
+    special: special.join("\n") + "\n",
+  };
+}
+
 export async function mockSaveCsvFile(req: SaveCsvFileRequest): Promise<SavedFiles | null> {
   const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "data", "csv").path);
   if (chosen === null) return null;
   const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
   mockSaved(`${stem}.csv`, req.file.csv);
+  const special = req.file.special;
+  if (special !== undefined) mockSaved(`${stem}-special.csv`, special);
   mockSaved(`${stem}.meta.json`, req.file.meta);
-  return { names: [`${stem}.csv`, `${stem}.meta.json`] };
+  return { names: [`${stem}.csv`, ...(special !== undefined ? [`${stem}-special.csv`] : []), `${stem}.meta.json`] };
 }
 
 function mockSaved(name: string, contents: string | Uint8Array): void {

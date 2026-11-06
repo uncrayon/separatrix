@@ -17,9 +17,10 @@ use separatrix_export::latex_figure::{figure, FigureInput, FigureOutput, Placeme
 use separatrix_export::latex_fixed_points::{self, FixedPointsInput};
 use separatrix_export::latex_system::{system, Notation, SystemInput};
 use separatrix_export::{
-    lyapunov_latex, orbit_figure, Labels, LyapunovRun, LyapunovSpectrum, Method, OrbitDiagram,
-    OrbitFigureInput, OrbitRun, ParamValue, SolverOptions, StateName, Status, SystemKind,
-    SystemMeta, Theme,
+    continuation_figure, lyapunov_latex, orbit_figure, special_points_table, BranchMeasure,
+    BranchRun, ContinuationFigureInput, ContinuationRun, Labels, LyapunovRun, LyapunovSpectrum,
+    Method, OrbitDiagram, OrbitFigureInput, OrbitRun, ParamValue, SolverOptions, SpecialKind,
+    SpecialRow, StateName, Status, SystemKind, SystemMeta, Theme,
 };
 
 const UPDATE: &str = "UPDATE_GOLDEN";
@@ -1131,4 +1132,246 @@ fn logistic_orbit_csv_and_figure() {
     assert_eq!((fig.points, fig.thinned), (40, false));
     assert!(fig.files.is_empty());
     check_figure("logistic-orbit-figure", &fig);
+}
+
+/// The Sel'kov branch x* = b, y* = b/(a + b²) at a = 0.08 for b from 0 to
+/// 1.5, with the two Hopf points (b² = 0.12 and 0.72, Strogatz §7.3) where
+/// the core located them; ω and ℓ₁ are the core's values there.
+fn selkov_continuation_run() -> ContinuationRun {
+    let a = 0.08;
+    let hopf = [
+        (
+            0.346_410_161_513_799_83,
+            [0.346_410_161_513_799_83, 1.732_050_807_568_853],
+            0.447_213_595_499_976_8,
+            -0.527_073_167_303_874_5,
+        ),
+        (
+            0.848_528_137_423_867_6,
+            [0.848_528_137_423_867_6, 1.060_660_171_779_810_8],
+            0.894_427_190_999_925_8,
+            -0.141_904_313_900_418_8,
+        ),
+    ];
+    let mut br = BranchRun {
+        period: 1,
+        color: 0,
+        p: vec![],
+        x: vec![],
+        stable: vec![],
+        unstable: vec![],
+        special: vec![],
+    };
+    let mut next = 0;
+    for i in 0..=30 {
+        let b = i as f64 * 0.05;
+        while next < hopf.len() && hopf[next].0 < b {
+            let (p, x, omega, l1) = hopf[next];
+            br.special.push(SpecialRow {
+                kind: SpecialKind::Hopf,
+                index: br.p.len(),
+                p,
+                x: x.to_vec(),
+                omega: Some(omega),
+                lyapunov: Some(l1),
+            });
+            br.p.push(p);
+            br.x.extend(x);
+            br.stable.push(false);
+            br.unstable.push(0);
+            next += 1;
+        }
+        let stable = b * b < 0.12 || b * b > 0.72;
+        br.p.push(b);
+        br.x.extend([b, b / (a + b * b)]);
+        br.stable.push(stable);
+        br.unstable.push(if stable { 0 } else { 2 });
+    }
+    ContinuationRun {
+        param: 1,
+        range: (0.0, 1.5),
+        y_measure: BranchMeasure::State { index: 1 },
+        branches: vec![br],
+    }
+}
+
+/// The logistic map's branches through r = 1 and the doubled cycles born
+/// at r₁ … r₄, each special point where the core located it. A switched
+/// cycle followed both ways reports its next flip once per half, and both
+/// branches through r = 1 report the branch point: the table lists each
+/// once.
+fn logistic_cascade_run() -> ContinuationRun {
+    let branch = |period: usize, color: u8, special: &[(SpecialKind, f64, f64)]| BranchRun {
+        period,
+        color,
+        p: special.iter().map(|s| s.1).collect(),
+        x: special
+            .iter()
+            .flat_map(|s| std::iter::repeat_n(s.2, period))
+            .collect(),
+        stable: vec![false; special.len()],
+        unstable: vec![0; special.len()],
+        special: special
+            .iter()
+            .enumerate()
+            .map(|(index, &(kind, p, x))| SpecialRow {
+                kind,
+                index,
+                p,
+                x: vec![x],
+                omega: None,
+                lyapunov: None,
+            })
+            .collect(),
+    };
+    let (bp, pd) = (SpecialKind::BranchPoint, SpecialKind::Flip);
+    ContinuationRun {
+        param: 0,
+        range: (0.0, 3.57),
+        y_measure: BranchMeasure::State { index: 0 },
+        branches: vec![
+            branch(1, 0, &[(bp, 0.999_999_999_999_963_7, 0.0)]),
+            branch(
+                1,
+                1,
+                &[
+                    (bp, 0.999_999_999_999_963_7, 3.6e-14),
+                    (pd, 2.999_999_999_999_940_5, 0.666_666_666_666_660_1),
+                ],
+            ),
+            branch(
+                2,
+                2,
+                &[
+                    (pd, 3.449_489_742_783_287_6, 0.849_937_779_554_800_1),
+                    (pd, 3.449_489_742_783_288, 0.439_960_113_1),
+                ],
+            ),
+            branch(
+                4,
+                3,
+                &[
+                    (pd, 3.544_090_359_551_739_7, 0.884_049_545_401_325_9),
+                    (pd, 3.544_090_359_551_74, 0.367_8),
+                ],
+            ),
+            branch(
+                8,
+                4,
+                &[
+                    (pd, 3.564_407_266_095_344_5, 0.890_787_378_461_704),
+                    (pd, 3.564_407_266_095_345, 0.35),
+                ],
+            ),
+        ],
+    }
+}
+
+#[test]
+fn selkov_branch_plot_special_points_and_csv() {
+    let (t, labels) = template_labels("selkov-glycolysis", &[("b", 0.6)]);
+    let sys = SystemMeta {
+        kind: SystemKind::Ode,
+        labels: &labels,
+        title: &t.title,
+        source_ref: Some("Strogatz §7.3"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = selkov_continuation_run();
+    let pal = palette(Theme::Light);
+    let input = ContinuationFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (-0.06, 1.56),
+        y_range: (-0.1, 2.0),
+        width_cm: 8.0,
+        height_cm: 6.0,
+        theme: Theme::Light,
+        palette: &pal,
+        placement: Placement::Inline,
+        standalone: false,
+    };
+    let fig = continuation_figure(&input);
+    check_figure("selkov-continuation-figure", &fig);
+    assert!(fig.files.is_empty());
+    // Stable, unstable between the Hopf points, stable again: one solid
+    // and one dashed plot, the two Hopf points as glyphs with labels H.
+    assert_eq!(fig.tex.matches("% Branch 1, stable (solid)").count(), 1);
+    assert_eq!(fig.tex.matches("% Branch 1, unstable (dashed)").count(), 1);
+    assert_eq!(fig.tex.matches("dash pattern=on 4.5bp off 3bp").count(), 1);
+    assert_eq!(fig.tex.matches("{H};").count(), 2);
+    assert!(fig.tex.contains("\\usetikzlibrary{calc,plotmarks}"));
+    assert!(fig.tex.contains("% Parameters: a = 0.08\n"), "{}", fig.tex);
+
+    let saved = continuation_figure(&ContinuationFigureInput {
+        placement: Placement::External {
+            base: "Selkov branches.tex".into(),
+        },
+        ..input
+    });
+    let names: Vec<&str> = saved.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "selkov-branches-branch-1-stable.dat",
+            "selkov-branches-branch-1-unstable.dat",
+            "selkov-branches-special-points.dat"
+        ]
+    );
+    for f in &saved.files {
+        assert!(saved.tex.contains(&format!("{{\\sepxdir {}}}", f.name)));
+    }
+
+    let table = special_points_table(&sys, &run);
+    check("selkov-special-points.tex", &table);
+    assert_portable("selkov-special-points", &table);
+    assert!(table.contains(
+        "H & \\num{0.346410} & $(\\num{0.34641}, \\num{1.73205})$ & \\num{0.447214} & \\num{-0.527073} \\\\"
+    ));
+    assert!(table.contains("\\num{0.848528}"));
+
+    let csv = csv::continuation(&sys, &run, "0.2.0");
+    assert_eq!(csv.file.stem, "sel-primekov-glycolysis-continuation");
+    assert_eq!(
+        csv.file.csv.lines().next(),
+        Some("branch,period,point,b,x,y,stable,unstable")
+    );
+    assert_eq!(csv.file.csv.lines().count(), 1 + 33);
+    assert_eq!(csv.special.lines().count(), 1 + 2);
+    check("selkov-continuation.csv", &csv.file.csv);
+    check("selkov-continuation.meta.json", &csv.file.meta);
+    check("selkov-continuation-special.csv", &csv.special);
+}
+
+#[test]
+fn logistic_cascade_lists_each_flip_once() {
+    let (t, labels) = template_labels("logistic-map", &[("r", 3.2)]);
+    let sys = SystemMeta {
+        kind: SystemKind::Map,
+        labels: &labels,
+        title: "Logistic cascade",
+        source_ref: Some("Strogatz §10.2"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = logistic_cascade_run();
+    let table = special_points_table(&sys, &run);
+    check("logistic-cascade-special-points.tex", &table);
+    assert_portable("logistic-cascade-special-points", &table);
+    let rows: Vec<&str> = table
+        .lines()
+        .filter(|l| l.starts_with("BP &") || l.starts_with("PD &"))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            "BP & \\num{1.000000} & \\num{0} & \\num{1} \\\\",
+            "PD & \\num{3.000000} & \\num{0.666667} & \\num{1} \\\\",
+            "PD & \\num{3.449490} & \\num{0.849938} & \\num{2} \\\\",
+            "PD & \\num{3.544090} & \\num{0.88405} & \\num{4} \\\\",
+            "PD & \\num{3.564407} & \\num{0.890787} & \\num{8} \\\\",
+        ]
+    );
+    assert!(!table.contains("\\omega") && !table.contains("\\ell_1"));
 }

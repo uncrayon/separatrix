@@ -563,25 +563,25 @@ fn layout_labels(
 
 /// A data table: column names and rows (`None` is a break).
 #[derive(Debug, Clone, Default)]
-struct Table {
-    columns: Vec<&'static str>,
-    rows: Vec<Option<Vec<f64>>>,
+pub(crate) struct Table {
+    pub(crate) columns: Vec<&'static str>,
+    pub(crate) rows: Vec<Option<Vec<f64>>>,
 }
 
 impl Table {
-    fn new(columns: &[&'static str]) -> Table {
+    pub(crate) fn new(columns: &[&'static str]) -> Table {
         Table {
             columns: columns.to_vec(),
             rows: Vec::new(),
         }
     }
 
-    fn data_rows(&self) -> usize {
+    pub(crate) fn data_rows(&self) -> usize {
         self.rows.iter().filter(|r| r.is_some()).count()
     }
 
     /// Pieces separated by breaks.
-    fn push_pieces(&mut self, pieces: &[Vec<(f64, f64)>]) {
+    pub(crate) fn push_pieces(&mut self, pieces: &[Vec<(f64, f64)>]) {
         for p in pieces {
             if p.len() < 2 {
                 continue;
@@ -596,12 +596,12 @@ impl Table {
 
 /// Rounds values per column to a tenth of a figure pixel (at least three
 /// significant digits of the axis span) and writes them shortest.
-struct Quantizer {
-    decimals: Vec<usize>,
+pub(crate) struct Quantizer {
+    pub(crate) decimals: Vec<usize>,
 }
 
 impl Quantizer {
-    fn decimals_for(units_per_px: f64, span: f64, lo: f64, hi: f64) -> usize {
+    pub(crate) fn decimals_for(units_per_px: f64, span: f64, lo: f64, hi: f64) -> usize {
         let q = units_per_px / 10.0;
         let from_px = if q > 0.0 && q.is_finite() {
             (-q.log10()).ceil()
@@ -630,7 +630,7 @@ impl Quantizer {
     }
 }
 
-fn table_text(t: &Table, q: &Quantizer, inline: bool) -> String {
+pub(crate) fn table_text(t: &Table, q: &Quantizer, inline: bool) -> String {
     let end = if inline { "\\\\\n" } else { "\n" };
     let mut out = format!("{}{end}", t.columns.join(" "));
     for row in &t.rows {
@@ -678,7 +678,7 @@ fn ax_value(axis: Axis, t: &[f64], x: &[f64], dim: usize, k: usize) -> f64 {
 
 /// `(x, y)` pixel (y down) to a TikZ point: the plot's top-left corner plus
 /// an offset in bp.
-fn at_px(x: f64, y: f64) -> String {
+pub(crate) fn at_px(x: f64, y: f64) -> String {
     format!(
         "($(rel axis cs:0,1)+({}bp,{}bp)$)",
         fixed_trim(x * BP_PER_PX, 3),
@@ -686,7 +686,7 @@ fn at_px(x: f64, y: f64) -> String {
     )
 }
 
-struct Frame {
+pub(crate) struct Frame {
     vp: Viewport,
     tx: ticks::Ticks,
     ty: ticks::Ticks,
@@ -699,7 +699,7 @@ struct Frame {
 }
 
 impl Frame {
-    fn new(
+    pub(crate) fn new(
         vp: Viewport,
         xn: String,
         yn: String,
@@ -732,7 +732,7 @@ impl Frame {
         }
     }
 
-    fn axis_begin(&self, theme: Theme) -> String {
+    pub(crate) fn axis_begin(&self, theme: Theme) -> String {
         let vp = &self.vp;
         let mut axis_opts: Vec<String> = vec![
             format!("width={}, height={}, scale only axis", bp(vp.width), bp(vp.height)),
@@ -857,7 +857,7 @@ impl Frame {
         body
     }
 
-    fn axis_end(&self) -> String {
+    pub(crate) fn axis_end(&self) -> String {
         let mut body = String::new();
         for l in &self.labels {
             body.push_str(&format!(
@@ -895,7 +895,7 @@ impl Frame {
 /// The `% Needs:` comment and the preamble of a standalone figure that
 /// uses the TikZ libraries `libs`. amsmath: axis names are state LaTeX
 /// (`\\dddot{x}` for a fourth-order system), which only amsmath defines.
-fn packages(libs: &[&str]) -> (String, String) {
+pub(crate) fn packages(libs: &[&str]) -> (String, String) {
     let libs = libs.join(",");
     (
         comment(&format!(
@@ -907,7 +907,7 @@ fn packages(libs: &[&str]) -> (String, String) {
     )
 }
 
-fn definitions(external: bool, colors: &[(String, String)]) -> String {
+pub(crate) fn definitions(external: bool, colors: &[(String, String)]) -> String {
     let mut defs = String::new();
     if external {
         defs.push_str(&comment(
@@ -921,7 +921,13 @@ fn definitions(external: bool, colors: &[(String, String)]) -> String {
     defs
 }
 
-fn finish(mut tex: String, preamble: &str, defs: &str, body: &str, standalone: bool) -> String {
+pub(crate) fn finish(
+    mut tex: String,
+    preamble: &str,
+    defs: &str,
+    body: &str,
+    standalone: bool,
+) -> String {
     if standalone {
         tex.push_str("\\documentclass[border=2mm]{standalone}\n");
         tex.push_str(preamble);

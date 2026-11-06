@@ -16,7 +16,7 @@ A desktop app for exploring dynamical systems, built for students and professors
 - Continuation of equilibria and of a map's fixed points and cycles: the Branch view follows a fixed point as a parameter changes, solid where it is stable and dashed where it is not, and marks where it folds (LP), loses stability at a Hopf point (H), crosses another branch (BP), period-doubles (PD) or undergoes a Neimark–Sacker bifurcation (NS). Sel'kov's Hopf points come out at b = 0.346410 and 0.848528 with their frequency ω and the sign of ℓ₁. Switch branch at a BP or PD row follows the second branch, so the logistic cascade r₁ … r₄ = 3.000000, 3.449490, 3.544090, 3.564407 takes three clicks. Click a row or a branch to set the parameter there.
 - Symplectic integration for Hamiltonian systems, and an implicit solver for stiff ones, suggested when Dormand–Prince's steps look stiff.
 - A gallery of 31 examples from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), grouped by chapter, each citing the section it comes from (the opening slope field cites none). Every chapter 2–8 example reproduces a result of the book, checked by the Strogatz gate below.
-- Export to LaTeX, PNG, SVG and CSV, the Lyapunov spectrum as a table with siunitx uncertainties and the orbit diagram as a figure. Shareable project files.
+- Export to LaTeX, PNG, SVG and CSV, the Lyapunov spectrum as a table with siunitx uncertainties and the orbit diagram as a figure, and branch plots with their special points as a figure and an siunitx table. Shareable project files.
 - Windows, macOS and Linux. Works offline.
 
 ## Layout

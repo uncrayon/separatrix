@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Branch plot exports. In the Branch view, Export… offers LaTeX, SVG, PNG and CSV. The LaTeX
+  Figure is a pgfplots branch plot with the screen's frame: each branch in its trajectory colour,
+  stable stretches solid and unstable ones dashed, and each special point as a fixed-point glyph
+  labelled LP, H, BP, PD or NS. The new Special points content is a booktabs table with siunitx
+  `\num{}` cells: the type, the parameter to six decimals, the state, the period for a map, ω or θ,
+  and ℓ₁, each bifurcation once (Sel'kov's Hopf points at `\num{0.346410}` and `\num{0.848528}`).
+  The CSV has `branch,period,point,<param>,<states>,stable,unstable` with a `.meta.json`, and the
+  special points in `<stem>-special.csv`. PNG and SVG draw the screen's branches. The core follows
+  the view's own branch requests again for the LaTeX and the CSV, and caches the last run. New
+  commands are `export_continuation_latex`, `save_continuation_latex` and `export_continuation_csv`.
+  `CsvFileOut` gains an optional `special`, which `save_csv_file` writes beside the CSV.
 - The Branch view (View control: Continuation; "Branch" on the control), the first place a student
   sees continuation. It follows a fixed point of a flow, or of a map, as one parameter changes and
   plots the parameter against a state or ‖x‖: each branch in its own trajectory colour, solid
@@ -20,8 +31,7 @@ All notable changes to this project are documented in this file.
   with six views for flows and maps alike, and the toolbar's axes menu offers the same. The status
   bar reads "Continuation 4 ms" and "213 points · 2 special". Saved in `.sepx` as its seeds; a view
   that can't be replayed opens with "The saved continuation can't be run as saved, so the default
-  view is shown." The browser preview follows branches with a small JavaScript stand-in. Export of
-  branch plots is not there yet, so Export… is off in this view.
+  view is shown." The browser preview follows branches with a small JavaScript stand-in.
 - Continuation views in `.sepx` (format version 1, additive). A view of `kind` `"continuation"` is a
   branch plot: a parameter across (`{ "kind": "param" }`), a state or the new axis kind
   `{ "kind": "norm" }` (‖x‖₂) up, and a `continuation` object with the parameter `range`, `ds`,

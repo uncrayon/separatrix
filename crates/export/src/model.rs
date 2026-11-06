@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use dyn_analysis::{Classification, LyapunovSpectrum, OrbitDiagram};
+pub use dyn_analysis::{Classification, LyapunovSpectrum, OrbitDiagram, SpecialKind};
 pub use dyn_core::SystemKind;
 pub use dyn_expr::InputFormat;
 pub use dyn_solve::{Direction, Method, SolverOptions, Status};
@@ -370,6 +370,146 @@ pub struct OrbitRun {
     pub transient: usize,
     /// The columns.
     pub diagram: OrbitDiagram,
+}
+
+/// What the vertical axis of a branch plot shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchMeasure {
+    /// State variable number `index`.
+    State {
+        /// Index into the state vector.
+        index: usize,
+    },
+    /// The Euclidean norm ‖x‖₂ of the state.
+    Norm,
+}
+
+impl BranchMeasure {
+    /// The value at a state: the state's entry, or `sqrt(Σ xᵢ²)` (only
+    /// `+ ×` and a correctly rounded `sqrt`, so the same on every platform).
+    pub fn value(self, x: &[f64]) -> f64 {
+        match self {
+            BranchMeasure::State { index } => x.get(index).copied().unwrap_or(f64::NAN),
+            BranchMeasure::Norm => x.iter().map(|v| v * v).sum::<f64>().sqrt(),
+        }
+    }
+}
+
+/// A located bifurcation on a branch, as the special-point list shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpecialRow {
+    /// What it is; [`SpecialKind::label`] is its abbreviation.
+    pub kind: SpecialKind,
+    /// Its own point in [`BranchRun::p`].
+    pub index: usize,
+    /// The parameter.
+    pub p: f64,
+    /// The state (the cycle's first point for a map).
+    pub x: Vec<f64>,
+    /// Hopf: the frequency ω. Neimark–Sacker: the angle θ = arg μ.
+    pub omega: Option<f64>,
+    /// Hopf: the first Lyapunov coefficient ℓ₁.
+    pub lyapunov: Option<f64>,
+}
+
+/// One followed branch: equilibria of a flow, or fixed points of `f^period`
+/// of a map.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BranchRun {
+    /// `k` of `f^k` for a map, 1 for a flow.
+    pub period: usize,
+    /// Palette index (taken mod 7), as the plot colors the branch.
+    pub color: u8,
+    /// The parameter at each point.
+    pub p: Vec<f64>,
+    /// `points · period · dim` values: point `i` is the cycle
+    /// `x, f(x), …, f^{k−1}(x)`.
+    pub x: Vec<f64>,
+    /// Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map).
+    pub stable: Vec<bool>,
+    /// Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map).
+    pub unstable: Vec<u32>,
+    /// The located bifurcations in arclength order.
+    pub special: Vec<SpecialRow>,
+}
+
+impl BranchRun {
+    /// Number of points.
+    pub fn len(&self) -> usize {
+        self.p.len()
+    }
+
+    /// No points.
+    pub fn is_empty(&self) -> bool {
+        self.p.is_empty()
+    }
+
+    /// Cycle member `m` of point `i` (`dim` values).
+    pub fn state(&self, dim: usize, i: usize, m: usize) -> &[f64] {
+        let at = (i * self.period + m) * dim;
+        self.x.get(at..at + dim).unwrap_or(&[])
+    }
+
+    /// The stretches of one stability as point ranges `[from, to]` that
+    /// share their end points, split at every special point. A neutral
+    /// point (a special point, or the start of a switched branch) takes the
+    /// stability of the point after it, as `app/src/canvas/branch.ts`
+    /// `stabilityRuns` splits the screen's branch.
+    pub fn stability_runs(&self) -> Vec<(usize, usize, bool)> {
+        let at = |i: usize| self.special.iter().any(|s| s.index == i);
+        let neutral = |i: usize| at(i) || (!self.stable[i] && self.unstable[i] == 0);
+        let n = self.stable.len().min(self.unstable.len());
+        let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            let s = if neutral(i) {
+                self.stable[i + 1]
+            } else {
+                self.stable[i]
+            };
+            match runs.last_mut() {
+                Some(last) if last.2 == s && !at(i) => last.1 = i + 1,
+                _ => runs.push((i, i + 1, s)),
+            }
+        }
+        runs
+    }
+}
+
+/// A branch plot: the branches of one continuation view and what it shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContinuationRun {
+    /// Index of the swept parameter in [`Labels::params`].
+    pub param: usize,
+    /// The parameter interval the branches were followed in.
+    pub range: (f64, f64),
+    /// The vertical axis.
+    pub y_measure: BranchMeasure,
+    /// The branches, in the view's order.
+    pub branches: Vec<BranchRun>,
+}
+
+impl ContinuationRun {
+    /// Every special point once, in increasing parameter: both halves of a
+    /// switched cycle, and two branches that cross, report the same one
+    /// (same kind and period, parameters within `1e-7·(1 + |p|)`), as the
+    /// inspector lists them. Each comes with its branch's index and period.
+    pub fn special_points(&self) -> Vec<(usize, usize, &SpecialRow)> {
+        let mut rows: Vec<(usize, usize, &SpecialRow)> = Vec::new();
+        for (b, br) in self.branches.iter().enumerate() {
+            for sp in &br.special {
+                let same = rows.iter().any(|(_, k, r)| {
+                    r.kind == sp.kind
+                        && *k == br.period
+                        && (r.p - sp.p).abs() <= 1e-7 * (1.0 + sp.p.abs())
+                });
+                if !same {
+                    rows.push((b, br.period, sp));
+                }
+            }
+        }
+        rows.sort_by(|a, b| a.2.p.total_cmp(&b.2.p));
+        rows
+    }
 }
 
 /// The export's color theme.

@@ -147,7 +147,7 @@ export default function App() {
   const saveAs = useCallback(() => void doc.saveAs(), [doc.saveAs]);
 
   // The export dialog has no branch plot yet.
-  const canExport = state.compiled !== null && !isContinuation(state.view);
+  const canExport = state.compiled !== null;
   useShortcuts(
     {
       new: newSystem,

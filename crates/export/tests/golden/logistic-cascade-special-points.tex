@@ -1,0 +1,19 @@
+% Separatrix special points: Logistic cascade (Strogatz §10.2)
+%   x_{n+1} = r*x_n*(1 - x_n)
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Logistic cascade: special points of the branches as $r$ varies. BP: branch point; PD: period doubling (flip). The state of a cycle is its first point.}
+\label{tab:logistic-cascade-special-points}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Type & $r$ & $x$ & Period \\
+\midrule
+BP & \num{1.000000} & \num{0} & \num{1} \\
+PD & \num{3.000000} & \num{0.666667} & \num{1} \\
+PD & \num{3.449490} & \num{0.849938} & \num{2} \\
+PD & \num{3.544090} & \num{0.88405} & \num{4} \\
+PD & \num{3.564407} & \num{0.890787} & \num{8} \\
+\bottomrule
+\end{tabular}
+\end{table}

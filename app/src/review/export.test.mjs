@@ -44,14 +44,23 @@ const {
   icProjectId,
   axisNames,
   analysisKind,
+  buildContinuationExport,
   buildLyapunovExport,
   buildOrbitExport,
   orbitFigureRatio,
 } = await import("../export/job.ts");
 const { figureSvg } = await import("../export/svg.ts");
-const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA, lyapunovView, orbitView, buildLyapunovJob } = await import(
-  "../state/model.ts"
-);
+const {
+  DEFAULT_LAYERS,
+  DEFAULT_SOLVER,
+  DEFAULT_CAMERA,
+  lyapunovView,
+  orbitView,
+  buildLyapunovJob,
+  buildContinuationJobs,
+  continuationView,
+  pointSeed,
+} = await import("../state/model.ts");
 
 const light = plotThemeFromTokens(tokens, "light");
 const dark = plotThemeFromTokens(tokens, "dark");
@@ -938,6 +947,57 @@ test("analysis views export their own run: the Lyapunov view's request, an orbit
   assert.ok(Math.abs(fig.diagram.range[0] - (2.8 + w / 2)) < 1e-12 && Math.abs(fig.diagram.range[1] - (4 - w / 2)) < 1e-12);
   assert.equal(buildOrbitExport(orbit, source, 1), null, "fewer than 2 columns: nothing to draw");
   assert.equal(readExportOptions({ latexContent: "spectrum" }).latexContent, "spectrum");
+});
+
+test("a branch plot exports the view's own branch requests with their colors, and the Special points content", () => {
+  const view = { ...continuationView([{ min: 0, max: 4 }], [0, 1], 0, [pointSeed([0.5], 2, "both"), pointSeed([0.6], 2.5, "forward")]), yAxis: { kind: "norm" } };
+  const s = snapshot({ compiled: { ...logisticMap, autonomous: true }, params: [{ value: 3.2, min: 0, max: 4 }], view, selection: null });
+  assert.equal(analysisKind(s), "continuation");
+  assert.deepEqual(axisNames(s), { x: "r", y: "\\lVert x \\rVert" });
+  const req = buildContinuationExport(s, source);
+  const jobs = buildContinuationJobs(s);
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(
+    req.branches,
+    jobs.map((j, i) => ({ request: { ...j.body, requestId: 0 }, color: i })),
+    "the screen's requests, colored as the plot colors them",
+  );
+  assert.equal(req.branches[1].request.params[0], 2.5, "each branch starts at its seed's own parameter");
+  assert.deepEqual(req.params, [3.2], "the sliders' values label the export");
+  assert.deepEqual([req.systemId, req.param, req.range, req.yAxis, req.title], [5, 0, [0, 4], { kind: "norm" }, "T"]);
+  assert.equal(buildContinuationExport(snapshot({ selection: null }), source), null, "a phase plane has no branches");
+  assert.equal(readExportOptions({ latexContent: "specialPoints" }).latexContent, "specialPoints");
+});
+
+test("SVG: a branch figure is solid where stable and dashed where unstable, each special point labelled once", () => {
+  const branch = {
+    period: 2,
+    p: [3, 3.2, 3.4, 3.449, 3.5],
+    x: [0.66, 0.66, 0.8, 0.5, 0.84, 0.45, 0.85, 0.44, 0.86, 0.43],
+    stable: [false, true, true, false, false],
+    unstable: [0, 0, 0, 0, 1],
+    special: [{ kind: "flip", index: 3, p: 3.449, x: [0.85], period: 2, tangent: [0, 1], eigenvalues: [], omega: null, lyapunov: null }],
+  };
+  const svg = figureSvg(
+    {
+      widthPx: W,
+      heightPx: H,
+      xRange: [2.9, 3.6],
+      yRange: [0.3, 1],
+      scene: null,
+      theme: light,
+      names: { x: "r", y: "x" },
+      transparent: false,
+      analysis: { kind: "branch", branches: [{ branch, color: 2 }], dim: 1, axis: { kind: "state", index: 0 } },
+    },
+    measure,
+  );
+  assertWellFormedXml(svg);
+  const curves = svg.match(/<path [^>]*stroke="([^"]+)"[^>]*>/g)?.filter((t) => t.includes(`stroke="${light.traj[2]}"`)) ?? [];
+  assert.equal(curves.length, 2, "one stable and one unstable stretch");
+  assert.equal(curves.filter((t) => t.includes("stroke-dasharray")).length, 1, "the unstable one dashed");
+  assert.equal((svg.match(/>PD</g) ?? []).length, 2, "one label (halo, then text) for the 2-cycle's flip");
+  assert.match(svg, />r</);
 });
 
 test("SVG: a Lyapunov figure is vector paths in the trajectory colors, the names λ and t as text", () => {

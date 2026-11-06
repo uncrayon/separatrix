@@ -12,7 +12,9 @@
 //! | LaTeX figure (pgfplots) | [`latex_figure::figure`] |
 //! | LaTeX Lyapunov spectrum (booktabs, siunitx) | [`latex_lyapunov::lyapunov_latex`] |
 //! | LaTeX orbit diagram (pgfplots) | [`latex_figure::orbit_figure`] |
-//! | CSV and `.meta.json` | [`csv::files`], [`csv::lyapunov`], [`csv::orbit`] |
+//! | LaTeX branch plot (pgfplots) | [`latex_continuation::continuation_figure`] |
+//! | LaTeX special points (booktabs, siunitx) | [`latex_continuation::special_points_table`] |
+//! | CSV and `.meta.json` | [`csv::files`], [`csv::lyapunov`], [`csv::orbit`], [`csv::continuation`] |
 //! | Curve simplification for exports | [`simplify::simplify_portrait`] |
 //! | Clipboard PNG decoding | [`raster::decode_rgba`] |
 //! | Cobweb geometry (staircase, diagonal) | [`cobweb`] |
@@ -28,6 +30,7 @@ pub mod cobweb;
 pub mod csv;
 mod geom;
 pub mod heads;
+pub mod latex_continuation;
 pub mod latex_figure;
 pub mod latex_fixed_points;
 pub mod latex_lyapunov;
@@ -40,6 +43,7 @@ pub mod simplify;
 pub mod ticks;
 pub mod words;
 
+pub use latex_continuation::{continuation_figure, special_points_table, ContinuationFigureInput};
 pub use latex_figure::{
     figure, orbit_figure, FigureFile, FigureInput, FigureOutput, OrbitFigureInput, Placement,
 };

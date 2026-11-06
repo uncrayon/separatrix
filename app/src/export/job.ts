@@ -10,6 +10,7 @@
 // - Hidden initial conditions are left out, as on screen.
 
 import type {
+  ContinuationExportRequest,
   CsvRequest,
   ExportPortraitRequest,
   InputFormat,
@@ -26,6 +27,7 @@ import { viewAxisLabels } from "../math/format";
 import {
   COBWEB_GRAPH_SAMPLES,
   MAX_GRAPH_SAMPLES,
+  buildContinuationJobs,
   buildLyapunovJob,
   buildOrbitJob,
   buildPortraitJob,
@@ -189,8 +191,10 @@ export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   return viewAxisLabels(v, sys.states, sys.kind);
 }
 
-export function analysisKind(s: Pick<StudioSnapshot, "view">): "lyapunov" | "orbit" | null {
-  return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : null;
+export type AnalysisKind = "lyapunov" | "orbit" | "continuation";
+
+export function analysisKind(s: Pick<StudioSnapshot, "view">): AnalysisKind | null {
+  return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : isContinuation(s.view) ? "continuation" : null;
 }
 
 export interface ExportSource {
@@ -206,6 +210,29 @@ export function buildLyapunovExport(
 ): LyapunovExportRequest | null {
   const job = buildLyapunovJob(s);
   return job && { run: { ...job.body, requestId: 0 }, ...source };
+}
+
+/**
+ * The branch plot's requests, one per branch it shows, with their colors
+ * (the core follows them again for the LaTeX and the CSV); null outside a
+ * branch plot.
+ */
+export function buildContinuationExport(
+  s: Parameters<typeof buildContinuationJobs>[0],
+  source: ExportSource,
+): ContinuationExportRequest | null {
+  const sys = s.compiled;
+  const v = s.view;
+  if (!sys || !sys.ok || sys.systemId === undefined || !isContinuation(v)) return null;
+  return {
+    systemId: sys.systemId,
+    params: s.params.map((p) => p.value),
+    param: v.param,
+    range: [v.continuation.range[0], v.continuation.range[1]],
+    yAxis: v.yAxis,
+    branches: buildContinuationJobs(s).map((job) => ({ request: { ...job.body, requestId: 0 }, color: job.meta.seed })),
+    ...source,
+  };
 }
 
 export function orbitFigureRatio(format: "latex" | "svg" | "png" | "csv", pngScale: number): number {

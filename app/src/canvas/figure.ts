@@ -3,6 +3,8 @@
 // export preview, the PNG and the SVG, through any DrawContext.
 
 import type { LyapunovResponse, OrbitDiagramResponse } from "../api/types";
+import type { NormAxis, StateAxis } from "../state/model";
+import { drawBranch, type ShownBranch } from "./branch";
 import { axisLines, drawScene, type Box, type DrawContext, type Scene } from "./draw";
 import { drawLyapunov } from "./lyapunov";
 import { drawMath, layoutMath, mathRuns, type MathLayout } from "./mathText";
@@ -146,7 +148,8 @@ function drawNames(ctx: DrawContext, names: PlacedName[], th: PlotTheme): void {
 
 export type AnalysisFigure =
   | { kind: "lyapunov"; res: LyapunovResponse }
-  | { kind: "orbit"; res: Pick<OrbitDiagramResponse, "r" | "x">; pixelRatio: number };
+  | { kind: "orbit"; res: Pick<OrbitDiagramResponse, "r" | "x">; pixelRatio: number }
+  | { kind: "branch"; branches: readonly ShownBranch[]; dim: number; axis: StateAxis | NormAxis };
 
 export function drawAnalysisFigure(
   ctx: RasterContext,
@@ -165,6 +168,7 @@ export function drawAnalysisFigure(
   const names = placeNames(ctx, vp, opts);
   const avoid = names.map((n) => n.box);
   if (fig.kind === "lyapunov") drawLyapunov(ctx, vp, fig.res, th, opts.fonts ?? DEFAULT_FIGURE_FONTS, avoid);
+  else if (fig.kind === "branch") drawBranch(ctx, vp, fig.branches, fig.dim, fig.axis, th, { avoid });
   else drawOrbit(ctx, vp, fig.res, th, { pixelRatio: fig.pixelRatio, marker: null, avoid });
   drawNames(ctx, names, th);
 }

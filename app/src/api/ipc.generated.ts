@@ -1299,7 +1299,12 @@ csv: string,
 /**
  * The `.meta.json` contents.
  */
-meta: string, };
+meta: string, 
+/**
+ * A branch plot's special points, written beside it as
+ * `<stem>-special.csv`.
+ */
+special?: string, };
 
 export type CsvResponse = { 
 /**
@@ -1399,6 +1404,110 @@ export type SaveOrbitFigureRequest = {
  * The figure.
  */
 figure: OrbitFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
+export type BranchAxis = { "kind": "state", 
+/**
+ * Index into the state vector.
+ */
+index: number, } | { "kind": "norm" };
+
+export type BranchExport = { 
+/**
+ * The view's request for the branch.
+ */
+request: ContinuationRequest, 
+/**
+ * Palette index (taken mod 7), as the plot colors the branch.
+ */
+color: number, };
+
+export type ContinuationExportRequest = { 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * The sliders' parameter values (the swept one's is each branch's own).
+ */
+params: Array<number>, 
+/**
+ * Index of the swept parameter.
+ */
+param: number, 
+/**
+ * The parameter interval the branches are followed in.
+ */
+range: [number, number], 
+/**
+ * The vertical axis.
+ */
+yAxis: BranchAxis, 
+/**
+ * The branches, in the view's order.
+ */
+branches: Array<BranchExport>, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type ContinuationLatex = "figure" | "specialPoints";
+
+export type ContinuationFigureRequest = { 
+/**
+ * The branches and their names.
+ */
+continuation: ContinuationExportRequest, 
+/**
+ * The figure or the table.
+ */
+content: ContinuationLatex, 
+/**
+ * The view's parameter range (across).
+ */
+xRange: [number, number], 
+/**
+ * The view's range up.
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveContinuationFigureRequest = { 
+/**
+ * The figure or table.
+ */
+figure: ContinuationFigureRequest, 
 /**
  * File name offered in the dialog.
  */

@@ -415,3 +415,66 @@ test("orbit diagram: Copy thins the LaTeX dots, Save… writes the density PNG; 
     await browser.close();
   }
 });
+
+test("branch plot: the figure dashed where unstable, the special points table, CSV with its special file, SVG and PNG", async () => {
+  const { browser, page } = await openStudioView("Sel'kov", "Continuation");
+  try {
+    await page.locator(".panel-right").getByLabel("Parameter", { exact: true }).selectOption({ label: "b" });
+    await page.waitForFunction(() => document.querySelectorAll("[data-special-points] [data-special-kind=hopf]").length === 2, null, {
+      timeout: 30000,
+    });
+    await openStudioExport(page);
+    const d = dialog(page);
+    assert.match(await page.locator(".ds-export-sub").innerText(), /^Sel'kov glycolysis, branch plot of x against b, as you see it now$/);
+    const content = d.locator("[role=radiogroup][aria-label=Content]");
+    assert.equal(await content.getByRole("radio", { name: "Figure" }).getAttribute("aria-checked"), "true");
+    assert.match(await content.getByRole("radio", { name: "Fixed points" }).getAttribute("data-tooltip"), /the branch plot shows no fixed points/);
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("% Separatrix branch plot"));
+    assert.match(await snippet(page), /% Branch 1, unstable \(dashed\)/);
+    assert.ok((await inked(page)).n > 200, "the preview draws the branch");
+    await d.getByRole("button", { name: "Save…" }).click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 1);
+    assert.equal(await mock(page, "m.saved[0].name"), "sel-kov-glycolysis.tex");
+
+    await content.getByRole("radio", { name: "Special points" }).click();
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("\\toprule"));
+    const tex = await snippet(page);
+    assert.match(tex, /H & \\num\{0\.346410\}/);
+    assert.match(tex, /H & \\num\{0\.848528\}/);
+    assert.equal(await d.locator(".export-fp-table tbody tr").count(), 2, "the preview lists both Hopf points");
+    assert.match(await page.locator(".ds-export-foot-note").innerText(), /Save… writes sel-kov-glycolysis-special-points\.tex/);
+    await d.getByRole("button", { name: "Save…" }).click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 2);
+    assert.equal(await mock(page, "m.saved[1].name"), "sel-kov-glycolysis-special-points.tex");
+
+    await format(page, "CSV");
+    await page.waitForFunction(() => /^branch,period,point,b,x,y,stable,unstable\n1,1,0,/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    assert.match(await page.locator(".ds-export-foot-note").innerText(), /sel-kov-glycolysis-continuation\.csv, its \.meta\.json and sel-kov-glycolysis-continuation-special\.csv/);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 5);
+    assert.deepEqual(await mock(page, "m.saved.slice(2).map((s) => s.name)"), [
+      "sel-kov-glycolysis-continuation.csv",
+      "sel-kov-glycolysis-continuation-special.csv",
+      "sel-kov-glycolysis-continuation.meta.json",
+    ]);
+    assert.equal((await mock(page, "m.saved[3].contents")).split("\n").filter((l) => l.includes(",H,")).length, 2);
+
+    await format(page, "SVG");
+    await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 6);
+    const svg = await savedSvg(page, 5);
+    assert.equal(svg.name, "sel-kov-glycolysis.svg");
+    assert.equal(svg.error, null);
+    assert.equal(svg.desc, "Sel'kov glycolysis with 1 branch and 2 special points");
+    assert.match(await mock(page, "m.saved[5].contents"), /stroke-dasharray/);
+
+    await format(page, "PNG");
+    await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 7);
+    assert.equal(await mock(page, "m.saved[6].name"), "sel-kov-glycolysis.png");
+  } finally {
+    await browser.close();
+  }
+});

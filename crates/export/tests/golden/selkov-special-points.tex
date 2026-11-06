@@ -1,0 +1,18 @@
+% Separatrix special points: Sel'kov glycolysis (Strogatz §7.3)
+%   x' = -x + a*y + x^2*y
+%   y' = b - a*y - x^2*y
+% Parameters: a = 0.08
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Sel'kov glycolysis: special points of the branches as $b$ varies, with $a = 0.08$. H: Hopf bifurcation. $\omega$ is the frequency at a Hopf point. $\ell_1$ is the first Lyapunov coefficient, negative when the Hopf bifurcation is supercritical, scaled so that $\dot r = \mu r + a r^3$, $\dot\theta = \omega$ has $\ell_1 = a/\omega$.}
+\label{tab:sel-primekov-glycolysis-special-points}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Type & $b$ & $(x, y)$ & $\omega$ & $\ell_1$ \\
+\midrule
+H & \num{0.346410} & $(\num{0.34641}, \num{1.73205})$ & \num{0.447214} & \num{-0.527073} \\
+H & \num{0.848528} & $(\num{0.848528}, \num{1.06066})$ & \num{0.894427} & \num{-0.141904} \\
+\bottomrule
+\end{tabular}
+\end{table}
