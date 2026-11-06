@@ -43,6 +43,7 @@ import {
 } from "./icons";
 import { diagnosticLine } from "./diagnostics";
 import { looksStiff, sectionCounts } from "./runStatus";
+import { UpdateButton } from "../update/UpdateButton";
 
 type Theme = "dark" | "light";
 
@@ -639,6 +640,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             </button>
           </span>
         )}
+        <UpdateButton />
       </div>
     </footer>
   );

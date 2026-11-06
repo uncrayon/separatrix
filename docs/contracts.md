@@ -635,6 +635,8 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 | `compute_continuation` | `ContinuationRequest` | `ContinuationResponse` (see Continuation above) |
 | `recent_projects` | none | `RecentProject[]`, each `{ path, name, folder }` |
+| `check_for_update` | none | `UpdateCheck`: `{ kind: "off" }`, `{ kind: "upToDate", version }`, `{ kind: "available", version, notes, date }` or `{ kind: "failed", message }` |
+| `install_update` | none | `()`, after which the app restarts; or a sentence to show |
 
 The project-file commands (`project_read`, `project_write`, the dialogs, `launch_ready`) are
 listed in `app/src-tauri/src/lib.rs`. `project_read` and `project_write` accept only granted paths:
@@ -644,6 +646,18 @@ file once by its canonical path, at most 8), stored as `recent-projects.json` (`
 }`) in the app's config folder. A missing or malformed file is an empty list. `recent_projects`
 returns the ones that still exist, most recent first, and grants each, so the launch gallery's
 Recent rows open through `project_read` like any other file.
+
+The updater (`app/src-tauri/src/updater.rs`, docs/updater.md) is on only in a build whose
+`tauri.conf.json` has a non-empty `plugins.updater.pubkey`; `updater_setup` decides once at
+startup, and the plugin is registered only then. The shipped config has no key, so
+`check_for_update` answers `off` and `install_update` refuses. With a key, `check_for_update` reads
+`latest.json` from the configured endpoint with a 15 s timeout, and `install_update` checks again,
+downloads, verifies the signature, installs and restarts. The first `launch_ready` of a launch
+also starts one quiet check in the background: it never delays the UI, logs a failure to stderr
+only, and emits `update-available` (an `UpdateCheck` of kind `available`) only when there is a
+newer release. The macOS app menu's "Check for Updates…" emits `update-check-requested`, which the
+status bar's version button answers with a check. The plugin is used from Rust only, so the
+capability stays `core:default`.
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,

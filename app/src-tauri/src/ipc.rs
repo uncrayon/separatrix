@@ -905,6 +905,39 @@ pub struct ProjectOpenRequested {
 #[serde(rename_all = "camelCase")]
 pub struct CloseRequested {}
 
+/// Response of `check_for_update`, and payload of the `update-available`
+/// event (always `available` there).
+///
+/// On the wire: `{ "kind": "off" }`, `{ "kind": "upToDate", "version":
+/// "1.0.0" }`, `{ "kind": "available", "version": "1.0.1", "notes": …,
+/// "date": … }` or `{ "kind": "failed", "message": … }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UpdateCheck {
+    /// This build has no updater key (docs/updater.md).
+    Off,
+    /// The running version is the newest.
+    UpToDate {
+        /// The running version, e.g. `"1.0.0"`.
+        version: String,
+    },
+    /// A newer release is on GitHub Releases.
+    Available {
+        /// Its version, e.g. `"1.0.1"`.
+        version: String,
+        /// Its release notes, from `latest.json`.
+        notes: Option<String>,
+        /// Its publication date (RFC 3339), from `latest.json`.
+        date: Option<String>,
+    },
+    /// The check failed (offline, or the server answered badly).
+    Failed {
+        /// The reason, for the log.
+        message: String,
+    },
+}
+
 // ---------------------------------------------------------------------
 // Exports (docs/exports.md)
 // ---------------------------------------------------------------------
@@ -1456,6 +1489,7 @@ mod bindings {
             DocumentStateRequest::decl(&cfg),
             ProjectOpenRequested::decl(&cfg),
             CloseRequested::decl(&cfg),
+            UpdateCheck::decl(&cfg),
             ExportPortraitRequest::decl(&cfg),
             TrajectoryTag::decl(&cfg),
             ExportTheme::decl(&cfg),

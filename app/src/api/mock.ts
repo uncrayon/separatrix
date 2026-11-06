@@ -56,6 +56,7 @@ import type {
   SystemLatexResponse,
   TrajectoryOut,
   TrajectoryRequest,
+  UpdateCheck,
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
@@ -1817,6 +1818,8 @@ export interface SepxMock {
   launchFiles: string[];
   /** The recent projects, most recent first, as Rust keeps them (`files::RecentList`). */
   recent?: string[];
+  /** What `check_for_update` answers; the preview has no updater, so `off` by default. */
+  update?: UpdateCheck;
   /** The last text copied. */
   clipboardText?: string;
   /** Size of the last image copied, in bytes. */
@@ -1934,6 +1937,14 @@ export async function mockLaunchReady(): Promise<string[]> {
   const out = m.launchFiles;
   m.launchFiles = [];
   return out;
+}
+
+export async function mockCheckForUpdate(): Promise<UpdateCheck> {
+  return sepxMock().update ?? { kind: "off" };
+}
+
+export async function mockInstallUpdate(): Promise<void> {
+  throw new Error("Updates are off in this build.");
 }
 
 export async function mockSetDocumentState(req: DocumentStateRequest): Promise<void> {

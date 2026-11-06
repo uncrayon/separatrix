@@ -8,6 +8,7 @@
 //! - [`files`]: launch arguments, single instance, macOS `Opened`, drops,
 //!   the close guard, the paths the webview may read or write and the
 //!   recent projects.
+//! - [`updater`]: updates from GitHub Releases, off without a signing key.
 //!
 //! Commands (called from `app/src/api/client.ts` as `invoke(name, { req })`;
 //! see `docs/contracts.md`):
@@ -42,15 +43,18 @@
 //! | `save_png_file` | raw PNG body, header `x-sepx-name` | [`ipc::SavedFiles`] or `null` |
 //! | `clipboard_write_text` | [`ipc::ClipboardTextRequest`] | `()` |
 //! | `clipboard_write_png` | raw PNG body | `()` |
+//! | `check_for_update` | none | [`ipc::UpdateCheck`] |
+//! | `install_update` | none | `()` |
 //!
-//! Every plugin (dialog, clipboard, single instance) is used from Rust
-//! only, so no plugin command is exposed to the webview (the capability
+//! Every plugin (dialog, clipboard, single instance, updater) is used from
+//! Rust only, so no plugin command is exposed to the webview (the capability
 //! stays `core:default`).
 
 pub mod export_service;
 pub mod files;
 pub mod ipc;
 pub mod service;
+pub mod updater;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -379,8 +383,10 @@ fn recent_projects(
 
 /// The UI listens for `project-open-requested`: returns the files that
 /// arrived before (granted), and emits from now on.
+/// Also starts the quiet update check, now that the UI is listening.
 #[tauri::command]
-fn launch_ready(launch: State<'_, LaunchFiles>) -> Vec<String> {
+fn launch_ready<R: Runtime>(app: AppHandle<R>, launch: State<'_, LaunchFiles>) -> Vec<String> {
+    updater::spawn_startup_check(&app);
     launch
         .take_ready()
         .into_iter()
@@ -850,6 +856,8 @@ async fn clipboard_write_png<R: Runtime>(
 
 #[cfg(target_os = "macos")]
 const QUIT_MENU_ID: &str = "quit";
+#[cfg(target_os = "macos")]
+const CHECK_UPDATES_MENU_ID: &str = "check-updates";
 
 /// The default macOS menu with Quit replaced by an item that closes the
 /// window, so Cmd+Q and the app menu's Quit go through the unsaved-changes
@@ -877,6 +885,13 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
         true,
         Some("CmdOrCtrl+Q"),
     )?;
+    let check_updates = MenuItem::with_id(
+        app,
+        CHECK_UPDATES_MENU_ID,
+        "Check for Updates\u{2026}",
+        true,
+        None::<&str>,
+    )?;
     Menu::with_items(
         app,
         &[
@@ -886,6 +901,7 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
                 true,
                 &[
                     &PredefinedMenuItem::about(app, None, Some(about))?,
+                    &check_updates,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
@@ -941,6 +957,8 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
 /// Starts the desktop app.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    let plugins = serde_json::to_value(&context.config().plugins).unwrap_or_default();
     let builder = tauri::Builder::default()
         // Managed on the builder, not in `setup`: macOS `Opened` can arrive
         // before `setup` has finished.
@@ -959,7 +977,8 @@ pub fn run() {
             files::deliver(app, paths);
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+    let builder = updater::register(builder, updater::updater_setup(&plugins))
         .setup(|app| {
             let recent = app
                 .path()
@@ -976,7 +995,9 @@ pub fn run() {
                 let menu = macos_menu(app.handle())?;
                 app.set_menu(menu)?;
                 app.on_menu_event(|app, event| {
-                    if event.id() == QUIT_MENU_ID {
+                    if event.id() == CHECK_UPDATES_MENU_ID {
+                        let _ = app.emit_to(MAIN_WINDOW, updater::EVENT_CHECK_REQUESTED, ());
+                    } else if event.id() == QUIT_MENU_ID {
                         match app.get_webview_window(MAIN_WINDOW) {
                             // Raises CloseRequested: the guard below runs.
                             Some(w) => {
@@ -1048,9 +1069,11 @@ pub fn run() {
             save_png_file,
             clipboard_write_text,
             clipboard_write_png,
+            updater::check_for_update,
+            updater::install_update,
         ]);
     builder
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building the app")
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]

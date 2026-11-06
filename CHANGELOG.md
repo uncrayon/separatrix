@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Check for updates. The status bar's right end shows the version (`v1.0.0`); a click checks
+  GitHub Releases and says "Separatrix is up to date", "Separatrix 1.0.1 is available" with
+  Install and restart, or "Couldn't check for updates. You can keep working offline." The macOS
+  app menu has Check for Updates…. A quiet check runs once after launch, gives up after 15 s and
+  never delays the gallery; it only speaks up when a newer version exists ("Update available"
+  beside the version). The updater stays off ("Updates are off in this build") until the owner
+  adds a signing key, as docs/updater.md describes, so no placeholder key ships. New commands:
+  `check_for_update` and `install_update`. New dependency: `tauri-plugin-updater` 2.14.0.
 - Open a project from the launch gallery. The gallery has an Open… button (Ctrl+O, ⌘O on a Mac)
   from the first launch on, and Ctrl+O now works while the gallery is open. A Recent section above
   Chapter 2 lists the last 8 projects opened or saved that still exist, newest first, with their
