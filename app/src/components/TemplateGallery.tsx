@@ -1,14 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { RecentProject } from "../api/types";
 import { Tex } from "../math/Tex";
+import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
 import { TEMPLATES, strogatzRef, templateChapters, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
-import { IconClose, IconPlus } from "./icons";
+import { Button } from "./controls";
+import { IconClose, IconOpen, IconPlus } from "./icons";
 import { TemplateThumb, compileTemplate } from "./TemplateThumb";
 
 interface Props {
   onPick: (t: Template) => void;
   onBlank: () => void;
   onClose: () => void;
+  /** Open… (the file dialog, after the unsaved-changes confirm). */
+  onOpen: () => void;
+  /** Projects opened or saved lately, most recent first. */
+  recent: RecentProject[];
+  onOpenRecent: (path: string) => void;
   canClose: boolean;
   /** Shown under the heading: why a file passed at launch didn't open, say. */
   notice?: ReactNode;
@@ -108,6 +116,27 @@ function TemplateCardButton({ template: t, onPick }: { template: Template; onPic
   );
 }
 
+const MAC = isMacPlatform(typeof navigator === "undefined" ? undefined : navigator);
+const OPEN_KEYS = shortcutLabel("o", { mac: MAC });
+
+function RecentProjects({ recent, onOpenRecent }: { recent: RecentProject[]; onOpenRecent: (path: string) => void }) {
+  return (
+    <section className="gallery-chapter" aria-labelledby="gallery-recent">
+      <ChapterHeading id="gallery-recent" chapter="Recent" title="" />
+      <ul className="gallery-recent">
+        {recent.map((r) => (
+          <li key={r.path}>
+            <button type="button" className="gallery-recent-row" title={r.path} onClick={() => onOpenRecent(r.path)}>
+              <span className="body-strong gallery-recent-name">{r.name}</span>
+              <span className="caption gallery-recent-folder">{r.folder}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function ChapterHeading({ id, chapter, title }: { id: string; chapter: string; title: string }) {
   return (
     <h2 className="heading gallery-chapter-head" id={id}>
@@ -117,7 +146,7 @@ function ChapterHeading({ id, chapter, title }: { id: string; chapter: string; t
   );
 }
 
-export function TemplateGallery({ onPick, onBlank, onClose, canClose, notice }: Props) {
+export function TemplateGallery({ onPick, onBlank, onClose, onOpen, recent, onOpenRecent, canClose, notice }: Props) {
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dialog.current?.focus();
@@ -158,6 +187,7 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose, notice }: 
         aria-modal="true"
         aria-labelledby="gallery-title"
         aria-describedby="gallery-sub"
+        data-shortcuts="open"
       >
         <header className="gallery-head">
           <div className="gallery-head-text">
@@ -168,22 +198,35 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose, notice }: 
               Each one opens with trajectories already placed. Edit the equations or drag anything afterwards.
             </p>
           </div>
-          {canClose && (
-            <button
-              type="button"
-              className="ds-icon-button"
-              aria-label="Close gallery"
-              data-tip="Close gallery"
-              data-tip-align="end"
-              onClick={onClose}
-              {...tipDismiss}
+          <div className="gallery-head-actions">
+            <Button
+              variant="secondary"
+              icon={<IconOpen />}
+              aria-keyshortcuts={MAC ? "Meta+O" : "Control+O"}
+              data-tooltip={`Open a project (${OPEN_KEYS})`}
+              data-tooltip-desc="A .sepx file you or a colleague saved."
+              onClick={onOpen}
             >
-              <IconClose />
-            </button>
-          )}
+              Open…
+            </Button>
+            {canClose && (
+              <button
+                type="button"
+                className="ds-icon-button"
+                aria-label="Close gallery"
+                data-tip="Close gallery"
+                data-tip-align="end"
+                onClick={onClose}
+                {...tipDismiss}
+              >
+                <IconClose />
+              </button>
+            )}
+          </div>
         </header>
         {notice && <div className="gallery-notice">{notice}</div>}
         <div className="gallery-grid">
+          {recent.length > 0 && <RecentProjects recent={recent} onOpenRecent={onOpenRecent} />}
           {CHAPTERS.map((ch) => (
             <section className="gallery-chapter" key={ch.chapter} aria-labelledby={`gallery-ch-${ch.number}`}>
               <ChapterHeading id={`gallery-ch-${ch.number}`} chapter={`Chapter ${ch.number}`} title={ch.title} />

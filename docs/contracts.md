@@ -634,6 +634,16 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
 | `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 | `compute_continuation` | `ContinuationRequest` | `ContinuationResponse` (see Continuation above) |
+| `recent_projects` | none | `RecentProject[]`, each `{ path, name, folder }` |
+
+The project-file commands (`project_read`, `project_write`, the dialogs, `launch_ready`) are
+listed in `app/src-tauri/src/lib.rs`. `project_read` and `project_write` accept only granted paths:
+ones chosen in a dialog, passed at launch, sent by the OS or dropped on the window. After each
+successful read or write the path goes first in the recent projects (`files::RecentList`: each
+file once by its canonical path, at most 8), stored as `recent-projects.json` (`{ "paths": [...]
+}`) in the app's config folder. A missing or malformed file is an empty list. `recent_projects`
+returns the ones that still exist, most recent first, and grants each, so the launch gallery's
+Recent rows open through `project_read` like any other file.
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,

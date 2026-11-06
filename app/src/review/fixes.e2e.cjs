@@ -40,6 +40,8 @@ test("picking a template from the keyboard leaves focus on the plot, not the pag
   const { browser, page } = await open();
   try {
     await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), "Open…", "Open… is the first stop");
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".gallery", { state: "detached" });
     const focused = await page.evaluate(() => document.activeElement.className);

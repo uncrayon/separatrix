@@ -6,7 +6,8 @@
 //! - [`service`]: what the maths commands do, testable without a window.
 //! - [`export_service`]: what the export commands do, testable without a window.
 //! - [`files`]: launch arguments, single instance, macOS `Opened`, drops,
-//!   the close guard and the paths the webview may read or write.
+//!   the close guard, the paths the webview may read or write and the
+//!   recent projects.
 //!
 //! Commands (called from `app/src/api/client.ts` as `invoke(name, { req })`;
 //! see `docs/contracts.md`):
@@ -23,6 +24,7 @@
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
 //! | `project_write` | [`ipc::ProjectWriteRequest`] | [`ipc::SavedProject`] |
+//! | `recent_projects` | none | [`ipc::RecentProject`]`[]` |
 //! | `launch_ready` | none | `string[]` |
 //! | `set_document_state` | [`ipc::DocumentStateRequest`] | `()` |
 //! | `close_window` | none | `()` |
@@ -55,7 +57,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use export_service::ExportCache;
-use files::{DocState, GrantedPaths, LaunchFiles, MAIN_WINDOW};
+use files::{DocState, GrantedPaths, LaunchFiles, RecentProjects, MAIN_WINDOW};
 use separatrix_export::Placement;
 use service::SystemStore;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
@@ -249,18 +251,24 @@ async fn project_choose_open_path<R: Runtime>(app: AppHandle<R>) -> Result<Optio
     Ok(Some(s))
 }
 
-/// Reads a granted project file.
+/// Reads a granted project file, and puts it first in the recent projects.
 #[tauri::command]
 async fn project_read(
     req: ipc::ProjectReadRequest,
     granted: State<'_, GrantedPaths>,
+    recent: State<'_, Arc<RecentProjects>>,
 ) -> Result<ipc::OpenedProject, String> {
     let path = PathBuf::from(&req.path);
     if !granted.contains(&path) {
         return Err(not_granted(&path));
     }
-    let opened =
-        blocking(move || separatrix_project::read_file(&path).map_err(|e| e.to_string())).await?;
+    let recent = Arc::clone(&recent);
+    let opened = blocking(move || {
+        let opened = separatrix_project::read_file(&path).map_err(|e| e.to_string())?;
+        remember_recent(&recent, &path);
+        Ok(opened)
+    })
+    .await?;
     Ok(ipc::OpenedProject {
         name: separatrix_project::file_name(Path::new(&req.path)),
         path: req.path,
@@ -306,11 +314,13 @@ async fn project_choose_save_path<R: Runtime>(
     }))
 }
 
-/// Checks and writes a project to a granted `.sepx` path.
+/// Checks and writes a project to a granted `.sepx` path, and puts it first
+/// in the recent projects.
 #[tauri::command]
 async fn project_write(
     req: ipc::ProjectWriteRequest,
     granted: State<'_, GrantedPaths>,
+    recent: State<'_, Arc<RecentProjects>>,
 ) -> Result<ipc::SavedProject, String> {
     let path = PathBuf::from(&req.path);
     if !files::is_project_path(&path) {
@@ -323,17 +333,48 @@ async fn project_write(
         return Err(not_granted(&path));
     }
     let name = separatrix_project::file_name(&path);
+    let recent = Arc::clone(&recent);
     blocking(move || {
         let project =
             separatrix_project::from_value_checked(req.project).map_err(|e| e.to_string())?;
         separatrix_project::write_file(&path, &project, export_service::APP_VERSION)
             .map_err(|e| e.with_file(&name).to_string())?;
+        remember_recent(&recent, &path);
         Ok(ipc::SavedProject {
             path: req.path,
             name,
         })
     })
     .await
+}
+
+/// A recent list that can't be saved costs only the list: the open or save
+/// itself succeeded.
+fn remember_recent(recent: &RecentProjects, path: &Path) {
+    if let Err(e) = recent.remember(path) {
+        eprintln!("separatrix: couldn't save the recent projects: {e}");
+    }
+}
+
+/// The recent projects that still exist, most recent first, each granted
+/// for `project_read`.
+#[tauri::command]
+fn recent_projects(
+    recent: State<'_, Arc<RecentProjects>>,
+    granted: State<'_, GrantedPaths>,
+) -> Vec<ipc::RecentProject> {
+    recent
+        .existing()
+        .into_iter()
+        .filter_map(|p| {
+            granted.grant(&p);
+            Some(ipc::RecentProject {
+                path: p.to_str()?.to_owned(),
+                name: separatrix_project::file_name(&p),
+                folder: p.parent()?.to_str()?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// The UI listens for `project-open-requested`: returns the files that
@@ -920,6 +961,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
+            let recent = app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|d| d.join(files::RECENT_FILE));
+            app.manage(Arc::new(RecentProjects::load(recent)));
             let cwd = std::env::current_dir().unwrap_or_default();
             // `args_os`: `args` panics on an argument that isn't UTF-8.
             let paths = files::project_paths_from_args(std::env::args_os(), &cwd);
@@ -977,6 +1024,7 @@ pub fn run() {
             project_read,
             project_choose_save_path,
             project_write,
+            recent_projects,
             launch_ready,
             set_document_state,
             close_window,

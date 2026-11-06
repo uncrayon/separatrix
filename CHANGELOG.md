@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Open a project from the launch gallery. The gallery has an Open… button (Ctrl+O, ⌘O on a Mac)
+  from the first launch on, and Ctrl+O now works while the gallery is open. A Recent section above
+  Chapter 2 lists the last 8 projects opened or saved that still exist, newest first, with their
+  folders, and a click reopens one. Both go through the unsaved-changes question, and Cancel keeps
+  the gallery open. A `.sepx` file dropped on the window while the gallery is open opens too. The
+  list is `recent-projects.json` in the app's config folder. A damaged list is read as empty. New
+  command: `recent_projects`. `scripts/smoke/xdnd_drop.py` drops a file on an X11 window over XDND,
+  for checking drag-and-drop in the real app.
 - Branch plot exports. In the Branch view, Export… offers LaTeX, SVG, PNG and CSV. The LaTeX
   Figure is a pgfplots branch plot with the screen's frame: each branch in its trajectory colour,
   stable stretches solid and unstable ones dashed, and each special point as a fixed-point glyph

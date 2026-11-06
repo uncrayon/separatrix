@@ -862,6 +862,20 @@ pub struct SavedProject {
     pub name: String,
 }
 
+/// One entry of `recent_projects`: a project opened or saved lately that
+/// still exists, granted for `project_read`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RecentProject {
+    /// The path, for `project_read`.
+    pub path: String,
+    /// Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+    pub name: String,
+    /// The folder it is in, as the system writes it.
+    pub folder: String,
+}
+
 /// Request of `set_document_state`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1438,6 +1452,7 @@ mod bindings {
             ChosenSavePath::decl(&cfg),
             ProjectWriteRequest::decl(&cfg),
             SavedProject::decl(&cfg),
+            RecentProject::decl(&cfg),
             DocumentStateRequest::decl(&cfg),
             ProjectOpenRequested::decl(&cfg),
             CloseRequested::decl(&cfg),

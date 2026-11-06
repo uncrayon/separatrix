@@ -84,6 +84,7 @@ export type {
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
+  RecentProject,
   SaveFigureRequest,
   SaveOrbitFigureRequest,
   SaveTextRequest,

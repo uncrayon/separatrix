@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, Url};
 
 use crate::ipc::ProjectOpenRequested;
@@ -82,6 +83,95 @@ impl GrantedPaths {
     pub fn contains(&self, path: &Path) -> bool {
         let set = lock(&self.0);
         set.contains(path) || path.canonicalize().is_ok_and(|c| set.contains(&c))
+    }
+}
+
+/// The recent projects file, in the app's config folder.
+pub const RECENT_FILE: &str = "recent-projects.json";
+/// How many recent projects are kept.
+pub const RECENT_MAX: usize = 8;
+
+/// The projects opened or saved last, most recent first, each once, as
+/// `recent-projects.json` stores them: `{ "paths": [...] }`.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentList {
+    pub paths: Vec<PathBuf>,
+}
+
+impl RecentList {
+    /// The stored list; a missing, unreadable or malformed file is an empty
+    /// list, never an error.
+    pub fn parse(bytes: &[u8]) -> Self {
+        serde_json::from_slice(bytes).unwrap_or_default()
+    }
+
+    pub fn to_json(&self) -> Vec<u8> {
+        let mut out = serde_json::to_vec_pretty(self).unwrap_or_default();
+        out.push(b'\n');
+        out
+    }
+
+    /// `path` first, any earlier entry for it dropped, at most
+    /// [`RECENT_MAX`] kept. Callers pass canonical paths (see
+    /// [`canonical`]), so two spellings of one file are one entry.
+    pub fn push(mut self, path: PathBuf) -> Self {
+        self.paths.retain(|p| *p != path);
+        self.paths.insert(0, path);
+        self.paths.truncate(RECENT_MAX);
+        self
+    }
+}
+
+/// `path` with links and `..` resolved when it exists, else as given.
+pub fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The recent projects, kept in memory and written to `file` after every
+/// change. With no config folder (`file` is `None`) the list lasts for the
+/// session only.
+pub struct RecentProjects {
+    file: Option<PathBuf>,
+    list: Mutex<RecentList>,
+}
+
+impl RecentProjects {
+    pub fn load(file: Option<PathBuf>) -> Self {
+        let list = file
+            .as_deref()
+            .and_then(|f| std::fs::read(f).ok())
+            .map(|b| RecentList::parse(&b))
+            .unwrap_or_default();
+        Self {
+            file,
+            list: Mutex::new(list),
+        }
+    }
+
+    /// Puts `path` first and saves the list. The lock is held through the
+    /// write, so two saves can't store an older list over a newer one.
+    pub fn remember(&self, path: &Path) -> std::io::Result<()> {
+        let mut list = lock(&self.list);
+        *list = std::mem::take(&mut *list).push(canonical(path));
+        let Some(file) = &self.file else {
+            return Ok(());
+        };
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        separatrix_project::write_atomic(file, &list.to_json())
+    }
+
+    /// The listed files that still exist and have UTF-8 paths, most recent
+    /// first. Missing ones stay stored: a file on an unplugged drive comes
+    /// back when the drive does.
+    pub fn existing(&self) -> Vec<PathBuf> {
+        lock(&self.list)
+            .paths
+            .iter()
+            .filter(|p| p.is_file() && p.to_str().is_some())
+            .cloned()
+            .collect()
     }
 }
 
@@ -341,6 +431,112 @@ mod tests {
         let new = dir.join("new.sepx");
         g.grant(&new);
         assert!(g.contains(&new));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn recent(paths: &[&str]) -> RecentList {
+        RecentList {
+            paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    #[test]
+    fn recent_puts_the_newest_first_and_keeps_each_file_once() {
+        let list = RecentList::default()
+            .push("a.sepx".into())
+            .push("b.sepx".into())
+            .push("c.sepx".into());
+        assert_eq!(list, recent(&["c.sepx", "b.sepx", "a.sepx"]));
+        let list = list.push("a.sepx".into());
+        assert_eq!(
+            list,
+            recent(&["a.sepx", "c.sepx", "b.sepx"]),
+            "moved, not added"
+        );
+        assert_eq!(list.clone().push("a.sepx".into()), list, "already first");
+    }
+
+    #[test]
+    fn recent_keeps_at_most_eight() {
+        let list = (0..12).fold(RecentList::default(), |l, k| {
+            l.push(format!("{k}.sepx").into())
+        });
+        assert_eq!(list.paths.len(), RECENT_MAX);
+        assert_eq!(list.paths[0], PathBuf::from("11.sepx"));
+        assert_eq!(list.paths[RECENT_MAX - 1], PathBuf::from("4.sepx"));
+    }
+
+    #[test]
+    fn recent_garbage_parses_to_an_empty_list() {
+        for bytes in [
+            &b""[..],
+            b"not json",
+            b"null",
+            b"[]",
+            b"{}",
+            b"{\"paths\": 3}",
+            b"{\"paths\": [1, 2]}",
+            b"\xff\xfe",
+        ] {
+            assert_eq!(
+                RecentList::parse(bytes),
+                RecentList::default(),
+                "{:?}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+        let list = recent(&["/w/a.sepx", "/w/b c.sepx"]);
+        assert_eq!(RecentList::parse(&list.to_json()), list, "round trip");
+        assert_eq!(
+            RecentList::parse(br#"{"paths":["/w/a.sepx"],"later":true}"#),
+            recent(&["/w/a.sepx"]),
+            "unknown keys are ignored"
+        );
+    }
+
+    #[test]
+    fn recent_is_stored_by_canonical_path_and_lists_only_files_that_exist() {
+        let dir = std::env::temp_dir().join(format!("sepx-recent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let a = dir.join("a.sepx");
+        let b = dir.join("b.sepx");
+        std::fs::write(&a, "{}").unwrap();
+        std::fs::write(&b, "{}").unwrap();
+        let file = dir.join("config").join(RECENT_FILE);
+
+        let store = RecentProjects::load(Some(file.clone()));
+        assert!(store.existing().is_empty(), "no file yet: empty");
+        store.remember(&a).unwrap();
+        store.remember(&b).unwrap();
+        store
+            .remember(&dir.join("sub").join("..").join("a.sepx"))
+            .unwrap();
+        let (a, b) = (canonical(&a), canonical(&b));
+        assert_eq!(
+            store.existing(),
+            vec![a.clone(), b.clone()],
+            "a once, first"
+        );
+
+        let reloaded = RecentProjects::load(Some(file.clone()));
+        assert_eq!(reloaded.existing(), vec![a.clone(), b.clone()], "persisted");
+        std::fs::remove_file(&b).unwrap();
+        assert_eq!(
+            reloaded.existing(),
+            vec![a.clone()],
+            "a deleted file is not listed"
+        );
+        assert_eq!(
+            RecentList::parse(&std::fs::read(&file).unwrap())
+                .paths
+                .len(),
+            2,
+            "but stays stored"
+        );
+
+        std::fs::write(&file, "garbage").unwrap();
+        assert!(RecentProjects::load(Some(file)).existing().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -1086,6 +1086,20 @@ path: string,
  */
 name: string, };
 
+export type RecentProject = { 
+/**
+ * The path, for `project_read`.
+ */
+path: string, 
+/**
+ * Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+ */
+name: string, 
+/**
+ * The folder it is in, as the system writes it.
+ */
+folder: string, };
+
 export type DocumentStateRequest = { 
 /**
  * Window title, e.g. `"● rabbits-vs-sheep — Separatrix"`.
