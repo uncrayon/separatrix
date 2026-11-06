@@ -25,6 +25,7 @@ import {
   viewChoice,
   viewChoiceAvailability,
   viewChoicesFor,
+  type ViewChoice,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
 import { Select } from "./controls";
@@ -84,6 +85,23 @@ const TOOLS: { key: CanvasTool; label: string; tip: string; icon: ReactNode }[] 
     icon: <IconTrajectoryAdd />,
   },
 ];
+
+/** How the axes picker names each view: in its accessible name, in the list of views, and what its axes offer. */
+const PICKER: Record<ViewChoice, { noun: string; name: string; axes: string }> = {
+  phase: { noun: "Axes", name: "phase plane", axes: "; each state, or time, on either axis." },
+  series: { noun: "Axes", name: "time series", axes: "; each state, or time, on either axis." },
+  cobweb: { noun: "Cobweb", name: "cobweb", axes: "." },
+  section: { noun: "Section", name: "section", axes: "; a state on each axis, or one state on both for the return map." },
+  space: { noun: "3D", name: "3D", axes: "; the three states are picked beside it." },
+  lyapunov: { noun: "Lyapunov spectrum", name: "Lyapunov spectrum", axes: "." },
+  orbit: { noun: "Orbit diagram", name: "orbit diagram", axes: "." },
+};
+
+/** "Phase plane, time series or cobweb". */
+function orList(names: string[]): string {
+  const text = names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}` : names.join("");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 export function CanvasToolbar({ state, actions }: Props) {
   const tool = useCanvasTool();
@@ -610,27 +628,9 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={
-          space
-            ? "View: 3D"
-            : `${lyapunov ? "Lyapunov spectrum" : orbit ? "Orbit diagram" : cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`
-        }
+        aria-label={space ? "View: 3D" : `${PICKER[current].noun}: ${xPlain} horizontal, ${yPlain} vertical`}
         data-tooltip={viewOnly ? "Choose the view" : "Choose the view and axes"}
-        data-tooltip-desc={
-          lyapunov || orbit
-            ? isMap
-              ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram."
-              : "Phase plane, time series, section, 3D or Lyapunov spectrum."
-            : cobweb
-            ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram."
-            : space
-              ? "Phase plane, time series, section, 3D or Lyapunov spectrum; the three states are picked beside it."
-              : section
-                ? "Phase plane, time series, section, 3D or Lyapunov spectrum; a state on each axis, or one state on both for the return map."
-                : isMap
-                  ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram; each state, or time, on either axis."
-                  : "Phase plane, time series, section, 3D or Lyapunov spectrum; each state, or time, on either axis."
-        }
+        data-tooltip-desc={`${orList(viewChoicesFor(sys).map((c) => PICKER[c].name))}${PICKER[current].axes}`}
         tabIndex={tabIndex}
         onFocus={onFocus}
         onClick={() => (open ? setOpen(false) : openWith("current"))}
