@@ -274,6 +274,17 @@ fn first_non_finite(p: &ProjectFile) -> Option<String> {
                 }
             }
         }
+        if let Some(l) = &v.lyapunov {
+            for (k, x) in [
+                ("transient", l.transient),
+                ("total", l.total),
+                ("interval", l.interval),
+            ] {
+                if x.is_some_and(bad) {
+                    return Some(format!("views[{i}].lyapunov.{k}"));
+                }
+            }
+        }
         if let Some(s) = &v.section {
             for (k, x) in [("value", s.value), ("period", s.period), ("phase", s.phase)] {
                 if x.is_some_and(bad) {

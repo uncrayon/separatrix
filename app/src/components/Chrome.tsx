@@ -5,7 +5,18 @@ import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport
 import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
 import { METHODS, STIFF_HINT } from "../state/methods";
-import { isReturnMap, searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
+import {
+  countText,
+  isLyapunov,
+  isReturnMap,
+  lyapunovCurrent,
+  lyapunovSolver,
+  renormalizations,
+  searchedFixedPoints,
+  systemTitle,
+  type LyapunovSettings,
+  type SolverSettings,
+} from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
@@ -209,6 +220,15 @@ function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.label}, step ${v}` };
 }
 
+/** The status bar's run summary in the Lyapunov view: `10⁵ renormalizations · RK4 · h 0.01`. */
+function lyapunovSummary(l: LyapunovSettings, s: SolverSettings, kind: SystemKind | undefined) {
+  const k = renormalizations(l, kind);
+  const count = `${countText(k)} ${k === 1 ? "renormalization" : "renormalizations"}`;
+  if (kind === "map") return { lead: "", num: count, tail: "", tip: `Lyapunov run of ${k.toLocaleString("en-US")} QR steps` };
+  const m = solverSummary({ ...s, h: lyapunovSolver(s, l, kind).h }, kind);
+  return { ...m, lead: `${count} · ${m.lead}`, tip: `Lyapunov run of ${k.toLocaleString("en-US")} QR steps, ${m.tip}` };
+}
+
 function focusEquationLine(index: number) {
   const boxes = document.querySelectorAll<HTMLElement>(".panel-left .ds-equation-editor-field");
   const box = boxes[Math.max(0, index)] ?? boxes[0];
@@ -319,14 +339,16 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ state, actions }: StatusBarProps) {
-  const p = state.portrait;
+  const lyapunov = isLyapunov(state.view) ? state.view : null;
+  const p = lyapunov ? null : state.portrait;
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
-  const current = !!p && !!sys && p.meta.systemId === sys.systemId;
-  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+  const current = lyapunov ? lyapunovCurrent(state) : !!p && !!sys && p.meta.systemId === sys.systemId;
+  const run = lyapunov && current ? state.lyapunov : null;
+  const nFp = state.layers.fixedPoints && !lyapunov ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
   const crossings =
-    current && p.meta.view.kind === "section" && state.view.kind === "section"
+    p && current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
       : null;
 
@@ -336,26 +358,32 @@ export function StatusBar({ state, actions }: StatusBarProps) {
       )
     : [];
   const solverGaveUpIcs = [...new Set(solverGaveUpIcIds)].filter((id) => state.ics.some((ic) => ic.id === id));
-  const stiff = current && looksStiff(p.res, state.solver.method);
+  const stiff = !!p && current && looksStiff(p.res, state.solver.method);
 
   const errors = state.diagnostics.filter((d) => d.severity === "error");
   const lines = state.equations.map((l) => l.source);
   const firstBad = errors.length ? diagnosticLine(errors[0], lines) : -1;
 
-  const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
+  const waiting = lyapunov ? !current && state.ics.some((ic) => ic.x0.length === states.length) : !current;
+  const computing = useDelayed(!!sys?.ok && waiting && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
   const cobwebNames =
     (state.view.kind === "cobweb" || isReturnMap(state.view)) && states[0] ? viewAxisLabels(state.view, states, kind) : null;
-  const xName = cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind);
-  const yName = cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind);
-  const solver = solverSummary(state.solver, kind);
-  const t = p ? timing(p.res.elapsedMs) : null;
-  const timingDesc = p
-    ? `${fmt(p.roundTripMs, 2)} ms including transfer. ` +
+  const xName = lyapunov
+    ? kind === "map"
+      ? "n"
+      : "t"
+    : (cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind));
+  const yName = lyapunov ? "\\lambda" : (cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind));
+  const solver = lyapunov ? lyapunovSummary(lyapunov.lyapunov, state.solver, kind) : solverSummary(state.solver, kind);
+  const done = run ?? p;
+  const t = done ? timing(done.res.elapsedMs) : null;
+  const timingDesc = done
+    ? `${fmt(done.roundTripMs, 2)} ms including transfer. ` +
       (isTauri() ? "Rust core." : "Browser preview: a small JavaScript stand-in computes the templates only.")
     : undefined;
-  const timingLabel = p ? `Computed in ${fmt(p.res.elapsedMs, 2)} ms` : undefined;
+  const timingLabel = done ? `Computed in ${fmt(done.res.elapsedMs, 2)} ms` : undefined;
   const lineTip = firstBad >= 0 ? `Go to line ${firstBad + 1}` : "Go to the equations";
   const num = (v: number, digits: number) => <span className="ds-statusbar-num">{minus(v.toFixed(digits))}</span>;
 
@@ -468,7 +496,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
           t && (
             <span className="ds-statusbar-item" data-tooltip={timingLabel} data-tooltip-desc={timingDesc}>
               <span className="ds-statusbar-text">
-                <span className="ds-statusbar-wide">Portrait </span>
+                <span className="ds-statusbar-wide">{run ? "Lyapunov " : "Portrait "}</span>
                 <span className="ds-statusbar-num">{t.num}</span> {t.unit}
               </span>
               <span className="ds-sr">

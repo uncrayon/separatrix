@@ -51,6 +51,7 @@ export type {
   ProjectFile,
   ProjectInitialCondition,
   ProjectLayers,
+  ProjectLyapunov,
   ProjectOpenRequested,
   ProjectParam,
   ProjectReadRequest,

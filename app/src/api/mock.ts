@@ -18,6 +18,8 @@ import type {
   FigureLatexResponse,
   FixedPointOut,
   FixedPointsLatexRequest,
+  LyapunovRequest,
+  LyapunovResponse,
   NullclineOut,
   OpenedProject,
   ParamInfo,
@@ -401,6 +403,199 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   const res = await portrait(req);
   sepxMock().lastPortrait = { req, res };
   return res;
+}
+
+/** `compute_lyapunov`; the request and response are kept in `__sepxMock.lastLyapunov` for the e2e tests. */
+export async function mockLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  const method = req.solver.method;
+  if (sys.kind !== "map" && METHODS[method].needs !== "any")
+    throw new Error(
+      `A Lyapunov run integrates the variational equations, which ${METHODS[method].label} cannot step; choose Runge–Kutta 4 or Dormand–Prince 5(4).`,
+    );
+  if (sys.kind !== "map" && method === "rosenbrock23")
+    throw new Error(
+      "A Lyapunov run integrates the variational equations, which have no exact Jacobian for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4).",
+    );
+  const res = { ...lyapunovSpectrum(sys, req), elapsedMs: performance.now() - started };
+  sepxMock().lastLyapunov = { req, res };
+  return res;
+}
+
+/** The core's history length (`LYAPUNOV_HISTORY` in service.rs). */
+const LYAPUNOV_HISTORY = 2000;
+
+/**
+ * Benettin's method as `dyn_analysis::lyapunov_spectrum` runs it: Q (column
+ * major) follows J(x)Q, re-orthonormalized by modified Gram–Schmidt (twice)
+ * every interval, ln R_ii summed per block. The preview's flows step with
+ * RK4 at h (0.01 for an adaptive method) and a central-difference Jacobian.
+ */
+function lyapunovSpectrum(sys: MockSystem, req: LyapunovRequest): Omit<LyapunovResponse, "elapsedMs"> {
+  const n = sys.states.length;
+  const p = req.params;
+  const map = sys.kind === "map";
+  const jac = (t: number, x: number[]) => jacobian((v) => sys.f(t, v, p), x, n);
+  const h = map ? 1 : !METHODS[req.solver.method].adaptive && req.solver.h > 0 ? req.solver.h : 0.01;
+  const per = map ? Math.max(1, Math.round(req.interval)) : req.interval;
+  const total = map ? Math.round(req.total) : req.total;
+  const ratio = total / per;
+  const steps = Math.abs(ratio - Math.round(ratio)) <= 1e-9 * Math.max(1, ratio) ? Math.round(ratio) : Math.ceil(ratio);
+  const blocks = Math.max(2, Math.min(req.blocks, steps));
+  const every = Math.max(1, Math.ceil(steps / LYAPUNOV_HISTORY));
+  const sums = new Array<number>(n).fill(0);
+  const blockSums = Array.from({ length: blocks }, () => new Array<number>(n).fill(0));
+  const blockSpan = new Array<number>(blocks).fill(0);
+  const historyT: number[] = [];
+  const history: number[] = [];
+  let q: number[] = Array.from({ length: n * n }, (_, k) => (k % (n + 1) === 0 ? 1 : 0));
+  let x = req.x0.slice(0, n);
+  let t = map ? 0 : req.t0;
+  let trace = 0;
+  let measured = 0;
+  let evals = 0;
+  let accepted = 0;
+  const bad = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
+  // Tangent flow (x, Φ, ∫tr J): RK4 on the n + n² + 1 variables.
+  const tangent = (tt: number, y: number[]): number[] => {
+    const xs = y.slice(0, n);
+    const j = jac(tt, xs);
+    evals += 1 + 2 * n;
+    const out = sys.f(tt, xs, p).slice();
+    for (let c = 0; c < n; c++)
+      for (let r = 0; r < n; r++) {
+        let acc = 0;
+        for (let k = 0; k < n; k++) acc += j[r * n + k] * y[n + c * n + k];
+        out.push(acc);
+      }
+    let tr = 0;
+    for (let i = 0; i < n; i++) tr += j[i * n + i];
+    out.push(tr);
+    return out;
+  };
+  const flowFor = (span: number, withQ: boolean): boolean => {
+    let y = [...x, ...(withQ ? q : []), 0];
+    const f = withQ ? tangent : (tt: number, v: number[]) => [...sys.f(tt, v.slice(0, n), p), 0];
+    let left = span;
+    while (left > 1e-12 * Math.max(1, span)) {
+      const dt = Math.min(h, left);
+      const k1 = f(t, y);
+      const k2 = f(t + dt / 2, y.map((v, i) => v + (dt / 2) * k1[i]));
+      const k3 = f(t + dt / 2, y.map((v, i) => v + (dt / 2) * k2[i]));
+      const k4 = f(t + dt, y.map((v, i) => v + dt * k3[i]));
+      if (!withQ) evals += 4;
+      y = y.map((v, i) => v + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+      t += dt;
+      left -= dt;
+      accepted++;
+      if (bad(y.slice(0, n))) return false;
+    }
+    x = y.slice(0, n);
+    if (withQ) {
+      q = y.slice(n, n + n * n);
+      trace += y[n + n * n];
+    }
+    return true;
+  };
+  const iterate = (count: number, withQ: boolean): boolean => {
+    for (let k = 0; k < count; k++) {
+      if (withQ) {
+        const j = jac(t, x);
+        const next = new Array<number>(n * n).fill(0);
+        for (let c = 0; c < n; c++)
+          for (let r = 0; r < n; r++) {
+            let acc = 0;
+            for (let m = 0; m < n; m++) acc += j[r * n + m] * q[c * n + m];
+            next[c * n + r] = acc;
+          }
+        q = next;
+        trace += Math.log(Math.abs(determinant(j, n)));
+      }
+      x = sys.f(t, x, p);
+      t += 1;
+      evals++;
+      accepted++;
+      if (bad(x)) return false;
+    }
+    return true;
+  };
+  const done = (status: LyapunovResponse["status"], k: number): Omit<LyapunovResponse, "elapsedMs"> => {
+    const exponents = measured > 0 ? sums.map((v) => v / measured) : [];
+    const reached = blockSpan.filter((v) => v > 0).length;
+    const uncertainty =
+      reached >= 2
+        ? exponents.map((_, i) => {
+            const per = blockSums.slice(0, reached).map((b, m) => b[i] / blockSpan[m]);
+            const mean = per.reduce((a, v) => a + v, 0) / reached;
+            const sd = Math.sqrt(per.reduce((a, v) => a + (v - mean) ** 2, 0) / (reached - 1));
+            return sd / Math.sqrt(reached);
+          })
+        : [];
+    return {
+      requestId: req.requestId,
+      exponents,
+      uncertainty,
+      sum: exponents.reduce((a, v) => a + v, 0),
+      traceAverage: measured > 0 ? trace / measured : 0,
+      historyT,
+      history,
+      renormalizations: k,
+      status,
+      stats: { accepted, rejected: 0, evals },
+    };
+  };
+  const transient = map ? Math.round(req.transient) : req.transient;
+  if (transient > 0 && !(map ? iterate(transient, false) : flowFor(transient, false))) return done("blewUp", 0);
+  for (let k = 0; k < steps; k++) {
+    const span = Math.min(per, total - k * per);
+    if (!(map ? iterate(span, true) : flowFor(span, true))) return done("blewUp", k);
+    const block = Math.min(blocks - 1, Math.floor((k * blocks) / steps));
+    for (let c = 0; c < n; c++) {
+      for (let pass = 0; pass < 2; pass++) {
+        for (let b = 0; b < c; b++) {
+          let dot = 0;
+          for (let r = 0; r < n; r++) dot += q[b * n + r] * q[c * n + r];
+          for (let r = 0; r < n; r++) q[c * n + r] -= dot * q[b * n + r];
+        }
+      }
+      let norm = 0;
+      for (let r = 0; r < n; r++) norm += q[c * n + r] ** 2;
+      norm = Math.sqrt(norm);
+      for (let r = 0; r < n; r++) q[c * n + r] /= norm;
+      const ln = Math.log(norm);
+      sums[c] += ln;
+      blockSums[block][c] += ln;
+    }
+    measured += span;
+    blockSpan[block] += span;
+    if ((k + 1) % every === 0 || k === steps - 1) {
+      historyT.push(t);
+      for (let c = 0; c < n; c++) history.push(sums[c] / measured);
+    }
+  }
+  return done("completed", steps);
+}
+
+function determinant(a: number[], n: number): number {
+  const m = a.slice();
+  let det = 1;
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r * n + c]) > Math.abs(m[piv * n + c])) piv = r;
+    if (m[piv * n + c] === 0) return 0;
+    if (piv !== c) {
+      for (let k = 0; k < n; k++) [m[c * n + k], m[piv * n + k]] = [m[piv * n + k], m[c * n + k]];
+      det = -det;
+    }
+    det *= m[c * n + c];
+    for (let r = c + 1; r < n; r++) {
+      const f = m[r * n + c] / m[c * n + c];
+      for (let k = c; k < n; k++) m[r * n + k] -= f * m[c * n + k];
+    }
+  }
+  return det;
 }
 
 /** The checks `cobweb_fits` makes in service.rs, with the same messages. */
@@ -1207,6 +1402,8 @@ export interface SepxMock {
   document: DocumentStateRequest;
   /** The last `compute_portrait` (the canvas's or a gallery thumbnail's; never the export dialog's). */
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
+  /** The last `compute_lyapunov`. */
+  lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
 }
 
 function sepxMock(): SepxMock {

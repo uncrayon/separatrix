@@ -7,8 +7,11 @@ import { axisLatex, latexToPlain, sameAxis, viewAxisLabels } from "../math/forma
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   VIEW_CHOICE_LABELS,
+  fitLyapunovRanges,
   hasNullclineLayer,
   isCobweb,
+  isLyapunov,
+  lyapunovFits,
   isReturnMap,
   isSection,
   isSpace,
@@ -89,10 +92,11 @@ export function CanvasToolbar({ state, actions }: Props) {
   if (!sys) return null;
   const isMap = sys.kind === "map";
   const space = isSpace(state.view) ? state.view : null;
+  const lyapunov = isLyapunov(state.view);
 
   const zoomToFit = () => {
     const v = state.view;
-    const fit = isSpace(v) ? fitSpace(state, v) : fitView(state);
+    const fit = isSpace(v) ? fitSpace(state, v) : isLyapunov(v) ? fitLyapunov(state) : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
@@ -108,12 +112,12 @@ export function CanvasToolbar({ state, actions }: Props) {
     {
       key: "reset",
       label: "Reset view",
-      tip: "Reset view (or double-click the plot)",
+      tip: lyapunov ? "Reset view: fit the run (or double-click the plot)" : "Reset view (or double-click the plot)",
       icon: <IconResetView />,
-      onClick: actions.resetView,
+      onClick: lyapunov ? zoomToFit : actions.resetView,
     },
   ];
-  const layers: IconButtonSpec[] = isSection(state.view) ? [] : [
+  const layers: IconButtonSpec[] = isSection(state.view) || lyapunov ? [] : [
     ...(!isMap && !space
       ? [
           {
@@ -149,14 +153,14 @@ export function CanvasToolbar({ state, actions }: Props) {
     },
   ];
 
-  const tools = space ? [] : TOOLS;
+  const tools = space || lyapunov ? [] : TOOLS;
   const keys = [
     ...tools.map((t) => t.key as string),
     ...view.map((b) => b.key),
     ...layers.map((b) => b.key),
     "axes",
   ];
-  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space ? "axes" : tool;
+  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space || lyapunov ? "axes" : tool;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -303,6 +307,10 @@ function fitSpace(state: StudioState, view: SpaceView): Pick<SpaceView, "xRange"
   return { xRange, yRange, zRange };
 }
 
+function fitLyapunov(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
+  return lyapunovFits(state.compiled, state.shapeId, state.lyapunov) ? fitLyapunovRanges(state.lyapunov.res) : null;
+}
+
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
   if (!sys) return null;
@@ -409,12 +417,15 @@ function AxisPicker({
         ]),
   ];
   const cobweb = isCobweb(state.view);
-  const viewOnly = cobweb || space;
-  const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
+  const lyapunov = isLyapunov(state.view);
+  const viewOnly = cobweb || space || lyapunov;
+  const { x: xLatex, y: yLatex } = lyapunov
+    ? { x: isMap ? "n" : "t", y: "\\lambda" }
+    : viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
   const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
-  const xPlain = step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
-  const yPlain = step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
+  const xPlain = lyapunov ? xLatex : step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
+  const yPlain = lyapunov ? "λ" : step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -568,18 +579,26 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={space ? "View: 3D" : `${cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
+        aria-label={
+          space
+            ? "View: 3D"
+            : `${lyapunov ? "Lyapunov spectrum" : cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`
+        }
         data-tooltip={viewOnly ? "Choose the view" : "Choose the view and axes"}
         data-tooltip-desc={
-          cobweb
-            ? "Phase plane, time series or cobweb."
+          lyapunov
+            ? isMap
+              ? "Phase plane, time series, cobweb or Lyapunov spectrum."
+              : "Phase plane, time series, section, 3D or Lyapunov spectrum."
+            : cobweb
+            ? "Phase plane, time series, cobweb or Lyapunov spectrum."
             : space
-              ? "Phase plane, time series, section or 3D; the three states are picked beside it."
+              ? "Phase plane, time series, section, 3D or Lyapunov spectrum; the three states are picked beside it."
               : section
-                ? "Phase plane, time series or section; a state on each axis, or one state on both for the return map."
+                ? "Phase plane, time series, section, 3D or Lyapunov spectrum; a state on each axis, or one state on both for the return map."
                 : isMap
-                  ? "Phase plane, time series or cobweb; each state, or time, on either axis."
-                  : "Phase plane, time series, section or 3D; each state, or time, on either axis."
+                  ? "Phase plane, time series, cobweb or Lyapunov spectrum; each state, or time, on either axis."
+                  : "Phase plane, time series, section, 3D or Lyapunov spectrum; each state, or time, on either axis."
         }
         tabIndex={tabIndex}
         onFocus={onFocus}

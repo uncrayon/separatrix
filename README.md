@@ -11,7 +11,8 @@ A desktop app for exploring dynamical systems, built for students and professors
 - Poincaré sections of flows: a plane x_i = c or a stroboscopic section of a forced oscillator, plotted in two states or as the return map x_k → x_{k+1}.
 - Phase portraits, nullclines, fixed points with stability, 2D projections of any variables.
 - An interactive 3D view of any three states of a flow (Lorenz, Rössler): drag to turn the box, scroll to zoom, with the fixed points in Strogatz's glyphs. Drawn with WebGL (three.js), or on a 2D canvas where WebGL is unavailable.
-- Lyapunov exponents, orbit diagrams, and continuation of equilibria (fold, Hopf, flip, Neimark–Sacker).
+- The Lyapunov spectrum of a flow or a map: the View control's λ view plots the running estimate of every exponent against t (or n) and reads out λ₁ = 0.906 ± 0.004 with its block standard error, and checks Σλ against the mean trace of the Jacobian.
+- Orbit diagrams, and continuation of equilibria (fold, Hopf, flip, Neimark–Sacker).
 - Symplectic integration for Hamiltonian systems, and an implicit solver for stiff ones, suggested when Dormand–Prince's steps look stiff.
 - A gallery of 31 examples from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), grouped by chapter, each citing the section it comes from (the opening slope field cites none). Every chapter 2–8 example reproduces a result of the book, checked by the Strogatz gate below.
 - Export to LaTeX, PNG, SVG and CSV. Shareable project files.

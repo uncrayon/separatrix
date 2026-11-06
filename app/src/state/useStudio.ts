@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic, InputFormat, SectionSpec } from "../api/types";
-import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
+import { compileSystem, computeLyapunov, computePortrait, convertSource, RequestScheduler } from "../api/client";
 import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
@@ -11,12 +11,14 @@ import {
   applyProjectLoad,
   adaptInitialConditions,
   adaptView,
+  buildLyapunovJob,
   buildPortraitJob,
   clampCamera,
   clampTransient,
   cobwebAvailability,
   defaultView,
   isCobweb,
+  isLyapunov,
   isSection,
   isSpace,
   knownStateRange,
@@ -39,6 +41,9 @@ import {
   type EquationLine,
   type InitialCondition,
   type Layers,
+  type LyapunovMeta,
+  type LyapunovSettings,
+  type LyapunovState,
   type ModeSnapshot,
   type ParamState,
   type PortraitMeta,
@@ -86,6 +91,8 @@ export interface StudioState extends StudioSnapshot {
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
+  /** The last Lyapunov run (the Lyapunov view's), kept while other views are shown. */
+  lyapunov: LyapunovState | null;
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -140,6 +147,7 @@ export function useStudio() {
   const [solver, setSolverState] = useState<SolverSettings>(DEFAULT_SOLVER);
   const [selection, setSelection] = useState<Selection>(null);
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
+  const [lyapunov, setLyapunovState] = useState<LyapunovState | null>(null);
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -167,6 +175,7 @@ export function useStudio() {
     solver,
     selection,
     portrait,
+    lyapunov,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -203,9 +212,10 @@ export function useStudio() {
 
   const scheduler = useMemo(
     () =>
-      new PortraitScheduler<PortraitMeta>(
+      new RequestScheduler(
+        computePortrait,
         () => buildPortraitJob(latest.current),
-        (res, meta, roundTripMs) => {
+        (res, meta: PortraitMeta, roundTripMs) => {
           const last = latest.current.portrait;
           const prev = last?.meta.fixedPoints ? last.res.fixedPoints : [];
           setPortrait({ res, meta, roundTripMs });
@@ -219,10 +229,31 @@ export function useStudio() {
   );
   useEffect(() => () => scheduler.dispose(), [scheduler]);
 
+  const lyapunovScheduler = useMemo(
+    () =>
+      new RequestScheduler(
+        computeLyapunov,
+        () => buildLyapunovJob(latest.current),
+        (res, meta: LyapunovMeta, roundTripMs) => {
+          setLyapunovState({ res, meta, roundTripMs });
+          setComputeError(null);
+        },
+        (err) => setComputeError(err instanceof Error ? err.message : String(err)),
+      ),
+    [],
+  );
+  useEffect(() => () => lyapunovScheduler.dispose(), [lyapunovScheduler]);
+
   const viewKey = viewRequestKey(view);
   useEffect(() => {
     scheduler.request();
   }, [scheduler, compiled, params, viewKey, baseState, fieldTime, ics, layers, solver, plotAspect]);
+
+  // The run itself is the key: zooming the plot or a start point the run doesn't follow asks for nothing.
+  const lyapunovKey = buildLyapunovJob(state)?.meta.key ?? null;
+  useEffect(() => {
+    if (lyapunovKey !== null) lyapunovScheduler.request();
+  }, [lyapunovScheduler, lyapunovKey]);
 
   const runCompile = useCallback(
     async (lines: string[], format: InputFormat, template?: Template) => {
@@ -627,6 +658,11 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
+  const setLyapunov = useCallback((patch: Partial<LyapunovSettings>) => {
+    setViewState((v) => (isLyapunov(v) ? { ...v, lyapunov: { ...v.lyapunov, ...patch } } : v));
+    setHomeView((v) => (isLyapunov(v) ? { ...v, lyapunov: { ...v.lyapunov, ...patch } } : v));
+  }, []);
+
   const setSlice = useCallback((index: number, value: number) => {
     setBaseState((b) => {
       const copy = b.slice();
@@ -719,6 +755,7 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setLyapunov,
       setCamera,
       setSpaceAxis,
       setSlice,
@@ -750,6 +787,7 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setLyapunov,
       setCamera,
       setSpaceAxis,
       setSlice,

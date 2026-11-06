@@ -512,6 +512,16 @@ half an iterate for a map), more than `MAX_RENORMALIZATIONS = 10⁷` QR steps (`
 `blocks < 2`, and more blocks than QR steps. A long run takes seconds. The command runs on a
 blocking worker thread and the UI drops stale responses by `requestId`.
 
+The studio's Lyapunov view sends one request per run (`buildLyapunovJob` in state/model.ts): the
+selected start point, else the first; the view's `transient`, `total`, `interval` and `blocks`;
+and the studio's own solver, so the status bar and an export caption name the integrator that
+ran. Because `solver.maxSteps` counts the whole run, the view raises the studio's step limit to
+what the run needs when that is larger: `(transient + total) / h` plus one shortened step per QR
+step for a fixed step, 100 steps per renormalization interval for an adaptive method, at most
+10⁹. It asks for nothing while there is no start point, while a setting would be refused (the
+fields say why), or in any other view, and zooming or panning the plot asks for nothing. The
+Lyapunov view asks for no portrait.
+
 `compute_orbit_diagram` takes `OrbitDiagramRequest { requestId, systemId, params, param, range:
 [lo, hi], columns, state, x0, transient, kept, doublings }` and returns `OrbitDiagramResponse {
 requestId, r, x, doublings?: { r, period }[], elapsedMs }`. That is `orbit_diagram` (above), and

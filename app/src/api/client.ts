@@ -4,10 +4,12 @@ import type {
   CompileResponse,
   ConvertRequest,
   ConvertResponse,
+  LyapunovRequest,
+  LyapunovResponse,
   PortraitRequest,
   PortraitResponse,
 } from "./types";
-import { mockCompile, mockConvert, mockPortrait } from "./mock";
+import { mockCompile, mockConvert, mockLyapunov, mockPortrait } from "./mock";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -26,12 +28,24 @@ export function computePortrait(req: PortraitRequest): Promise<PortraitResponse>
   return isTauri() ? invoke<PortraitResponse>("compute_portrait", { req }) : mockPortrait(req);
 }
 
-export interface PortraitJob<M> {
-  body: Omit<PortraitRequest, "requestId">;
+/** The Lyapunov spectrum of one orbit; see `compute_lyapunov` in docs/contracts.md. */
+export function computeLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
+  return isTauri() ? invoke<LyapunovResponse>("compute_lyapunov", { req }) : mockLyapunov(req);
+}
+
+/** A request without its `requestId`, which the scheduler numbers, and what the caller keeps with it. */
+export interface Job<B, M> {
+  body: B;
   meta: M;
 }
 
-export class PortraitScheduler<M> {
+export type PortraitJob<M> = Job<Omit<PortraitRequest, "requestId">, M>;
+
+/**
+ * One request in flight at a time, the newest state asked for next (at most
+ * one per frame), and a response older than one already delivered dropped.
+ */
+export class RequestScheduler<B, R extends { requestId: number }, M> {
   private nextId = 1;
   private newestDelivered = 0;
   private inFlight = false;
@@ -39,8 +53,9 @@ export class PortraitScheduler<M> {
   private frame = 0;
 
   constructor(
-    private readonly build: () => PortraitJob<M> | null,
-    private readonly onResult: (res: PortraitResponse, meta: M, roundTripMs: number) => void,
+    private readonly compute: (req: B & { requestId: number }) => Promise<R>,
+    private readonly build: () => Job<B, M> | null,
+    private readonly onResult: (res: R, meta: M, roundTripMs: number) => void,
     private readonly onError: (err: unknown) => void,
   ) {}
 
@@ -68,7 +83,7 @@ export class PortraitScheduler<M> {
     this.inFlight = true;
     const started = performance.now();
     try {
-      const res = await computePortrait({ ...job.body, requestId });
+      const res = await this.compute({ ...job.body, requestId });
       if (res.requestId > this.newestDelivered) {
         this.newestDelivered = res.requestId;
         this.onResult(res, job.meta, performance.now() - started);

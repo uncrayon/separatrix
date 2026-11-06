@@ -25,10 +25,20 @@ import {
   PALETTE_SIZE,
   VIEW_CHOICE_LABELS,
   VIEW_CHOICE_SHORT,
+  countText,
   isCobweb,
+  isLyapunov,
   isReturnMap,
   isSection,
   isSpace,
+  lyapunovFits,
+  lyapunovSettingsError,
+  lyapunovSolver,
+  lyapunovStart,
+  lyapunovValueText,
+  renormalizations,
+  scientificText,
+  type LyapunovSettings,
   spaceStates,
   planeSectionAvailability,
   viewChoice,
@@ -57,7 +67,7 @@ import { systemNameOf } from "./systemName";
 import { PanelSection, useSections } from "./PanelSection";
 import { focusAfterTrajectoryDelete } from "./focus";
 import { dec, startPointParts } from "./startPoint";
-import { landedOnSource, looksStiff, stopText } from "./runStatus";
+import { landedOnSource, looksStiff, STATUS_WORDS, stopText } from "./runStatus";
 import { fixedPointGlyph } from "../canvas/draw";
 import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
@@ -104,7 +114,7 @@ function optionName(latex: string): string {
   return latexToPlain(latex);
 }
 
-type SectionKey = "layers" | "axes" | "section" | "solver" | "fixedPoints" | "trajectories" | "selected";
+type SectionKey = "layers" | "axes" | "section" | "lyapunov" | "solver" | "fixedPoints" | "trajectories" | "selected";
 const SECTIONS_KEY = "separatrix.inspector.sections";
 
 export function Inspector({ state, actions }: Props) {
@@ -113,12 +123,14 @@ export function Inspector({ state, actions }: Props) {
     layers: true,
     axes: true,
     section: true,
+    lyapunov: true,
     solver: true,
     fixedPoints: true,
     trajectories: state.ics.length <= 5,
     selected: true,
   });
 
+  const lyapunov = isLyapunov(state.view);
   const sel = state.selection;
   const selKind = sel?.kind ?? null;
   const selId = sel ? (sel.kind === "ic" ? sel.id : sel.key) : null;
@@ -139,8 +151,18 @@ export function Inspector({ state, actions }: Props) {
         <p className="inspector-empty body ds-muted">Pick a template or type an equation to see its settings here.</p>
       ) : (
         <>
-          <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
+          {!lyapunov && (
+            <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
+          )}
           <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
+          {lyapunov && (
+            <LyapunovSection
+              state={state}
+              actions={actions}
+              open={open.lyapunov}
+              onToggle={(v) => setOpen("lyapunov", v)}
+            />
+          )}
           {isSection(state.view) && (
             <PoincareSection
               state={state}
@@ -149,13 +171,17 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("section", v)}
             />
           )}
-          <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
-          <FixedPointsSection
-            state={state}
-            actions={actions}
-            open={open.fixedPoints}
-            onToggle={(v) => setOpen("fixedPoints", v)}
-          />
+          {!(lyapunov && sys.kind === "map") && (
+            <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
+          )}
+          {!lyapunov && (
+            <FixedPointsSection
+              state={state}
+              actions={actions}
+              open={open.fixedPoints}
+              onToggle={(v) => setOpen("fixedPoints", v)}
+            />
+          )}
           <TrajectoriesSection
             state={state}
             actions={actions}
@@ -320,7 +346,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const named = (axis: AxisRef, step: string) =>
     isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}${step}` } : o)) : options;
   const sliceStates =
-    kind === "ode" && !section && !space
+    kind === "ode" && !section && !space && !isLyapunov(view)
       ? sys.states
           .map((s, i) => ({ s, i }))
           .filter(({ i }) => !sameAxis(view.xAxis, { kind: "state", index: i }) && !sameAxis(view.yAxis, { kind: "state", index: i }))
@@ -350,7 +376,25 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {space ? (
+      {isLyapunov(view) ? (
+        <>
+          <dl className="ds-panel-section-kv">
+            <KvRow label="Horizontal" text>
+              <span className="math">
+                <Tex latex={kind === "map" ? "n" : "t"} />
+              </span>
+            </KvRow>
+            <KvRow label="Vertical" text>
+              <span className="math">
+                <Tex latex="\lambda" />
+              </span>
+            </KvRow>
+          </dl>
+          <p className="ds-panel-section-hint caption">
+            The running estimate of each exponent as the orbit is followed; it settles as {kind === "map" ? "n" : "t"} grows.
+          </p>
+        </>
+      ) : space ? (
         <>
           <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
             {spaceStates(space).map((index, slot) => (
@@ -632,6 +676,130 @@ function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
+const LYAPUNOV_FIELDS: Record<keyof LyapunovSettings, string> = {
+  transient: "transient",
+  total: "measured span",
+  interval: "renormalization interval",
+  blocks: "blocks",
+};
+
+/** Plain-text subscripts: λ₁, x₀. */
+const sub = (n: number | string) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
+
+function LyapunovSection({ state, actions, open, onToggle }: SectionProps) {
+  const sys = state.compiled!;
+  const view = state.view;
+  if (!isLyapunov(view)) return null;
+  const map = sys.kind === "map";
+  const settings = view.lyapunov;
+  const k = renormalizations(settings, sys.kind);
+  const validate = (field: keyof LyapunovSettings) => (v: number) => {
+    const err = lyapunovSettingsError({ ...settings, [field]: v }, sys.kind);
+    if (!err) return null;
+    return err.field === field ? err.message : `Then the ${LYAPUNOV_FIELDS[err.field]}: ${err.message.toLowerCase()}`;
+  };
+  const set = (field: keyof LyapunovSettings) => (v: number) =>
+    actions.setLyapunov({ [field]: map || field === "blocks" ? Math.round(v) : v });
+  const whole = (v: number) => v.toLocaleString("en-US");
+  const run = lyapunovFits(sys, state.shapeId, state.lyapunov) ? state.lyapunov : null;
+  const res = run?.res;
+  const start = lyapunovStart(state.ics, state.selection, sys.states.length);
+  const startText = start
+    ? sys.states.length === 1
+      ? `${plainName(sys.states[0].latex)}${sub(0)} = ${dec(start.x0[0], 3)}`
+      : `(${sys.states.map((st) => plainName(st.latex) + sub(0)).join(", ")}) = (${start.x0.map((v) => dec(v, 3)).join(", ")})`
+    : null;
+  const per = map ? "per iterate" : "per unit time";
+  const traceName = map ? "⟨ln |det J|⟩" : "⟨tr J⟩";
+  const stopped = res && res.status !== "completed" ? STATUS_WORDS[res.status].words.replace(/ at$/, "") : null;
+  return (
+    <PanelSection title="Lyapunov" open={open} onToggle={onToggle}>
+      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+        <FieldRow label="Transient" tip={map ? "Iterates run before measuring" : "Time run before measuring"}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={map ? "N_0" : "T_0"} />}
+            value={settings.transient}
+            onCommit={set("transient")}
+            validate={validate("transient")}
+            format={map ? whole : undefined}
+            ariaLabel={map ? "Transient iterates before measuring" : "Transient time before measuring"}
+          />
+        </FieldRow>
+        <FieldRow label="Measured" tip={map ? "Iterates measured after the transient" : "Time measured after the transient"}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={map ? "N" : "T"} />}
+            value={settings.total}
+            onCommit={set("total")}
+            validate={validate("total")}
+            format={map ? whole : undefined}
+            digits={6}
+            ariaLabel={map ? "Iterates measured" : "Time measured"}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Renormalize"
+          tip={map ? "Iterates between QR steps" : "Time between QR steps (Gram–Schmidt renormalizations)"}
+        >
+          <NumberField
+            size="sm"
+            lead={<Tex latex={map ? "k" : "\\tau"} />}
+            value={settings.interval}
+            onCommit={set("interval")}
+            validate={validate("interval")}
+            format={map ? whole : undefined}
+            unit={map ? (settings.interval === 1 ? "iterate" : "iterates") : undefined}
+            ariaLabel={map ? "Iterates per renormalization" : "Renormalization interval tau"}
+          />
+        </FieldRow>
+        <FieldRow label="Blocks" tip="The run is split into this many blocks; ± is the spread of their estimates">
+          <NumberField
+            size="sm"
+            lead={<Tex latex="B" />}
+            value={settings.blocks}
+            onCommit={set("blocks")}
+            validate={validate("blocks")}
+            step={1}
+            steppers
+            format={whole}
+            ariaLabel="Blocks for the uncertainty"
+          />
+        </FieldRow>
+      </dl>
+      <p className="ds-panel-section-hint caption" data-lyapunov-start="">
+        {startText
+          ? `Follows ${state.selection?.kind === "ic" && start?.id === state.selection.id ? "the selected start point" : "the first start point"}, ${startText}; ${countText(k)} renormalizations.`
+          : "Add a start point to measure its spectrum."}
+      </p>
+      {res && res.exponents.length > 0 && (
+        <>
+          <h3 className="ds-panel-section-subhead label">Exponents, {per}</h3>
+          <dl className="ds-panel-section-kv lyapunov-readout" data-lyapunov-readout="">
+            {res.exponents.map((v, i) => (
+              <KvRow key={i} label={`λ${sub(i + 1)}`}>
+                {lyapunovValueText(v, res.uncertainty[i])}
+              </KvRow>
+            ))}
+            <KvRow label="Σλ">{withMinus(res.sum.toPrecision(6))}</KvRow>
+            <KvRow label={traceName}>{withMinus(res.traceAverage.toPrecision(6))}</KvRow>
+            <KvRow label="Difference">{scientificText(res.sum - res.traceAverage)}</KvRow>
+          </dl>
+          <p className="ds-panel-section-hint caption">
+            ± is the standard error over the {whole(settings.blocks)} blocks. Σλ must equal {traceName} along the orbit;
+            the difference is the integrator&apos;s error.
+          </p>
+        </>
+      )}
+      {stopped && res && (
+        <p className="ds-panel-section-hint caption" data-lyapunov-stopped="">
+          {stopped} after {whole(res.renormalizations)} of {whole(k)} renormalizations; the estimates cover those.
+        </p>
+      )}
+    </PanelSection>
+  );
+}
+
 const positive = (v: number) => (v > 0 ? null : "Must be positive");
 
 /** MAX_SAMPLES in app/src-tauri/src/service.rs: the core takes no more per trajectory. */
@@ -733,11 +901,12 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   }
   const s = state.solver;
   const adaptive = METHODS[s.method].adaptive;
-  const refusal = symplecticRefusal(sys);
+  const lyapunov = isLyapunov(state.view) ? state.view : null;
+  const refusal = lyapunov ? LYAPUNOV_METHOD_HINT : symplecticRefusal(sys);
   const methodOptions: SelectOption<Method>[] = (Object.keys(METHODS) as Method[]).map((value) => ({
     value,
     label: METHODS[value].label,
-    disabled: !methodFits(value, sys),
+    disabled: !methodFits(value, sys) || (!!lyapunov && !LYAPUNOV_METHODS.includes(value)),
   }));
   const drift = energyDrift(state);
   const stiff = portraitFits(sys, state.shapeId, state.portrait) && looksStiff(state.portrait.res, s.method);
@@ -821,7 +990,7 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
             />
           </FieldRow>
         )}
-        {timeOnAxis ? (
+        {lyapunov ? null : timeOnAxis ? (
           <KvRow label="Time span" text>
             <span data-tooltip="Trajectories cover exactly the visible time window">
               follows the <Tex latex="t" /> axis
@@ -841,19 +1010,21 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
             />
           </FieldRow>
         )}
-        <FieldRow label="Samples" tip="Samples per trajectory (0 = automatic)">
-          <NumberField
-            size="sm"
-            value={s.samples}
-            onCommit={(v) => actions.setSolver({ samples: Math.round(v) })}
-            validate={(v) =>
-              v >= 0 && v <= MAX_SAMPLES ? null : `Must be from 0 (auto) to ${MAX_SAMPLES.toLocaleString("en-US")}`
-            }
-            digits={5}
-            format={(v) => (v > 0 ? String(v) : "auto")}
-            ariaLabel="Samples per trajectory (0 = automatic)"
-          />
-        </FieldRow>
+        {!lyapunov && (
+          <FieldRow label="Samples" tip="Samples per trajectory (0 = automatic)">
+            <NumberField
+              size="sm"
+              value={s.samples}
+              onCommit={(v) => actions.setSolver({ samples: Math.round(v) })}
+              validate={(v) =>
+                v >= 0 && v <= MAX_SAMPLES ? null : `Must be from 0 (auto) to ${MAX_SAMPLES.toLocaleString("en-US")}`
+              }
+              digits={5}
+              format={(v) => (v > 0 ? String(v) : "auto")}
+              ariaLabel="Samples per trajectory (0 = automatic)"
+            />
+          </FieldRow>
+        )}
         {drift !== null && (
           <KvRow label="Energy drift" text>
             <span
@@ -865,6 +1036,13 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
           </KvRow>
         )}
       </dl>
+      {lyapunov ? (
+        <p className="ds-panel-section-hint caption">
+          The run integrates the orbit and its tangent vectors with this method. Step limit{" "}
+          {lyapunovSolver(s, lyapunov.lyapunov, sys.kind).maxSteps.toLocaleString("en-US")}, enough for the whole run.
+        </p>
+      ) : (
+      <>
       <div className="inspector-switch-row">
         <Switch
           row
@@ -881,9 +1059,16 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
           : "Also follow each start point backward in time, drawn fainter."}{" "}
         Step limit {s.maxSteps.toLocaleString("en-US")} per run.
       </p>
+      </>
+      )}
     </PanelSection>
   );
 }
+
+/** The methods `compute_lyapunov` integrates the variational equations with (service.rs refuses the others). */
+const LYAPUNOV_METHODS: readonly Method[] = ["dopri5", "rk4", "heun", "euler"];
+const LYAPUNOV_METHOD_HINT =
+  "A Lyapunov run integrates the variational equations: the explicit Runge–Kutta methods only, not the symplectic or implicit ones.";
 
 const NBSP = "\u00a0";
 

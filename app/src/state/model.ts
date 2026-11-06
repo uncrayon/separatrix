@@ -5,17 +5,26 @@ import type {
   Direction,
   FixedPointOut,
   InputFormat,
+  LyapunovRequest,
+  LyapunovResponse,
   Method,
   PortraitRequest,
   PortraitResponse,
   SectionSpec,
+  SolverOptions,
   StateInfo,
   SystemKind,
   TrajectoryRequest,
 } from "../api/types";
-import { DEFAULT_CAMERA, SECTION_MISFIT, SPACE_MISFIT } from "../api/ipc.generated.ts";
+import {
+  DEFAULT_CAMERA,
+  LYAPUNOV_MISFIT,
+  MAX_RENORMALIZATIONS,
+  SECTION_MISFIT,
+  SPACE_MISFIT,
+} from "../api/ipc.generated.ts";
 import { DEFAULT_METHOD, METHODS } from "./methods.ts";
-import type { PortraitJob } from "../api/client";
+import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
 
@@ -77,7 +86,9 @@ export function clampCamera(c: Partial<Camera>): Camera {
  * up) and whose ranges are kept at equal scales; `section` is a flow's
  * Poincaré section, its crossings plotted in two states, or as the return
  * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention);
- * `space` is the 3D view of a flow, three states in a box seen from `camera`.
+ * `space` is the 3D view of a flow, three states in a box seen from `camera`;
+ * `lyapunov` is the running estimates of the Lyapunov spectrum against t (or
+ * n), where neither axis is a state.
  */
 interface ViewBase {
   xAxis: AxisRef;
@@ -96,23 +107,50 @@ export type SpaceView = Omit<ViewBase, "xAxis" | "yAxis"> & {
   zRange: [number, number];
   camera: Camera;
 };
-export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView | SpaceView;
+export type TimeAxis = Extract<AxisRef, { kind: "time" }>;
+
+/**
+ * A Lyapunov run (Benettin's QR method, `compute_lyapunov`): `transient` time
+ * (or iterates) before measuring, `total` measured, a QR step every
+ * `interval` (τ, or iterates per step), and `blocks` for the ± spread.
+ */
+export interface LyapunovSettings {
+  transient: number;
+  total: number;
+  interval: number;
+  blocks: number;
+}
+
+/** t (or n) across and λ up: `xRange` is the t-range, `yRange` the λ-range. */
+export type LyapunovView = ViewBase & {
+  kind: "lyapunov";
+  xAxis: TimeAxis;
+  yAxis: TimeAxis;
+  lyapunov: LyapunovSettings;
+};
+export type View =
+  | (ViewBase & { kind?: "plane" })
+  | (ViewBase & { kind: "cobweb" })
+  | SectionView
+  | SpaceView
+  | LyapunovView;
 export type ViewKind = NonNullable<View["kind"]>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
 export const isSection = (v: View): v is SectionView => v.kind === "section";
 export const isSpace = (v: View): v is SpaceView => v.kind === "space";
+export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space"];
+export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov";
+export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space", "lyapunov"];
 
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
-  ode: ["phase", "series", "section", "space"],
-  map: ["phase", "series", "cobweb"],
+  ode: ["phase", "series", "section", "space", "lyapunov"],
+  map: ["phase", "series", "cobweb", "lyapunov"],
 };
 
 export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
@@ -123,6 +161,7 @@ export function viewChoice(v: View): ViewChoice {
   if (isCobweb(v)) return "cobweb";
   if (isSection(v)) return "section";
   if (isSpace(v)) return "space";
+  if (isLyapunov(v)) return "lyapunov";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
@@ -177,6 +216,7 @@ export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   cobweb: "Cobweb",
   section: "Poincaré section",
   space: "3D view",
+  lyapunov: "Lyapunov spectrum",
 };
 
 /**
@@ -190,6 +230,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   cobweb: "Cobweb",
   section: "Section",
   space: "3D",
+  lyapunov: "λ",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -203,6 +244,7 @@ export function viewChoiceAvailability(
     cobweb: cobwebAvailability(sys, name),
     section: sectionAvailability(sys, name),
     space: spaceAvailability(sys, name),
+    lyapunov: { ok: true },
   };
 }
 
@@ -330,6 +372,264 @@ export function cobwebView(range: [number, number]): View {
     xRange: [range[0], range[1]],
     yRange: [range[0], range[1]],
   };
+}
+
+/** A Lyapunov run's settings when the view first opens, for a flow (time) and a map (iterates). */
+export const LYAPUNOV_DEFAULTS: Record<SystemKind, LyapunovSettings> = {
+  ode: { transient: 100, total: 1000, interval: 0.1, blocks: 10 },
+  map: { transient: 1000, total: 100_000, interval: 1, blocks: 10 },
+};
+
+/** The Lyapunov view of a `kind` system: t from the transient to its end across, λ in [−1, 1] until the run fits it. */
+export function lyapunovView(kind: SystemKind, settings: LyapunovSettings = LYAPUNOV_DEFAULTS[kind]): LyapunovView {
+  const { transient, total } = settings;
+  return {
+    kind: "lyapunov",
+    xAxis: TIME_AXIS,
+    yAxis: TIME_AXIS,
+    xRange: [transient, transient + total],
+    yRange: [-1, 1],
+    lyapunov: { ...settings },
+  };
+}
+
+/**
+ * QR steps a run of `s` takes: total / interval, rounded up, as
+ * `validate_lyapunov` counts them (a map's iterates are whole numbers; a
+ * flow's ratio within 1e-9 of a whole number is that number).
+ */
+export function renormalizations(s: Pick<LyapunovSettings, "total" | "interval">, kind: SystemKind | undefined): number {
+  if (kind === "map") return Math.ceil(Math.round(s.total) / Math.max(1, Math.round(s.interval)));
+  const r = s.total / s.interval;
+  const k = Math.round(r);
+  return Math.abs(r - k) <= 1e-9 * Math.max(1, r) ? k : Math.ceil(r);
+}
+
+/** Why the core would refuse `s`, by field (the core's own checks); null when it runs. */
+export function lyapunovSettingsError(
+  s: LyapunovSettings,
+  kind: SystemKind | undefined,
+): { field: keyof LyapunovSettings; message: string } | null {
+  const map = kind === "map";
+  const whole = (v: number) => !map || Number.isInteger(v);
+  if (!(Number.isFinite(s.transient) && s.transient >= 0 && whole(s.transient)))
+    return { field: "transient", message: map ? "Must be a whole number, 0 or more" : "Must be 0 or more" };
+  if (!(Number.isFinite(s.total) && s.total > 0 && whole(s.total)))
+    return { field: "total", message: map ? "Must be a whole number above 0" : "Must be above 0" };
+  if (!(Number.isFinite(s.interval) && s.interval > 0 && whole(s.interval)))
+    return { field: "interval", message: map ? "Must be a whole number above 0" : "Must be above 0" };
+  const k = renormalizations(s, kind);
+  if (k > MAX_RENORMALIZATIONS)
+    return { field: "interval", message: `${k.toLocaleString("en-US")} QR steps; at most ${MAX_RENORMALIZATIONS.toLocaleString("en-US")} fit in one run` };
+  if (!(Number.isInteger(s.blocks) && s.blocks >= 2 && s.blocks <= k))
+    return { field: "blocks", message: `Must be a whole number from 2 to ${k.toLocaleString("en-US")}, the QR steps` };
+  return null;
+}
+
+/** The start point a Lyapunov run follows: the selected one, else the first that fits the system. */
+export function lyapunovStart(
+  ics: readonly InitialCondition[],
+  selection: Selection,
+  dim: number,
+): InitialCondition | null {
+  const fits = (ic: InitialCondition) => ic.x0.length === dim;
+  const picked = selection?.kind === "ic" ? ics.find((ic) => ic.id === selection.id && fits(ic)) : undefined;
+  return picked ?? ics.find(fits) ?? null;
+}
+
+/** The most steps a Lyapunov request allows: the core's step counter is a usize, the run's own length bounds it. */
+const LYAPUNOV_MAX_STEPS = 1e9;
+/** Steps an adaptive method may take per renormalization interval before a run stops at the step limit. */
+const ADAPTIVE_STEPS_PER_INTERVAL = 100;
+
+/**
+ * The integrator a Lyapunov run uses: the studio's, with a step limit that
+ * covers the whole run (the transient too, which `maxSteps` counts in the
+ * core). A fixed step needs (T₀ + T)/h steps plus one shortened step at each
+ * QR time; an adaptive method gets {@link ADAPTIVE_STEPS_PER_INTERVAL} per
+ * interval. The studio's own limit is kept when it is larger.
+ */
+export function lyapunovSolver(solver: SolverSettings, settings: LyapunovSettings, kind: SystemKind | undefined): SolverOptions {
+  const fixed = !METHODS[solver.method].adaptive;
+  const h = fixed && solver.h <= 0 ? DEFAULT_FIXED_STEP : solver.h;
+  const k = renormalizations(settings, kind);
+  const need = fixed
+    ? Math.ceil((settings.transient + settings.total) / h) + k + 2
+    : ADAPTIVE_STEPS_PER_INTERVAL * (k + 1);
+  return {
+    method: solver.method,
+    rtol: solver.rtol,
+    atol: solver.atol,
+    h,
+    maxSteps: Math.min(LYAPUNOV_MAX_STEPS, Math.max(solver.maxSteps, need)),
+  };
+}
+
+export interface LyapunovMeta {
+  /** The request without its id, as JSON: a run on hand is current when the job now has the same key. */
+  key: string;
+  systemId: number;
+  shapeId: number;
+  kind: SystemKind;
+  /** The start point followed. */
+  icId: number;
+  settings: LyapunovSettings;
+  /** The integrator, as sent (a map ignores it). */
+  solver: SolverOptions;
+}
+
+export interface LyapunovState {
+  res: LyapunovResponse;
+  meta: LyapunovMeta;
+  roundTripMs: number;
+}
+
+export type LyapunovJob = Job<Omit<LyapunovRequest, "requestId">, LyapunovMeta>;
+
+/** The `compute_lyapunov` request of the Lyapunov view, or null when there is nothing to run (or a setting the core refuses). */
+export function buildLyapunovJob(
+  s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "solver" | "shapeId"> & { selection: Selection },
+): LyapunovJob | null {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || !sys.kind || !isLyapunov(s.view)) return null;
+  const settings = s.view.lyapunov;
+  if (lyapunovSettingsError(settings, sys.kind)) return null;
+  const ic = lyapunovStart(s.ics, s.selection, sys.states.length);
+  if (!ic) return null;
+  const solver = lyapunovSolver(s.solver, settings, sys.kind);
+  const body: LyapunovJob["body"] = {
+    systemId: sys.systemId,
+    params: s.params.map((p) => p.value),
+    x0: ic.x0.slice(),
+    t0: sys.kind === "map" ? 0 : ic.t0,
+    transient: settings.transient,
+    total: settings.total,
+    interval: settings.interval,
+    blocks: settings.blocks,
+    solver,
+  };
+  return {
+    body,
+    meta: {
+      key: JSON.stringify(body),
+      systemId: sys.systemId,
+      shapeId: s.shapeId,
+      kind: sys.kind,
+      icId: ic.id,
+      settings: { ...settings },
+      solver,
+    },
+  };
+}
+
+/** The Lyapunov run on hand belongs to the system shown (the same shape, as {@link portraitFits}). */
+/** The run on hand is the one the view asks for now (not only one of the same system). */
+export function lyapunovCurrent(
+  s: Parameters<typeof buildLyapunovJob>[0] & { lyapunov: LyapunovState | null },
+): boolean {
+  const job = buildLyapunovJob(s);
+  return !!job && s.lyapunov?.meta.key === job.meta.key;
+}
+
+export function lyapunovFits(
+  sys: CompileResponse | null,
+  shapeId: number,
+  l: LyapunovState | null,
+): l is LyapunovState {
+  return !!sys && !!l && l.meta.shapeId === shapeId && l.res.exponents.length === sys.states.length;
+}
+
+/**
+ * Ranges that fit a run's running estimates: the measured t-span across, and
+ * up the estimates after the first tenth of it (the first QR steps swing
+ * widely before they settle), the final values and λ = 0.
+ */
+export function fitLyapunovRanges(res: Pick<LyapunovResponse, "historyT" | "history" | "exponents">): {
+  xRange: [number, number];
+  yRange: [number, number];
+} | null {
+  const n = res.exponents.length;
+  const m = res.historyT.length;
+  if (n === 0 || m === 0) return null;
+  const t0 = res.historyT[0];
+  const t1 = res.historyT[m - 1];
+  const settled = t0 + 0.1 * (t1 - t0);
+  let lo = 0;
+  let hi = 0;
+  const take = (v: number) => {
+    if (!Number.isFinite(v)) return;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  };
+  res.exponents.forEach(take);
+  for (let k = 0; k < m; k++) {
+    if (res.historyT[k] < settled) continue;
+    for (let i = 0; i < n; i++) take(res.history[k * n + i]);
+  }
+  const span = hi - lo || 1;
+  const xSpan = t1 - t0 || 1;
+  return {
+    xRange: [t0, t1 + 0.02 * xSpan],
+    yRange: [lo - 0.08 * span, hi + 0.14 * span],
+  };
+}
+
+const MINUS = "\u2212";
+const withRealMinus = (text: string) => (Number(text) === 0 ? text.replace(/^-/, "") : text).replace(/^-/, MINUS);
+
+/**
+ * An exponent and its standard error as printed: the error to one
+ * significant digit (two when it starts with 1) and the value to the same
+ * decimal place, `0.906 ± 0.004`; without an error, four significant
+ * digits. The numbers alone, for LaTeX's `\num{0.906 +- 0.004}` too.
+ */
+export function roundWithUncertainty(v: number, u: number | undefined): { value: string; error: string | null } {
+  if (!Number.isFinite(v)) return { value: String(v), error: null };
+  if (u === undefined || !(u > 0) || !Number.isFinite(u)) {
+    const text = Number(v.toPrecision(4)).toString();
+    return { value: text, error: null };
+  }
+  let d = -Math.floor(Math.log10(u));
+  // 0.0096 rounds up to 0.01, whose leading digit is one place up.
+  if (Math.round(u * 10 ** d) >= 10) d -= 1;
+  if (Math.round(u * 10 ** d) === 1) d += 1;
+  const places = Math.max(0, Math.min(20, d));
+  return { value: v.toFixed(places), error: u.toFixed(places) };
+}
+
+/** `λ₁ = 0.906 ± 0.004`'s numbers with real minus signs: `0.906 ± 0.004`. */
+export function lyapunovValueText(v: number, u: number | undefined): string {
+  const r = roundWithUncertainty(v, u);
+  return r.error === null ? withRealMinus(r.value) : `${withRealMinus(r.value)} ± ${r.error}`;
+}
+
+const SUPERSCRIPTS: Record<string, string> = {
+  "-": "⁻",
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+};
+const superscript = (e: number) => String(e).replace(/./g, (c) => SUPERSCRIPTS[c] ?? c);
+
+/** A count as prose: `10⁵` for a power of ten from 1,000 up, else `12,500`. */
+export function countText(n: number): string {
+  const e = Math.round(Math.log10(n));
+  return n >= 1000 && 10 ** e === n ? `10${superscript(e)}` : n.toLocaleString("en-US");
+}
+
+/** A small number in prose, to two significant digits: `1.0 × 10⁻⁴` (and `0` for zero). */
+export function scientificText(v: number): string {
+  if (v === 0) return "0";
+  if (!Number.isFinite(v)) return String(v);
+  const [m, e] = v.toExponential(1).split("e");
+  return `${withRealMinus(m)} × 10${superscript(Number(e))}`;
 }
 
 export interface Layers {
@@ -665,7 +965,7 @@ export const DEFAULT_SOLVER: SolverSettings = {
 
 export const DEFAULT_FIXED_STEP = 0.01;
 
-export const TIME_AXIS: AxisRef = { kind: "time" };
+export const TIME_AXIS: TimeAxis = { kind: "time" };
 export const stateAxis = (index: number): StateAxis => ({ kind: "state", index });
 
 /**
@@ -684,7 +984,7 @@ export function seriesRange(
 
 /** `v` with the range of its time axes moved by `dt` (the transient changed by `dt`); `v` itself when it has none. */
 export function shiftTimeAxes(v: View, dt: number): View {
-  if (dt === 0 || isCobweb(v)) return v;
+  if (dt === 0 || isCobweb(v) || isLyapunov(v)) return v;
   const shift = (r: [number, number]): [number, number] => [r[0] + dt, r[1] + dt];
   const x = v.xAxis.kind === "time";
   const y = v.yAxis.kind === "time";
@@ -833,6 +1133,7 @@ export function adaptView(
   newStates: StateInfo[],
   next?: Pick<CompileResponse, "kind" | "autonomous">,
 ): View | null {
+  if (isLyapunov(view)) return view;
   if (isCobweb(view)) {
     // A cobweb stays while the system is still a one-dimensional autonomous map.
     const ok = newStates.length === 1 && (!next || cobwebAvailability({ ...next, states: newStates }).ok);
@@ -994,7 +1295,7 @@ export function hasNullclineLayer(kind: SystemKind | undefined): boolean {
 
 export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> | null {
   const sys = s.compiled;
-  if (!sys || !sys.ok || sys.systemId === undefined) return null;
+  if (!sys || !sys.ok || sys.systemId === undefined || isLyapunov(s.view)) return null;
   const dim = sys.states.length;
   const isOde = sys.kind !== "map";
   const trajectories: TrajectoryRequest[] = [];
@@ -1101,7 +1402,7 @@ export function liftPlotPoint(
   return { x0, t0 };
 }
 
-export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view);
+export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view) && !isLyapunov(view);
 
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
@@ -1151,6 +1452,7 @@ export function switchView(
     return sectionView(sys, defaultSection(sys, (r0[0] + r0[1]) / 2), rangeOf);
   }
   if (choice === "space") return spaceView([0, 1, 2], fromExtent);
+  if (choice === "lyapunov") return lyapunovView(sys.kind ?? "ode");
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -1225,7 +1527,7 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section" || v.kind === "space") return null;
+  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov") return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1290,9 +1592,27 @@ function loadSpaceView(v: LoadedView, sys: CompileResponse): SpaceView | string 
   return spaceView(idx as [number, number, number], (i) => ranges[idx.indexOf(i)]!, clampCamera(v.camera ?? {}));
 }
 
+/** A saved Lyapunov view: t (or n) across and the exponent up, with settings the core runs. */
+function loadLyapunovView(v: LoadedView, sys: CompileResponse): LyapunovView | string {
+  const l = v.lyapunov;
+  const kind = sys.kind ?? "ode";
+  const settings: LyapunovSettings | null =
+    l && [l.transient, l.total, l.interval, l.blocks].every((x) => x !== undefined)
+      ? { transient: l.transient!, total: l.total!, interval: l.interval!, blocks: l.blocks! }
+      : null;
+  if (!settings || lyapunovSettingsError(settings, kind) || v.xAxis.kind !== "time" || v.yAxis.kind !== "exponent")
+    return LYAPUNOV_MISFIT;
+  if (!v.xRange || !v.yRange) return VIEW_WARNING;
+  return { ...lyapunovView(kind, settings), xRange: [v.xRange[0], v.xRange[1]], yRange: [v.yRange[0], v.yRange[1]] };
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
+  if (v?.kind === "lyapunov") {
+    const fit = loadLyapunovView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
   if (v?.kind === "section") {
     const fit = loadSectionView(v, sys);
     return typeof fit === "string" ? null : fit;
@@ -1356,6 +1676,7 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
     view = defaultView(sys, solver);
     if (load.view?.kind === "section") warnings.push(loadSectionView(load.view, sys) as string);
     else if (load.view?.kind === "space") warnings.push(loadSpaceView(load.view, sys) as string);
+    else if (load.view?.kind === "lyapunov") warnings.push(loadLyapunovView(load.view, sys) as string);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
   const slice = load.view?.slice ?? {};

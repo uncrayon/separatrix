@@ -83,13 +83,14 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section or a 3D view, after `id`. |
+| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` \| `"lyapunov"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section, a 3D or a Lyapunov view, after `id`. |
 | `section` | object | Only in a `"section"` view, after `kind`: the Poincaré section (below). |
 | `z_axis` | `{ "kind": "state", "name": "z" }` | Only in a `"space"` view, after `y_axis`: the third state of the 3D view. |
-| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` | Axes are stored by state name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. |
+| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` \| `{ "kind": "exponent" }` | Axes are stored by state name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. `exponent` is λ, the `y_axis` of a Lyapunov view, whose `x_axis` is time. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
 | `z_range` | `[lo, hi]` | Only in a `"space"` view, after `y_range`: the range of `z_axis`. |
 | `camera` | `{ "yaw": number, "pitch": number, "zoom": number }` | Only in a `"space"` view, after `z_range`: where the box is seen from (below). |
+| `lyapunov` | `{ "transient", "total", "interval", "blocks" }` | Only in a `"lyapunov"` view, after the ranges: the run whose running estimates it shows (below). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
 
@@ -148,6 +149,37 @@ A missing camera key takes its default (`yaw = −π/4`, `pitch = π/6` as `Math
 it, `zoom = 1`); the app clamps `pitch` to ±(π/2 − 0.01) and `zoom` to 0.25–8 when it opens the
 file. Unknown keys inside `camera` are kept.
 
+A Lyapunov view (Strogatz §9.3, §10.5) of the Lorenz equations: the running estimates of λ₁, λ₂
+and λ₃ against `t`, measured over `T = 10⁴` after a transient of 100 with a Gram–Schmidt
+renormalization every `τ = 0.1` (`crates/project/tests/fixtures/lyapunov-view.sepx`, which also
+sets `solver.method` to `"rk4"` with `h = 0.01`):
+
+```json
+{
+  "id": "main",
+  "kind": "lyapunov",
+  "x_axis": { "kind": "time" },
+  "y_axis": { "kind": "exponent" },
+  "x_range": [100.0, 10300.0],
+  "y_range": [-16.0, 2.0],
+  "lyapunov": { "transient": 100.0, "total": 10000.0, "interval": 0.1, "blocks": 10 },
+  "…": "slice and layers as in any view; a Lyapunov view draws neither"
+}
+```
+
+| `lyapunov` key | Type | Meaning |
+|---|---|---|
+| `transient` | number ≥ 0 | Time (flow) or iterates (map) run before measuring. |
+| `total` | number > 0 | Time or iterates measured after the transient. |
+| `interval` | number > 0 | Flow: `τ`, the time between QR steps. Map: iterates per QR step. |
+| `blocks` | integer ≥ 2 | The run is split into this many blocks; ± is the standard error of their estimates. At most the number of QR steps, `total / interval` rounded up. |
+
+A map's `transient`, `total` and `interval` are whole numbers. The run follows the selected start
+point, else the first, and integrates with `solver`'s method and step: the explicit methods only
+(`euler`, `heun`, `rk4`, `dopri5`; the core refuses the symplectic and implicit ones). The ranges
+are the user's; the app fits them to each new run, which leaves a clean document clean. Unknown
+keys inside `lyapunov` are kept.
+
 | `section` key | Type | Meaning |
 |---|---|---|
 | `kind` | `"plane"` \| `"stroboscopic"` | A plane `x_i = c`, or the state once per forcing period. |
@@ -179,6 +211,13 @@ the default view is shown.", shows its default view and keeps `kind`, `z_axis`, 
 `camera` as unknown keys (written back after the known keys, so not byte for byte). Its studio
 drops `kind` when it saves from its default view; this build then reads the plane view the
 `x_axis` and `y_axis` say and drops the stale z keys and camera on its next save.
+
+`lyapunov` and the axis kind `exponent` are additive in the same way, so `format_version` and
+`min_reader_version` stay 1. The 0.2.0 reader that knows 3D views (trunk before Lyapunov views)
+opens a Lyapunov view with its view-kind warning, "The saved cobweb view doesn't fit this system,
+so the default view is shown.", shows its default view and keeps `kind` and `lyapunov` as unknown
+keys. Its studio drops `kind` when it saves from its default view and writes its own axes; this
+build reads the plane view those axes say and drops the stale `lyapunov` on its next save.
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -266,6 +305,7 @@ Everything else is repaired on open, with one warning per repair:
 | A primary `"section"` plane through a state the system doesn't have | "The section of the view “main” holds the state w fixed, which the system doesn't have, so the default view is used." |
 | Any other section that doesn't fit: no `section`, a map, a plane of a one-state system, no `value`, an unknown `direction`, a `period` that isn't above 0, or axes other than two states or a state and its `next` | "The saved Poincaré section doesn't fit this system, so the default view is shown." The app gives the same sentences when the compiled system can't take the section. The view is kept as written. |
 | A primary `"space"` view of a map or of a system with fewer than 3 states, with no `z_axis` or `z_range`, or whose three axes are not three different states | "The saved 3D view doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `z_axis` naming a state the system lacks, or an empty `z_range`, gets the axis and range warnings of `x` and `y` (with "z"). The view is kept as written. |
+| A primary `"lyapunov"` view with no `lyapunov` or a key of it missing, axes other than `time` across and `exponent` up, a negative `transient`, a `total` or `interval` that isn't above 0 (or isn't a whole number for a map), or `blocks` outside 2 to the number of QR steps | "The saved Lyapunov view can't be run as saved, so the default view is shown." The app gives the same sentence when it judges the run itself, and also when the run would take more than 10⁷ QR steps. An `exponent` axis outside a Lyapunov view is an axis kind the view doesn't know. The view is kept as written. |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |

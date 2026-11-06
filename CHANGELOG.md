@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- The Lyapunov view (Strogatz §9.3, §10.5): a new choice of the View control, λ, for flows and
+  maps. It runs `compute_lyapunov` on the selected start point (else the first) with the studio's
+  solver and plots the running estimate of each exponent against `t` (or `n`) in its trajectory
+  colour, its final value dashed and λ₁ … λₙ beside it, fitted to each run and zoomed and panned
+  like the phase plane. The inspector's Lyapunov panel sets the transient, the time (or iterates)
+  measured, the renormalization interval τ and the blocks, and reads out `λ₁ = 0.906 ± 0.004`,
+  `Σλ`, `⟨tr J⟩` (a map's `⟨ln |det J|⟩`) and their difference. The status bar reads
+  `10⁵ renormalizations · RK4 · h 0.01`. The method picker disables the methods the core can't
+  use for the variational equations, and the step limit is raised to cover the whole run.
+  Projects save the view as kind `"lyapunov"` with a `lyapunov` object and the axis kind
+  `exponent` (format version 1, additive). The browser preview computes the spectrum in
+  JavaScript (RK4 and Gram–Schmidt). The View control's segments now take their labels' widths,
+  so five fit at 1,024 px.
 - Rosenbrock 2(3) for stiff systems: the L-stable implicit method of MATLAB's `ode23s`, adaptive,
   with the exact Jacobian and its own dense output, so sampling and Poincaré sections work.
   Dormand–Prince now runs Hairer's stiffness test. When its steps are held back by stability

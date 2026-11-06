@@ -720,8 +720,9 @@ id: string,
  * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
  * for a Poincaré section of a flow (see `section`); `"space"` for a 3D
  * view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
- * `camera`); absent for the phase plane and the time series, which the
- * axes tell apart.
+ * `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
+ * (see `lyapunov`); absent for the phase plane and the time series,
+ * which the axes tell apart.
  */
 kind?: string, 
 /**
@@ -746,7 +747,13 @@ z_range?: [number, number],
 /**
  * Where a `"space"` view is seen from.
  */
-camera?: ProjectCamera, slice: ProjectSlice, layers: ProjectLayers, };
+camera?: ProjectCamera, 
+/**
+ * The run of a `"lyapunov"` view (the running estimates of the
+ * Lyapunov spectrum: `x_axis` is time, `y_axis` is
+ * `{ "kind": "exponent" }`).
+ */
+lyapunov?: ProjectLyapunov, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -759,6 +766,8 @@ state?: string, value?: number,
 direction?: string, period?: number, phase?: number, };
 
 export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
+
+export type ProjectLyapunov = { transient?: number, total?: number, interval?: number, blocks?: number, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -1148,6 +1157,8 @@ export const MAX_ORBIT_POINTS = 4000000;
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 
 export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+export const LYAPUNOV_MISFIT = "The saved Lyapunov view can't be run as saved, so the default view is shown.";
 
 export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 

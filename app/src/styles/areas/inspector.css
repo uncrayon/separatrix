@@ -34,6 +34,11 @@
   margin-bottom: var(--space-2);
 }
 
+/* Five or more views share the row: each segment grows from its label's width, so "Section" fits beside "3D" and "λ". */
+.inspector .inspector-view-control .ds-segmented--fill .ds-segmented-item {
+  flex: 1 1 auto;
+}
+
 .inspector .nowrap {
   white-space: nowrap;
 }

@@ -561,8 +561,9 @@ pub struct OrbitDiagramResponse {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
-    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem,
+    ProjectView,
 };
 
 /// Request of `project_read`.
@@ -999,6 +1000,7 @@ mod bindings {
             ProjectView::decl(&cfg),
             ProjectSection::decl(&cfg),
             ProjectCamera::decl(&cfg),
+            ProjectLyapunov::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -1052,6 +1054,7 @@ mod bindings {
             ("MAX_ORBIT_POINTS", MAX_ORBIT_POINTS.to_string()),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
+            ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),
             (
                 "SPACE_LATEX_REFUSAL",
                 text(crate::export_service::SPACE_LATEX_REFUSAL),

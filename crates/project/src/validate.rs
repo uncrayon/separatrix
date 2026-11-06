@@ -3,11 +3,12 @@
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
 //! solver settings (the transient too), the field grid, `x0` lengths. View
-//! ranges, axes and a cobweb, section or 3D view that doesn't fit the system
-//! are only reported: the UI falls back to the default view for a primary
-//! view whose range isn't usable (see [`range_ok`]), whose cobweb axes are
-//! wrong (see [`cobweb_axes_ok`]), whose section doesn't fit (see
-//! [`section_misfit`]) or whose 3D axes don't (see [`space_misfit`]).
+//! ranges, axes and a cobweb, section, 3D or Lyapunov view that doesn't fit
+//! the system are only reported: the UI falls back to the default view for a
+//! primary view whose range isn't usable (see [`range_ok`]), whose cobweb
+//! axes are wrong (see [`cobweb_axes_ok`]), whose section doesn't fit (see
+//! [`section_misfit`]), whose 3D axes don't (see [`space_misfit`]) or whose
+//! Lyapunov run can't be run (see [`lyapunov_misfit`]).
 
 use std::collections::HashSet;
 
@@ -122,6 +123,57 @@ pub fn space_misfit(view: &ProjectView, kind: &str, states: &[String]) -> Option
     let three = states.is_empty() || states.len() >= 3;
     if kind == "map" || !three || !distinct || view.z_range.is_none() {
         return Some(SPACE_MISFIT.to_string());
+    }
+    None
+}
+
+/// The view kind of the Lyapunov spectrum's running estimates.
+pub const LYAPUNOV: &str = "lyapunov";
+/// The warning for a saved Lyapunov view the app can't run (the app gives
+/// the same one when it judges the run itself).
+pub const LYAPUNOV_MISFIT: &str =
+    "The saved Lyapunov view can't be run as saved, so the default view is shown.";
+
+/// Why the Lyapunov view `view` can't be run for a system of `kind` (empty
+/// when not known until the app compiles), or `None` when it can: the axes
+/// must be time across and `{ "kind": "exponent" }` up, the transient 0 or
+/// more, the total and interval above 0 (whole numbers for a map), and
+/// `blocks` from 2 to the number of QR steps, total / interval rounded up.
+/// The app also refuses more QR steps than the core takes in one run.
+pub fn lyapunov_misfit(view: &ProjectView, kind: &str) -> Option<String> {
+    let misfit = || Some(LYAPUNOV_MISFIT.to_string());
+    let Some(l) = &view.lyapunov else {
+        return misfit();
+    };
+    let (Some(transient), Some(total), Some(interval), Some(blocks)) =
+        (l.transient, l.total, l.interval, l.blocks)
+    else {
+        return misfit();
+    };
+    let map = kind == "map";
+    let whole = |v: f64| !map || v.fract() == 0.0;
+    let ok = view.x_axis.kind == "time"
+        && view.y_axis.kind == "exponent"
+        && transient.is_finite()
+        && transient >= 0.0
+        && whole(transient)
+        && total.is_finite()
+        && total > 0.0
+        && whole(total)
+        && interval.is_finite()
+        && interval > 0.0
+        && whole(interval);
+    if !ok {
+        return misfit();
+    }
+    let ratio = total / interval;
+    let steps = if (ratio - ratio.round()).abs() <= 1e-9 * ratio.max(1.0) {
+        ratio.round()
+    } else {
+        ratio.ceil()
+    };
+    if blocks < 2 || f64::from(blocks) > steps {
+        return misfit();
     }
     None
 }
@@ -253,8 +305,16 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 continue;
             }
         }
+        let lyapunov = kind == Some(LYAPUNOV);
+        if lyapunov {
+            if let Some(w) = lyapunov_misfit(view, &p.system.kind) {
+                warnings.push(w);
+                continue;
+            }
+        }
         let cobweb = !section
             && !space
+            && !lyapunov
             && (kind.is_some_and(|k| k != "plane")
                 || [&view.x_axis, &view.y_axis]
                     .iter()
@@ -288,6 +348,7 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 "time" => true,
                 // Checked above, with the view's kind.
                 "next" if cobweb || section => true,
+                "exponent" if lyapunov => true,
                 "state" => axis
                     .name
                     .as_ref()
