@@ -35,7 +35,9 @@
       "icons/icon.ico"
     ],
     "category": "Education",
+    "publisher": "Ulises Rayón",
     "shortDescription": "Explore dynamical systems: phase portraits, chaos and bifurcations",
+    "longDescription": "Separatrix draws phase portraits, time series, cobweb plots, Poincaré sections, Lyapunov exponents, orbit diagrams and bifurcation branches for differential equations and maps, for teaching and studying nonlinear dynamics.",
     "fileAssociations": [
       {
         "ext": ["sepx"],
