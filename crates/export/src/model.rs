@@ -488,11 +488,15 @@ pub struct ContinuationRun {
     pub branches: Vec<BranchRun>,
 }
 
+/// Two special points of the same kind and period are one bifurcation when
+/// their parameters are within `SAME_BIFURCATION_TOL · (1 + |p|)`.
+pub const SAME_BIFURCATION_TOL: f64 = 1e-7;
+
 impl ContinuationRun {
     /// Every special point once, in increasing parameter: both halves of a
     /// switched cycle, and two branches that cross, report the same one
-    /// (same kind and period, parameters within `1e-7·(1 + |p|)`), as the
-    /// inspector lists them. Each comes with its branch's index and period.
+    /// (same kind and period, parameters within
+    /// [`SAME_BIFURCATION_TOL`]` · (1 + |p|)`), as the inspector lists them. Each comes with its branch's index and period.
     pub fn special_points(&self) -> Vec<(usize, usize, &SpecialRow)> {
         let mut rows: Vec<(usize, usize, &SpecialRow)> = Vec::new();
         for (b, br) in self.branches.iter().enumerate() {
@@ -500,7 +504,7 @@ impl ContinuationRun {
                 let same = rows.iter().any(|(_, k, r)| {
                     r.kind == sp.kind
                         && *k == br.period
-                        && (r.p - sp.p).abs() <= 1e-7 * (1.0 + sp.p.abs())
+                        && (r.p - sp.p).abs() <= SAME_BIFURCATION_TOL * (1.0 + sp.p.abs())
                 });
                 if !same {
                     rows.push((b, br.period, sp));

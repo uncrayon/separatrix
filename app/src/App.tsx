@@ -146,7 +146,6 @@ export default function App() {
   const save = useCallback(() => void doc.save(), [doc.save]);
   const saveAs = useCallback(() => void doc.saveAs(), [doc.saveAs]);
 
-  // The export dialog has no branch plot yet.
   const canExport = state.compiled !== null;
   useShortcuts(
     {
@@ -199,6 +198,7 @@ export default function App() {
             ) : (
               <PortraitCanvas
                 state={state}
+                view={state.view}
                 actions={actions}
                 theme={theme}
                 toolbar={<CanvasToolbar state={state} actions={actions} />}

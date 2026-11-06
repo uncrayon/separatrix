@@ -59,7 +59,6 @@ export type LoadedAxis =
   | { kind: "norm" }
   | { kind: "unknown"; kindName: string };
 
-/** A saved seed of a continuation view, every key as read (checked against the system by the studio). */
 export interface LoadedSeed {
   from?: string;
   x?: number[];
@@ -223,11 +222,6 @@ function sectionOut(prev: ProjectSection | undefined, s: SectionSpec, states: re
 
 const SEED_FROMS: readonly string[] = ["point", "switch"] satisfies ContinuationSeed["from"][];
 
-/**
- * The seeds as saved: each merged onto the saved seed it was read from (the
- * known ones, in order), then any saved seed this version can't replay, kept
- * as read so a newer file loses nothing.
- */
 function continuationOut(prev: ProjectContinuation | undefined, c: ContinuationSettings): ProjectContinuation {
   const saved = isObj(prev) && Array.isArray(prev.seeds) ? prev.seeds : [];
   const known = saved.filter((p) => isObj(p) && SEED_FROMS.includes(String(p.from)));

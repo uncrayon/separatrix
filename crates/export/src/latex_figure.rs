@@ -312,7 +312,7 @@ const TICK_LEN: f64 = 4.0;
 /// Space between a tick and its label (px).
 const TICK_LABEL_PAD: f64 = 3.0;
 /// Halo radius of a fixed point (px).
-const FP_HALO_R: f64 = 7.5;
+pub(crate) const FP_HALO_R: f64 = 7.5;
 /// Height of a tick label (px): `\footnotesize` in a 10 pt document.
 const LABEL_HEIGHT_PX: f64 = 8.0 * 96.0 / 72.27;
 

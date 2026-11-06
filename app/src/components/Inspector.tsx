@@ -422,6 +422,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
         <SegmentedControl
           size="sm"
           fill
+          columns={3}
           ariaLabel="View"
           value={viewChoice(shown)}
           options={viewOptions}
@@ -911,7 +912,6 @@ const BRANCH_STOPS: Record<BranchStop, string> = {
   stepTooSmall: "a step too small to go on",
 };
 
-/** "(x, y) = (0.3464, 1.7321)", or "x = 0.6667" for one state. */
 function stateText(names: readonly string[], x: readonly number[]): string {
   return names.length === 1 ? `${names[0]} = ${dec(x[0], 4)}` : `(${names.join(", ")}) = (${x.map((v) => dec(v, 4)).join(", ")})`;
 }

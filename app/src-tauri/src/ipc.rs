@@ -1475,6 +1475,10 @@ mod bindings {
                 "MAX_CONTINUATION_POINTS",
                 MAX_CONTINUATION_POINTS.to_string(),
             ),
+            (
+                "SAME_BIFURCATION_TOL",
+                format!("{:e}", separatrix_export::model::SAME_BIFURCATION_TOL),
+            ),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),

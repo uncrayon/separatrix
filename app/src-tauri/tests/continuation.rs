@@ -1,35 +1,3 @@
-//! The continuation gate: every bifurcation value below is derived in
-//! closed form, and `compute_continuation` must reproduce it.
-//!
-//! - Saddle-node `ẋ = r + x²`, transcritical `ẋ = rx − x²` and pitchfork
-//!   `ẋ = rx − x³` bifurcate at `r = 0` (Strogatz §3.1–3.4).
-//! - The Hopf normal form `ẋ = μx − y ∓ x(x² + y²)`, `ẏ = x + μy ∓ y(x² + y²)`
-//!   has its Hopf point at `μ = 0` with `ω = 1` and, in polar form,
-//!   `ṙ = μr ∓ r³`, so `ℓ₁ = ∓1` (Strogatz §8.2; Kuznetsov, *Elements of
-//!   Applied Bifurcation Theory*, §3.5).
-//! - `ẋ = y, ẏ = x + μy` has eigenvalues `λ₁ + λ₂ = μ`, `λ₁λ₂ = −1`: a
-//!   neutral saddle at `μ = 0`, not a Hopf point.
-//! - Sel'kov's glycolysis model (Strogatz §7.3) at `a = 0.08` loses and
-//!   regains stability where `b² = (1 − 2a ± √(1 − 8a))/2`, that is
-//!   `b = √0.12` and `b = √0.72`, with `ω² = det J = a + b²`.
-//! - The Brusselator `ẋ = a − (b + 1)x + x²y, ẏ = bx − x²y` (Strogatz
-//!   exercise 7.3.2) has `tr J = b − 1 − a²` and `det J = a²` at `(a, b/a)`.
-//! - The logistic map's fixed point `1 − 1/r` has multiplier `2 − r`: a
-//!   flip at `r1 = 3` (Strogatz §10.3).
-//! - Hénon's map at `b = 0.3` has fixed points where
-//!   `a x² + (1 − b)x − 1 = 0`: they are born at `a0 = −(1 − b)²/4` and the
-//!   upper one flips at `a1 = 3(1 − b)²/4` (Strogatz exercise 12.2.6).
-//! - The delayed logistic map `x ↦ r x (1 − y), y ↦ x` has multipliers with
-//!   `μ² − μ + (r − 1) = 0` at `x = y = 1 − 1/r`: `|μ|² = r − 1`, so a
-//!   Neimark–Sacker point at `r = 2` with `μ = e^{±iπ/3}`.
-//! - Switching at the pitchfork's branch point gives `r = x²` on both sides,
-//!   and at the transcritical's gives `x = r`.
-//! - Switching at each flip of the logistic map onto the doubled cycle
-//!   gives the cascade `r2 = 1 + √6` (Strogatz §10.3), `r3 = 3.544090360`
-//!   and `r4 = 3.564407266` (the milestone's values; Strogatz Table 10.2.1
-//!   gives them to fewer digits), and `r1 … r4` agree with M3's
-//!   `period_doublings` on the chaos gate's 2,000-column orbit diagram.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -62,8 +30,6 @@ struct Run {
 
 enum Start {
     Point(&'static [f64]),
-    /// At the first special point of `kind` on `parent`, which has the same
-    /// system and parameters.
     Switch {
         parent: &'static Run,
         kind: SpecialKindOut,
@@ -169,8 +135,6 @@ const LOGISTIC: Run = Run {
 
 const HENON_B: f64 = 0.3;
 
-/// From the upper fixed point at `a = 0.2`, both ways: back to the fold and
-/// round it onto the lower fixed point, and forward to the flip.
 const HENON: Run = Run {
     label: "Hénon map, both directions",
     source: Source::Template("henon-map"),
@@ -202,7 +166,6 @@ const TRANSCRITICAL_SWITCH: Run = Run {
     ..TRANSCRITICAL
 };
 
-/// The logistic map's fixed point over the chaos gate's diagram range.
 const CASCADE_1: Run = Run {
     label: "logistic map, period 1, r ∈ [2.8, 3.57]",
     params: &[("r", 2.8)],
@@ -238,7 +201,6 @@ const CASCADE_8: Run = Run {
     ..CASCADE_1
 };
 
-/// The branches whose first flips are `r1, …, r4`.
 const CASCADE: [&Run; 4] = [&CASCADE_1, &CASCADE_2, &CASCADE_4, &CASCADE_8];
 
 const DELAYED_LOGISTIC: Run = Run {
@@ -252,23 +214,15 @@ const DELAYED_LOGISTIC: Run = Run {
 };
 
 enum Measure {
-    /// The parameter at the `nth` special point of a kind.
     P(SpecialKindOut, usize),
-    /// Its `omega`: `ω` of a Hopf point, `θ` of a Neimark–Sacker point.
     Omega(SpecialKindOut, usize),
-    /// `ℓ₁` of the `nth` Hopf point.
     Lyapunov(usize),
-    /// How many special points of a kind the branch has.
     Count(SpecialKindOut),
-    /// The largest `|x|` over the branch.
     MaxAbsX,
-    /// The largest `|residual(x, p)|` over a one-dimensional branch; `NaN`
-    /// when `both_signs` and `x` doesn't take both signs.
     MaxResidual {
         residual: fn(f64, f64) -> f64,
         both_signs: bool,
     },
-    /// The largest `|r_k − period_doublings r_k|` over the [`CASCADE`].
     CascadeAgreement,
 }
 
@@ -646,7 +600,6 @@ fn measure(check: &Check) -> f64 {
     }
 }
 
-/// `r1, …, r4`, each the first flip on its branch of the [`CASCADE`].
 fn cascade() -> Vec<f64> {
     CASCADE
         .iter()
@@ -660,9 +613,6 @@ fn cascade() -> Vec<f64> {
         .collect()
 }
 
-/// `r1, …, r4` from M3's orbit diagram, exactly as the chaos gate asks
-/// for it: `r ∈ [2.8, 3.57]`, 2,000 columns from `x0 = 0.1`, 2,000
-/// transient iterates and 64 kept; `NaN` for a doubling it didn't find.
 fn period_doublings() -> Vec<f64> {
     let res = service::compile_system(
         store(),

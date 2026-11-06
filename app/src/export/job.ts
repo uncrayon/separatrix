@@ -212,11 +212,6 @@ export function buildLyapunovExport(
   return job && { run: { ...job.body, requestId: 0 }, ...source };
 }
 
-/**
- * The branch plot's requests, one per branch it shows, with their colors
- * (the core follows them again for the LaTeX and the CSV); null outside a
- * branch plot.
- */
 export function buildContinuationExport(
   s: Parameters<typeof buildContinuationJobs>[0],
   source: ExportSource,

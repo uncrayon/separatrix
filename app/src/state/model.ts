@@ -35,6 +35,7 @@ import {
   ORBIT_MAX_KEPT,
   ORBIT_MAX_TRANSIENT,
   ORBIT_MISFIT,
+  SAME_BIFURCATION_TOL,
   SECTION_MISFIT,
   SPACE_MISFIT,
 } from "../api/ipc.generated.ts";
@@ -148,14 +149,8 @@ export type OrbitView = ViewBase & {
   param: number;
   orbit: OrbitSettings;
 };
-/** ‖x‖₂, the vertical measure of a branch plot that shows no single state. */
 export type NormAxis = { kind: "norm" };
 
-/**
- * Where a branch of a continuation view starts: a fixed point (of `f^k` for
- * a map), which the core corrects first, or a switch onto the second branch
- * at a branch point or a flip.
- */
 export type ContinuationSeed =
   | { from: "point"; x: number[]; param: number; period: number; direction: ContinuationDirection }
   | { from: "switch"; at: SpecialPointOut; direction: ContinuationDirection };
@@ -184,7 +179,6 @@ export type View =
   | OrbitView
   | ContinuationView;
 export type ViewKind = NonNullable<View["kind"]>;
-/** A view whose two axes are a state or time: every view but the branch plot. */
 export type PlotView = Exclude<View, ContinuationView>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
@@ -828,12 +822,6 @@ export function doublingRows(
 
 const subscriptDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
 
-/**
- * Each kind of special point on a branch: its label on the plot and in the
- * inspector (Strogatz's and the standard abbreviations), its full name, the
- * symbol of `SpecialPointOut::omega` when the kind has one, and whether the
- * core can switch onto the second branch there.
- */
 export interface SpecialKindInfo {
   label: string;
   name: string;
@@ -852,10 +840,8 @@ export const SPECIAL_KINDS: Record<SpecialKindOut, SpecialKindInfo> = {
 export const CONTINUATION_MAX_POINTS = 500;
 export { MAX_CONTINUATION_POINTS };
 
-/** The default first step: a hundredth of the range, to one significant digit. */
 export const continuationStep = ([lo, hi]: readonly [number, number]): number => Number(((hi - lo) / 100).toPrecision(1));
 
-/** The plot's horizontal range for a continuation range: 4 % of it on either side. */
 export function continuationXRange([lo, hi]: readonly [number, number]): [number, number] {
   const pad = 0.04 * (hi - lo);
   return [lo - pad, hi + pad];
@@ -892,7 +878,6 @@ export function continuationSettingsError(
   return null;
 }
 
-/** A point seed, or a switch at `at`: the whole second branch, followed both ways. */
 export const pointSeed = (x: readonly number[], param: number, direction: ContinuationDirection): ContinuationSeed => ({
   from: "point",
   x: x.slice(),
@@ -902,7 +887,6 @@ export const pointSeed = (x: readonly number[], param: number, direction: Contin
 });
 export const switchSeed = (at: SpecialPointOut): ContinuationSeed => ({ from: "switch", at, direction: "both" });
 
-/** `seeds` with `seed` appended, unless an equal one is there already. */
 export function withSeed(seeds: readonly ContinuationSeed[], seed: ContinuationSeed): ContinuationSeed[] {
   const key = JSON.stringify(seed);
   return seeds.some((s) => JSON.stringify(s) === key) ? seeds.slice() : [...seeds, seed];
@@ -911,7 +895,6 @@ export function withSeed(seeds: readonly ContinuationSeed[], seed: ContinuationS
 export interface ContinuationMeta {
   key: string;
   systemId: number;
-  /** The seed's position in the view's `continuation.seeds`. */
   seed: number;
 }
 
@@ -919,11 +902,6 @@ export type ContinuationJob = Job<Omit<ContinuationRequest, "requestId">, Contin
 
 export type BranchRun = { ok: true; res: ContinuationResponse; roundTripMs: number } | { ok: false; error: string };
 
-/**
- * The requests of a continuation view, one per seed that fits the system.
- * Every parameter but the swept one comes from its slider; the swept one is
- * the seed's own, so moving its slider asks for nothing.
- */
 export function buildContinuationJobs(s: Pick<StudioSnapshot, "compiled" | "params" | "view">): ContinuationJob[] {
   const sys = s.compiled;
   if (!sys || !sys.ok || sys.systemId === undefined || !isContinuation(s.view) || !continuationAvailability(sys).ok)
@@ -954,27 +932,21 @@ export function buildContinuationJobs(s: Pick<StudioSnapshot, "compiled" | "para
   });
 }
 
-/** Each job of the view with its run, when it has come back. */
 export function shownBranches(
   s: Parameters<typeof buildContinuationJobs>[0] & { branches: Readonly<Record<string, BranchRun>> },
 ): { job: ContinuationJob; run: BranchRun | undefined }[] {
   return buildContinuationJobs(s).map((job) => ({ job, run: s.branches[job.meta.key] }));
 }
 
-/**
- * The special points of every branch, each bifurcation once (both halves of
- * a switched cycle, and two branches that cross, report the same one), in
- * increasing parameter.
- */
+const isSameBifurcation = (a: SpecialPointOut, b: SpecialPointOut): boolean =>
+  a.kind === b.kind && a.period === b.period && Math.abs(a.p - b.p) <= SAME_BIFURCATION_TOL * (1 + Math.abs(b.p));
+
 export function specialRows(runs: readonly (BranchRun | undefined)[]): { at: SpecialPointOut; branch: number }[] {
   const rows: { at: SpecialPointOut; branch: number }[] = [];
   runs.forEach((run, branch) => {
     if (!run?.ok) return;
     for (const at of run.res.branch.special) {
-      const same = rows.some(
-        (r) => r.at.kind === at.kind && r.at.period === at.period && Math.abs(r.at.p - at.p) <= 1e-7 * (1 + Math.abs(at.p)),
-      );
-      if (!same) rows.push({ at, branch });
+      if (!rows.some((r) => isSameBifurcation(r.at, at))) rows.push({ at, branch });
     }
   });
   return rows.sort((a, b) => a.at.p - b.at.p);
@@ -995,7 +967,6 @@ export function continuationSummary(
   return { elapsedMs, roundTripMs, points, special: specialRows(runs).length };
 }
 
-/** The value a branch plot draws for point `i`, cycle member `m`: a state, or ‖x‖₂. */
 export function branchValue(
   b: Pick<ContinuationResponse["branch"], "x" | "period">,
   dim: number,
@@ -1010,7 +981,6 @@ export function branchValue(
   return Math.sqrt(sum);
 }
 
-/** Every branch point and cycle member in view, padded 8 %; null with nothing to fit. */
 export function fitBranchRanges(
   runs: readonly (BranchRun | undefined)[],
   dim: number,
@@ -2072,15 +2042,12 @@ function loadOrbitView(v: LoadedView, sys: CompileResponse): OrbitView | string 
   return { ...orbitView([], v.yRange, param, state, settings), xRange: [v.xRange[0], v.xRange[1]] };
 }
 
-/** The notice when a saved continuation view can't be replayed for the system. */
 export const CONTINUATION_MISFIT = "The saved continuation can't be run as saved, so the default view is shown.";
-/** The notice for a saved seed that doesn't fit the system (`n` counts from 1). */
 export const continuationSeedMisfit = (n: number) =>
   `The saved continuation's branch ${n} doesn't fit this system, so it was left out.`;
 
 const CONTINUATION_DIRECTIONS: readonly string[] = ["forward", "backward", "both"] satisfies ContinuationDirection[];
 
-/** A saved seed as the studio replays it, or null when it doesn't fit `sys` (or is of a kind this version lacks). */
 function loadedSeed(seed: LoadedSeed, sys: CompileResponse): ContinuationSeed | null {
   const dim = sys.states.length;
   const { x, param, direction } = seed;

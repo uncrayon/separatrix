@@ -50,7 +50,6 @@ pub struct ExportCache {
     continuation: Mutex<Option<(Vec<ContinuationRequest>, Arc<BranchResults>)>>,
 }
 
-/// Each branch request's response, or why it could not be followed.
 type BranchResults = Vec<Result<ContinuationResponse, String>>;
 
 #[derive(Clone, PartialEq)]
@@ -284,8 +283,6 @@ pub fn orbit_csv(system: &CompiledSystem, req: &OrbitExportRequest) -> Result<Cs
     })
 }
 
-/// The branch plot's requests followed by the core, or the last export's
-/// branches for the same requests (their `requestId`s aside).
 fn continuation_results(
     cache: &ExportCache,
     system: &CompiledSystem,
@@ -324,9 +321,6 @@ fn special_kind(kind: SpecialKindOut) -> dyn_analysis::SpecialKind {
     }
 }
 
-/// The branches that could be followed, in the view's order with their
-/// colors. A branch the screen could not follow either is left out, as the
-/// plot leaves it out; with none left, the first branch's reason.
 fn continuation_run(
     cache: &ExportCache,
     system: &CompiledSystem,
@@ -1639,8 +1633,6 @@ mod tests {
             .1
             .contains("\"special_csv\": \"selkov-special.csv\""));
 
-        // A branch the core cannot follow is left out, as the plot leaves
-        // it out; with none left, its reason is the error.
         let mut off = branch(0.6, 0, 0);
         off.request.start = ContinuationStart::Point {
             x0: vec![0.6, 0.6],

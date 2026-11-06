@@ -1,27 +1,6 @@
-//! Pseudo-arclength continuation of equilibria of flows and of fixed points
-//! of `f^k` for maps.
-//!
 //! Modelled on the natural and pseudo-arclength continuation of
 //! BifurcationKit.jl (R. Veltz, MIT license,
-//! <https://github.com/bifurcationkit/BifurcationKit.jl>). Everything reads
-//! one residual `g(x, p)` and its Jacobian `[g_x | g_p]`: `g = f` for a flow
-//! and `g = f^k − x` for a map. A step predicts along the unit tangent (the
-//! first step) or the secant (later steps) and corrects by Newton's method on
-//! the bordered system
-//!
-//! ```text
-//! [ g_x  g_p ] Δz = − [ g(z)              ]
-//! [    τᵀ    ]        [ τ · (z − z_pred)  ]
-//! ```
-//!
-//! with the exact Jacobians of the field ([`VectorField::jacobian`] and
-//! [`VectorField::param_jacobian`]).
-//!
-//! Special points come from one table of test functions, [`DETECTORS`],
-//! each of which changes sign at its bifurcation, as in BifurcationKit.jl's
-//! event detection. A step is accepted only if its change in the unstable
-//! count is the jump of the one test that changed sign, or zero when none
-//! did; the sign change is then located by bisection in arclength.
+//! <https://github.com/bifurcationkit/BifurcationKit.jl>).
 
 use std::f64::consts::PI;
 
@@ -30,34 +9,16 @@ use dyn_core::{SystemKind, VectorField};
 use crate::eigvec::eigenvectors;
 use crate::linalg::{eigenvalues, lu_det, lu_solve};
 
-/// Newton iterations allowed per correction.
 const MAX_NEWTON: usize = 10;
-/// Newton converges when its last step and the residual are both below
-/// `TOL · (1 + |z|∞)`.
 const TOL: f64 = 1e-10;
-/// A correction in this many iterations or fewer grows the next step.
-const FAST: usize = 3;
-/// A correction in more iterations than this halves the next step.
-const SLOW: usize = 6;
-const GROW: f64 = 1.5;
-/// A step may reach this multiple of the predicted arclength `s*` to the
-/// next crossing of the stability boundary. Up to 2 it never steps over
-/// both crossings of a dip `d(s) = c (s − s₁)(s − s₂)`: from `L` before
-/// `s₁`, `s* = L (L + Δ) / (2L + Δ)` and `2 s* < L + Δ`. Above 1 the step
-/// lands past a near crossing rather than creeping up to it in halving
-/// steps, which a factor of 1/2 does.
+const FAST_NEWTON_ITERS: usize = 3;
+const SLOW_NEWTON_ITERS: usize = 6;
+const STEP_GROWTH: f64 = 1.5;
 const PROXIMITY: f64 = 1.5;
-/// The farthest the first point of a switched branch may land from the
-/// switch point, as a multiple of the offset `h`: the second branch crosses
-/// the hyperplane `h` along `d` at `h / cos θ`, `θ` its angle to `d`, so this
-/// takes branches up to 60° off `d`, and a point farther away is on another
-/// branch through the same region (another point of the old cycle).
 const SWITCH_REACH: f64 = 2.0;
-/// Below this residual of `f^k − x` (relative to `1 + |z|∞`) the first point
-/// after a flip of `f^k` is a point of a `k`-cycle, not of the new `2k`-cycle.
 const SWITCH_OLD_TOL: f64 = 1e-6;
-/// Bisection steps allowed to locate a special point.
 const MAX_BISECTION: usize = 200;
+const INVERSE_ITERATION_SHIFT: f64 = 1e-12;
 
 /// How to follow a branch.
 #[derive(Debug, Clone, PartialEq)]
@@ -252,7 +213,6 @@ pub fn continue_branch(
     Ok(g.follow(vec![start], tau, h, opts))
 }
 
-/// Halvings of the offset allowed when no second branch is found at it.
 const SWITCH_HALVINGS: usize = 8;
 
 /// Follow the other branch through the branch point or flip `at`, found on
@@ -291,8 +251,6 @@ pub fn switch_branch(
         _ => return Err(ContinuationError::CannotSwitch),
     };
     let g = Residual::new(f, params, opts.param, period);
-    // At a flip every point of the old cycle is also a fixed point of
-    // `f^{2k}`: a first point that `f^k` already fixes is on one of those.
     let old = (period != at.period).then(|| Residual::new(f, params, opts.param, at.period));
     let on_old = |z: &[f64]| {
         old.as_ref()
@@ -359,25 +317,16 @@ fn in_range(opts: &ContinuationOptions, p: f64) -> bool {
     (a.min(b)..=a.max(b)).contains(&p)
 }
 
-/// A test function that changes sign at one kind of special point.
 struct Detector {
     kind: SpecialKind,
     applies_to: &'static [SystemKind],
-    /// The change of the unstable count across it, `±jump`.
     jump: usize,
-    /// The signed test at a point; `None` where it is undefined (no
-    /// complex pair, for Hopf and Neimark–Sacker).
     test: fn(&Residual, &BranchPoint) -> Option<f64>,
-    /// [`SpecialPoint::omega`] and [`SpecialPoint::lyapunov`] of the
-    /// located point.
     extras: fn(&Residual, &BranchPoint) -> OmegaLyapunov,
 }
 
 type OmegaLyapunov = (Option<f64>, Option<f64>);
 
-/// Every special point a branch can carry. A fold or branch point of a map
-/// is one of `g = f^k − x` (a multiplier `+1`), so those two rows serve
-/// both kinds of system.
 const DETECTORS: &[Detector] = &[
     Detector {
         kind: SpecialKind::Fold,
@@ -413,16 +362,13 @@ const DETECTORS: &[Detector] = &[
         kind: SpecialKind::Flip,
         applies_to: &[SystemKind::Map],
         jump: 1,
-        // det(D f^k + I) = Π (μ + 1): a complex pair adds |μ + 1|² > 0 and
-        // a pair that splits at μ < −1 two negative factors, so only a
-        // multiplier through −1 changes its sign.
         test: |g, pt| {
             let n = pt.x.len();
-            let (_, a) = g.linear(&z_of(pt));
-            let shifted: Vec<f64> = (0..n * n)
-                .map(|k| a[k / n * (n + 1) + k % n] + if k / n == k % n { 2.0 } else { 0.0 })
-                .collect();
-            Some(lu_det(&shifted))
+            let mut df_plus_identity = g.power_jacobian(&pt.x, pt.p);
+            for i in 0..n {
+                df_plus_identity[i * n + i] += 1.0;
+            }
+            Some(lu_det(&df_plus_identity))
         },
         extras: |_, _| (None, None),
     },
@@ -442,21 +388,14 @@ const DETECTORS: &[Detector] = &[
     },
 ];
 
-/// One eigenvalue `(re, im)` with `im > 0` per complex pair.
 fn upper_pairs(pt: &BranchPoint) -> impl Iterator<Item = (f64, f64)> + '_ {
     pt.eigenvalues.iter().copied().filter(|&(_, im)| im > 0.0)
 }
 
-/// The pair (`im > 0`) nearest the stability boundary by `distance`.
 fn critical_pair(pt: &BranchPoint, distance: impl Fn(f64, f64) -> f64) -> Option<(f64, f64)> {
     upper_pairs(pt).min_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
 }
 
-/// The longest next step: [`PROXIMITY`] times the arclength at which the
-/// nearest approaching eigenvalue reaches the stability boundary, its
-/// distance `d_i` (`|Re λ|`, or `||μ| − 1|`) extrapolated linearly along
-/// the secant `a → b` of length `len`, so that two crossings never fall
-/// inside one step and cancel in the count.
 fn proximity_limit(map: bool, a: &BranchPoint, b: &BranchPoint, len: f64) -> f64 {
     let distances = |pt: &BranchPoint| {
         let mut d: Vec<f64> = pt
@@ -512,12 +451,10 @@ fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<
     let transpose: Vec<f64> = (0..n * n).map(|i| a[i % n * n + i / n]).collect();
     let q = vector(&a)?;
     let q = q.scale(1.0 / (2.0 * q.dot_conj(&q).0).sqrt());
-    // w = p̄, so ⟨p, v⟩ = Σ wᵢ vᵢ.
     let w = vector(&transpose)?;
     let w = w.div(w.dot(&q));
 
     let scale = 1.0 + norm_inf(&pt.x);
-    // J(x ± εĉ) with ĉ = c/|c|, and |c|.
     let around = |c: &[f64], eps: f64| {
         let len = norm2(c);
         let at = |sign: f64| {
@@ -526,7 +463,6 @@ fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<
         };
         (at(1.0), at(-1.0), len)
     };
-    // DJ[c] u ≈ (J(x + εĉ) − J(x − εĉ)) u |c| / 2ε.
     let b_real = |u: &[f64], c: &[f64]| -> Vec<f64> {
         if c.iter().all(|v| *v == 0.0) {
             return vec![0.0; n];
@@ -548,7 +484,6 @@ fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<
             im: (0..n).map(|i| ri[i] + ir[i]).collect(),
         }
     };
-    // D²J[c, c] ≈ (J(x + εĉ) − 2J(x) + J(x − εĉ)) |c|² / ε².
     let d2j = |c: &[f64]| -> Vec<f64> {
         if c.iter().all(|v| *v == 0.0) {
             return vec![0.0; n * n];
@@ -559,7 +494,6 @@ fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<
             .map(|i| (jp[i] - 2.0 * a[i] + jm[i]) * len * len / (eps * eps))
             .collect()
     };
-    // C(q, q, q̄) = D²J[q, q̄] q, and D²J[q, q̄] = D²J[Re q, Re q] + D²J[Im q, Im q].
     let m: Vec<f64> = d2j(&q.re)
         .iter()
         .zip(d2j(&q.im))
@@ -578,7 +512,6 @@ fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<
     l1.is_finite().then_some(l1)
 }
 
-/// A complex vector as its real and imaginary parts.
 #[derive(Clone)]
 struct C {
     re: Vec<f64>,
@@ -602,7 +535,6 @@ impl C {
             self.im.iter().map(|v| v * s).collect(),
         )
     }
-    /// `self / (re + i im)`.
     fn div(&self, (re, im): (f64, f64)) -> Self {
         let d = re * re + im * im;
         let (cr, ci) = (re / d, -im / d);
@@ -615,7 +547,6 @@ impl C {
                 .collect(),
         )
     }
-    /// `Σ selfᵢ vᵢ`, without conjugation.
     fn dot(&self, v: &C) -> (f64, f64) {
         (0..self.re.len()).fold((0.0, 0.0), |(r, i), k| {
             (
@@ -624,14 +555,11 @@ impl C {
             )
         })
     }
-    /// `Σ conj(selfᵢ) vᵢ`.
     fn dot_conj(&self, v: &C) -> (f64, f64) {
         self.conj().dot(v)
     }
 }
 
-/// Solve `(m + i·s·I) z = r` through the real `2n` system
-/// `[m, −sI; sI, m] [Re z; Im z] = [Re r; Im r]`.
 fn complex_solve(m: &[f64], s: f64, r: &C) -> Option<C> {
     let n = r.re.len();
     let big: Vec<f64> = (0..4 * n * n)
@@ -662,7 +590,6 @@ fn diff(a: &[f64], b: &[f64]) -> Vec<f64> {
     a.iter().zip(b).map(|(u, v)| u - v).collect()
 }
 
-/// `(x, p)` of a point.
 fn z_of(pt: &BranchPoint) -> Vec<f64> {
     pt.x.iter().copied().chain([pt.p]).collect()
 }
@@ -675,16 +602,12 @@ fn dist(a: &[f64], b: &[f64]) -> f64 {
         .sqrt()
 }
 
-/// `f^k` as a field. For `k = 1` it is `f` itself, so flows and maps share
-/// one residual.
 pub(crate) struct Power<'a> {
     pub(crate) f: &'a dyn VectorField,
     pub(crate) k: usize,
 }
 
 impl Power<'_> {
-    /// Iterate `f` `k` times from `x`, calling `visit` on each `x_j`
-    /// (`j = 0..k`) before it is mapped. Returns `x_k`.
     fn walk(&self, x: &[f64], p: &[f64], mut visit: impl FnMut(&[f64])) -> Vec<f64> {
         let mut xj = x.to_vec();
         let mut next = vec![0.0; x.len()];
@@ -696,7 +619,6 @@ impl Power<'_> {
         xj
     }
 
-    /// `x, f(x), …, f^{k−1}(x)`, `k · dim` values.
     pub(crate) fn cycle(&self, x: &[f64], p: &[f64]) -> Vec<f64> {
         let mut out = Vec::with_capacity(self.k * x.len());
         self.walk(x, p, |xj| out.extend_from_slice(xj));
@@ -718,7 +640,6 @@ impl VectorField for Power<'_> {
         out.copy_from_slice(&self.walk(x, p, |_| {}));
     }
 
-    /// `D f^k(x) = J(x_{k−1}) ⋯ J(x_0)`.
     fn jacobian(&self, _t: f64, x: &[f64], p: &[f64], out: &mut [f64]) {
         let n = x.len();
         let mut m = identity(n);
@@ -730,7 +651,6 @@ impl VectorField for Power<'_> {
         out.copy_from_slice(&m);
     }
 
-    /// `∂f^j/∂p = J(x_{j−1}) · ∂f^{j−1}/∂p + f_p(x_{j−1})`.
     fn param_jacobian(&self, _t: f64, x: &[f64], p: &[f64], k: usize, out: &mut [f64]) {
         let n = x.len();
         let mut v = vec![0.0; n];
@@ -747,7 +667,6 @@ impl VectorField for Power<'_> {
     }
 }
 
-/// `g(x, p) = f^k(x) − x` (map) or `f(x)` (flow) in `z = (x, p)`.
 struct Residual<'a> {
     power: Power<'a>,
     map: bool,
@@ -761,8 +680,6 @@ enum Fail {
 }
 
 impl<'a> Residual<'a> {
-    /// The residual of `f` (a flow; `period` is then taken as 1) or of
-    /// `f^period − x` (a map).
     fn new(f: &'a dyn VectorField, params: &[f64], param: usize, period: usize) -> Self {
         let map = f.kind() == SystemKind::Map;
         Residual {
@@ -790,9 +707,6 @@ impl<'a> Residual<'a> {
         }
     }
 
-    /// Continue from the last of `points` along `dir` with first step `h`
-    /// until the range, `max_points` or `ds_min` ends the branch, locating
-    /// the special points on the way.
     fn follow(
         &self,
         mut points: Vec<BranchPoint>,
@@ -903,9 +817,9 @@ impl<'a> Residual<'a> {
             }
             dir = diff(&z_new, &z).iter().map(|c| c / len).collect();
             z = z_new;
-            if iters <= FAST {
-                h = (h * GROW).min(opts.ds_max);
-            } else if iters > SLOW {
+            if iters <= FAST_NEWTON_ITERS {
+                h = (h * STEP_GROWTH).min(opts.ds_max);
+            } else if iters > SLOW_NEWTON_ITERS {
                 h = (h / 2.0).max(opts.ds_min);
             }
             h = h.min(limit.max(opts.ds_min));
@@ -919,7 +833,6 @@ impl<'a> Residual<'a> {
         params
     }
 
-    /// `g(z)` and `[g_x | g_p]`, `n × (n + 1)` row-major.
     fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>) {
         let n = z.len() - 1;
         let (x, p) = (&z[..n], self.params_at(z[n]));
@@ -941,7 +854,6 @@ impl<'a> Residual<'a> {
         (g, a)
     }
 
-    /// Newton on `g(x, p) = 0` with `p` held exactly.
     fn correct_at_fixed_p(&self, x: &[f64], p: f64) -> Result<(Vec<f64>, usize), Fail> {
         let n = x.len();
         let (x, iters) = newton(x.to_vec(), |x| {
@@ -953,7 +865,6 @@ impl<'a> Residual<'a> {
         Ok((x.into_iter().chain([p]).collect(), iters))
     }
 
-    /// Newton on `g(z) = 0, dir · (z − pred) = 0` from `pred`.
     fn correct_along(&self, pred: &[f64], dir: &[f64]) -> Result<(Vec<f64>, usize), Fail> {
         newton(pred.to_vec(), |z| {
             let (mut g, a) = self.linear(z);
@@ -968,8 +879,6 @@ impl<'a> Residual<'a> {
         })
     }
 
-    /// The unit kernel vector `τ` of `[g_x | g_p]` at `z` with
-    /// `border · τ > 0`, or `None` where the bordered Jacobian is singular.
     fn tangent(&self, z: &[f64], border: &[f64]) -> Option<Vec<f64>> {
         let (_, a) = self.linear(z);
         let mut rhs = vec![0.0; z.len()];
@@ -979,11 +888,6 @@ impl<'a> Residual<'a> {
         len.is_finite().then(|| t.iter().map(|v| v / len).collect())
     }
 
-    /// The unit vector `d ⊥ τ` in the kernel of `[g_x | g_p]` at `z`: the
-    /// null vector of the bordered Jacobian `[g_x g_p; τᵀ]`, singular at a
-    /// branch point. Inverse iteration on its normal matrix shifted by
-    /// `σ = 1e−12 (1 + trace)`: the longest column of the inverse lies along
-    /// the null vector, and one more solve refines it.
     fn second_direction(&self, z: &[f64], tau: &[f64]) -> Option<Vec<f64>> {
         let m = bordered(self.linear(z).1, tau);
         let n1 = z.len();
@@ -996,7 +900,7 @@ impl<'a> Residual<'a> {
             .collect();
         let trace: f64 = (0..n1).map(|i| normal[i * n1 + i]).sum();
         for i in 0..n1 {
-            normal[i * n1 + i] += 1e-12 * (1.0 + trace);
+            normal[i * n1 + i] += INVERSE_ITERATION_SHIFT * (1.0 + trace);
         }
         let column = (0..n1)
             .filter_map(|j| {
@@ -1012,10 +916,6 @@ impl<'a> Residual<'a> {
         (len.is_finite() && len > 0.0).then(|| d.iter().map(|c| c / len).collect())
     }
 
-    /// The point between `a` and `b` where `detector`'s test (`test_a` at
-    /// `a`) changes sign, by bisection in arclength along the secant `dir`,
-    /// correcting at every midpoint, until `p` is known to
-    /// `1e−13 (1 + |p|)` and `z` to the Newton tolerance. Its `s` is left 0.
     fn locate(
         &self,
         a: &BranchPoint,
@@ -1043,32 +943,16 @@ impl<'a> Residual<'a> {
             {
                 break;
             }
-            // Predicted from the bracket's own end along its tangent, not on
-            // the first secant: that chord stays as far off a curved branch
-            // as the bracket shrinks, and next to a branch point its
-            // corrector lands on the other branch, whose tests have other
-            // signs.
-            let half = 0.5 * (hi.0 - lo.0);
-            let pred: Vec<f64> = zl
-                .iter()
-                .zip(&lo.1.tangent)
-                .map(|(z, t)| z + half * t)
-                .collect();
+            let pred = predict_from_bracket_end(&lo.1, 0.5 * (hi.0 - lo.0));
             let zm = match self.correct_along(&pred, &lo.1.tangent) {
                 Ok((zm, _)) => zm,
-                // A midpoint exactly on a branch point is a zero of `g` at
-                // which the bordered Jacobian is singular.
-                Err(Fail::Singular)
-                    if norm_inf(&self.linear(&pred).0) <= TOL * (1.0 + norm_inf(&pred)) =>
-                {
-                    return self.point(0.0, &pred, lo.1.tangent.clone());
+                Err(Fail::Singular) if self.solves(&pred) => {
+                    return self.branch_point_at(&pred, &lo.1);
                 }
                 Err(_) => break,
             };
             let Some(tm) = self.tangent(&zm, &lo.1.tangent) else {
-                // The bordered Jacobian is singular only at the branch point
-                // itself.
-                return self.point(0.0, &zm, lo.1.tangent.clone());
+                return self.branch_point_at(&zm, &lo.1);
             };
             let sigma = dot(dir, &diff(&zm, &za));
             if !(sigma > lo.0 && sigma < hi.0) {
@@ -1093,12 +977,25 @@ impl<'a> Residual<'a> {
         best
     }
 
+    fn solves(&self, z: &[f64]) -> bool {
+        norm_inf(&self.linear(z).0) <= TOL * (1.0 + norm_inf(z))
+    }
+
+    fn branch_point_at(&self, z: &[f64], bracket_end: &BranchPoint) -> BranchPoint {
+        self.point(0.0, z, bracket_end.tangent.clone())
+    }
+
+    fn power_jacobian(&self, x: &[f64], p: f64) -> Vec<f64> {
+        let n = x.len();
+        let mut jac = vec![0.0; n * n];
+        self.power.jacobian(0.0, x, &self.params_at(p), &mut jac);
+        jac
+    }
+
     fn point(&self, s: f64, z: &[f64], tangent: Vec<f64>) -> BranchPoint {
         let n = z.len() - 1;
         let (x, p) = (&z[..n], self.params_at(z[n]));
-        let mut jac = vec![0.0; n * n];
-        self.power.jacobian(0.0, x, &p, &mut jac);
-        let eigenvalues = eigenvalues(n, &jac);
+        let eigenvalues = eigenvalues(n, &self.power_jacobian(x, z[n]));
         let growth: Vec<f64> = if self.map {
             eigenvalues
                 .iter()
@@ -1124,8 +1021,6 @@ impl<'a> Residual<'a> {
     }
 }
 
-/// Newton's method on `system(z) = (residual, Jacobian)`. Returns the zero
-/// and the number of linear solves.
 fn newton(
     mut z: Vec<f64>,
     mut system: impl FnMut(&[f64]) -> (Vec<f64>, Vec<f64>),
@@ -1156,7 +1051,6 @@ fn newton(
     Err(Fail::NoConvergence)
 }
 
-/// `[a; borderᵀ]`: `a` is `n × (n + 1)` row-major, the result square.
 fn bordered(mut a: Vec<f64>, border: &[f64]) -> Vec<f64> {
     a.extend_from_slice(border);
     a
@@ -1194,6 +1088,14 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 
 fn norm2(a: &[f64]) -> f64 {
     dot(a, a).sqrt()
+}
+
+fn predict_from_bracket_end(end: &BranchPoint, h: f64) -> Vec<f64> {
+    z_of(end)
+        .iter()
+        .zip(&end.tangent)
+        .map(|(z, t)| z + h * t)
+        .collect()
 }
 
 fn norm_inf(a: &[f64]) -> f64 {

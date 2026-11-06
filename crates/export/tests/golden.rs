@@ -1134,9 +1134,6 @@ fn logistic_orbit_csv_and_figure() {
     check_figure("logistic-orbit-figure", &fig);
 }
 
-/// The Sel'kov branch x* = b, y* = b/(a + b²) at a = 0.08 for b from 0 to
-/// 1.5, with the two Hopf points (b² = 0.12 and 0.72, Strogatz §7.3) where
-/// the core located them; ω and ℓ₁ are the core's values there.
 fn selkov_continuation_run() -> ContinuationRun {
     let a = 0.08;
     let hopf = [
@@ -1195,11 +1192,6 @@ fn selkov_continuation_run() -> ContinuationRun {
     }
 }
 
-/// The logistic map's branches through r = 1 and the doubled cycles born
-/// at r₁ … r₄, each special point where the core located it. A switched
-/// cycle followed both ways reports its next flip once per half, and both
-/// branches through r = 1 report the branch point: the table lists each
-/// once.
 fn logistic_cascade_run() -> ContinuationRun {
     let branch = |period: usize, color: u8, special: &[(SpecialKind, f64, f64)]| BranchRun {
         period,
@@ -1295,8 +1287,6 @@ fn selkov_branch_plot_special_points_and_csv() {
     let fig = continuation_figure(&input);
     check_figure("selkov-continuation-figure", &fig);
     assert!(fig.files.is_empty());
-    // Stable, unstable between the Hopf points, stable again: one solid
-    // and one dashed plot, the two Hopf points as glyphs with labels H.
     assert_eq!(fig.tex.matches("% Branch 1, stable (solid)").count(), 1);
     assert_eq!(fig.tex.matches("% Branch 1, unstable (dashed)").count(), 1);
     assert_eq!(fig.tex.matches("dash pattern=on 4.5bp off 3bp").count(), 1);

@@ -34,7 +34,6 @@ const specialRows = (page) =>
     .evaluateAll((rows) => rows.map((r) => [r.dataset.specialKind, r.querySelector(".inspector-special-text").textContent]));
 const pOf = (text) => Number(text.split("  ")[0].split(" = ")[1].replace("−", "-"));
 
-/** Waits until every branch has come back and the special points are listed. */
 async function settled(page) {
   await page.waitForFunction(
     () => {

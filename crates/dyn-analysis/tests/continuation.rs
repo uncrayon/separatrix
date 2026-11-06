@@ -218,7 +218,6 @@ fn range_and_max_points_bound_the_branch() {
     assert_eq!(b.points.len(), 5);
 }
 
-/// The branch of `ẋ = r + x²` through the fold at `r = 0`.
 fn saddle_node() -> Branch {
     let sys = system("x' = r + x^2");
     run(&sys, &[-1.0], &[-1.0], &opts(0, (-1.0, 1.0), 0.05))
@@ -246,8 +245,6 @@ fn hopf_quadratic() -> Branch {
     run(&sys, &[-1.0], &[0.0, 0.0], &opts(0, (-1.0, 1.0), 0.05))
 }
 
-/// `Re λ = 0.01 − μ²`: two Hopf points 0.2 apart, which a first step of 0.5
-/// growing to 1 would cross together and miss without the proximity limit.
 fn hopf_dip() -> Branch {
     let sys = system("x' = (0.01 - mu^2)*x - y\ny' = x + (0.01 - mu^2)*y");
     let o = ContinuationOptions {
@@ -257,9 +254,6 @@ fn hopf_dip() -> Branch {
     run(&sys, &[-1.0], &[0.0, 0.0], &o)
 }
 
-/// `λ = (μ ± √(μ² − 0.04))/2`: the pair is complex only for `|μ| < 0.2`, so
-/// a long step goes from two real eigenvalues straight to an unstable
-/// spiral, and only the unstable count sees the Hopf point inside it.
 fn hopf_from_a_node() -> Branch {
     let sys = system("x' = y\ny' = -0.01*x + mu*y");
     let o = ContinuationOptions {
@@ -305,7 +299,6 @@ fn logistic(x0: f64, range: (f64, f64)) -> Branch {
 
 const HENON_B: f64 = 0.3;
 
-/// Hénon's map from its fixed point `x₊` at `a = 0.2`, followed with `ds`.
 fn henon(ds: f64) -> Branch {
     let sys = system("x_{n+1} = 1 - a*x_n^2 + y_n\ny_{n+1} = b*x_n");
     let (ia, ib) = (param(&sys, "a"), param(&sys, "b"));
@@ -331,7 +324,6 @@ fn kinds(b: &Branch) -> Vec<SpecialKind> {
     b.special.iter().map(|sp| sp.kind).collect()
 }
 
-/// The one special point of `kind` on `b`.
 fn only(b: &Branch, kind: SpecialKind) -> &dyn_analysis::SpecialPoint {
     let mut of_kind = b.special.iter().filter(|sp| sp.kind == kind);
     let sp = of_kind
@@ -499,7 +491,6 @@ fn delayed_logistic_neimark_sacker() {
     assert!((theta - third).abs() <= 1e-9, "θ = {theta}");
 }
 
-/// The jump of the unstable count across a special point of `kind`.
 fn jump(kind: SpecialKind) -> usize {
     match kind {
         SpecialKind::Fold | SpecialKind::BranchPoint | SpecialKind::Flip => 1,
@@ -566,8 +557,6 @@ fn unstable_count_is_explained() {
     }
 }
 
-/// Both halves of the branch switched onto at the one special point of
-/// `kind` on `parent`, from `ds = ±0.05`.
 fn switched_halves(
     sys: &CompiledSystem,
     params: &[f64],
@@ -686,9 +675,6 @@ fn flip_switch_doubles_the_period() {
     }
 }
 
-/// `r` of the flip on each branch of the cascade: the fixed point's from
-/// `r = 2.8`, then the flip of each `2^k`-cycle, switched onto at the flip
-/// before it.
 fn cascade(sys: &CompiledSystem, steps: usize) -> Vec<f64> {
     let o = opts(0, (2.8, 3.57), 0.05);
     let mut b = run(sys, &[2.8], &[1.0 - 1.0 / 2.8], &o);
@@ -776,9 +762,6 @@ fn branch_point_located_from_a_curved_branch() {
     assert!(bp.x[0].abs() <= 1e-9, "BP at x = {}", bp.x[0]);
 }
 
-/// Every half of every doubled cycle from `r1` to `r3`, over the slider's
-/// whole range `[0, 4]`, where the cycles of `f^k` crowd the fixed points of
-/// `f^{2k}`.
 #[test]
 fn switched_cycles_stay_on_their_own_branch() {
     let sys = system("x_{n+1} = r*x_n*(1 - x_n)");

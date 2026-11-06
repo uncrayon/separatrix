@@ -122,7 +122,6 @@ export interface StudioState extends StudioSnapshot {
   lyapunov: LyapunovState | null;
   orbit: OrbitState | null;
   orbitColumns: number;
-  /** The runs of the continuation view's requests, by job key (see {@link buildContinuationJobs}). */
   branches: Record<string, BranchRun>;
   sourceTemplateId: string | null;
   computeError: string | null;
@@ -310,8 +309,6 @@ export function useStudio() {
   );
   useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
 
-  // One continuation request at a time, for the first job not yet run. A run
-  // is kept while its job is still asked for, so only a new seed or setting asks again.
   const continuing = useRef(false);
   const nextContinuationId = useRef(1);
   const pumpContinuation = useCallback(async () => {
@@ -815,7 +812,6 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
-  /** Changes the continuation view, and its home view the same way. */
   const updateContinuation = useCallback((f: (v: ContinuationView) => ContinuationView) => {
     setViewState((v) => (isContinuation(v) ? f(v) : v));
     setHomeView((v) => (isContinuation(v) ? f(v) : v));
@@ -831,21 +827,15 @@ export function useStudio() {
     [updateContinuation],
   );
 
-  /**
-   * Sweeps another parameter over its slider's range: each fixed point is
-   * followed again from that parameter's value now; a switch, which belongs
-   * to a special point of the old parameter, is dropped.
-   */
   const setContinuationParam = useCallback(
     (index: number) => {
       const p = latest.current.params[index];
       if (!p || !(p.min < p.max)) return;
       const range: [number, number] = [p.min, p.max];
-      const rebase = (seeds: ContinuationSeed[]) =>
-        seeds.reduce<ContinuationSeed[]>(
-          (out, seed) => (seed.from === "point" ? withSeed(out, { ...seed, param: p.value }) : out),
-          [],
-        );
+      const pointSeedsAtValueNow = (seeds: ContinuationSeed[]) =>
+        seeds
+          .filter((seed) => seed.from === "point")
+          .reduce<ContinuationSeed[]>((out, seed) => withSeed(out, { ...seed, param: p.value }), []);
       updateContinuation((v) =>
         v.param === index
           ? v
@@ -853,7 +843,7 @@ export function useStudio() {
               ...v,
               param: index,
               xRange: continuationXRange(range),
-              continuation: { ...v.continuation, range, ds: continuationStep(range), seeds: rebase(v.continuation.seeds) },
+              continuation: { ...v.continuation, range, ds: continuationStep(range), seeds: pointSeedsAtValueNow(v.continuation.seeds) },
             },
       );
     },
@@ -880,10 +870,6 @@ export function useStudio() {
     [updateContinuation],
   );
 
-  /**
-   * Follows the fixed point at `x` from the swept parameter's value now: in
-   * the Branch view, which opens (as last left, else fresh) when it isn't shown.
-   */
   const continueFrom = useCallback((x: number[], direction: ContinuationDirection) => {
     const cur = latest.current;
     const sys = cur.compiled;

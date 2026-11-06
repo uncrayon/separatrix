@@ -7,19 +7,11 @@ import { sx, sy, type Viewport } from "./viewport";
 const CLAMP = 1e5;
 const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
 
-/** A branch as the plot draws it: its points, and its palette slot. */
 export interface ShownBranch {
   branch: Pick<BranchOut, "p" | "x" | "period" | "stable" | "unstable" | "special">;
   color: number;
 }
 
-/**
- * The stretches of a branch with one stability, as point index ranges
- * `[from, to]` that share their end points, split at every special point. A
- * neutral point (a special point, or the start of a switched branch, which
- * is neither stable nor has an unstable direction) takes its stability from
- * its neighbour, so it never makes a stretch of its own.
- */
 export function stabilityRuns(
   b: Pick<BranchOut, "stable" | "unstable"> & { special: readonly { index: number }[] },
 ): { from: number; to: number; stable: boolean }[] {
@@ -35,15 +27,10 @@ export function stabilityRuns(
   return runs;
 }
 
-/** Point `i` of cycle member `m` on the screen. */
 function vertexPx(vp: Viewport, b: ShownBranch["branch"], dim: number, axis: StateAxis | NormAxis, i: number, m: number): [number, number] {
   return [clampPx(sx(vp, b.p[i])), clampPx(sy(vp, branchValue(b, dim, axis, i, m)))];
 }
 
-/**
- * The branch vertex nearest to (`x`, `y`) on the screen, any cycle member,
- * within `slop` pixels; null when none is that near.
- */
 export function nearestBranchVertex(
   vp: Viewport,
   branches: readonly ShownBranch[],
@@ -93,17 +80,10 @@ function frameOnly(avoid: Box[]): Scene {
 }
 
 export interface BranchDrawOptions {
-  /** The swept parameter's value, marked with a line in accent. */
   marker?: number | null;
   avoid?: Box[];
 }
 
-/**
- * A branch plot: the frame, then each branch in `traj-(i mod 7 + 1)`, stable
- * stretches solid and unstable ones dashed, every member of a cycle; then
- * the special points as fixed-point glyphs on a halo with their labels (LP,
- * H, BP, PD, NS); the marker on top, as the orbit diagram orders them.
- */
 export function drawBranch(
   ctx: DrawContext,
   vp: Viewport,

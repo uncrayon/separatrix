@@ -45,9 +45,6 @@ pub(crate) fn lu_solve(a: &[f64], b: &[f64]) -> Option<Vec<f64>> {
     Some(b)
 }
 
-/// The determinant of a row-major square matrix by LU decomposition with
-/// partial pivoting: the product of the pivots, negated per row swap. `0`
-/// when a pivot is exactly zero; not finite when `a` is not.
 pub(crate) fn lu_det(a: &[f64]) -> f64 {
     let n = (a.len() as f64).sqrt() as usize;
     debug_assert_eq!(a.len(), n * n);

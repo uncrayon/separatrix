@@ -52,6 +52,7 @@ import { plotViewport, sx, sy, toPlot, unitsPerPx, zoomRange } from "./viewport"
 
 interface Props {
   state: StudioState;
+  view: PlotView;
   actions: StudioActions;
   theme: "dark" | "light";
   toolbar?: ReactNode;
@@ -80,7 +81,7 @@ export function dotted(latex: string): string {
 }
 
 
-export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
+export function PortraitCanvas({ state, view, actions, theme, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const probeRef = useRef<HTMLSpanElement>(null);
@@ -104,8 +105,6 @@ export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const showEigen = useShowEigenvectors();
 
   const { compiled } = state;
-  // App draws the branch plot with BranchCanvas; every view shown here has a state or time on each axis.
-  const view = state.view as PlotView;
   const cobweb = isCobweb(view);
   const section = isSection(view);
   const returnMap = isReturnMap(view);

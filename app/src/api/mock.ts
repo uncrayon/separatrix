@@ -469,14 +469,6 @@ export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitD
   return res;
 }
 
-/**
- * `compute_continuation` for the browser preview: pseudo-arclength
- * continuation of a fixed point of f (a flow) or of f^k (a map), dim ≤ 3,
- * with finite-difference Jacobians, the five test functions changing sign
- * between two points located by bisection, and switching at a branch point
- * or a flip. No eigenvalue-count check and no ℓ₁: the desktop app's core
- * has both.
- */
 export async function mockContinuation(req: ContinuationRequest): Promise<ContinuationResponse> {
   const started = performance.now();
   const sys = byId.get(req.systemId);
@@ -524,7 +516,6 @@ class MockBranch {
     this.flow = sys.kind !== "map";
   }
 
-  /** g(z) and [g_x | g_p] for g = f (flow) or f^k − x (map), by the chain rule; the cycle; D f^k. */
   private eval(z: number[]): { g: number[]; jac: number[]; cycle: number[]; a: number[] } {
     const { n, k } = this;
     const ps = this.req.params.slice();
@@ -563,7 +554,6 @@ class MockBranch {
     return { g, jac, cycle, a: m };
   }
 
-  /** Newton on g(z) = 0 and t·(z − zp) = 0 (t = null: p held at zp's). */
   private correct(zp: number[], t: number[] | null): number[] | null {
     const n = this.n;
     let z = zp.slice();
@@ -582,7 +572,6 @@ class MockBranch {
     return null;
   }
 
-  /** The unit tangent at z: the null vector of [g_x | g_p], on the side of `prev`. */
   private tangent(z: number[], prev: number[]): number[] | null {
     const n = this.n;
     const v = solveLinear([...this.eval(z).jac, ...prev], [...new Array<number>(n).fill(0), 1], n + 1);
@@ -614,7 +603,6 @@ class MockBranch {
     return n < 2 ? 1 : pairs(([a, b], [c, d]) => [a * c - b * d - 1, a * d + b * c]);
   }
 
-  /** A located point is the bifurcation it was tested for: not a neutral saddle. */
   private genuine(kind: SpecialKindOut, p: MockPoint): boolean {
     const tol = 1e-5;
     if (kind === "hopf") return p.eig.some(([re, im]) => im !== 0 && Math.abs(re) < tol * (1 + Math.abs(im)));
@@ -627,12 +615,12 @@ class MockBranch {
     return { stable: p.eig.every((e) => big(e) < -1e-9), unstable: p.eig.filter((e) => big(e) > 1e-9).length };
   }
 
-  /**
-   * Narrows [a, b] by following the branch from a in eighths of it, eight
-   * times, then takes the test's zero on the last short secant: no corrector
-   * hyperplane near a branch point, where it would cross the other branch.
-   */
   private locate(kind: SpecialKindOut, a: MockPoint, b: MockPoint): MockPoint | null {
+    const hit = this.secantZero(kind, ...this.narrowAlongBranch(kind, a, b));
+    return this.genuine(kind, hit) ? { ...hit, special: kind } : null;
+  }
+
+  private narrowAlongBranch(kind: SpecialKindOut, a: MockPoint, b: MockPoint): [MockPoint, MockPoint] {
     const dist = (p: number[], q: number[]) => Math.sqrt(p.reduce((acc, v, i) => acc + (v - q[i]) ** 2, 0));
     for (let round = 0; round < 8; round++) {
       const h = dist(a.z, b.z) / 8;
@@ -650,10 +638,13 @@ class MockBranch {
       if (!next) break;
       [a, b] = [prev, next];
     }
+    return [a, b];
+  }
+
+  private secantZero(kind: SpecialKindOut, a: MockPoint, b: MockPoint): MockPoint {
     const fa = this.test(kind, a);
     const s = fa / (fa - this.test(kind, b));
-    const hit = this.point(a.z.map((v, i) => v + s * (b.z[i] - v)), a.t);
-    return this.genuine(kind, hit) ? { ...hit, special: kind } : null;
+    return this.point(a.z.map((v, i) => v + s * (b.z[i] - v)), a.t);
   }
 
   private start(): number[] {
@@ -664,7 +655,6 @@ class MockBranch {
     return z.slice(0, n + 1);
   }
 
-  /** The direction of the second branch at a switch: the null vector of [g_x g_p; τᵀ], across τ. */
   private second(z: number[], tau: number[]): number[] {
     const n = this.n;
     const m = [...this.eval(z).jac, ...tau];
@@ -1836,7 +1826,6 @@ export interface SepxMock {
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
   lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
   lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
-  /** Every continuation request and response, in order. */
   continuations?: { req: ContinuationRequest; res: ContinuationResponse }[];
 }
 
@@ -2271,19 +2260,11 @@ const MOCK_SPECIAL_LABELS: Record<SpecialKindOut, string> = {
   neimarkSacker: "NS",
 };
 
-/** The branches the core would follow for a branch-plot export (failures left out, as on screen). */
 async function mockBranches(req: ContinuationExportRequest): Promise<ContinuationResponse["branch"][]> {
   if (req.branches.length === 0)
     throw "There are no branches to export yet. Continue from a fixed point in the Continuation panel first.";
-  const out: ContinuationResponse["branch"][] = [];
-  for (const b of req.branches) {
-    try {
-      out.push((await mockContinuation(b.request)).branch);
-    } catch {
-      // Left out, as the plot leaves it out.
-    }
-  }
-  return out;
+  const runs = await Promise.allSettled(req.branches.map((b) => mockContinuation(b.request)));
+  return runs.flatMap((run) => (run.status === "fulfilled" ? [run.value.branch] : []));
 }
 
 export async function mockExportContinuationLatex(req: ContinuationFigureRequest): Promise<FigureLatexResponse> {

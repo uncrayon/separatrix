@@ -518,13 +518,15 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   }, [orbitKey, wantsFigure]);
   const continuationReq = chaos === "continuation" ? buildContinuationExport(state, source) : null;
   const branchRuns = chaos === "continuation" ? shownBranches(state).map((b) => b.run) : [];
+  const { compiled, params, view, branches: runs } = state;
   const branches = useMemo(
     () =>
       chaos === "continuation"
-        ? shownBranches(state).flatMap(({ job, run }) => (run?.ok ? [{ branch: run.res.branch, color: job.meta.seed }] : []))
+        ? shownBranches({ compiled, params, view, branches: runs }).flatMap(({ job, run }) =>
+            run?.ok ? [{ branch: run.res.branch, color: job.meta.seed }] : [],
+          )
         : [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chaos, state.compiled, state.params, state.view, state.branches],
+    [chaos, compiled, params, view, runs],
   );
   const branchAxis = isContinuation(state.view) ? state.view.yAxis : null;
   const analysis: AnalysisFigure | null =

@@ -34,21 +34,18 @@
   margin-bottom: var(--space-2);
 }
 
-/* Six views in a 3 × 2 grid of equal segments: the track is two rows tall, and
-   each row starts without a divider and is set off from the one above by a hairline. */
-.inspector .inspector-view-control .ds-segmented--fill {
+.inspector .inspector-view-control .segmented-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-rows: calc(var(--control-h-sm) - 2px);
   height: auto;
 }
-.inspector .inspector-view-control .ds-segmented--fill .ds-segmented-item {
+.inspector .inspector-view-control .segmented-grid .ds-segmented-item {
   padding: 0 var(--space-1);
 }
-.inspector .inspector-view-control .ds-segmented-item:nth-child(3n + 1)::before {
+.inspector .inspector-view-control .segmented-grid .segmented-row-start::before {
   opacity: 0;
 }
-.inspector .inspector-view-control .ds-segmented-item:nth-child(n + 4)::after {
+.inspector .inspector-view-control .segmented-grid .segmented-lower-row::after {
   content: "";
   position: absolute;
   top: 0;
@@ -58,16 +55,10 @@
   background: var(--line-strong);
   pointer-events: none;
 }
-.inspector .inspector-view-control .ds-segmented-item[aria-checked="true"]::after,
-.inspector .inspector-view-control
-  .ds-segmented-item[aria-checked="true"]
-  + .ds-segmented-item
-  + .ds-segmented-item
-  + .ds-segmented-item::after {
+.inspector .inspector-view-control .segmented-grid :is([aria-checked="true"], .segmented-below-checked)::after {
   opacity: 0;
 }
 
-/* The Continuation panel's Direction and its Continue button, full width. */
 .inspector .inspector-continue {
   display: flex;
   flex-direction: column;
@@ -79,7 +70,6 @@
   margin: 0;
 }
 
-/* A branch row is not a button: it has nothing to select. */
 .inspector .inspector-branch {
   cursor: default;
 }
@@ -91,7 +81,6 @@
   white-space: nowrap;
 }
 
-/* "H  b = 0.346410  (x, y) = …": two spaces between the parts, as in a table. */
 .inspector .inspector-special-text {
   white-space: pre-wrap;
 }

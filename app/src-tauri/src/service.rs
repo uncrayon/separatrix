@@ -490,7 +490,6 @@ fn continuation_refusal(f: &dyn VectorField, e: dyn_analysis::ContinuationError)
     }
 }
 
-/// Each core kind of special point and its name on the wire.
 const SPECIAL_KINDS: [(dyn_analysis::SpecialKind, SpecialKindOut); 5] = [
     (dyn_analysis::SpecialKind::Fold, SpecialKindOut::Fold),
     (dyn_analysis::SpecialKind::Hopf, SpecialKindOut::Hopf),
@@ -524,9 +523,6 @@ fn kind_in(kind: SpecialKindOut) -> dyn_analysis::SpecialKind {
 const NOT_AUTONOMOUS: &str =
     "Continuation follows fixed points, which a system that depends on t or n doesn't have.";
 
-/// One polyline from `forward`, preceded by `backward` reversed when there
-/// is one: the shared start appears once, indices and tangents follow the
-/// polyline's order.
 fn join(backward: Option<dyn_analysis::Branch>, forward: dyn_analysis::Branch) -> BranchOut {
     let stop = |end| match end {
         dyn_analysis::BranchEnd::Range => BranchStop::Range,

@@ -1563,6 +1563,8 @@ export const MAX_ORBIT_POINTS = 4000000;
 
 export const MAX_CONTINUATION_POINTS = 20000;
 
+export const SAME_BIFURCATION_TOL = 1e-7;
+
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 
 export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the default view is shown.";

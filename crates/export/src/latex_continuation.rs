@@ -23,7 +23,7 @@
 use crate::clip::{clip_polyline, Rect};
 use crate::latex_figure::{
     at_px, definitions, file_base, finish, packages, table_text, FigureFile, FigureOutput, Frame,
-    Placement, Quantizer, Table, MAX_POINTS,
+    Placement, Quantizer, Table, FP_HALO_R, MAX_POINTS,
 };
 use crate::latex_system::header_comments;
 use crate::latex_util::{bp, comment, escape_text, packages_comment, slug, PX_PER_CM};
@@ -33,8 +33,7 @@ use crate::model::{
 };
 use crate::num;
 
-/// Halo radius of a special point's glyph, px (draw.ts `FP_HALO_R`).
-const HALO_R: f64 = 7.5;
+const CLIP_GROW_PX: f64 = 8.0;
 
 /// What [`continuation_figure`] needs.
 #[derive(Debug, Clone)]
@@ -61,7 +60,6 @@ pub struct ContinuationFigureInput<'a> {
     pub standalone: bool,
 }
 
-/// The vertical axis name in LaTeX: the state's, or `\lVert x \rVert`.
 fn measure_latex(sys: &SystemMeta, m: BranchMeasure) -> String {
     match m {
         BranchMeasure::State { index } => sys
@@ -84,7 +82,6 @@ fn measure_name(sys: &SystemMeta, m: BranchMeasure) -> String {
     }
 }
 
-/// The parameters other than the swept one, for the header comment.
 fn fixed_params(sys: &SystemMeta, swept: usize) -> Vec<(String, f64)> {
     sys.labels
         .params
@@ -121,14 +118,11 @@ pub fn continuation_figure(input: &ContinuationFigureInput) -> FigureOutput {
             Quantizer::decimals_for(upy, vp.y_range.1 - vp.y_range.0, vp.y_range.0, vp.y_range.1),
         ],
     };
-    // Curves are clipped to the view grown by 8 px; the line's ends and
-    // joins stay outside the plot box, which pgfplots clips.
-    let grow = 8.0;
     let rect = Rect {
-        x0: vp.x_range.0 - grow * upx,
-        x1: vp.x_range.1 + grow * upx,
-        y0: vp.y_range.0 - grow * upy,
-        y1: vp.y_range.1 + grow * upy,
+        x0: vp.x_range.0 - CLIP_GROW_PX * upx,
+        x1: vp.x_range.1 + CLIP_GROW_PX * upx,
+        y0: vp.y_range.0 - CLIP_GROW_PX * upy,
+        y1: vp.y_range.1 + CLIP_GROW_PX * upy,
     };
     let external = match &input.placement {
         Placement::External { base } => Some(file_base(base)),
@@ -146,7 +140,6 @@ pub fn continuation_figure(input: &ContinuationFigureInput) -> FigureOutput {
     let mut body = frame.axis_begin(input.theme);
     let mut files: Vec<FigureFile> = Vec::new();
     let mut points = 0;
-    // One data source, drawn once per option list (a glyph over its halo).
     let mut add_table = |body: &mut String, name: String, t: &Table, options: &[String]| {
         let data = table_text(t, &quant, external.is_none());
         let source = match &external {
@@ -218,15 +211,13 @@ pub fn continuation_figure(input: &ContinuationFigureInput) -> FigureOutput {
         }
     }
 
-    // Special points: a glyph at every point of the cycle, the label at the
-    // first, for those in view.
     let mut marks = Table::new(&["x", "y"]);
     let mut labels = String::new();
     let inside = |x: f64, y: f64| {
-        x >= vp.left - HALO_R
-            && x <= vp.right() + HALO_R
-            && y >= vp.top - HALO_R
-            && y <= vp.bottom() + HALO_R
+        x >= vp.left - FP_HALO_R
+            && x <= vp.right() + FP_HALO_R
+            && y >= vp.top - FP_HALO_R
+            && y <= vp.bottom() + FP_HALO_R
     };
     for br in &run.branches {
         for sp in &br.special {
@@ -257,7 +248,7 @@ pub fn continuation_figure(input: &ContinuationFigureInput) -> FigureOutput {
             &[
                 format!(
                     "sepxhalo, only marks, mark=*, mark size={}, mark options={{draw opacity=0, fill=sepxhalo}}",
-                    bp(HALO_R)
+                    bp(FP_HALO_R)
                 ),
                 format!(
                     "only marks, sepxfp, mark=halfcircle*, mark options={{rotate=90, fill=sepxfp, draw=sepxfp}}, mark size={}, line width={}",
@@ -317,7 +308,6 @@ pub fn continuation_figure(input: &ContinuationFigureInput) -> FigureOutput {
     }
 }
 
-/// The first words of each kind in the table's caption.
 fn kind_words(kind: SpecialKind) -> &'static str {
     match kind {
         SpecialKind::Fold => "fold (limit point)",
@@ -328,7 +318,6 @@ fn kind_words(kind: SpecialKind) -> &'static str {
     }
 }
 
-/// Values below this fraction of the largest in their column print as 0.
 const SNAP: f64 = 1e-12;
 
 fn fixed6(v: f64) -> String {
