@@ -280,6 +280,11 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- On Linux, the first click on a plot after choosing from a dropdown (the integration method, the
+  continuation parameter, an axis) takes effect instead of being ignored. WebKitGTK never sends
+  the pointerup for the press that opens a dropdown, so it sends no pointerdown for the next
+  press, and the plots (and closing a menu or tooltip) start on pointerdown. After a mouse
+  press on a dropdown, the first press that arrives without a pointerdown now gets one.
 - An apostrophe in a document title separates words in LaTeX labels and export file names
   (`Sel'kov glycolysis` → `sel-kov-glycolysis`, as the app suggests) instead of reading as a
   prime (`sel-primekov-glycolysis`). State names keep `theta'` → `theta-prime`.
