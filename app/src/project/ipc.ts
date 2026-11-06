@@ -57,7 +57,6 @@ export const chooseSavePath = (req: ProjectChooseSaveRequest): Promise<ChosenSav
 export const writeProject = (req: ProjectWriteRequest): Promise<SavedProject> =>
   isTauri() ? invoke<SavedProject>("project_write", { req }) : mockProjectWrite(req);
 
-/** The projects opened or saved lately that still exist, most recent first (granted for `readProject`). */
 export const recentProjects = (): Promise<RecentProject[]> =>
   isTauri() ? invoke<RecentProject[]>("recent_projects") : mockRecentProjects();
 

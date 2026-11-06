@@ -35,7 +35,6 @@ def parse_args():
 
 
 def xdnd_target(d, wid):
-    """The window at or under `wid` that announces XdndAware, and its version."""
     aware = d.intern_atom("XdndAware")
     queue = [d.create_resource_object("window", wid)]
     while queue:

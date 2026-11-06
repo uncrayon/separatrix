@@ -1,9 +1,6 @@
-// The status bar's version button: a click checks GitHub Releases for a
-// newer Separatrix and says what it found in a small panel above the bar.
-
 import { useCallback, useEffect, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { checkForUpdate, installUpdate, listenUpdateEvents } from "../api/client";
+import { checkForUpdate, installUpdate, listenUpdateEvents, startUpdateCheck } from "../api/client";
 import { errorText } from "../project/ipc";
 import { initialUpdateState, updateMessage, updateReducer } from "./state";
 
@@ -28,7 +25,11 @@ export function UpdateButton() {
     void listenUpdateEvents({
       onAvailable: (result) => dispatch({ type: "checked", result }),
       onCheckRequested: check,
-    }).then((f) => (gone ? f() : (off = f)));
+    }).then((f) => {
+      if (gone) return f();
+      off = f;
+      void startUpdateCheck().catch(() => {});
+    });
     return () => {
       gone = true;
       off?.();

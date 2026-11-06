@@ -147,7 +147,6 @@ export default function App() {
   const openFile = useCallback(() => void doc.open(), [doc.open]);
   const openRecent = useCallback((path: string) => void doc.openPath(path), [doc.openPath]);
 
-  // Read each time the gallery opens: a save since the last time is listed.
   const [recent, setRecent] = useState<RecentProject[]>([]);
   useEffect(() => {
     if (!galleryOpen) return;

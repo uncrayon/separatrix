@@ -55,17 +55,18 @@ export function computeContinuation(req: ContinuationRequest): Promise<Continuat
   return isTauri() ? invoke<ContinuationResponse>("compute_continuation", { req }) : mockContinuation(req);
 }
 
-/** Asks GitHub Releases for a newer version; `off` in a build without the updater key (docs/updater.md). */
 export function checkForUpdate(): Promise<UpdateCheck> {
   return isTauri() ? invoke<UpdateCheck>("check_for_update") : mockCheckForUpdate();
 }
 
-/** Downloads, installs and restarts; rejects with a sentence to show. */
 export function installUpdate(): Promise<void> {
   return isTauri() ? invoke<void>("install_update") : mockInstallUpdate();
 }
 
-/** The startup check's `update-available` and the macOS menu's "Check for Updates…". */
+export async function startUpdateCheck(): Promise<void> {
+  if (isTauri()) await invoke<void>("start_update_check");
+}
+
 export async function listenUpdateEvents(handlers: {
   onAvailable: (check: UpdateCheck) => void;
   onCheckRequested: () => void;

@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Writes the release manifests into <dir>, which holds every published asset.
-#
 #   bash scripts/release/manifest.sh <dir> <version> <owner/repo>
-#
-# latest.json, the updater's feed, is written only when .sig files exist, and
-# removed otherwise. SHA256SUMS.txt lists every other file in <dir>, sorted, in
-# sha256sum format. pub_date is SOURCE_DATE_EPOCH, or the commit time of HEAD,
-# so running this twice gives identical files.
 set -euo pipefail
 export LC_ALL=C
 
@@ -19,7 +12,6 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir"
 rm -f SHA256SUMS.txt latest.json.tmp SHA256SUMS.txt.tmp
 
-# Updater platform -> published asset. Both macOS keys share the universal app.
 PLATFORMS='
 linux-x86_64    linux_x86_64.AppImage
 windows-x86_64  windows_x64-setup.exe

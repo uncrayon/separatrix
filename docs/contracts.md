@@ -637,6 +637,7 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `recent_projects` | none | `RecentProject[]`, each `{ path, name, folder }` |
 | `check_for_update` | none | `UpdateCheck`: `{ kind: "off" }`, `{ kind: "upToDate", version }`, `{ kind: "available", version, notes, date }` or `{ kind: "failed", message }` |
 | `install_update` | none | `()`, after which the app restarts; or a sentence to show |
+| `start_update_check` | none | `()` at once; the quiet check runs in the background (below) |
 
 The project-file commands (`project_read`, `project_write`, the dialogs, `launch_ready`) are
 listed in `app/src-tauri/src/lib.rs`. `project_read` and `project_write` accept only granted paths:
@@ -652,10 +653,10 @@ The updater (`app/src-tauri/src/updater.rs`, docs/updater.md) is on only in a bu
 startup, and the plugin is registered only then. The shipped config has no key, so
 `check_for_update` answers `off` and `install_update` refuses. With a key, `check_for_update` reads
 `latest.json` from the configured endpoint with a 15 s timeout, and `install_update` checks again,
-downloads, verifies the signature, installs and restarts. The first `launch_ready` of a launch
-also starts one quiet check in the background: it never delays the UI, logs a failure to stderr
-only, and emits `update-available` (an `UpdateCheck` of kind `available`) only when there is a
-newer release. The macOS app menu's "Check for Updates…" emits `update-check-requested`, which the
+downloads, verifies the signature, installs and restarts. The status bar's version button calls
+`start_update_check` once it listens for `update-available`. The first call of a launch starts one
+quiet check in the background: it never delays the UI, logs a failure to stderr only, and emits
+`update-available` (an `UpdateCheck` of kind `available`) only when there is a newer release. The macOS app menu's "Check for Updates…" emits `update-check-requested`, which the
 status bar's version button answers with a check. The plugin is used from Rust only, so the
 capability stays `core:default`.
 

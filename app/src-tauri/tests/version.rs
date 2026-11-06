@@ -1,8 +1,3 @@
-//! One version for the whole app. Cargo's `[workspace.package]` version is
-//! the source for Rust and Tauri (tauri.conf.json has no `version`, so Tauri
-//! falls back to it); app/package.json and its lock must carry the same
-//! string. It must also be a version the Windows MSI bundler accepts.
-
 use std::path::Path;
 
 use serde_json::Value;

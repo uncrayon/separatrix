@@ -1,6 +1,3 @@
-// The launch gallery opens project files: Open…, its Mod+O shortcut, the
-// Recent rows and a file dropped on the window, in the browser preview over
-// the in-memory files of `window.__sepxMock`.
 // CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");

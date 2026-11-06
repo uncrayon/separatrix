@@ -1816,9 +1816,7 @@ export interface SepxMock {
   nextSavePath?: string | null;
   /** Paths "passed on the command line", returned once by `launch_ready`. */
   launchFiles: string[];
-  /** The recent projects, most recent first, as Rust keeps them (`files::RecentList`). */
   recent?: string[];
-  /** What `check_for_update` answers; the preview has no updater, so `off` by default. */
   update?: UpdateCheck;
   /** The last text copied. */
   clipboardText?: string;
@@ -1860,7 +1858,6 @@ function remember(path: string) {
   m.recent = [path, ...(m.recent ?? []).filter((p) => p !== path)].slice(0, RECENT_MAX);
 }
 
-/** `recent_projects`: the recent paths whose files still exist. */
 export async function mockRecentProjects(): Promise<RecentProject[]> {
   const m = sepxMock();
   return (m.recent ?? [])

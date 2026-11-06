@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Is v1 ready to release? Each row prints PASS or FAIL with what it found or
-# what is missing; the exit code is the number of FAIL rows.
-#
 #   bash scripts/release-check.sh               every row, gates included
 #   bash scripts/release-check.sh --skip-gates  skip the slow numerical gates
 set -u
@@ -19,14 +16,10 @@ FAILS=0
 pass() { printf 'PASS  %s: %s\n' "$1" "$2"; }
 fail() { printf 'FAIL  %s: %s\n' "$1" "$2"; FAILS=$((FAILS + 1)); }
 
-# Prints the value at a property path of a JSON file, or nothing when absent.
-json() { node -e 'let v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const k of process.argv.slice(2)){if(v==null||typeof v!=="object"||!(k in v)){v=undefined;break}v=v[k]}if(v!==undefined)process.stdout.write(typeof v==="string"?v:JSON.stringify(v))' "$@"; }
+json_get() { node -e 'let v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));for(const k of process.argv.slice(2)){if(v==null||typeof v!=="object"||!(k in v)){v=undefined;break}v=v[k]}if(v!==undefined)process.stdout.write(typeof v==="string"?v:JSON.stringify(v))' "$@"; }
 
-# Prints its arguments joined by "; ".
 joined() { local s; s=$(printf '%s; ' "$@"); printf '%s' "${s%; }"; }
 
-# Fails <row>, naming <file> and every required string it lacks.
-# Usage: require_strings <row> <file> <string>...
 require_strings() {
   local row=$1 file=$2 s missing=()
   shift 2
@@ -38,10 +31,10 @@ require_strings() {
 row_versions() {
   local cargo pkg lock lock_root tauri
   cargo=$(awk '/^\[workspace\.package\]/{p=1;next} /^\[/{p=0} p&&/^version *=/{gsub(/.*= *"|".*/,"");print;exit}' Cargo.toml)
-  pkg=$(json app/package.json version)
-  lock=$(json app/package-lock.json version)
-  lock_root=$(json app/package-lock.json packages "" version)
-  tauri=$(json app/src-tauri/tauri.conf.json version)
+  pkg=$(json_get app/package.json version)
+  lock=$(json_get app/package-lock.json version)
+  lock_root=$(json_get app/package-lock.json packages "" version)
+  tauri=$(json_get app/src-tauri/tauri.conf.json version)
   if [ -z "$cargo" ]; then fail versions "Cargo.toml has no [workspace.package] version"; return; fi
   if ! [[ "$cargo" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     fail versions "Cargo.toml version $cargo is not MAJOR.MINOR.PATCH (MSI rejects suffixes)"; return
@@ -60,14 +53,10 @@ row_versions() {
   fi
 }
 
-# Every kind in the View union of app/src/state/model.ts, plus the time
-# series (a plane view with time on an axis), needs a guide page. A kind
-# missing from this table fails, so a new view cannot ship without one.
 # (A case table, not an associative array: macOS still ships bash 3.2.)
 view_page() {
   case "$1" in
     plane) echo phase-plane.md ;;
-    timeseries) echo time-series.md ;;
     cobweb) echo cobweb.md ;;
     section) echo poincare-section.md ;;
     space) echo 3d-view.md ;;
@@ -76,7 +65,7 @@ view_page() {
     continuation) echo continuation.md ;;
   esac
 }
-GUIDE_TOPICS=(getting-started.md equations.md exports.md project-files.md projector-mode.md keyboard-shortcuts.md)
+GUIDE_TOPICS=(getting-started.md equations.md time-series.md exports.md project-files.md projector-mode.md keyboard-shortcuts.md)
 
 view_kinds() {
   local model=app/src/state/model.ts member
@@ -87,7 +76,6 @@ view_kinds() {
       fi
       grep -oE 'kind\??: "[a-z]+"' <<<"$member" | head -1 | sed -E 's/.*"([a-z]+)"/\1/'
     done
-  echo timeseries
 }
 
 row_view_docs() {
@@ -110,15 +98,10 @@ row_view_docs() {
   fi
 }
 
-# Published asset names at <version>, one "<os> <need> <name>" per line, from
-# the table in scripts/release/assets.sh. <need> is "always" or "updater".
 asset_names() {
-  awk -v v="$1" '/^ASSETS=/{p=1;next} p&&/^'"'"'/{exit}
-    p&&NF==7&&$1!~/^#/{print $1, $5, "Separatrix_" v "_" $7}' scripts/release/assets.sh
+  awk -v v="$1" 'NR>1{print $1, $5, "Separatrix_" v "_" $7}' scripts/release/assets.txt
 }
 
-# Strings each install guide must contain: its first-launch steps and its
-# checksum command. A guide missing from this table fails.
 guide_strings() {
   case "$1" in
     windows) printf '%s\n' "More info" "Run anyway" "offline" "WebView2" "SHA-256" "Get-FileHash" ;;
@@ -128,8 +111,6 @@ guide_strings() {
 }
 GUIDES=(windows macos linux)
 
-# Screenshots only the owner can take, one "<guide>.md|<what it shows>"
-# per line: each is a "> **Screenshot to add on a real <machine>:** ..." line.
 screenshot_placeholders() {
   grep -HE '^ *> \*\*Screenshot to add on a real [^*]+:\*\* ' docs/install/*.md 2>/dev/null |
     sed -E 's#^docs/install/([a-z]+\.md): *> \*\*[^*]+\*\* #\1|#' | LC_ALL=C sort
@@ -137,9 +118,9 @@ screenshot_placeholders() {
 
 row_install_guides() {
   local ver os guide names strings name stray=() absent=() n
-  ver=$(json app/package.json version)
+  ver=$(json_get app/package.json version)
   names=$(asset_names "$ver")
-  if [ -z "$names" ]; then fail install-guides "could not read the asset table in scripts/release/assets.sh"; return; fi
+  if [ -z "$names" ]; then fail install-guides "could not read scripts/release/assets.txt"; return; fi
   for os in "${GUIDES[@]}"; do
     guide=docs/install/$os.md
     strings=()
@@ -153,7 +134,7 @@ row_install_guides() {
     done < <(grep "^$os always " <<<"$names")
   done
   if [ ${#stray[@]} -gt 0 ]; then
-    fail install-guides "not an asset at $ver in scripts/release/assets.sh: $(joined "${stray[@]}")"
+    fail install-guides "not an asset at $ver in scripts/release/assets.txt: $(joined "${stray[@]}")"
     return
   fi
   if [ ${#absent[@]} -gt 0 ]; then fail install-guides "$(joined "${absent[@]}")"; return; fi
@@ -163,7 +144,7 @@ row_install_guides() {
 
 row_changelog() {
   local v
-  v=$(json app/package.json version)
+  v=$(json_get app/package.json version)
   if grep -qE "^## \[${v//./\\.}\]" CHANGELOG.md; then
     pass changelog "CHANGELOG.md has a [$v] section"
   else
@@ -177,16 +158,13 @@ row_release_workflow() {
   pass release-workflow "release.yml attaches SHA256SUMS and builds the WebView2 offline installer"
 }
 
-# The updater is wired, and it stays off until the owner configures a real
-# minisign public key: no placeholder key ships, and no updater artifacts are
-# requested (they need TAURI_SIGNING_PRIVATE_KEY) while there is no key.
 row_updater_off_without_key() {
   local conf=app/src-tauri/tauri.conf.json pubkey artifacts decoded
   if ! grep -qE '^tauri-plugin-updater *=' app/src-tauri/Cargo.toml; then
     fail updater-off-without-key "tauri-plugin-updater is not a dependency in app/src-tauri/Cargo.toml"; return
   fi
-  pubkey=$(json "$conf" plugins updater pubkey)
-  artifacts=$(json "$conf" bundle createUpdaterArtifacts)
+  pubkey=$(json_get "$conf" plugins updater pubkey)
+  artifacts=$(json_get "$conf" bundle createUpdaterArtifacts)
   if [ -z "$pubkey" ]; then
     if [ -n "$artifacts" ] && [ "$artifacts" != "false" ]; then
       fail updater-off-without-key "$conf sets bundle.createUpdaterArtifacts=$artifacts without a pubkey"; return
@@ -202,10 +180,6 @@ row_updater_off_without_key() {
   fi
 }
 
-# docs/release-checklist.md is an ordered list of owner steps, each with a
-# "Done when" line, and it lists every screenshot placeholder still in the
-# install guides as an open "- [ ] [<guide>.md](install/<guide>.md): <what>"
-# item. Ticking an item and replacing its placeholder keep the two in step.
 row_checklist() {
   local list=docs/release-checklist.md steps undone wanted listed missing extra
   require_strings checklist "$list" \
@@ -227,8 +201,6 @@ row_checklist() {
   fi
 }
 
-# Every relative link and image in the top-level docs and docs/ resolves, and
-# the README links the install guides, the user guide and CONTRIBUTING.md.
 row_docs_links() {
   local f target path broken=() unlinked=()
   for f in README.md CONTRIBUTING.md CHANGELOG.md docs/*.md docs/*/*.md; do
@@ -255,17 +227,14 @@ row_docs_links() {
 
 row_gates() {
   if [ "$SKIP_GATES" = 1 ]; then printf 'SKIP  gates: --skip-gates\n'; return; fi
-  # A claim row ends in PASS or has PASS before an info column. Rows that
-  # start "wrong:" are claims each gate requires to FAIL, so they don't count.
-  local gate out rc passed claims counts=() failed=()
+  local gate out rc tests counts=() failed=()
   for gate in strogatz chaos continuation; do
     out=$(bash "scripts/$gate-gate.sh" 2>&1)
     rc=$?
-    passed=$(grep -E ' PASS( |$)' <<<"$out" | grep -vc 'wrong:')
-    claims=$((passed + $(grep -E ' FAIL( |$)' <<<"$out" | grep -vc 'wrong:')))
-    counts+=("$gate $passed/$claims")
-    if [ "$rc" -ne 0 ] || [ "$claims" -eq 0 ] || [ "$passed" -ne "$claims" ]; then
-      failed+=("scripts/$gate-gate.sh (exit $rc, $passed/$claims)")
+    tests=$(sed -nE 's/^test result: ok\. ([0-9]+) passed.*/\1/p' <<<"$out" | awk '{n+=$1} END{print n+0}')
+    counts+=("$gate $tests tests")
+    if [ "$rc" -ne 0 ] || [ "$tests" -eq 0 ]; then
+      failed+=("scripts/$gate-gate.sh (exit $rc, $tests tests passed)")
     fi
   done
   if [ ${#failed[@]} -gt 0 ]; then

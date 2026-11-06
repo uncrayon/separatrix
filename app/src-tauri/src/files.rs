@@ -86,21 +86,15 @@ impl GrantedPaths {
     }
 }
 
-/// The recent projects file, in the app's config folder.
 pub const RECENT_FILE: &str = "recent-projects.json";
-/// How many recent projects are kept.
 pub const RECENT_MAX: usize = 8;
 
-/// The projects opened or saved last, most recent first, each once, as
-/// `recent-projects.json` stores them: `{ "paths": [...] }`.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecentList {
     pub paths: Vec<PathBuf>,
 }
 
 impl RecentList {
-    /// The stored list; a missing, unreadable or malformed file is an empty
-    /// list, never an error.
     pub fn parse(bytes: &[u8]) -> Self {
         serde_json::from_slice(bytes).unwrap_or_default()
     }
@@ -111,10 +105,8 @@ impl RecentList {
         out
     }
 
-    /// `path` first, any earlier entry for it dropped, at most
-    /// [`RECENT_MAX`] kept. Callers pass canonical paths (see
-    /// [`canonical`]), so two spellings of one file are one entry.
-    pub fn push(mut self, path: PathBuf) -> Self {
+    pub fn push(mut self, path: &Path) -> Self {
+        let path = canonical(path);
         self.paths.retain(|p| *p != path);
         self.paths.insert(0, path);
         self.paths.truncate(RECENT_MAX);
@@ -122,14 +114,17 @@ impl RecentList {
     }
 }
 
-/// `path` with links and `..` resolved when it exists, else as given.
-pub fn canonical(path: &Path) -> PathBuf {
+fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// The recent projects, kept in memory and written to `file` after every
-/// change. With no config folder (`file` is `None`) the list lasts for the
-/// session only.
+fn save_recent(file: &Path, list: &MutexGuard<'_, RecentList>) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    separatrix_project::write_atomic(file, &list.to_json())
+}
+
 pub struct RecentProjects {
     file: Option<PathBuf>,
     list: Mutex<RecentList>,
@@ -148,23 +143,15 @@ impl RecentProjects {
         }
     }
 
-    /// Puts `path` first and saves the list. The lock is held through the
-    /// write, so two saves can't store an older list over a newer one.
     pub fn remember(&self, path: &Path) -> std::io::Result<()> {
         let mut list = lock(&self.list);
-        *list = std::mem::take(&mut *list).push(canonical(path));
-        let Some(file) = &self.file else {
-            return Ok(());
-        };
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
+        *list = std::mem::take(&mut *list).push(path);
+        match &self.file {
+            Some(file) => save_recent(file, &list),
+            None => Ok(()),
         }
-        separatrix_project::write_atomic(file, &list.to_json())
     }
 
-    /// The listed files that still exist and have UTF-8 paths, most recent
-    /// first. Missing ones stay stored: a file on an unplugged drive comes
-    /// back when the drive does.
     pub fn existing(&self) -> Vec<PathBuf> {
         lock(&self.list)
             .paths
@@ -443,23 +430,27 @@ mod tests {
     #[test]
     fn recent_puts_the_newest_first_and_keeps_each_file_once() {
         let list = RecentList::default()
-            .push("a.sepx".into())
-            .push("b.sepx".into())
-            .push("c.sepx".into());
+            .push(Path::new("a.sepx"))
+            .push(Path::new("b.sepx"))
+            .push(Path::new("c.sepx"));
         assert_eq!(list, recent(&["c.sepx", "b.sepx", "a.sepx"]));
-        let list = list.push("a.sepx".into());
+        let list = list.push(Path::new("a.sepx"));
         assert_eq!(
             list,
             recent(&["a.sepx", "c.sepx", "b.sepx"]),
             "moved, not added"
         );
-        assert_eq!(list.clone().push("a.sepx".into()), list, "already first");
+        assert_eq!(
+            list.clone().push(Path::new("a.sepx")),
+            list,
+            "already first"
+        );
     }
 
     #[test]
     fn recent_keeps_at_most_eight() {
         let list = (0..12).fold(RecentList::default(), |l, k| {
-            l.push(format!("{k}.sepx").into())
+            l.push(Path::new(&format!("{k}.sepx")))
         });
         assert_eq!(list.paths.len(), RECENT_MAX);
         assert_eq!(list.paths[0], PathBuf::from("11.sepx"));

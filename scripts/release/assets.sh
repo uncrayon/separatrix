@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Copies one bundle job's installers into <out-dir> under their published names,
-# Separatrix_<version>_<os>_<arch>[_<variant>]<ext>, with each .sig beside its file.
-#
 #   bash scripts/release/assets.sh <out-dir> <os> <arch> [<variant>]
 #   bash scripts/release/assets.sh --version     print the version cargo metadata reports
 #
@@ -9,21 +6,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 
-# One row per published asset. Bundle paths are relative to
-# target/<target>/release/bundle, or target/release/bundle when target is "-",
-# and @V@ stands for the version. "updater" rows exist only when
-# createUpdaterArtifacts is on, so their absence is not an error.
-ASSETS='
-# os      arch       variant  target                 need     bundle path                       published suffix
-linux     x86_64     -        -                      always   appimage/Separatrix_@V@_amd64.AppImage  linux_x86_64.AppImage
-linux     x86_64     -        -                      always   deb/Separatrix_@V@_amd64.deb      linux_amd64.deb
-linux     x86_64     -        -                      always   rpm/Separatrix-@V@-1.x86_64.rpm   linux_x86_64.rpm
-windows   x64        -        -                      always   nsis/Separatrix_@V@_x64-setup.exe windows_x64-setup.exe
-windows   x64        -        -                      always   msi/Separatrix_@V@_x64_en-US.msi  windows_x64.msi
-windows   x64        offline  -                      always   nsis/Separatrix_@V@_x64-setup.exe windows_x64_offline-setup.exe
-macos     universal  -        universal-apple-darwin always   dmg/Separatrix_@V@_universal.dmg  macos_universal.dmg
-macos     universal  -        universal-apple-darwin updater  macos/Separatrix.app.tar.gz       macos_universal.app.tar.gz
-'
+table=$root/scripts/release/assets.txt
 
 version() {
   (cd "$root" && cargo metadata --no-deps --format-version 1) |
@@ -41,13 +24,12 @@ mkdir -p "$out"
 
 copied=0
 while read -r r_os r_arch r_variant r_target r_need r_path r_suffix; do
-  case "$r_os" in ''|'#'*) continue ;; esac
   [ "$r_os $r_arch $r_variant" = "$os $arch $variant" ] || continue
   dir="$root/target/release/bundle"
   [ "$r_target" = "-" ] || dir="$root/target/$r_target/release/bundle"
   src="$dir/${r_path//@V@/$ver}"
   if [ ! -f "$src" ]; then
-    [ "$r_need" = "updater" ] && continue
+    [ "$r_need" = "optional" ] && continue
     echo "error: $src is missing; the bundle step did not produce it" >&2
     exit 1
   fi
@@ -56,9 +38,7 @@ while read -r r_os r_arch r_variant r_target r_need r_path r_suffix; do
   echo "$name"
   if [ -f "$src.sig" ]; then cp "$src.sig" "$out/$name.sig"; echo "$name.sig"; fi
   copied=$((copied + 1))
-done <<EOF
-$ASSETS
-EOF
+done < <(tail -n +2 "$table")
 
 if [ "$copied" -eq 0 ]; then
   echo "error: no asset row matches os=$os arch=$arch variant=$variant" >&2

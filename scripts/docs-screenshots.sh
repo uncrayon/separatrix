@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# Screenshots for the user guide. Opens each docs/guide/examples/<view>.sepx
-# in the release app under Xvfb, waits until the screen stops changing, and
-# saves docs/media/<view>.png. A launch with no file gives gallery.png.
-# Nothing is clicked, so a rerun captures the same views.
-#
 #   bash scripts/docs-screenshots.sh [path/to/separatrix]
 #
 # Build the app first with the bundled UI:
@@ -46,7 +41,6 @@ for _ in $(seq 50); do [ -e "/tmp/.X11-unix/X$display" ] && break; sleep 0.1; do
 
 screen_hash() { import -window root rgb:- 2>/dev/null | md5sum | cut -d' ' -f1; }
 
-# Waits until the screen has not changed for SETTLE_SECONDS, then saves it.
 capture_when_settled() {
   local out=$1 last='' now same=0 waited=0
   while [ "$waited" -lt "$TIMEOUT_SECONDS" ]; do
@@ -65,8 +59,6 @@ capture_when_settled() {
   return 1
 }
 
-# Launches the app on <example> (or on nothing) with a fresh config, so no
-# recent files or saved window state leak between shots.
 shoot() {
   local name=$1 example=${2:-} home=$work/home-$1
   mkdir -p "$home"

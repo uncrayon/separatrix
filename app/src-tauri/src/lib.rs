@@ -45,6 +45,7 @@
 //! | `clipboard_write_png` | raw PNG body | `()` |
 //! | `check_for_update` | none | [`ipc::UpdateCheck`] |
 //! | `install_update` | none | `()` |
+//! | `start_update_check` | none | `()` |
 //!
 //! Every plugin (dialog, clipboard, single instance, updater) is used from
 //! Rust only, so no plugin command is exposed to the webview (the capability
@@ -269,7 +270,7 @@ async fn project_read(
     let recent = Arc::clone(&recent);
     let opened = blocking(move || {
         let opened = separatrix_project::read_file(&path).map_err(|e| e.to_string())?;
-        remember_recent(&recent, &path);
+        remember_recent_best_effort(&recent, &path);
         Ok(opened)
     })
     .await?;
@@ -343,7 +344,7 @@ async fn project_write(
             separatrix_project::from_value_checked(req.project).map_err(|e| e.to_string())?;
         separatrix_project::write_file(&path, &project, export_service::APP_VERSION)
             .map_err(|e| e.with_file(&name).to_string())?;
-        remember_recent(&recent, &path);
+        remember_recent_best_effort(&recent, &path);
         Ok(ipc::SavedProject {
             path: req.path,
             name,
@@ -352,9 +353,7 @@ async fn project_write(
     .await
 }
 
-/// A recent list that can't be saved costs only the list: the open or save
-/// itself succeeded.
-fn remember_recent(recent: &RecentProjects, path: &Path) {
+fn remember_recent_best_effort(recent: &RecentProjects, path: &Path) {
     if let Err(e) = recent.remember(path) {
         eprintln!("separatrix: couldn't save the recent projects: {e}");
     }
@@ -383,10 +382,8 @@ fn recent_projects(
 
 /// The UI listens for `project-open-requested`: returns the files that
 /// arrived before (granted), and emits from now on.
-/// Also starts the quiet update check, now that the UI is listening.
 #[tauri::command]
-fn launch_ready<R: Runtime>(app: AppHandle<R>, launch: State<'_, LaunchFiles>) -> Vec<String> {
-    updater::spawn_startup_check(&app);
+fn launch_ready(launch: State<'_, LaunchFiles>) -> Vec<String> {
     launch
         .take_ready()
         .into_iter()
@@ -1071,6 +1068,7 @@ pub fn run() {
             clipboard_write_png,
             updater::check_for_update,
             updater::install_update,
+            updater::start_update_check,
         ]);
     builder
         .build(context)

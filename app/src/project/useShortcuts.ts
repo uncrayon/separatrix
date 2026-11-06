@@ -3,10 +3,10 @@ import { isMacPlatform, matchShortcut, type ShortcutAction } from "./shortcuts";
 
 export type ShortcutHandlers = Partial<Record<ShortcutAction, () => void>>;
 
-/**
- * A modal dialog (the gallery, the export dialog, a confirm) holds `action`
- * back unless it lists it in `data-shortcuts`, as the gallery lists `open`.
- */
+export function modalShortcuts(...actions: ShortcutAction[]): { "data-shortcuts": string } {
+  return { "data-shortcuts": actions.join(" ") };
+}
+
 function heldByModal(action: ShortcutAction): boolean {
   return Array.from(document.querySelectorAll<HTMLElement>('[aria-modal="true"]')).some(
     (m) => !(m.dataset.shortcuts ?? "").split(" ").includes(action),
@@ -16,7 +16,8 @@ function heldByModal(action: ShortcutAction): boolean {
 /**
  * Mod+N (desktop app only), Mod+O, Mod+S, Mod+Shift+S and Mod+E, on `window` in the
  * capture phase, so an equation field (MathLive) can't swallow them first.
- * Ignored during IME composition and while a modal dialog holds them back.
+ * Ignored during IME composition, and while a modal dialog is open unless it
+ * spreads `modalShortcuts(action)`.
  */
 export function useShortcuts(handlers: ShortcutHandlers, opts: { tauri: boolean; enabled?: boolean }) {
   const latest = useRef(handlers);

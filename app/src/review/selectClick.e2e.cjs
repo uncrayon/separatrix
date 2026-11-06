@@ -48,7 +48,6 @@ async function open(stream, title) {
   }
 }
 
-/** A mouse press on the select, as when it opens its popup, then the choice. */
 async function choose(select, option) {
   await select.click();
   await select.selectOption(option);

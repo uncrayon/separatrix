@@ -455,10 +455,7 @@ interface SelectProps<T extends string> {
  * WebKitGTK sends no pointerup for the mouse press that opens a <select>'s
  * popup, so it still counts that button as down: the next press brings a
  * mousedown but no pointerdown, and everything that starts on pointerdown (the
- * plots, closing a menu or a tooltip) misses it. After a mouse press on a
- * Select, the first mousedown that comes without its pointerdown gets one
- * dispatched ahead of it. A pointerdown or pointerup first means the browser
- * kept the pointer's state, and nothing is dispatched.
+ * plots, closing a menu or a tooltip) misses it.
  */
 let selectPressId: number | null = null;
 let disarmPressRepair: (() => void) | null = null;

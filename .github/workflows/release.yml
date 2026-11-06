@@ -1,9 +1,5 @@
 name: Release
 
-# Builds every installer, names each one Separatrix_<version>_<os>_<arch>[_<variant>]<ext>
-# (scripts/release/assets.sh), checksums them all in SHA256SUMS.txt (scripts/release/manifest.sh)
-# and opens a draft release v<version>. Publishing the draft is the owner's step.
-
 on:
   workflow_dispatch:
   push:
@@ -35,7 +31,6 @@ jobs:
             arch: x64
             variant: ''
             args: --bundles nsis,msi
-          # For a PC with neither WebView2 nor internet: the installer carries WebView2.
           - name: windows-offline
             runner: windows-latest
             os: windows

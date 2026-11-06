@@ -1,5 +1,3 @@
-// The status bar's version button checks for updates. The browser preview has
-// no updater, so it answers "off" unless a test sets `__sepxMock.update`.
 // CommonJS so Playwright can come from a global install (NODE_PATH).
 
 const test = require("node:test");

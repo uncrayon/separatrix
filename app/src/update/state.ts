@@ -1,5 +1,3 @@
-// What the status bar's version button knows about updates (docs/updater.md).
-
 import type { UpdateCheck } from "../api/types";
 
 export type UpdateState =
@@ -45,7 +43,6 @@ export function updateReducer(state: UpdateState, event: UpdateEvent): UpdateSta
   }
 }
 
-/** The sentence the update panel shows. */
 export function updateMessage(state: UpdateState): string {
   switch (state.kind) {
     case "idle":

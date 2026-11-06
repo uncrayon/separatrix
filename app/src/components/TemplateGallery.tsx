@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import type { RecentProject } from "../api/types";
 import { Tex } from "../math/Tex";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
+import { modalShortcuts } from "../project/useShortcuts";
 import { TEMPLATES, strogatzRef, templateChapters, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
 import { Button } from "./controls";
@@ -12,9 +13,7 @@ interface Props {
   onPick: (t: Template) => void;
   onBlank: () => void;
   onClose: () => void;
-  /** Open… (the file dialog, after the unsaved-changes confirm). */
   onOpen: () => void;
-  /** Projects opened or saved lately, most recent first. */
   recent: RecentProject[];
   onOpenRecent: (path: string) => void;
   canClose: boolean;
@@ -187,7 +186,7 @@ export function TemplateGallery({ onPick, onBlank, onClose, onOpen, recent, onOp
         aria-modal="true"
         aria-labelledby="gallery-title"
         aria-describedby="gallery-sub"
-        data-shortcuts="open"
+        {...modalShortcuts("open")}
       >
         <header className="gallery-head">
           <div className="gallery-head-text">
