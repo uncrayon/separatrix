@@ -295,6 +295,7 @@
   stroke-linejoin: miter;
 }
 
+.space-grid,
 .space-gl {
   position: absolute;
   inset: 0;

@@ -775,13 +775,21 @@ test("a 3D view's SVG: one path per trajectory, the three axis names, Strogatz g
     assert.equal(lines.length, 1, `one path in traj-${k + 1}`);
     assert.equal((lines[0][1].match(/[ML]/g) ?? []).length, 200, "every sample");
   }
-  const names = [...svg.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-family="'KaTeX_Main'[^>]*fill="#[^>]*>(.*?)<\/text>/g)].map((m) => ({
-    x: Number(m[1]),
-    y: Number(m[2]),
-    text: m[3].replace(/<[^>]+>/g, ""),
-  }));
+  const grid = svg.indexOf(`stroke="${light.grid}"`);
+  assert.ok(grid > 0, "the box's edges are drawn");
+  for (const k of [0, 1]) assert.ok(grid < svg.indexOf(`stroke="${light.traj[k]}"`), `the box's edges are under traj-${k + 1}`);
+  const namesOf = (text) =>
+    [...text.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-family="'KaTeX_Main'[^>]*fill="#[^>]*>(.*?)<\/text>/g)].map((m) => ({
+      x: Number(m[1]),
+      y: Number(m[2]),
+      text: m[3].replace(/<[^>]+>/g, ""),
+    }));
+  const names = namesOf(svg);
   assert.deepEqual(names.map((n) => n.text), ["x", "y", "z"]);
   for (const n of names) assert.ok(n.x > 0 && n.x < 480 && n.y > 0 && n.y < 360, `${n.text} at (${n.x}, ${n.y}) is inside the figure`);
+  const zoomed = namesOf(svgOf({ ...fig.view.camera, zoom: 8 }));
+  assert.deepEqual(zoomed.map((n) => n.text), ["x", "y", "z"]);
+  for (const n of zoomed) assert.ok(n.x > 0 && n.x < 480 && n.y > 0 && n.y < 360, `zoom 8: ${n.text} at (${n.x}, ${n.y}) is inside the figure`);
   const ring = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*"[^>]*stroke="${light.fp}"`, "g"))].length;
   const filled = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*" fill="${light.fp}"`, "g"))].length;
   assert.equal(ring, 3, "three fixed-point glyphs");

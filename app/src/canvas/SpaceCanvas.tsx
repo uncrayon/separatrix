@@ -16,13 +16,13 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { latexToPlain } from "../math/format";
 import { IconInfo } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { isSection, portraitFits, selectedFixedPointIndex, stateAxis, type SpaceView } from "../state/model";
+import { isSection, portraitFits, selectedFixedPointIndex, spaceStates, stateAxis, type SpaceView } from "../state/model";
 import {
   clampCamera,
   DEFAULT_CAMERA,
+  drawSpaceGrid,
   drawSpaceLines,
   drawSpaceOverlay,
-  spaceAxes,
   spaceNames,
   threeCamera,
   trajectoryBoxCoords,
@@ -66,7 +66,8 @@ interface Gl {
 function makeGl(canvas: HTMLCanvasElement): Gl | null {
   try {
     // No multisampling: in software WebGL it doubled a turning frame (54 ms against 24, measured).
-    const renderer = new WebGLRenderer({ canvas, antialias: false });
+    // Transparent, so the box's edges drawn on the canvas under it show behind the lines.
+    const renderer = new WebGLRenderer({ canvas, antialias: false, alpha: true });
     return { renderer, scene: new Scene(), camera: new OrthographicCamera(), wide: [], thin: [], disposables: [], restMs: Infinity, settle: 0 };
   } catch {
     return null;
@@ -137,6 +138,7 @@ export function renderSpaceFigure(
     ctx.fillStyle = th.bg;
     ctx.fillRect(0, 0, w, h);
   }
+  drawSpaceGrid(ctx, fig.view, w, h, th);
   if (!drawWebGlLines(ctx, w, h, scale, fig, th)) drawSpaceLines(ctx, fig.view, w, h, fig.trajectories, fig.marks.dim, th);
   drawSpaceOverlay(ctx, fig.view, w, h, fig.marks, th);
 }
@@ -183,6 +185,7 @@ function drawWebGlLines(
 
 export default function SpaceCanvas({ state, actions, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLCanvasElement>(null);
   const glCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const probeRef = useRef<HTMLSpanElement>(null);
@@ -259,7 +262,7 @@ export default function SpaceCanvas({ state, actions, toolbar }: Props) {
     };
   }, [compiled, dim, state.portrait, state.shapeId, state.ics, state.layers.fixedPoints, state.selection, view.xAxis, view.yAxis, view.zAxis]);
 
-  const [ix, iy, iz] = spaceAxes(view);
+  const [ix, iy, iz] = spaceStates(view);
   const [x0, x1] = view.xRange;
   const [y0, y1] = view.yRange;
   const [z0, z1] = view.zRange;
@@ -299,17 +302,27 @@ export default function SpaceCanvas({ state, actions, toolbar }: Props) {
 
   const draw = useCallback((camera: Camera, lines: boolean) => {
     const overlay = overlayRef.current;
+    const grid = gridRef.current;
     const w = size.w;
     const h = size.h;
-    if (!overlay || w === 0 || h === 0) return;
+    if (!overlay || !grid || w === 0 || h === 0) return;
     const dpr = window.devicePixelRatio || 1;
     const W = Math.round(w * dpr);
     const H = Math.round(h * dpr);
-    if (overlay.width !== W || overlay.height !== H) {
-      overlay.width = W;
-      overlay.height = H;
+    for (const c of [overlay, grid]) {
+      if (c.width !== W || c.height !== H) {
+        c.width = W;
+        c.height = H;
+      }
     }
     const v = { ...box, camera };
+    const under = grid.getContext("2d");
+    if (under) {
+      under.setTransform(dpr, 0, 0, dpr, 0, 0);
+      under.fillStyle = th.bg;
+      under.fillRect(0, 0, w, h);
+      drawSpaceGrid(under, v, w, h, th);
+    }
     if (gl) {
       const wide = lines || gl.restMs < FAST_FRAME_MS;
       for (const o of gl.wide) o.visible = wide;
@@ -320,7 +333,7 @@ export default function SpaceCanvas({ state, actions, toolbar }: Props) {
         gl.renderer.setPixelRatio(dpr);
         gl.renderer.setSize(w, h, false);
       }
-      gl.renderer.setClearColor(th.bg, 1);
+      gl.renderer.setClearColor(th.bg, 0);
       setCamera(gl, camera, w, h);
       const started = performance.now();
       gl.renderer.render(gl.scene, gl.camera);
@@ -344,11 +357,7 @@ export default function SpaceCanvas({ state, actions, toolbar }: Props) {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (!gl) {
-      ctx.fillStyle = th.bg;
-      ctx.fillRect(0, 0, w, h);
-      if (lines) drawSpaceLines(ctx, v, w, h, marks.trajectories, dim, th);
-    }
+    if (!gl && lines) drawSpaceLines(ctx, v, w, h, marks.trajectories, dim, th);
     drawSpaceOverlay(ctx, v, w, h, marks.overlay, th);
   }, [size.w, size.h, gl, box, th, marks, dim]);
 
@@ -429,6 +438,7 @@ export default function SpaceCanvas({ state, actions, toolbar }: Props) {
   return (
     <>
       <div className="plot-wrap space-wrap" ref={wrapRef}>
+        <canvas ref={gridRef} className="space-grid" aria-hidden="true" />
         <canvas ref={glCanvasRef} className="space-gl" aria-hidden="true" hidden={gl === null} />
         <canvas
           ref={overlayRef}

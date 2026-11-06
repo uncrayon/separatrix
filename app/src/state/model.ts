@@ -69,6 +69,15 @@ export function clampCamera(c: Partial<Camera>): Camera {
   };
 }
 
+/**
+ * How a view draws its two axes. `plane` is the phase plane and the time
+ * series (the axes tell them apart); `cobweb` is the cobweb plot of a 1-D
+ * map x_{n+1} = f(x_n), whose two axes are both state 0 (x_n across, x_{n+1}
+ * up) and whose ranges are kept at equal scales; `section` is a flow's
+ * Poincaré section, its crossings plotted in two states, or as the return
+ * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention);
+ * `space` is the 3D view of a flow, three states in a box seen from `camera`.
+ */
 interface ViewBase {
   xAxis: AxisRef;
   yAxis: AxisRef;
@@ -77,7 +86,15 @@ interface ViewBase {
 }
 
 export type SectionView = ViewBase & { kind: "section"; section: SectionSpec };
-export type SpaceView = ViewBase & { kind: "space"; zAxis: AxisRef; zRange: [number, number]; camera: Camera };
+export type StateAxis = Extract<AxisRef, { kind: "state" }>;
+export type SpaceView = Omit<ViewBase, "xAxis" | "yAxis"> & {
+  kind: "space";
+  xAxis: StateAxis;
+  yAxis: StateAxis;
+  zAxis: StateAxis;
+  zRange: [number, number];
+  camera: Camera;
+};
 export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView | SpaceView;
 export type ViewKind = NonNullable<View["kind"]>;
 
@@ -88,6 +105,7 @@ export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
+/** Every option of the View control, in the order shown. */
 export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space";
 export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space"];
 
@@ -173,6 +191,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   space: "3D",
 };
 
+/** Which of the View control's options `sys` can show, with the reason for each it can't. */
 export function viewChoiceAvailability(
   sys: SystemShape | null | undefined,
   name?: string,
@@ -252,8 +271,11 @@ export function spaceView(
   };
 }
 
-export const spaceStates = (v: SpaceView): [number, number, number] =>
-  [v.xAxis, v.yAxis, v.zAxis].map((a) => (a.kind === "state" ? a.index : 0)) as [number, number, number];
+export const spaceStates = (v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">): [number, number, number] => [
+  v.xAxis.index,
+  v.yAxis.index,
+  v.zAxis.index,
+];
 
 export function withSpaceAxis(
   view: SpaceView,
@@ -643,7 +665,7 @@ export const DEFAULT_SOLVER: SolverSettings = {
 export const DEFAULT_FIXED_STEP = 0.01;
 
 export const TIME_AXIS: AxisRef = { kind: "time" };
-export const stateAxis = (index: number): AxisRef => ({ kind: "state", index });
+export const stateAxis = (index: number): StateAxis => ({ kind: "state", index });
 
 /**
  * The time axis of a time series over the N iterates (or the time `tEnd`)
@@ -815,20 +837,20 @@ export function adaptView(
     const ok = newStates.length === 1 && (!next || cobwebAvailability({ ...next, states: newStates }).ok);
     return ok ? { ...view, xAxis: stateAxis(0), yAxis: stateAxis(0) } : null;
   }
-  const follow = (a: AxisRef): AxisRef | null => {
-    if (a.kind === "time") return a;
+  const followState = (a: StateAxis): StateAxis | null => {
     const k = newStates.findIndex((s) => s.name === oldStates[a.index]?.name);
     if (k >= 0) return stateAxis(k);
     return renamedSlot(a.index, oldStates, newStates) ? a : null;
   };
+  const follow = (a: AxisRef): AxisRef | null => (a.kind === "time" ? a : followState(a));
+  if (isSpace(view)) {
+    const [xAxis, yAxis, zAxis] = [view.xAxis, view.yAxis, view.zAxis].map(followState);
+    if (!xAxis || !yAxis || !zAxis || newStates.length < 3 || (next && next.kind === "map")) return null;
+    return { ...view, xAxis, yAxis, zAxis };
+  }
   const xAxis = follow(view.xAxis);
   const yAxis = follow(view.yAxis);
   if (!xAxis || !yAxis) return null;
-  if (isSpace(view)) {
-    const zAxis = follow(view.zAxis);
-    if (!zAxis || newStates.length < 3 || (next && next.kind === "map")) return null;
-    return { ...view, xAxis, yAxis, zAxis };
-  }
   if (isSection(view)) {
     const s = view.section;
     if (s.kind !== "plane") return { ...view, xAxis, yAxis };
@@ -991,6 +1013,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
   const section = isSection(s.view) ? s.view.section : null;
   const space = isSpace(s.view) ? s.view : null;
   const transient = clampTransient(s.solver.transient, s.solver.tEnd);
+  // A map hides the same transient in every view; a cobweb also asks for f's graph.
   const extra: Pick<PortraitRequest, "graphSamples" | "transient" | "section" | "zAxis" | "zRange"> = !isOde
     ? { ...(cobweb ? { graphSamples: COBWEB_GRAPH_SAMPLES } : {}), transient }
     : section
@@ -1041,6 +1064,15 @@ export function clampTransient(t: number, tEnd: number): number {
   return Math.min(Math.max(0, Math.round(t)), Math.max(0, MAX_ITERATES - n));
 }
 
+/**
+ * The start point a click at plot point (px, py) gives (from `base`, the
+ * point being dragged, else the slice): each axis's state takes the
+ * pointer's value. A cobweb's start point is x_0 on the diagonal, so only
+ * the horizontal value counts. A map always starts at n = 0. A section's
+ * start point is on the section: the plane's state is its value, and a
+ * stroboscopic start is at t_0 = the phase. (A return map has no click to
+ * add: see {@link canAddOnPlot}.)
+ */
 export function liftPlotPoint(
   sys: Pick<CompileResponse, "kind" | "states"> | null,
   view: View,
@@ -1073,6 +1105,17 @@ export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSp
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
 
+/**
+ * The view the View control's `choice` shows, or null when it can't (the
+ * system can't show it, or it is shown already). The view being left is
+ * remembered in `memory`, and the remembered view of `choice` comes back;
+ * without one it is made from what is shown now: a cobweb over the state's
+ * range now (else [−0.1, 1.1]), a time series over n (or t) in [T − 0.04N, T + N]
+ * with the state's range, a phase plane of states 0 and 1 over their ranges
+ * (else their extents in the portrait, as `setAxis` does), a 3D view of
+ * states 0, 1 and 2 over their extents in the portrait, seen from
+ * {@link DEFAULT_CAMERA}.
+ */
 export function switchView(
   choice: ViewChoice,
   s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & { portrait?: PortraitState | null },

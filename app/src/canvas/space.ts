@@ -1,5 +1,5 @@
 import type { FixedPointOut, TrajectoryOut } from "../api/types";
-import type { Camera, InitialCondition, SpaceView } from "../state/model";
+import { spaceStates, type Camera, type InitialCondition, type SpaceView } from "../state/model";
 import { drawFixedPoint, fixedPointGlyph, type DrawContext } from "./draw";
 import { DEFAULT_FIGURE_FONTS, type FigureFonts } from "./figure";
 import { drawMath, layoutMath, mathRuns } from "./mathText";
@@ -38,13 +38,8 @@ export function spaceFrame(c: Camera, w: number, h: number): SpaceFrame {
   };
 }
 
-export function spaceAxes(v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">): Vec3 {
-  const at = (a: SpaceView["xAxis"]) => (a.kind === "state" ? a.index : 0);
-  return [at(v.xAxis), at(v.yAxis), at(v.zAxis)];
-}
-
 export function boxCoords(v: Omit<SpaceBox, "camera">): (p: readonly number[]) => Vec3 {
-  const [i, j, k] = spaceAxes(v);
+  const [i, j, k] = spaceStates(v);
   const mid = (r: [number, number]) => (r[0] + r[1]) / 2;
   const half = (r: [number, number]) => (r[1] - r[0]) / 2;
   const [mx, my, mz] = [mid(v.xRange), mid(v.yRange), mid(v.zRange)];
@@ -158,7 +153,7 @@ export function spaceNames(
   v: Pick<SpaceView, "xAxis" | "yAxis" | "zAxis">,
   states: readonly { latex: string }[],
 ): [string, string, string] {
-  const name = (a: SpaceView["xAxis"]) => (a.kind === "state" ? (states[a.index]?.latex ?? "x") : "t");
+  const name = (a: SpaceView["xAxis"]) => states[a.index]?.latex ?? "x";
   return [name(v.xAxis), name(v.yAxis), name(v.zAxis)];
 }
 
@@ -213,6 +208,9 @@ function axisLayout(f: SpaceFrame, k: number) {
 
 const FIT_MARGIN = 12;
 
+/** An axis name stays on the canvas however far the box is zoomed: its anchor is kept inside the margin. */
+const clampTo = (x: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, x)));
+
 export function fitCamera(v: SpaceBox, w: number, h: number, glyphScale = 1): Camera {
   const tick = TICK * glyphScale;
   const inside = ([x, y]: [number, number]) =>
@@ -231,6 +229,26 @@ export function fitCamera(v: SpaceBox, w: number, h: number, glyphScale = 1): Ca
   return c;
 }
 
+/** The box's twelve edges, drawn under the trajectories (the back ones are behind them). */
+export function drawSpaceGrid(ctx: DrawContext, v: SpaceBox, w: number, h: number, th: PlotTheme): void {
+  const f = spaceFrame(v.camera, w, h);
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.lineCap = "butt";
+  ctx.strokeStyle = th.grid;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let k = 0; k < 3; k++) {
+    for (const [a, b] of SIGNS) {
+      const [p, q] = edge(k, a, b).map((c) => projectBox(f, c));
+      ctx.moveTo(p[0], p[1]);
+      ctx.lineTo(q[0], q[1]);
+    }
+  }
+  ctx.stroke();
+}
+
+/** The axes, ticks, axis names, fixed points and start points, drawn over the trajectories. */
 export function drawSpaceOverlay(
   ctx: DrawContext,
   v: SpaceBox,
@@ -244,18 +262,6 @@ export function drawSpaceOverlay(
   ctx.globalAlpha = 1;
   ctx.setLineDash([]);
   ctx.lineCap = "butt";
-
-  ctx.strokeStyle = th.grid;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let k = 0; k < 3; k++) {
-    for (const [a, b] of SIGNS) {
-      const [p, q] = edge(k, a, b).map((c) => projectBox(f, c));
-      ctx.moveTo(p[0], p[1]);
-      ctx.lineTo(q[0], q[1]);
-    }
-  }
-  ctx.stroke();
 
   const tick = TICK * th.glyphScale;
   for (let k = 0; k < 3; k++) {
@@ -298,8 +304,8 @@ export function drawSpaceOverlay(
 
     const fonts = marks.fonts ?? DEFAULT_FIGURE_FONTS;
     const layout = layoutMath(ctx, mathRuns(marks.names[k]), fonts.mathFamily, fonts.mathSize);
-    const nx = mx + ox * (tick + NAME_GAP);
-    const ny = my + oy * (tick + NAME_GAP);
+    const nx = clampTo(mx + ox * (tick + NAME_GAP), FIT_MARGIN + layout.width / 2, w - FIT_MARGIN - layout.width / 2);
+    const ny = clampTo(my + oy * (tick + NAME_GAP), FIT_MARGIN + layout.size / 2, h - FIT_MARGIN - layout.size / 2);
     drawMath(ctx, layout, nx - layout.width / 2, ny + layout.size * 0.35, th.tick, th.halo);
   }
 
@@ -348,6 +354,7 @@ export function drawSpaceFigure(
     ctx.fillStyle = th.bg;
     ctx.fillRect(0, 0, w, h);
   }
+  drawSpaceGrid(ctx, fig.view, w, h, th);
   drawSpaceLines(ctx, fig.view, w, h, fig.trajectories, fig.marks.dim, th);
   drawSpaceOverlay(ctx, fig.view, w, h, fig.marks, th);
 }
