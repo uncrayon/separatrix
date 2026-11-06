@@ -10,12 +10,19 @@
 export type {
   Arrow,
   AxisRef,
+  BranchEndOut,
+  BranchOut,
+  BranchStop,
   ChosenSavePath,
   Classification,
   ClipboardTextRequest,
   CloseRequested,
   CompileRequest,
   CompileResponse,
+  ContinuationDirection,
+  ContinuationRequest,
+  ContinuationResponse,
+  ContinuationStart,
   ConvertedLineOut,
   ConvertRequest,
   ConvertResponse,
@@ -75,6 +82,8 @@ export type {
   SectionSpec,
   Severity,
   SolverOptions,
+  SpecialKindOut,
+  SpecialPointOut,
   StateInfo,
   Stats,
   Status,
@@ -87,4 +96,4 @@ export type {
   TrajectoryTag,
 } from "./ipc.generated";
 
-export { MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS, ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT } from "./ipc.generated";
+export { MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS, ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT } from "./ipc.generated";

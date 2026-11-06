@@ -1,0 +1,572 @@
+//! The continuation gate: every bifurcation value below is derived in
+//! closed form, and `compute_continuation` must reproduce it.
+//!
+//! - Saddle-node `ẋ = r + x²`, transcritical `ẋ = rx − x²` and pitchfork
+//!   `ẋ = rx − x³` bifurcate at `r = 0` (Strogatz §3.1–3.4).
+//! - The Hopf normal form `ẋ = μx − y ∓ x(x² + y²)`, `ẏ = x + μy ∓ y(x² + y²)`
+//!   has its Hopf point at `μ = 0` with `ω = 1` and, in polar form,
+//!   `ṙ = μr ∓ r³`, so `ℓ₁ = ∓1` (Strogatz §8.2; Kuznetsov, *Elements of
+//!   Applied Bifurcation Theory*, §3.5).
+//! - `ẋ = y, ẏ = x + μy` has eigenvalues `λ₁ + λ₂ = μ`, `λ₁λ₂ = −1`: a
+//!   neutral saddle at `μ = 0`, not a Hopf point.
+//! - Sel'kov's glycolysis model (Strogatz §7.3) at `a = 0.08` loses and
+//!   regains stability where `b² = (1 − 2a ± √(1 − 8a))/2`, that is
+//!   `b = √0.12` and `b = √0.72`, with `ω² = det J = a + b²`.
+//! - The Brusselator `ẋ = a − (b + 1)x + x²y, ẏ = bx − x²y` (Strogatz
+//!   exercise 7.3.2) has `tr J = b − 1 − a²` and `det J = a²` at `(a, b/a)`.
+//! - The logistic map's fixed point `1 − 1/r` has multiplier `2 − r`: a
+//!   flip at `r1 = 3` (Strogatz §10.3).
+//! - Hénon's map at `b = 0.3` has fixed points where
+//!   `a x² + (1 − b)x − 1 = 0`: they are born at `a0 = −(1 − b)²/4` and the
+//!   upper one flips at `a1 = 3(1 − b)²/4` (Strogatz exercise 12.2.6).
+//! - The delayed logistic map `x ↦ r x (1 − y), y ↦ x` has multipliers with
+//!   `μ² − μ + (r − 1) = 0` at `x = y = 1 − 1/r`: `|μ|² = r − 1`, so a
+//!   Neimark–Sacker point at `r = 2` with `μ = e^{±iπ/3}`.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
+
+use separatrix_lib::ipc::{
+    BranchOut, CompileRequest, ContinuationDirection, ContinuationRequest, ContinuationStart,
+    InputFormat, Severity, SpecialKindOut,
+};
+use separatrix_lib::service::{self, SystemStore};
+use serde::Deserialize;
+
+const TEMPLATES_JSON: &str = include_str!("../../src/templates/templates.json");
+
+enum Source {
+    Template(&'static str),
+    Text(&'static str),
+}
+
+struct Run {
+    label: &'static str,
+    source: Source,
+    params: &'static [(&'static str, f64)],
+    param: &'static str,
+    range: (f64, f64),
+    x0: &'static [f64],
+    direction: ContinuationDirection,
+    ds: f64,
+    ds_max: f64,
+}
+
+const DEFAULT: Run = Run {
+    label: "",
+    source: Source::Text(""),
+    params: &[],
+    param: "",
+    range: (-1.0, 1.0),
+    x0: &[0.0],
+    direction: ContinuationDirection::Forward,
+    ds: 0.05,
+    ds_max: 0.1,
+};
+
+const SADDLE_NODE: Run = Run {
+    label: "saddle-node",
+    source: Source::Template("saddle-node"),
+    params: &[("r", -1.0)],
+    param: "r",
+    x0: &[-1.0],
+    ..DEFAULT
+};
+
+const TRANSCRITICAL: Run = Run {
+    label: "transcritical",
+    source: Source::Template("transcritical"),
+    params: &[("r", -1.0)],
+    param: "r",
+    ..DEFAULT
+};
+
+const PITCHFORK: Run = Run {
+    label: "pitchfork",
+    source: Source::Template("pitchfork"),
+    params: &[("r", -1.0)],
+    param: "r",
+    ..DEFAULT
+};
+
+const HOPF: Run = Run {
+    label: "Hopf normal form",
+    source: Source::Template("hopf-supercritical"),
+    params: &[("mu", -1.0)],
+    param: "mu",
+    x0: &[0.0, 0.0],
+    ..DEFAULT
+};
+
+const SUBCRITICAL: Run = Run {
+    label: "subcritical Hopf",
+    source: Source::Text("x' = mu*x - y + x*(x^2 + y^2)\ny' = x + mu*y + y*(x^2 + y^2)"),
+    ..HOPF
+};
+
+const NEUTRAL_SADDLE: Run = Run {
+    label: "neutral saddle",
+    source: Source::Text("x' = y\ny' = x + mu*y"),
+    ..HOPF
+};
+
+const SELKOV_A: f64 = 0.08;
+
+const SELKOV: Run = Run {
+    label: "Sel'kov",
+    source: Source::Template("selkov-glycolysis"),
+    params: &[("a", SELKOV_A), ("b", 0.05)],
+    param: "b",
+    range: (0.05, 1.5),
+    x0: &[0.06, 0.6],
+    ..DEFAULT
+};
+
+const SELKOV_LONG: Run = Run {
+    label: "Sel'kov, ds = 1, ds_max = 2",
+    ds: 1.0,
+    ds_max: 2.0,
+    ..SELKOV
+};
+
+const BRUSSELATOR: Run = Run {
+    label: "Brusselator",
+    source: Source::Text("x' = a - (b + 1)*x + x^2*y\ny' = b*x - x^2*y"),
+    params: &[("a", 2.0), ("b", 1.0)],
+    param: "b",
+    range: (1.0, 8.0),
+    x0: &[2.0, 0.5],
+    ..DEFAULT
+};
+
+const LOGISTIC: Run = Run {
+    label: "logistic map",
+    source: Source::Template("logistic-map"),
+    params: &[("r", 2.5)],
+    param: "r",
+    range: (2.5, 3.5),
+    x0: &[0.6],
+    ..DEFAULT
+};
+
+const HENON_B: f64 = 0.3;
+
+/// From the upper fixed point at `a = 0.2`, both ways: back to the fold and
+/// round it onto the lower fixed point, and forward to the flip.
+const HENON: Run = Run {
+    label: "Hénon map, both directions",
+    source: Source::Template("henon-map"),
+    params: &[("a", 0.2), ("b", HENON_B)],
+    param: "a",
+    range: (-0.5, 1.0),
+    x0: &[1.09, 0.327],
+    direction: ContinuationDirection::Both,
+    ..DEFAULT
+};
+
+const DELAYED_LOGISTIC: Run = Run {
+    label: "delayed logistic map",
+    source: Source::Text("x_{n+1} = r*x_n*(1 - y_n)\ny_{n+1} = x_n"),
+    params: &[("r", 1.5)],
+    param: "r",
+    range: (1.5, 2.5),
+    x0: &[0.333, 0.333],
+    ..DEFAULT
+};
+
+enum Measure {
+    /// The parameter at the `nth` special point of a kind.
+    P(SpecialKindOut, usize),
+    /// Its `omega`: `ω` of a Hopf point, `θ` of a Neimark–Sacker point.
+    Omega(SpecialKindOut, usize),
+    /// `ℓ₁` of the `nth` Hopf point.
+    Lyapunov(usize),
+    /// How many special points of a kind the branch has.
+    Count(SpecialKindOut),
+    /// The largest `|x|` over the branch.
+    MaxAbsX,
+}
+
+enum Expect {
+    Near { value: f64, tol: f64 },
+    AtMost { bound: f64 },
+    Exactly { count: usize },
+}
+
+struct Check {
+    text: &'static str,
+    run: &'static Run,
+    measure: Measure,
+    expect: Expect,
+}
+
+const TOL: f64 = 1e-9;
+const SELKOV_TOL: f64 = 1e-8;
+const LYAPUNOV_TOL: f64 = 1e-6;
+const DOUBLING_TOL: f64 = 1e-6;
+
+const fn near(value: f64, tol: f64) -> Expect {
+    Expect::Near { value, tol }
+}
+
+use SpecialKindOut::{BranchPoint, Flip, Fold, Hopf, NeimarkSacker};
+
+const CHECKS: &[Check] = &[
+    Check {
+        text: "saddle-node ẋ = r + x²: LP r",
+        run: &SADDLE_NODE,
+        measure: Measure::P(Fold, 0),
+        expect: near(0.0, TOL),
+    },
+    Check {
+        text: "transcritical ẋ = rx − x²: BP r",
+        run: &TRANSCRITICAL,
+        measure: Measure::P(BranchPoint, 0),
+        expect: near(0.0, TOL),
+    },
+    Check {
+        text: "transcritical: max |x| on x = 0",
+        run: &TRANSCRITICAL,
+        measure: Measure::MaxAbsX,
+        expect: Expect::AtMost { bound: 1e-12 },
+    },
+    Check {
+        text: "pitchfork ẋ = rx − x³: BP r",
+        run: &PITCHFORK,
+        measure: Measure::P(BranchPoint, 0),
+        expect: near(0.0, TOL),
+    },
+    Check {
+        text: "Hopf normal form: H μ",
+        run: &HOPF,
+        measure: Measure::P(Hopf, 0),
+        expect: near(0.0, TOL),
+    },
+    Check {
+        text: "Hopf normal form: ω",
+        run: &HOPF,
+        measure: Measure::Omega(Hopf, 0),
+        expect: near(1.0, TOL),
+    },
+    Check {
+        text: "Hopf normal form: ℓ₁ (supercritical)",
+        run: &HOPF,
+        measure: Measure::Lyapunov(0),
+        expect: near(-1.0, LYAPUNOV_TOL),
+    },
+    Check {
+        text: "subcritical Hopf: ℓ₁",
+        run: &SUBCRITICAL,
+        measure: Measure::Lyapunov(0),
+        expect: near(1.0, LYAPUNOV_TOL),
+    },
+    Check {
+        text: "neutral saddle ẋ = y, ẏ = x + μy: H count",
+        run: &NEUTRAL_SADDLE,
+        measure: Measure::Count(Hopf),
+        expect: Expect::Exactly { count: 0 },
+    },
+    Check {
+        text: "Sel'kov a = 0.08: first H b = √0.12",
+        run: &SELKOV,
+        measure: Measure::P(Hopf, 0),
+        expect: near(0.346_410_161_513_775_4, SELKOV_TOL),
+    },
+    Check {
+        text: "Sel'kov: first H ω = √0.2",
+        run: &SELKOV,
+        measure: Measure::Omega(Hopf, 0),
+        expect: near(0.447_213_595_499_958, SELKOV_TOL),
+    },
+    Check {
+        text: "Sel'kov: second H b = √0.72",
+        run: &SELKOV,
+        measure: Measure::P(Hopf, 1),
+        expect: near(0.848_528_137_423_857, SELKOV_TOL),
+    },
+    Check {
+        text: "Sel'kov: second H ω = √0.8",
+        run: &SELKOV,
+        measure: Measure::Omega(Hopf, 1),
+        expect: near(0.894_427_190_999_916, SELKOV_TOL),
+    },
+    Check {
+        text: "Sel'kov, ds = 1, ds_max = 2: H count",
+        run: &SELKOV_LONG,
+        measure: Measure::Count(Hopf),
+        expect: Expect::Exactly { count: 2 },
+    },
+    Check {
+        text: "Brusselator a = 2: H b = 1 + a²",
+        run: &BRUSSELATOR,
+        measure: Measure::P(Hopf, 0),
+        expect: near(5.0, TOL),
+    },
+    Check {
+        text: "Brusselator a = 2: ω = a",
+        run: &BRUSSELATOR,
+        measure: Measure::Omega(Hopf, 0),
+        expect: near(2.0, TOL),
+    },
+    Check {
+        text: "logistic map: PD r1",
+        run: &LOGISTIC,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.0, DOUBLING_TOL),
+    },
+    Check {
+        text: "Hénon b = 0.3: LP a0 = −(1 − b)²/4",
+        run: &HENON,
+        measure: Measure::P(Fold, 0),
+        expect: near(-0.1225, TOL),
+    },
+    Check {
+        text: "Hénon b = 0.3: PD a1 = 3(1 − b)²/4",
+        run: &HENON,
+        measure: Measure::P(Flip, 0),
+        expect: near(0.3675, TOL),
+    },
+    Check {
+        text: "delayed logistic map: NS r",
+        run: &DELAYED_LOGISTIC,
+        measure: Measure::P(NeimarkSacker, 0),
+        expect: near(2.0, TOL),
+    },
+    Check {
+        text: "delayed logistic map: NS θ = π/3",
+        run: &DELAYED_LOGISTIC,
+        measure: Measure::Omega(NeimarkSacker, 0),
+        expect: near(std::f64::consts::FRAC_PI_3, TOL),
+    },
+];
+
+const WRONG_CHECKS: &[Check] = &[
+    Check {
+        text: "wrong: pitchfork BP r = 1e−4",
+        run: &PITCHFORK,
+        measure: Measure::P(BranchPoint, 0),
+        expect: near(1e-4, TOL),
+    },
+    Check {
+        text: "wrong: Sel'kov first H b = 0.35",
+        run: &SELKOV,
+        measure: Measure::P(Hopf, 0),
+        expect: near(0.35, SELKOV_TOL),
+    },
+    Check {
+        text: "wrong: Hopf normal form ω = 1.001",
+        run: &HOPF,
+        measure: Measure::Omega(Hopf, 0),
+        expect: near(1.001, TOL),
+    },
+    Check {
+        text: "wrong: neutral saddle has 1 H",
+        run: &NEUTRAL_SADDLE,
+        measure: Measure::Count(Hopf),
+        expect: Expect::Exactly { count: 1 },
+    },
+    Check {
+        text: "wrong: logistic r1 = 3.00001",
+        run: &LOGISTIC,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.00001, DOUBLING_TOL),
+    },
+];
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Template {
+    id: String,
+    format: InputFormat,
+    equations: Vec<String>,
+}
+
+fn store() -> &'static SystemStore {
+    static STORE: OnceLock<SystemStore> = OnceLock::new();
+    STORE.get_or_init(SystemStore::new)
+}
+
+fn branch(run: &'static Run) -> Arc<BranchOut> {
+    static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<BranchOut>>>> = OnceLock::new();
+    let runs = RUNS.get_or_init(Default::default);
+    if let Some(done) = runs.lock().unwrap().get(run.label) {
+        return done.clone();
+    }
+    let (source, format) = match run.source {
+        Source::Template(id) => {
+            let templates: Vec<Template> =
+                serde_json::from_str(TEMPLATES_JSON).expect("templates.json");
+            let t = templates
+                .into_iter()
+                .find(|t| t.id == id)
+                .unwrap_or_else(|| panic!("no template {id:?}"));
+            (t.equations.join("\n"), t.format)
+        }
+        Source::Text(text) => (text.to_string(), InputFormat::Text),
+    };
+    let res = service::compile_system(store(), &CompileRequest { source, format });
+    assert!(
+        res.ok
+            && !res
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == Severity::Error),
+        "{} doesn't compile: {:?}",
+        run.label,
+        res.diagnostics
+    );
+    let value = |name: &str| {
+        run.params
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|&(_, v)| v)
+            .unwrap_or_else(|| panic!("{}: no value for {name}", run.label))
+    };
+    let params = res.params.iter().map(|p| value(&p.name)).collect();
+    let param = res
+        .params
+        .iter()
+        .position(|p| p.name == run.param)
+        .unwrap_or_else(|| panic!("{}: no parameter {}", run.label, run.param));
+    let system_id = res.system_id.expect("compiled");
+    let req = ContinuationRequest {
+        request_id: 1,
+        system_id,
+        params,
+        param,
+        range: run.range,
+        start: ContinuationStart::Point {
+            x0: run.x0.to_vec(),
+            period: 1,
+        },
+        direction: run.direction,
+        ds: run.ds,
+        ds_max: run.ds_max,
+        max_points: 1000,
+    };
+    let system = store().get(system_id).expect("stored");
+    let out = service::compute_continuation(&system, &req)
+        .unwrap_or_else(|e| panic!("{}: {e}", run.label));
+    let out = Arc::new(out.branch);
+    runs.lock().unwrap().insert(run.label, out.clone());
+    out
+}
+
+fn measure(check: &Check) -> f64 {
+    let b = branch(check.run);
+    let nth = |kind: SpecialKindOut, n: usize| b.special.iter().filter(|sp| sp.kind == kind).nth(n);
+    let missing = f64::NAN;
+    match check.measure {
+        Measure::P(kind, n) => nth(kind, n).map_or(missing, |sp| sp.p),
+        Measure::Omega(kind, n) => nth(kind, n).and_then(|sp| sp.omega).unwrap_or(missing),
+        Measure::Lyapunov(n) => nth(Hopf, n).and_then(|sp| sp.lyapunov).unwrap_or(missing),
+        Measure::Count(kind) => b.special.iter().filter(|sp| sp.kind == kind).count() as f64,
+        Measure::MaxAbsX => b.x.iter().fold(0.0, |m, x| x.abs().max(m)),
+    }
+}
+
+struct Row {
+    text: &'static str,
+    expect: &'static Expect,
+    measured: f64,
+}
+
+impl Row {
+    fn delta(&self) -> Option<f64> {
+        match *self.expect {
+            Expect::Near { value, .. } => Some((self.measured - value).abs()),
+            Expect::Exactly { count } => Some((self.measured - count as f64).abs()),
+            Expect::AtMost { .. } => None,
+        }
+        .filter(|d| d.is_finite())
+    }
+
+    fn passes(&self) -> bool {
+        match *self.expect {
+            Expect::Near { tol, .. } => self.delta().is_some_and(|d| d <= tol),
+            Expect::Exactly { .. } => self.delta() == Some(0.0),
+            Expect::AtMost { bound } => self.measured <= bound,
+        }
+    }
+}
+
+fn print_line([claim, reference, measured, delta, tol, verdict]: [&str; 6]) {
+    // The dot of ẋ and ẏ is a combining character, which takes no column.
+    let columns = claim
+        .chars()
+        .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
+        .count();
+    let pad = " ".repeat(44usize.saturating_sub(columns));
+    println!("{claim}{pad} {reference:>16} {measured:>16} {delta:>8} {tol:>8} {verdict}");
+}
+
+fn print_table(rows: &[Row]) {
+    println!();
+    print_line(["claim", "reference", "measured", "Δ", "tol", "result"]);
+    for r in rows {
+        let (reference, measured, tol) = match *r.expect {
+            Expect::Near { value, tol } => (
+                format!("{value:.12}"),
+                format!("{:.12}", r.measured),
+                format!("{tol:.0e}"),
+            ),
+            Expect::AtMost { bound } => (
+                "0".to_string(),
+                format!("{:.3e}", r.measured),
+                format!("≤ {bound:.0e}"),
+            ),
+            Expect::Exactly { count } => (
+                count.to_string(),
+                format!("{}", r.measured),
+                "exact".to_string(),
+            ),
+        };
+        print_line([
+            r.text,
+            &reference,
+            &measured,
+            &r.delta().map_or("—".to_string(), |d| format!("{d:.1e}")),
+            &tol,
+            if r.passes() { "PASS" } else { "FAIL" },
+        ]);
+    }
+}
+
+fn evaluate(check: &'static Check) -> Row {
+    Row {
+        text: check.text,
+        expect: &check.expect,
+        measured: measure(check),
+    }
+}
+
+#[test]
+fn continuation_claims_reproduce() {
+    let started = Instant::now();
+    let rows: Vec<Row> = CHECKS.iter().map(evaluate).collect();
+    print_table(&rows);
+    println!(
+        "\nℓ₁ is Kuznetsov's (§3.5) with ⟨p, q⟩ = 1 and ⟨q, q⟩ = 1/2, so ṙ = μr + a r³, \
+         θ̇ = ω has ℓ₁ = a/ω."
+    );
+    println!(
+        "{} rows, wall time {:.2} s (budget 10 s)",
+        rows.len(),
+        started.elapsed().as_secs_f64()
+    );
+    let failed: Vec<&str> = rows
+        .iter()
+        .filter(|r| !r.passes())
+        .map(|r| r.text)
+        .collect();
+    assert!(failed.is_empty(), "failed claims: {failed:?}");
+}
+
+#[test]
+fn wrong_claims_fail() {
+    let rows: Vec<Row> = WRONG_CHECKS.iter().map(evaluate).collect();
+    print_table(&rows);
+    let passed: Vec<&str> = rows.iter().filter(|r| r.passes()).map(|r| r.text).collect();
+    assert!(passed.is_empty(), "wrong claims not failed: {passed:?}");
+}

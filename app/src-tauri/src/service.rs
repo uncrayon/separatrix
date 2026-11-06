@@ -9,11 +9,13 @@ use dyn_solve::Sampling;
 use separatrix_project::ORBIT_TRANSIENT_MAX;
 
 use crate::ipc::{
-    Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
-    ConvertedLineOut, Diagnostic, DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest,
-    LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo,
-    PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut,
-    TrajectoryRequest, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
+    Arrow, AxisRef, BranchEndOut, BranchOut, BranchStop, CompileRequest, CompileResponse,
+    ContinuationDirection, ContinuationRequest, ContinuationResponse, ContinuationStart,
+    ConvertRequest, ConvertResponse, ConvertedLineOut, Diagnostic, DoublingOut, EnergyOut,
+    FixedPointOut, LyapunovRequest, LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest,
+    OrbitDiagramResponse, ParamInfo, PortraitRequest, PortraitResponse, SectionSpec, SolverOptions,
+    SpecialKindOut, SpecialPointOut, StateInfo, TrajectoryOut, TrajectoryRequest,
+    MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -31,6 +33,10 @@ pub const MAX_RENORMALIZATIONS: usize = 10_000_000;
 pub const MAX_LYAPUNOV_ITERATES: usize = 100_000_000;
 /// Running-estimate samples returned by `compute_lyapunov`.
 pub const LYAPUNOV_HISTORY: usize = 2000;
+/// Smallest continuation step: a step halved below it ends the branch.
+pub const CONTINUATION_DS_MIN: f64 = 1e-8;
+/// Largest angle in radians between successive tangents of a branch.
+pub const CONTINUATION_MAX_ANGLE: f64 = 0.3;
 
 #[derive(Default)]
 pub struct SystemStore {
@@ -402,6 +408,187 @@ fn validate_orbit_diagram(f: &dyn VectorField, req: &OrbitDiagramRequest) -> Res
     }
     if req.doublings && !f.is_autonomous() {
         return Err("Period doublings need a map that doesn't depend on n.".into());
+    }
+    Ok(())
+}
+
+/// A branch of equilibria or of fixed points of `f^period` as one
+/// parameter varies (see [`dyn_analysis::continue_branch`]).
+pub fn compute_continuation(
+    system: &CompiledSystem,
+    req: &ContinuationRequest,
+) -> Result<ContinuationResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_continuation(f, req)?;
+    let ContinuationStart::Point { x0, period } = &req.start;
+    let follow = |sign: f64| {
+        let opts = dyn_analysis::ContinuationOptions {
+            param: req.param,
+            period: *period,
+            range: req.range,
+            ds: sign * req.ds,
+            ds_min: CONTINUATION_DS_MIN,
+            ds_max: req.ds_max,
+            max_points: req.max_points,
+            max_angle: CONTINUATION_MAX_ANGLE,
+        };
+        dyn_analysis::continue_branch(f, &req.params, x0, &opts)
+            .map_err(|e| continuation_refusal(f, e))
+    };
+    let branch = match req.direction {
+        ContinuationDirection::Forward => join(None, follow(1.0)?),
+        ContinuationDirection::Backward => join(None, follow(-1.0)?),
+        ContinuationDirection::Both => join(Some(follow(-1.0)?), follow(1.0)?),
+    };
+    Ok(ContinuationResponse {
+        request_id: req.request_id,
+        branch,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+fn continuation_refusal(f: &dyn VectorField, e: dyn_analysis::ContinuationError) -> String {
+    let point = if f.kind() == SystemKind::Map {
+        "fixed point"
+    } else {
+        "equilibrium"
+    };
+    match e {
+        dyn_analysis::ContinuationError::NotAFixedPoint => format!(
+            "Newton's method found no {point} near the starting point; start closer to one."
+        ),
+        dyn_analysis::ContinuationError::Singular => format!(
+            "The starting {point} is a fold or branch point, so the branch has no unique \
+             direction; start a little away from it."
+        ),
+        dyn_analysis::ContinuationError::NotAutonomous => NOT_AUTONOMOUS.into(),
+    }
+}
+
+const NOT_AUTONOMOUS: &str =
+    "Continuation follows fixed points, which a system that depends on t or n doesn't have.";
+
+/// One polyline from `forward`, preceded by `backward` reversed when there
+/// is one: the shared start appears once, indices and tangents follow the
+/// polyline's order.
+fn join(backward: Option<dyn_analysis::Branch>, forward: dyn_analysis::Branch) -> BranchOut {
+    let stop = |end| match end {
+        dyn_analysis::BranchEnd::Range => BranchStop::Range,
+        dyn_analysis::BranchEnd::MaxPoints => BranchStop::MaxPoints,
+        dyn_analysis::BranchEnd::StepTooSmall => BranchStop::StepTooSmall,
+    };
+    let special_out = |sp: dyn_analysis::SpecialPoint, index: usize, sign: f64| SpecialPointOut {
+        kind: match sp.kind {
+            dyn_analysis::SpecialKind::Fold => SpecialKindOut::Fold,
+            dyn_analysis::SpecialKind::Hopf => SpecialKindOut::Hopf,
+            dyn_analysis::SpecialKind::BranchPoint => SpecialKindOut::BranchPoint,
+            dyn_analysis::SpecialKind::Flip => SpecialKindOut::Flip,
+            dyn_analysis::SpecialKind::NeimarkSacker => SpecialKindOut::NeimarkSacker,
+        },
+        index,
+        p: sp.p,
+        x: sp.x,
+        period: sp.period,
+        tangent: sp.tangent.iter().map(|t| sign * t).collect(),
+        eigenvalues: sp.eigenvalues,
+        omega: sp.omega,
+        lyapunov: sp.lyapunov,
+    };
+    let mut points = Vec::new();
+    let mut special = Vec::new();
+    let mut first = None;
+    if let Some(b) = backward {
+        let last = b.points.len() - 1;
+        first = Some(stop(b.end));
+        points.extend(b.points.into_iter().skip(1).rev());
+        special.extend(
+            b.special
+                .into_iter()
+                .rev()
+                .map(|sp| (last - sp.index, sp))
+                .map(|(index, sp)| special_out(sp, index, -1.0)),
+        );
+    }
+    let offset = points.len();
+    points.extend(forward.points);
+    special.extend(
+        forward
+            .special
+            .into_iter()
+            .map(|sp| (offset + sp.index, sp))
+            .map(|(index, sp)| special_out(sp, index, 1.0)),
+    );
+    BranchOut {
+        period: forward.period,
+        p: points.iter().map(|pt| pt.p).collect(),
+        x: points
+            .iter()
+            .flat_map(|pt| pt.cycle.iter().copied())
+            .collect(),
+        stable: points.iter().map(|pt| pt.stable).collect(),
+        unstable: points.iter().map(|pt| pt.unstable as u32).collect(),
+        special,
+        end: BranchEndOut {
+            first,
+            last: stop(forward.end),
+        },
+    }
+}
+
+fn validate_continuation(f: &dyn VectorField, req: &ContinuationRequest) -> Result<(), String> {
+    if !f.is_autonomous() {
+        return Err(NOT_AUTONOMOUS.into());
+    }
+    if req.params.len() != f.n_params() {
+        return Err(format!(
+            "Expected {} parameter value(s) but got {}.",
+            f.n_params(),
+            req.params.len()
+        ));
+    }
+    if req.param >= f.n_params() {
+        return Err(if f.n_params() == 0 {
+            "This system has no parameter to continue in.".into()
+        } else {
+            format!(
+                "Parameter {} doesn't exist; the system has {}.",
+                req.param,
+                f.n_params()
+            )
+        });
+    }
+    let (lo, hi) = req.range;
+    if !(lo.is_finite() && hi.is_finite() && lo < hi) {
+        return Err("The parameter range must be finite, with its start below its end.".into());
+    }
+    let ContinuationStart::Point { x0, period } = &req.start;
+    if x0.len() != f.dim() {
+        return Err(format!(
+            "The starting point has {} coordinate(s) but the system has {}.",
+            x0.len(),
+            f.dim()
+        ));
+    }
+    if !x0.iter().chain(&req.params).all(|v| v.is_finite()) {
+        return Err("The starting point and the parameters must be finite.".into());
+    }
+    if *period == 0 {
+        return Err("The period must be at least 1.".into());
+    }
+    if *period > 1 && f.kind() == SystemKind::Ode {
+        return Err("A flow's equilibria have no period; use period 1.".into());
+    }
+    if !(req.ds > 0.0 && req.ds.is_finite()) {
+        return Err("The step ds must be a positive number.".into());
+    }
+    if !(req.ds_max >= req.ds && req.ds_max.is_finite()) {
+        return Err("The largest step must be a number at least ds.".into());
+    }
+    if !(2..=MAX_CONTINUATION_POINTS).contains(&req.max_points) {
+        return Err(format!(
+            "A branch needs 2 to {MAX_CONTINUATION_POINTS} points in each direction."
+        ));
     }
     Ok(())
 }
@@ -2516,5 +2703,280 @@ mod tests {
             ..ok.clone()
         };
         assert!(validate_lyapunov(&*system, &at_the_limit).is_ok());
+    }
+
+    fn continuation_request(system_id: u32, params: Vec<f64>, x0: Vec<f64>) -> ContinuationRequest {
+        ContinuationRequest {
+            request_id: 4,
+            system_id,
+            params,
+            param: 0,
+            range: (-1.0, 1.0),
+            start: ContinuationStart::Point { x0, period: 1 },
+            direction: ContinuationDirection::Forward,
+            ds: 0.05,
+            ds_max: 0.1,
+            max_points: 500,
+        }
+    }
+
+    #[test]
+    fn continuation_refuses_what_it_cannot_follow() {
+        let store = SystemStore::new();
+        let pitchfork = compile_src(&store, "\\dot{x}=rx-x^3");
+        let ok = continuation_request(pitchfork, vec![-1.0], vec![0.0]);
+        let flow = store.get(pitchfork).unwrap();
+        let out = compute_continuation(&flow, &ok).unwrap();
+        assert_eq!(out.request_id, 4);
+        assert_eq!(out.branch.special.len(), 1);
+        let at_the_limit = ContinuationRequest {
+            max_points: MAX_CONTINUATION_POINTS,
+            ds_max: 0.05,
+            ..ok.clone()
+        };
+        assert!(compute_continuation(&flow, &at_the_limit).is_ok());
+
+        let point = |x0: Vec<f64>, period| ContinuationStart::Point { x0, period };
+        let range = "The parameter range must be finite, with its start below its end.";
+        let ds = "The step ds must be a positive number.";
+        let points = "A branch needs 2 to 20000 points in each direction.";
+        let refused = [
+            (
+                ContinuationRequest {
+                    params: vec![],
+                    ..ok.clone()
+                },
+                "Expected 1 parameter value(s) but got 0.",
+            ),
+            (
+                ContinuationRequest {
+                    param: 1,
+                    ..ok.clone()
+                },
+                "Parameter 1 doesn't exist; the system has 1.",
+            ),
+            (
+                ContinuationRequest {
+                    range: (1.0, 1.0),
+                    ..ok.clone()
+                },
+                range,
+            ),
+            (
+                ContinuationRequest {
+                    range: (1.0, -1.0),
+                    ..ok.clone()
+                },
+                range,
+            ),
+            (
+                ContinuationRequest {
+                    range: (-1.0, f64::INFINITY),
+                    ..ok.clone()
+                },
+                range,
+            ),
+            (
+                ContinuationRequest {
+                    range: (f64::NAN, 1.0),
+                    ..ok.clone()
+                },
+                range,
+            ),
+            (
+                ContinuationRequest {
+                    start: point(vec![0.0, 0.0], 1),
+                    ..ok.clone()
+                },
+                "The starting point has 2 coordinate(s) but the system has 1.",
+            ),
+            (
+                ContinuationRequest {
+                    start: point(vec![f64::NAN], 1),
+                    ..ok.clone()
+                },
+                "The starting point and the parameters must be finite.",
+            ),
+            (
+                ContinuationRequest {
+                    params: vec![f64::INFINITY],
+                    ..ok.clone()
+                },
+                "The starting point and the parameters must be finite.",
+            ),
+            (
+                ContinuationRequest {
+                    start: point(vec![0.0], 0),
+                    ..ok.clone()
+                },
+                "The period must be at least 1.",
+            ),
+            (
+                ContinuationRequest {
+                    start: point(vec![0.0], 2),
+                    ..ok.clone()
+                },
+                "A flow's equilibria have no period; use period 1.",
+            ),
+            (
+                ContinuationRequest {
+                    ds: 0.0,
+                    ..ok.clone()
+                },
+                ds,
+            ),
+            (
+                ContinuationRequest {
+                    ds: -0.05,
+                    ..ok.clone()
+                },
+                ds,
+            ),
+            (
+                ContinuationRequest {
+                    ds: f64::NAN,
+                    ..ok.clone()
+                },
+                ds,
+            ),
+            (
+                ContinuationRequest {
+                    ds_max: 0.01,
+                    ..ok.clone()
+                },
+                "The largest step must be a number at least ds.",
+            ),
+            (
+                ContinuationRequest {
+                    max_points: 1,
+                    ..ok.clone()
+                },
+                points,
+            ),
+            (
+                ContinuationRequest {
+                    max_points: MAX_CONTINUATION_POINTS + 1,
+                    ..ok.clone()
+                },
+                points,
+            ),
+            (
+                ContinuationRequest {
+                    params: vec![0.0],
+                    ..ok.clone()
+                },
+                "The starting equilibrium is a fold or branch point, so the branch has no \
+                 unique direction; start a little away from it.",
+            ),
+        ];
+        for (req, message) in &refused {
+            assert_eq!(
+                compute_continuation(&flow, req).unwrap_err(),
+                *message,
+                "{req:?}"
+            );
+        }
+
+        let saddle_node = compile_src(&store, "\\dot{x}=r+x^2");
+        assert_eq!(
+            compute_continuation(
+                &store.get(saddle_node).unwrap(),
+                &continuation_request(saddle_node, vec![1.0], vec![0.5]),
+            )
+            .unwrap_err(),
+            "Newton's method found no equilibrium near the starting point; start closer to one."
+        );
+        let logistic = compile_src(&store, "x_{n+1}=rx_n\\left(1-x_n\\right)");
+        let map = store.get(logistic).unwrap();
+        assert_eq!(
+            compute_continuation(&map, &continuation_request(logistic, vec![1.0], vec![0.0]),)
+                .unwrap_err(),
+            "The starting fixed point is a fold or branch point, so the branch has no unique \
+             direction; start a little away from it."
+        );
+        assert!(compute_continuation(
+            &map,
+            &ContinuationRequest {
+                start: point(vec![0.6], 2),
+                ..continuation_request(logistic, vec![2.5], vec![])
+            },
+        )
+        .is_ok());
+
+        let constant = compile_src(&store, "\\dot{x}=-x");
+        assert_eq!(
+            compute_continuation(
+                &store.get(constant).unwrap(),
+                &continuation_request(constant, vec![], vec![0.0]),
+            )
+            .unwrap_err(),
+            "This system has no parameter to continue in."
+        );
+        let driven = compile_src(&store, "\\dot{x}=-x+at");
+        assert_eq!(
+            compute_continuation(
+                &store.get(driven).unwrap(),
+                &continuation_request(driven, vec![0.5], vec![0.0]),
+            )
+            .unwrap_err(),
+            "Continuation follows fixed points, which a system that depends on t or n doesn't \
+             have."
+        );
+    }
+
+    #[test]
+    fn both_directions_join_into_one_polyline() {
+        let store = SystemStore::new();
+        let henon = compile_src(&store, "x_{n+1}=1-ax_n^2+y_n\ny_{n+1}=bx_n");
+        let map = store.get(henon).unwrap();
+        let run = |direction| {
+            let req = ContinuationRequest {
+                direction,
+                range: (-0.5, 1.0),
+                ..continuation_request(henon, vec![0.2, 0.3], vec![1.09, 0.327])
+            };
+            compute_continuation(&map, &req).unwrap().branch
+        };
+        let back = run(ContinuationDirection::Backward);
+        let fwd = run(ContinuationDirection::Forward);
+        let both = run(ContinuationDirection::Both);
+        let nb = back.p.len();
+
+        let mut want_p: Vec<f64> = back.p.iter().rev().copied().collect();
+        want_p.extend(&fwd.p[1..]);
+        assert_eq!(both.p, want_p);
+        assert_eq!(both.x.len(), 2 * both.p.len());
+        assert_eq!(both.x[2 * (nb - 1)..2 * nb], fwd.x[..2]);
+        assert_eq!(both.stable[nb - 1..], fwd.stable[..]);
+        assert_eq!(both.unstable[nb - 1..], fwd.unstable[..]);
+        assert!(back.p[1] < back.p[0] && fwd.p[1] > fwd.p[0]);
+
+        let kinds: Vec<_> = both.special.iter().map(|sp| sp.kind).collect();
+        assert_eq!(kinds, [SpecialKindOut::Fold, SpecialKindOut::Flip]);
+        for sp in &both.special {
+            assert_eq!(both.p[sp.index], sp.p);
+            assert_eq!(both.x[2 * sp.index..2 * sp.index + 2], sp.x[..]);
+        }
+        let (lp, lp_back) = (&both.special[0], &back.special[0]);
+        assert_eq!(lp.index, nb - 1 - lp_back.index);
+        let negated: Vec<f64> = lp_back.tangent.iter().map(|t| -t).collect();
+        assert_eq!(lp.tangent, negated);
+        assert_eq!(
+            both.special[1],
+            SpecialPointOut {
+                index: fwd.special[0].index + nb - 1,
+                ..fwd.special[0].clone()
+            }
+        );
+
+        assert_eq!(fwd.end.first, None);
+        assert_eq!(back.end.first, None);
+        assert_eq!(
+            both.end,
+            BranchEndOut {
+                first: Some(back.end.last),
+                last: fwd.end.last,
+            }
+        );
     }
 }

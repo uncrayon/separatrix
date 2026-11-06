@@ -32,6 +32,18 @@ All notable changes to this project are documented in this file.
   Brusselator's `b = 1 + a²`, the logistic map's flip at `r = 3`, Hénon's fold and flip at
   `a = −(1 − b)²/4` and `3(1 − b)²/4`, and the delayed logistic map's Neimark–Sacker point at
   `r = 2` with `θ = π/3`. Not yet reachable from the app.
+- The `compute_continuation` command (docs/contracts.md, Continuation): a branch through a start
+  point, followed forward, backward or both ways (joined into one polyline through the start), as
+  flat arrays of parameters, cycles, stability and unstable counts, with its special points (kind,
+  index, parameter, state, tangent, eigenvalues, `ω` or `θ`, `ℓ₁`) and why each end stopped. It
+  refuses, with a message, a system that depends on `t` or `n`, a missing or out-of-range
+  parameter, an empty or non-finite range, a start that doesn't fit, a period of 0 (or above 1 for
+  a flow), `ds ≤ 0`, `dsMax < ds` and more than `MAX_CONTINUATION_POINTS = 20000` points per
+  direction. No view sends it yet.
+- The continuation gate, `bash scripts/continuation-gate.sh`: 21 bifurcation values derived in
+  closed form, reproduced through `compute_continuation` and printed as a table, from the
+  saddle-node fold at `r = 0` to the delayed logistic map's Neimark–Sacker point at `r = 2`,
+  `θ = π/3`. Five wrong claims must fail.
 - Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
   view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
   as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,

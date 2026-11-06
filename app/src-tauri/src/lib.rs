@@ -18,6 +18,7 @@
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
 //! | `compute_lyapunov` | [`ipc::LyapunovRequest`] | [`ipc::LyapunovResponse`] |
 //! | `compute_orbit_diagram` | [`ipc::OrbitDiagramRequest`] | [`ipc::OrbitDiagramResponse`] |
+//! | `compute_continuation` | [`ipc::ContinuationRequest`] | [`ipc::ContinuationResponse`] |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -120,6 +121,15 @@ async fn compute_orbit_diagram(
 ) -> Result<ipc::OrbitDiagramResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_orbit_diagram(&system, &req)).await
+}
+
+#[tauri::command]
+async fn compute_continuation(
+    req: ipc::ContinuationRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::ContinuationResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_continuation(&system, &req)).await
 }
 
 // ---------------------------------------------------------------------
@@ -886,6 +896,7 @@ pub fn run() {
             compute_portrait,
             compute_lyapunov,
             compute_orbit_diagram,
+            compute_continuation,
             project_choose_open_path,
             project_read,
             project_choose_save_path,

@@ -643,6 +643,166 @@ doublings?: Array<DoublingOut>,
  */
 elapsedMs: number, };
 
+export type ContinuationRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order; the branch
+ * starts at `params[param]`.
+ */
+params: Array<number>, 
+/**
+ * Index of the continuation parameter.
+ */
+param: number, 
+/**
+ * The parameter interval the branch stays in, `lo < hi`.
+ */
+range: [number, number], 
+/**
+ * Where the branch starts.
+ */
+start: ContinuationStart, 
+/**
+ * Which way to follow it from the start.
+ */
+direction: ContinuationDirection, 
+/**
+ * First step in arclength, `> 0`.
+ */
+ds: number, 
+/**
+ * Largest step, `>= ds`.
+ */
+dsMax: number, 
+/**
+ * Most points in each direction, the start included,
+ * `2..=MAX_CONTINUATION_POINTS`.
+ */
+maxPoints: number, };
+
+export type ContinuationStart = { "kind": "point", 
+/**
+ * Full state vector.
+ */
+x0: Array<number>, 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, };
+
+export type ContinuationDirection = "forward" | "backward" | "both";
+
+export type ContinuationResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The branch.
+ */
+branch: BranchOut, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type BranchOut = { 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, 
+/**
+ * The parameter at each point.
+ */
+p: Array<number>, 
+/**
+ * `points · period · dim` values: point `i` is the cycle
+ * `x, f(x), …, f^{k−1}(x)` at `x[i·period·dim .. (i + 1)·period·dim]`.
+ */
+x: Array<number>, 
+/**
+ * Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map); `false`
+ * at a special point.
+ */
+stable: Array<boolean>, 
+/**
+ * Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map) at each point.
+ */
+unstable: Array<number>, 
+/**
+ * The located bifurcations in arclength order.
+ */
+special: Array<SpecialPointOut>, 
+/**
+ * Why each end of the branch stopped.
+ */
+end: BranchEndOut, };
+
+export type BranchEndOut = { 
+/**
+ * The first point's, with direction `both`; `null` when the first
+ * point is the start.
+ */
+first: BranchStop | null, 
+/**
+ * The last point's.
+ */
+last: BranchStop, };
+
+export type BranchStop = "range" | "maxPoints" | "stepTooSmall";
+
+export type SpecialPointOut = { 
+/**
+ * What it is.
+ */
+kind: SpecialKindOut, 
+/**
+ * Its own point in `BranchOut::p`.
+ */
+index: number, 
+/**
+ * The parameter.
+ */
+p: number, 
+/**
+ * The state (`dim` values; the cycle's first point for a map).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k`, as `BranchOut::period`.
+ */
+period: number, 
+/**
+ * Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values,
+ * oriented as the polyline.
+ */
+tangent: Array<number>, 
+/**
+ * Eigenvalues of `J` (flow) or `D f^k` (map) as `[re, im]` pairs, the
+ * critical ones on the stability boundary.
+ */
+eigenvalues: Array<[number, number]>, 
+/**
+ * Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ = arg μ` of
+ * the critical multiplier, in `(0, π)`. `null` otherwise.
+ */
+omega: number | null, 
+/**
+ * Hopf: the first Lyapunov coefficient `ℓ₁` (negative when
+ * supercritical), scaled so that `ṙ = μr + a r³, θ̇ = ω` has
+ * `ℓ₁ = a/ω`. `null` otherwise, or where it could not be computed.
+ */
+lyapunov: number | null, };
+
+export type SpecialKindOut = "fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker";
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.
@@ -1268,6 +1428,8 @@ export const BLOW_UP_THRESHOLD = 1e12;
 export const LYAPUNOV_HISTORY = 2000;
 
 export const MAX_ORBIT_POINTS = 4000000;
+
+export const MAX_CONTINUATION_POINTS = 20000;
 
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 

@@ -555,6 +555,179 @@ pub struct OrbitDiagramResponse {
     pub elapsed_ms: f64,
 }
 
+/// Most points one `compute_continuation` request may ask for in each
+/// direction.
+pub const MAX_CONTINUATION_POINTS: usize = 20_000;
+
+/// Request of the `compute_continuation` command: follow a branch of
+/// equilibria of a flow, or of fixed points of `f^period` of a map, as one
+/// parameter varies (`dyn_analysis::continue_branch`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order; the branch
+    /// starts at `params[param]`.
+    pub params: Vec<f64>,
+    /// Index of the continuation parameter.
+    pub param: usize,
+    /// The parameter interval the branch stays in, `lo < hi`.
+    pub range: (f64, f64),
+    /// Where the branch starts.
+    pub start: ContinuationStart,
+    /// Which way to follow it from the start.
+    pub direction: ContinuationDirection,
+    /// First step in arclength, `> 0`.
+    pub ds: f64,
+    /// Largest step, `>= ds`.
+    pub ds_max: f64,
+    /// Most points in each direction, the start included,
+    /// `2..=MAX_CONTINUATION_POINTS`.
+    pub max_points: usize,
+}
+
+/// Where a branch starts.
+///
+/// On the wire: `{ "kind": "point", "x0": [0.5], "period": 1 }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ContinuationStart {
+    /// Near a fixed point: `x0` is corrected by Newton's method first.
+    Point {
+        /// Full state vector.
+        x0: Vec<f64>,
+        /// `k` of `f^k` for a map, 1 for a flow.
+        period: usize,
+    },
+}
+
+/// Which way a branch is followed from its start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum ContinuationDirection {
+    /// The parameter increases from the start.
+    Forward,
+    /// The parameter decreases from the start.
+    Backward,
+    /// Both ways, joined into one branch through the start.
+    Both,
+}
+
+/// Response of the `compute_continuation` command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// The branch.
+    pub branch: BranchOut,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
+/// A branch as one polyline in arclength order. With direction `both` the
+/// backward half comes first, reversed, so the start is in the middle.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct BranchOut {
+    /// `k` of `f^k` for a map, 1 for a flow.
+    pub period: usize,
+    /// The parameter at each point.
+    pub p: Vec<f64>,
+    /// `points · period · dim` values: point `i` is the cycle
+    /// `x, f(x), …, f^{k−1}(x)` at `x[i·period·dim .. (i + 1)·period·dim]`.
+    pub x: Vec<f64>,
+    /// Every eigenvalue has `Re λ < 0` (flow) or `|μ| < 1` (map); `false`
+    /// at a special point.
+    pub stable: Vec<bool>,
+    /// Eigenvalues with `Re λ > 0` (flow) or `|μ| > 1` (map) at each point.
+    pub unstable: Vec<u32>,
+    /// The located bifurcations in arclength order.
+    pub special: Vec<SpecialPointOut>,
+    /// Why each end of the branch stopped.
+    pub end: BranchEndOut,
+}
+
+/// Why each end of a branch stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct BranchEndOut {
+    /// The first point's, with direction `both`; `null` when the first
+    /// point is the start.
+    pub first: Option<BranchStop>,
+    /// The last point's.
+    pub last: BranchStop,
+}
+
+/// Why a branch stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum BranchStop {
+    /// It reached an edge of the parameter range; the point lies on it.
+    Range,
+    /// It has `max_points` points in that direction.
+    MaxPoints,
+    /// A step failed at the smallest step size.
+    StepTooSmall,
+}
+
+/// A located bifurcation on a branch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SpecialPointOut {
+    /// What it is.
+    pub kind: SpecialKindOut,
+    /// Its own point in `BranchOut::p`.
+    pub index: usize,
+    /// The parameter.
+    pub p: f64,
+    /// The state (`dim` values; the cycle's first point for a map).
+    pub x: Vec<f64>,
+    /// `k` of `f^k`, as `BranchOut::period`.
+    pub period: usize,
+    /// Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values,
+    /// oriented as the polyline.
+    pub tangent: Vec<f64>,
+    /// Eigenvalues of `J` (flow) or `D f^k` (map) as `[re, im]` pairs, the
+    /// critical ones on the stability boundary.
+    pub eigenvalues: Vec<(f64, f64)>,
+    /// Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ = arg μ` of
+    /// the critical multiplier, in `(0, π)`. `null` otherwise.
+    pub omega: Option<f64>,
+    /// Hopf: the first Lyapunov coefficient `ℓ₁` (negative when
+    /// supercritical), scaled so that `ṙ = μr + a r³, θ̇ = ω` has
+    /// `ℓ₁ = a/ω`. `null` otherwise, or where it could not be computed.
+    pub lyapunov: Option<f64>,
+}
+
+/// The kinds of special point; their labels are `LP`, `H`, `BP`, `PD`, `NS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum SpecialKindOut {
+    /// A limit point: the branch turns back in the parameter.
+    Fold,
+    /// A complex pair of eigenvalues of a flow crosses the imaginary axis.
+    Hopf,
+    /// Another branch crosses this one (pitchfork, transcritical).
+    BranchPoint,
+    /// A multiplier of a map passes through `−1` (period doubling).
+    Flip,
+    /// A complex pair of multipliers of a map crosses the unit circle.
+    NeimarkSacker,
+}
+
 // ---------------------------------------------------------------------
 // Project files (`.sepx`). The project itself is `ProjectFile` from
 // `separatrix-project`, whose keys are snake_case on the wire (the one
@@ -1083,6 +1256,15 @@ mod bindings {
             OrbitDiagramRequest::decl(&cfg),
             DoublingOut::decl(&cfg),
             OrbitDiagramResponse::decl(&cfg),
+            ContinuationRequest::decl(&cfg),
+            ContinuationStart::decl(&cfg),
+            ContinuationDirection::decl(&cfg),
+            ContinuationResponse::decl(&cfg),
+            BranchOut::decl(&cfg),
+            BranchEndOut::decl(&cfg),
+            BranchStop::decl(&cfg),
+            SpecialPointOut::decl(&cfg),
+            SpecialKindOut::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),
@@ -1160,6 +1342,10 @@ mod bindings {
                 crate::service::LYAPUNOV_HISTORY.to_string(),
             ),
             ("MAX_ORBIT_POINTS", MAX_ORBIT_POINTS.to_string()),
+            (
+                "MAX_CONTINUATION_POINTS",
+                MAX_CONTINUATION_POINTS.to_string(),
+            ),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),

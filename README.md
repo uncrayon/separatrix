@@ -61,6 +61,25 @@ The same gate checks the symplectic methods on the Hamiltonian pendulum `H = p²
 
 It also solves Robertson's stiff reaction to t = 40 with Rosenbrock 2(3) at rtol 10⁻⁸ and checks each component against the SUNDIALS and Hairer–Wanner values (7.158271·10⁻¹, 9.185535·10⁻⁶, 2.841637·10⁻¹) to 10⁻⁵ relative, after a Dormand–Prince run at rtol 10⁻¹¹ confirms them. Dormand–Prince must flag the stiff runs, and Rosenbrock 2(3) must need at most a tenth of its steps on the relaxation oscillator at μ = 1000. On Robertson at rtol 10⁻⁸ the second-order method gains less, about a fifth of the steps, which an info row prints without gating. The wrong claim that Dormand–Prince at rtol 10⁻⁸ finishes Robertson within 2,000 steps must fail (it takes 34,856).
 
+### The continuation gate
+
+```bash
+bash scripts/continuation-gate.sh
+```
+
+runs `cargo test --workspace --release --test continuation` and prints one row per claim with its reference value, the measured value, the difference Δ, the tolerance and PASS or FAIL. It exits non-zero if any row fails. Every reference is derived in closed form, and every branch is followed through the same `compute_continuation` command the UI calls, so the gate checks the request path as well as the maths. It covers 21 rows:
+
+- the fold (LP) of the saddle-node `ẋ = r + x²` and the branch points (BP) of the transcritical `ẋ = rx − x²` and pitchfork `ẋ = rx − x³`, all at `r = 0`, with the transcritical branch staying on `x = 0` to 10⁻¹²;
+- the Hopf normal form at `μ = 0` with `ω = 1`, and `ℓ₁ = −1` (supercritical) or `+1` (subcritical) to 10⁻⁶;
+- no Hopf point on the neutral saddle `ẋ = y, ẏ = x + μy`;
+- Sel'kov's glycolysis model at `a = 0.08`, with Hopf points at `b = √0.12` and `√0.72`, `ω = √0.2` and `√0.8`, to 10⁻⁸, and both Hopf points still found with steps up to 2;
+- the Brusselator's Hopf point `b = 1 + a² = 5` with `ω = a = 2`;
+- the logistic map's flip (PD) at `r1 = 3` to 10⁻⁶;
+- the Hénon map's fold `a0 = −0.1225` and flip `a1 = 0.3675` at `b = 0.3`, from one branch followed both ways;
+- the delayed logistic map's Neimark–Sacker point (NS) at `r = 2` with `θ = π/3`.
+
+Every other row has a tolerance of 10⁻⁹. `ℓ₁` uses Kuznetsov's normalization `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`, so `ṙ = μr + a r³, θ̇ = ω` has `ℓ₁ = a/ω`. A second test hands the gate five wrong claims and requires each to fail: a pitchfork at `r = 10⁻⁴`, Sel'kov's first Hopf point at `b = 0.35`, `ω = 1.001`, a Hopf point on the neutral saddle and `r1 = 3.00001`. `app/src-tauri/tests/continuation.rs` holds the claims.
+
 ### Evaluation speed
 
 ```bash
