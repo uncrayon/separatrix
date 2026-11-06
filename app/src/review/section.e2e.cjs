@@ -153,6 +153,8 @@ test("a click starts an orbit on the section; the return map pairs crossings and
     await waitPortrait(page, "req.yAxis.kind === 'state' && req.yAxis.index === 0 && req.xAxis.index === 0");
     assert.match(await page.getByRole("button", { name: /^Section:/ }).getAttribute("aria-label"), /^Section: x k horizontal, x k\+1 vertical$/);
     assert.match(await page.locator(".plot-wrap .axis-label-y").innerText(), /x sub k plus 1/);
+    const shown = (label) => inspector(page).getByLabel(label, { exact: true }).evaluate((s) => s.selectedOptions[0].textContent);
+    assert.deepEqual([await shown("Horizontal"), await shown("Vertical")], ["xₖ", "xₖ₊₁"]);
     const n = (await last(page)).req.trajectories.length;
     const mid = await toPx(page, 0, 0);
     await page.mouse.click(mid.x, mid.y);

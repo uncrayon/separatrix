@@ -315,9 +315,9 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
     ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
   ];
-  // A return map's axes are one state at successive crossings, named x_k and x_{k+1} as on the plot.
+  // A return map's axes are one state at successive crossings, named xₖ and xₖ₊₁ as on the plot.
   const named = (axis: AxisRef, step: string) =>
-    isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}_${step}` } : o)) : options;
+    isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}${step}` } : o)) : options;
   const sliceStates =
     kind === "ode" && !section && !space
       ? sys.states
@@ -401,7 +401,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.xAxis)}
-                options={named(view.xAxis, "k")}
+                options={named(view.xAxis, "ₖ")}
                 onChange={(v) => actions.setAxis("x", axisFromValue(v))}
               />
             </dd>
@@ -418,7 +418,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.yAxis)}
-                options={named(view.yAxis, "{k+1}")}
+                options={named(view.yAxis, "ₖ₊₁")}
                 onChange={(v) => actions.setAxis("y", axisFromValue(v))}
               />
             </dd>
