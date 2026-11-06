@@ -588,7 +588,15 @@ mod tests {
 
     #[test]
     fn known_methods_match_the_solver() {
-        let names: Vec<String> = [Method::Euler, Method::Heun, Method::Rk4, Method::Dopri5]
+        let all = [
+            Method::Euler,
+            Method::Heun,
+            Method::Rk4,
+            Method::Dopri5,
+            Method::Verlet,
+            Method::Yoshida4,
+        ];
+        let names: Vec<String> = all
             .iter()
             .map(|m| {
                 serde_json::to_value(m)
@@ -600,9 +608,14 @@ mod tests {
             .collect();
         assert_eq!(names, separatrix_project::KNOWN_METHODS);
         // Every method in the solver is listed (a new variant breaks this match).
-        for m in [Method::Euler, Method::Heun, Method::Rk4, Method::Dopri5] {
+        for m in all {
             match m {
-                Method::Euler | Method::Heun | Method::Rk4 | Method::Dopri5 => {}
+                Method::Euler
+                | Method::Heun
+                | Method::Rk4
+                | Method::Dopri5
+                | Method::Verlet
+                | Method::Yoshida4 => {}
             }
         }
     }

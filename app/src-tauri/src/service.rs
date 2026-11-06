@@ -9,10 +9,10 @@ use dyn_solve::Sampling;
 
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
-    ConvertedLineOut, Diagnostic, DoublingOut, FixedPointOut, LyapunovRequest, LyapunovResponse,
-    NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo, PortraitRequest,
-    PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
-    MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
+    ConvertedLineOut, Diagnostic, DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest,
+    LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo,
+    PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut,
+    TrajectoryRequest, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -85,12 +85,14 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
     match out.system {
         Some(system) => {
             let info = system.info.clone();
+            let separable = system.is_separable();
             let id = store.insert_evicting_oldest(system);
             CompileResponse {
                 ok: true,
                 system_id: Some(id),
                 kind: Some(info.kind),
                 hamiltonian: info.hamiltonian,
+                separable,
                 autonomous: info.autonomous,
                 states: info
                     .states
@@ -119,6 +121,7 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
             system_id: None,
             kind: None,
             hamiltonian: false,
+            separable: false,
             autonomous: true,
             states: Vec::new(),
             params: Vec::new(),
@@ -150,6 +153,7 @@ pub fn compute_portrait(
 ) -> Result<PortraitResponse, String> {
     let started = Instant::now();
     validate(system, req)?;
+    method_fits(system, req.solver.method)?;
     let f: &dyn VectorField = system;
     let p = req.params.as_slice();
     let dim = f.dim();
@@ -219,7 +223,7 @@ pub fn compute_portrait(
     let trajectories = req
         .trajectories
         .iter()
-        .map(|tr| trajectory(f, p, tr, req))
+        .map(|tr| trajectory(system, p, tr, req))
         .collect();
 
     let graph = req
@@ -245,6 +249,13 @@ pub fn compute_lyapunov(
     let started = Instant::now();
     let f: &dyn VectorField = system;
     validate_lyapunov(f, req)?;
+    if f.kind() == SystemKind::Ode && req.solver.method.is_symplectic() {
+        return Err(format!(
+            "A Lyapunov run integrates the variational equations, which {} cannot step; \
+             choose Runge–Kutta 4 or Dormand–Prince 5(4).",
+            method_name(req.solver.method)
+        ));
+    }
     let opts = dyn_analysis::LyapunovOptions {
         transient: req.transient,
         total: req.total,
@@ -649,6 +660,62 @@ fn seeds_per_axis(dim: usize) -> usize {
     }
 }
 
+/// What the method picker and the refusals call each method.
+fn method_name(m: Method) -> &'static str {
+    match m {
+        Method::Euler => "Euler",
+        Method::Heun => "Heun",
+        Method::Rk4 => "Runge–Kutta 4",
+        Method::Dopri5 => "Dormand–Prince 5(4)",
+        Method::Verlet => "Störmer–Verlet",
+        Method::Yoshida4 => "Yoshida 4",
+    }
+}
+
+/// A symplectic method steps `[q; p]` as kicks and drifts, which is only
+/// right for a separable `H(q, p)`; the core trusts that, so it is checked
+/// here. A map ignores the method.
+fn method_fits(system: &CompiledSystem, method: Method) -> Result<(), String> {
+    if !method.is_symplectic() || system.kind() == SystemKind::Map {
+        return Ok(());
+    }
+    if !system.info.hamiltonian {
+        return Err(format!(
+            "{} needs a Hamiltonian H(q, p); this system is given by its equations of motion.",
+            method_name(method)
+        ));
+    }
+    if !system.is_separable() {
+        return Err("H(q, p) must split as T(p) + V(q) for a symplectic method.".into());
+    }
+    Ok(())
+}
+
+/// `H` at the start and its largest drift over the samples, for a
+/// Hamiltonian flow. Absent when `H` is not finite somewhere, which JSON
+/// could not carry.
+fn energy(
+    system: &CompiledSystem,
+    p: &[f64],
+    tr: &TrajectoryRequest,
+    sol: &dyn_solve::Solution,
+) -> Option<EnergyOut> {
+    let h0 = system
+        .hamiltonian_value(tr.t0, &tr.x0, p)
+        .filter(|h| h.is_finite())?;
+    let dim = tr.x0.len();
+    let mut max_abs_drift: f64 = 0.0;
+    for (i, &t) in sol.t.iter().enumerate() {
+        let h = system.hamiltonian_value(t, &sol.x[i * dim..(i + 1) * dim], p)?;
+        let drift = (h - h0).abs();
+        if !drift.is_finite() {
+            return None;
+        }
+        max_abs_drift = max_abs_drift.max(drift);
+    }
+    Some(EnergyOut { h0, max_abs_drift })
+}
+
 fn to_solver(s: &SolverOptions) -> dyn_solve::SolverOptions {
     dyn_solve::SolverOptions {
         method: s.method,
@@ -661,11 +728,12 @@ fn to_solver(s: &SolverOptions) -> dyn_solve::SolverOptions {
 }
 
 fn trajectory(
-    f: &dyn VectorField,
+    system: &CompiledSystem,
     p: &[f64],
     tr: &TrajectoryRequest,
     req: &PortraitRequest,
 ) -> TrajectoryOut {
+    let f: &dyn VectorField = system;
     let sol = if f.kind() == SystemKind::Map {
         let n = if tr.t1.is_finite() {
             tr.t1.round().clamp(0.0, MAX_ITERATES as f64) as usize
@@ -694,11 +762,13 @@ fn trajectory(
         };
         dyn_solve::integrate(f, p, tr.t0, &tr.x0, tr.t1, &opts, sampling)
     };
+    let energy = energy(system, p, tr, &sol);
     TrajectoryOut {
         t: sol.t,
         x: sol.x,
         status: sol.status,
         stats: sol.stats,
+        energy,
     }
 }
 
@@ -2136,6 +2206,97 @@ mod tests {
         assert!(compute_orbit_diagram(&store.get(flow).unwrap(), &flow_req).is_err());
     }
 
+    fn symplectic(method: Method, id: u32) -> PortraitRequest {
+        let mut req = simple_request(id, 2);
+        req.solver.method = method;
+        req.solver.h = 0.05;
+        req.solver.max_steps = 100_000;
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0, 0.0],
+            t0: 0.0,
+            t1: 100.0,
+        }];
+        req
+    }
+
+    #[test]
+    fn symplectic_methods_need_a_separable_hamiltonian() {
+        let store = SystemStore::new();
+        let compiled = |src: &str| {
+            let res = compile_system(
+                &store,
+                &CompileRequest {
+                    source: src.into(),
+                    format: InputFormat::Text,
+                },
+            );
+            assert!(res.ok, "{:?}", res.diagnostics);
+            (res.separable, res.system_id.unwrap())
+        };
+        let (separable, pendulum) = compiled("H(q, p) = p^2/2 - cos(q)");
+        assert!(separable);
+        let (separable, coupled) = compiled("H(q, p) = p^2/2 + q^2/2 + q*p");
+        assert!(!separable);
+        let (separable, flow) = compiled("x' = y; y' = -sin(x)");
+        assert!(!separable);
+        let (_, map) = compiled("x_{n+1} = r*x_n*(1 - x_n)");
+
+        let err = |method, id| {
+            compute_portrait(&store.get(id).unwrap(), &symplectic(method, id)).unwrap_err()
+        };
+        assert_eq!(
+            err(Method::Verlet, flow),
+            "Störmer–Verlet needs a Hamiltonian H(q, p); this system is given by its equations of motion."
+        );
+        assert_eq!(
+            err(Method::Yoshida4, flow),
+            "Yoshida 4 needs a Hamiltonian H(q, p); this system is given by its equations of motion."
+        );
+        assert_eq!(
+            err(Method::Verlet, coupled),
+            "H(q, p) must split as T(p) + V(q) for a symplectic method."
+        );
+
+        let mut on_map = symplectic(Method::Verlet, map);
+        on_map.params = vec![3.5];
+        on_map.y_axis = AxisRef::Time;
+        on_map.base_state = vec![0.0];
+        on_map.trajectories[0].x0 = vec![0.2];
+        assert!(compute_portrait(&store.get(map).unwrap(), &on_map).is_ok());
+
+        for method in [Method::Verlet, Method::Yoshida4] {
+            let out =
+                compute_portrait(&store.get(pendulum).unwrap(), &symplectic(method, pendulum))
+                    .unwrap();
+            let tr = &out.trajectories[0];
+            assert_eq!(tr.status, Status::Completed);
+            let energy = tr
+                .energy
+                .expect("a Hamiltonian trajectory reports its energy");
+            assert!((energy.h0 - (-(1f64.cos()))).abs() < 1e-15, "{energy:?}");
+            assert!(
+                energy.max_abs_drift > 0.0 && energy.max_abs_drift < 1e-3,
+                "{method:?}: {energy:?}"
+            );
+            let worst = (0..tr.t.len())
+                .map(|i| (tr.x[2 * i + 1].powi(2) / 2.0 - tr.x[2 * i].cos() - energy.h0).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                (worst - energy.max_abs_drift).abs() < 1e-15,
+                "{worst} vs {energy:?}"
+            );
+        }
+        let rk4 = compute_portrait(
+            &store.get(pendulum).unwrap(),
+            &symplectic(Method::Rk4, pendulum),
+        )
+        .unwrap();
+        assert!(rk4.trajectories[0].energy.is_some());
+        let flow_out =
+            compute_portrait(&store.get(flow).unwrap(), &symplectic(Method::Rk4, flow)).unwrap();
+        assert_eq!(flow_out.trajectories[0].energy, None);
+    }
+
     #[test]
     fn lyapunov_refuses_runs_it_cannot_measure() {
         let store = SystemStore::new();
@@ -2214,6 +2375,18 @@ mod tests {
                 "{req:?} was accepted"
             );
         }
+        let leapfrog = LyapunovRequest {
+            solver: SolverOptions {
+                method: Method::Verlet,
+                ..ok.solver
+            },
+            ..ok.clone()
+        };
+        assert_eq!(
+            compute_lyapunov(&system, &leapfrog).unwrap_err(),
+            "A Lyapunov run integrates the variational equations, which Störmer–Verlet cannot \
+             step; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+        );
         let at_the_limit = LyapunovRequest {
             total: 1e4,
             interval: 1e-3,

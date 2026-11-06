@@ -143,6 +143,9 @@ pub struct CompileResponse {
     pub kind: Option<SystemKind>,
     /// Entered as `H(q, p) = ...`.
     pub hamiltonian: bool,
+    /// A Hamiltonian that splits as `T(p) + V(q)` and does not read `t`,
+    /// so the symplectic methods (`verlet`, `yoshida4`) can integrate it.
+    pub separable: bool,
     /// `t` (or `n`) does not appear on a right-hand side.
     pub autonomous: bool,
     /// State variables in order (empty when not `ok`).
@@ -182,7 +185,8 @@ pub struct SolverOptions {
     pub rtol: f64,
     /// Absolute tolerance (dopri5 only).
     pub atol: f64,
-    /// Fixed step for euler/heun/rk4; initial step for dopri5 (0 = automatic).
+    /// Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
+    /// dopri5 (0 = automatic).
     pub h: f64,
     /// Largest allowed step for dopri5; absent = no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -365,6 +369,21 @@ pub struct TrajectoryOut {
     pub status: Status,
     /// Work counters.
     pub stats: Stats,
+    /// How well a Hamiltonian flow kept its energy; absent for other systems.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub energy: Option<EnergyOut>,
+}
+
+/// The energy `H` along one trajectory of a Hamiltonian flow.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct EnergyOut {
+    /// `H` at the start point.
+    pub h0: f64,
+    /// The largest `|H − h0|` over the returned samples.
+    pub max_abs_drift: f64,
 }
 
 /// Response of the `compute_portrait` command.
@@ -960,6 +979,7 @@ mod bindings {
             NullclineOut::decl(&cfg),
             FixedPointOut::decl(&cfg),
             TrajectoryOut::decl(&cfg),
+            EnergyOut::decl(&cfg),
             PortraitResponse::decl(&cfg),
             LyapunovRequest::decl(&cfg),
             LyapunovResponse::decl(&cfg),

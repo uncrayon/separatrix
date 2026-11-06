@@ -23,7 +23,7 @@ import type {
   SectionSpec,
   SystemKind,
 } from "../api/types";
-import { METHODS } from "../state/methods.ts";
+import { DEFAULT_METHOD, METHODS } from "../state/methods.ts";
 import type { Camera, EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
 
 
@@ -31,7 +31,7 @@ import type { Camera, EquationLine, InitialCondition, Layers, ParamState, Solver
 type Obj = Record<string, unknown>;
 
 /** The method names `dyn_solve::Method` knows (mirrors `KNOWN_METHODS` in crates/project). */
-export const KNOWN_METHODS: readonly Method[] = ["euler", "heun", "rk4", "dopri5"];
+export const KNOWN_METHODS = Object.keys(METHODS) as readonly Method[];
 
 /**
  * A saved axis, by name. `next` is the state one iterate later (a cobweb's
@@ -443,9 +443,9 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
   if (typeof sv.method === "string") {
     if ((KNOWN_METHODS as readonly string[]).includes(sv.method)) method = sv.method as Method;
     else {
-      method = "dopri5";
+      method = DEFAULT_METHOD;
       warnings.push(
-        `The solver method “${sv.method}” isn't available in this version, so ${METHODS.dopri5.label} is used.`,
+        `The solver method “${sv.method}” isn't available in this version, so ${METHODS[DEFAULT_METHOD].label} is used.`,
       );
     }
   }

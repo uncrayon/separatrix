@@ -26,6 +26,7 @@ export type {
   Direction,
   DoublingOut,
   DocumentStateRequest,
+  EnergyOut,
   ExportPortraitRequest,
   ExportTheme,
   FigureLatexRequest,

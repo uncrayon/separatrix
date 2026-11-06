@@ -6,7 +6,7 @@ export type SystemKind = "ode" | "map";
 
 export type Severity = "error" | "warning" | "info";
 
-export type Method = "euler" | "heun" | "rk4" | "dopri5";
+export type Method = "euler" | "heun" | "rk4" | "dopri5" | "verlet" | "yoshida4";
 
 export type Status = "completed" | "blewUp" | "maxSteps" | "stepTooSmall" | "nonFinite";
 
@@ -100,6 +100,11 @@ kind?: SystemKind,
  */
 hamiltonian: boolean, 
 /**
+ * A Hamiltonian that splits as `T(p) + V(q)` and does not read `t`,
+ * so the symplectic methods (`verlet`, `yoshida4`) can integrate it.
+ */
+separable: boolean, 
+/**
  * `t` (or `n`) does not appear on a right-hand side.
  */
 autonomous: boolean, 
@@ -183,7 +188,8 @@ rtol: number,
  */
 atol: number, 
 /**
- * Fixed step for euler/heun/rk4; initial step for dopri5 (0 = automatic).
+ * Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
+ * dopri5 (0 = automatic).
  */
 h: number, 
 /**
@@ -402,7 +408,21 @@ status: Status,
 /**
  * Work counters.
  */
-stats: Stats, };
+stats: Stats, 
+/**
+ * How well a Hamiltonian flow kept its energy; absent for other systems.
+ */
+energy?: EnergyOut, };
+
+export type EnergyOut = { 
+/**
+ * `H` at the start point.
+ */
+h0: number, 
+/**
+ * The largest `|H − h0|` over the returned samples.
+ */
+maxAbsDrift: number, };
 
 export type PortraitResponse = { 
 /**

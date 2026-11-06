@@ -165,6 +165,29 @@ fn compute<T: Scalar>(op: Op, r: impl Fn(Reg) -> T) -> T {
     }
 }
 
+/// The inputs a register's value depends on (see [`Program::reads`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Reads {
+    pub low: bool,
+    pub high: bool,
+    pub time: bool,
+}
+
+impl Reads {
+    fn join(self, o: Reads) -> Reads {
+        Reads {
+            low: self.low || o.low,
+            high: self.high || o.high,
+            time: self.time || o.time,
+        }
+    }
+
+    /// Depends on no state (a constant, parameters, or `t`).
+    pub(crate) fn no_state(self) -> bool {
+        !self.low && !self.high
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Program {
     pub insts: Vec<Inst>,
@@ -184,6 +207,36 @@ impl Program {
 
     pub(crate) fn len(&self) -> usize {
         self.insts.len()
+    }
+
+    /// For every register, which inputs its value depends on: states below
+    /// `split`, states from `split` on, and `t`.
+    pub(crate) fn reads(&self, split: usize) -> Vec<Reads> {
+        let mut out: Vec<Reads> = Vec::with_capacity(self.insts.len());
+        for &inst in &self.insts {
+            let r = match inst {
+                Inst::Load(Load::State(k)) if (k as usize) < split => Reads {
+                    low: true,
+                    ..Reads::default()
+                },
+                Inst::Load(Load::State(_)) => Reads {
+                    high: true,
+                    ..Reads::default()
+                },
+                Inst::Load(Load::Time) => Reads {
+                    time: true,
+                    ..Reads::default()
+                },
+                Inst::Load(Load::Const(_) | Load::Param(_)) => Reads::default(),
+                Inst::Op(_) => inst
+                    .operands()
+                    .into_iter()
+                    .flatten()
+                    .fold(Reads::default(), |acc, a| acc.join(out[a as usize])),
+            };
+            out.push(r);
+        }
+        out
     }
 
     #[inline]

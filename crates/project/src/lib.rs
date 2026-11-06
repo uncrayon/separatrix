@@ -53,7 +53,7 @@ pub const MAX_FILE_BYTES: u64 = 4 << 20;
 /// The solver methods this build knows; any other value falls back to
 /// `dopri5` with a warning. Mirrors `dyn_solve::Method`'s lowercase serde
 /// names (the app crate tests the parity).
-pub const KNOWN_METHODS: [&str; 4] = ["euler", "heun", "rk4", "dopri5"];
+pub const KNOWN_METHODS: [&str; 6] = ["euler", "heun", "rk4", "dopri5", "verlet", "yoshida4"];
 /// The file extension, without the dot.
 pub const EXTENSION: &str = "sepx";
 

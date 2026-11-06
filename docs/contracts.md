@@ -125,7 +125,8 @@ template has its generated text and a browser-preview system, and opens in the v
 ### `dyn-solve` (integrate and iterate)
 
 ```rust
-pub enum Method { Euler, Heun, Rk4, Dopri5 }
+pub enum Method { Euler, Heun, Rk4, Dopri5, Verlet, Yoshida4 }   // serde: "verlet", "yoshida4"
+impl Method { pub fn is_adaptive(self) -> bool; pub fn is_symplectic(self) -> bool }
 pub struct SolverOptions { pub method: Method, pub rtol: f64, pub atol: f64,
                            pub h: f64 /* fixed step, or initial step for adaptive (0 = auto) */,
                            pub h_max: f64, pub max_steps: usize }
@@ -273,6 +274,55 @@ Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it 
 `max_seeds` (clamped to `MAX_SEEDS = 4096`; `fixed_points` uses `MAX_SEEDS`) is a hard cap in every
 dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
 (40, 14², 9³ grid points in 1D–3D; 2^10 = 1024 does not fit, so 10D and up use Halton points).
+
+### Symplectic methods
+
+```rust
+impl CompiledSystem { pub fn is_separable(&self) -> bool }   // dyn-expr
+```
+
+`Method::Verlet` (Störmer–Verlet, kick–drift–kick, order 2) and `Method::Yoshida4` (Yoshida's
+composition of three Verlet steps of sizes `w₁h, w₀h, w₁h`, order 4) integrate a Hamiltonian
+`H(q, p) = T(p) + V(q)` with the state laid out `[q; p]`, `dof = dim / 2`, as `dyn-expr` builds it.
+A kick `p += c·h·ṗ` reads the `ṗ` half of `f(q, ·)`; a drift `q += d·h·q̇` reads the `q̇` half of
+`f(·, p)`. `w₁ = 1/(2 − 2^{1/3})` and `w₀ = 1 − 2w₁` are decimal literals, never `cbrt` at run
+time, so every OS steps with the same bits. Both are fixed-step (`h = 0` means `|t1 − t0| / 1000`)
+and use the stepper's monotone cubic Hermite dense output, so events and Poincaré sections work.
+A step costs 3 evaluations (Verlet) or 7 (Yoshida 4), counting `f` at the new point. Both are
+time-symmetric: from the pendulum at `(1, 0)`, 100 time units forward and back return within
+1e−14. Halving `h` divides the error by 4.00 (Verlet) and 16.07 (Yoshida 4) on the harmonic
+oscillator.
+
+The `Stepper` trusts that `H` separates. `is_separable` is the check, and the service makes it.
+It is structural. Below the sums, differences and negations at the top of `H`, and its products
+with or quotients by factors that read no state, every term must read only coordinates or only
+momenta, and `H` must not read `t`. So `p²/2 − cos q`, `p²/(2m) + q⁴` and `(p² + q²)/2` are
+separable, and `q p`, `p² q`, `(p² + q²)²` and any `H` with `t` are not.
+
+The service refuses, with a message:
+
+- a symplectic method for a flow given by its equations of motion: "Störmer–Verlet needs a
+  Hamiltonian H(q, p); this system is given by its equations of motion." (and "Yoshida 4 …");
+- a symplectic method for a Hamiltonian that is not separable: "H(q, p) must split as T(p) + V(q)
+  for a symplectic method.";
+- a Lyapunov run of a flow with a symplectic method, since the variational equations are not
+  separable.
+
+A map ignores the method, so a map is never refused for it.
+
+`TrajectoryOut.energy?: { h0, maxAbsDrift }` (`EnergyOut`) comes with every trajectory of a
+Hamiltonian flow, whatever the method: `h0 = H(t0, x0)` and `maxAbsDrift` the largest `|H − h0|`
+over the returned samples (the crossings, in a section view). It is absent for other systems and
+when `H` is not finite at a sample. `CompileResponse.separable` tells the UI which systems the
+symplectic methods can run. The UI's method table (`app/src/state/methods.ts`) disables both
+methods otherwise and says why, and the Solver panel reads out `|ΔH| max = 3.1 × 10⁻⁷`.
+
+The chaos gate steps the pendulum `H = p²/2 − cos q` from `(1, 0)` (period
+`2π / AGM(1, cos ½) ≈ 6.70`) over 10⁵ periods and reads `H` after every step. Störmer–Verlet at
+h = 0.05 keeps `max |ΔH|` at 2.65e−4 (claim ≤ 1e−3), Yoshida 4 at h = 0.1 at 3.87e−6 (claim
+≤ 1e−4). For both, the largest `|ΔH|` over the last 10³ periods is 1.000 times the largest over the
+first 10³ (claim ≤ 2). RK4 at h = 0.1 gives 97.6 by the same rule, and the gate requires that
+claim to fail.
 
 ### Lyapunov spectrum
 

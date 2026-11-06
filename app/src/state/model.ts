@@ -14,7 +14,7 @@ import type {
   TrajectoryRequest,
 } from "../api/types";
 import { DEFAULT_CAMERA, SECTION_MISFIT, SPACE_MISFIT } from "../api/ipc.generated.ts";
-import { METHODS } from "./methods.ts";
+import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
@@ -653,7 +653,7 @@ export const DEFAULT_LAYERS: Layers = {
 };
 
 export const DEFAULT_SOLVER: SolverSettings = {
-  method: "dopri5",
+  method: DEFAULT_METHOD,
   rtol: 1e-6,
   atol: 1e-9,
   h: 0,

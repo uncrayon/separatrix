@@ -1,4 +1,5 @@
 import type {
+  Method,
   Arrow,
   AxisRef,
   ChosenSavePath,
@@ -42,12 +43,15 @@ import type {
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
 import { MAX_SECTION_POINTS } from "./ipc.generated";
+import { METHODS } from "../state/methods";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
 interface MockSystem {
   kind: SystemKind;
   hamiltonian?: boolean;
+  /** H(q, p) of a Hamiltonian system that splits as T(p) + V(q). */
+  energy?: (x: number[], p: number[]) => number;
   autonomous?: boolean;
   states: StateInfo[];
   params: ParamInfo[];
@@ -161,6 +165,7 @@ const SYSTEMS: Record<string, MockSystem> = {
       "\\dot{p} = -\\frac{\\partial H}{\\partial q}",
     ],
     f: (_t, [q, p]) => [p, -Math.sin(q)],
+    energy: ([q, p]) => (p * p) / 2 - Math.cos(q),
   },
   "sin-x": {
     kind: "ode",
@@ -341,6 +346,7 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
   const empty: CompileResponse = {
     ok: false,
     hamiltonian: false,
+    separable: false,
     autonomous: true,
     states: [],
     params: [],
@@ -377,6 +383,7 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
     systemId: id,
     kind: sys.kind,
     hamiltonian: sys.hamiltonian ?? false,
+    separable: sys.energy !== undefined,
     autonomous: sys.autonomous ?? true,
     states: sys.states,
     params: sys.params,
@@ -525,6 +532,8 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   }
   const zErr = thirdAxisError(dim, req);
   if (zErr) throw zErr;
+  const methodErr = methodError(sys, req.solver.method);
+  if (methodErr) throw methodErr;
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -579,9 +588,14 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const transient = req.transient ?? 0;
   const section = sys.kind === "ode" ? req.section : undefined;
   const trajectories = req.trajectories.map((tr) =>
-    section
-      ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
-      : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
+    withEnergy(
+      sys,
+      p,
+      tr,
+      section
+        ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
+        : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
+    ),
   );
   const graph =
     req.graphSamples === undefined
@@ -597,6 +611,28 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
     ...(graph ? { graph } : {}),
     elapsedMs: performance.now() - start,
   };
+}
+
+/** `method_fits` in service.rs, with its messages. The preview integrates every method with RK4. */
+function methodError(sys: MockSystem, method: Method): string | null {
+  if (METHODS[method].needs === "any" || sys.kind === "map") return null;
+  if (!sys.hamiltonian) {
+    return `${METHODS[method].label} needs a Hamiltonian H(q, p); this system is given by its equations of motion.`;
+  }
+  if (!sys.energy) return "H(q, p) must split as T(p) + V(q) for a symplectic method.";
+  return null;
+}
+
+/** `energy` in service.rs: H at the start and its largest drift over the samples. */
+function withEnergy(sys: MockSystem, p: number[], tr: TrajectoryRequest, out: TrajectoryOut): TrajectoryOut {
+  if (!sys.energy) return out;
+  const dim = sys.states.length;
+  const h0 = sys.energy(tr.x0, p);
+  let maxAbsDrift = 0;
+  for (let i = 0; i < out.t.length; i++) {
+    maxAbsDrift = Math.max(maxAbsDrift, Math.abs(sys.energy(out.x.slice(i * dim, (i + 1) * dim), p) - h0));
+  }
+  return Number.isFinite(h0) && Number.isFinite(maxAbsDrift) ? { ...out, energy: { h0, maxAbsDrift } } : out;
 }
 
 /** MAX_ITERATES in app/src-tauri/src/service.rs. */

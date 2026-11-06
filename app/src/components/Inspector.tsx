@@ -16,7 +16,7 @@ import {
   withSubscript,
   texMinus,
 } from "../math/format";
-import { METHODS } from "../state/methods";
+import { METHODS, energyDriftText, methodFits, symplecticRefusal } from "../state/methods";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   COBWEB_FILL_ITERATES,
@@ -632,11 +632,6 @@ function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
-const METHOD_OPTIONS: SelectOption<Method>[] = (Object.keys(METHODS) as Method[]).map((value) => ({
-  value,
-  label: METHODS[value].label,
-}));
-
 const positive = (v: number) => (v > 0 ? null : "Must be positive");
 
 /** MAX_SAMPLES in app/src-tauri/src/service.rs: the core takes no more per trajectory. */
@@ -659,9 +654,18 @@ function cobwebFillsIn(state: StudioState): boolean {
 
 const fillCache = new WeakMap<object, { key: string; fills: boolean }>();
 
+/** The largest energy drift over the drawn trajectories of a Hamiltonian flow; null when there is none to show. */
+function energyDrift(state: StudioState): number | null {
+  const p = state.portrait;
+  if (!state.compiled?.hamiltonian || !portraitFits(state.compiled, state.shapeId, p)) return null;
+  const drifts = p.res.trajectories.flatMap((tr) => (tr.energy ? [tr.energy.maxAbsDrift] : []));
+  return drifts.length ? Math.max(...drifts) : null;
+}
+
 function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
+  const refusalHint = useId();
   const backHint = useId();
   const section = isSection(state.view);
   if (sys.kind === "map") {
@@ -727,14 +731,21 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   }
   const s = state.solver;
   const adaptive = METHODS[s.method].adaptive;
+  const refusal = symplecticRefusal(sys);
+  const methodOptions: SelectOption<Method>[] = (Object.keys(METHODS) as Method[]).map((value) => ({
+    value,
+    label: METHODS[value].label,
+    disabled: !methodFits(value, sys),
+  }));
+  const drift = energyDrift(state);
   const timeOnAxis = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
   return (
     <PanelSection title="Solver" id="solver-settings" open={open} onToggle={onToggle}>
       <Select
         ariaLabel="Integration method"
-        describedBy={methodHint}
+        describedBy={refusal ? `${methodHint} ${refusalHint}` : methodHint}
         value={s.method}
-        options={METHOD_OPTIONS}
+        options={methodOptions}
         onChange={(method) =>
           actions.setSolver({ method, h: METHODS[method].adaptive ? 0 : s.h > 0 ? s.h : DEFAULT_FIXED_STEP })
         }
@@ -742,6 +753,11 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
       <p className="ds-panel-section-hint caption" id={methodHint}>
         {METHODS[s.method].about}
       </p>
+      {refusal && (
+        <p className="ds-panel-section-hint caption" id={refusalHint} data-method-refusal="">
+          {refusal}
+        </p>
+      )}
       <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
         {adaptive ? (
           <>
@@ -814,6 +830,16 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
             ariaLabel="Samples per trajectory (0 = automatic)"
           />
         </FieldRow>
+        {drift !== null && (
+          <KvRow label="Energy drift" text>
+            <span
+              data-energy-drift=""
+              data-tooltip="Largest |H − H₀| over the samples of every trajectory drawn"
+            >
+              {energyDriftText(drift)}
+            </span>
+          </KvRow>
+        )}
       </dl>
       <div className="inspector-switch-row">
         <Switch

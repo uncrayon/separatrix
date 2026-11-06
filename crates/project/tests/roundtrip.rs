@@ -1252,3 +1252,25 @@ fn a_space_view_that_does_not_fit_falls_back_to_the_default_view() {
         .to_string()
         .contains("views[0].camera.zoom"));
 }
+
+#[test]
+fn symplectic_methods_are_known_and_written_back_byte_for_byte() {
+    for method in ["verlet", "yoshida4"] {
+        let text = fixture("rabbits-vs-sheep.sepx").replace(
+            "\"method\": \"dopri5\",\n    \"rtol\": 1e-6,\n    \"atol\": 1e-9,\n    \"h\": 0.0,",
+            &format!("\"method\": \"{method}\",\n    \"rtol\": 1e-6,\n    \"atol\": 1e-9,\n    \"h\": 0.05,"),
+        );
+        assert!(
+            text.contains(&format!("\"method\": \"{method}\"")),
+            "{method}"
+        );
+        let opened = parse_named(&text, "symplectic.sepx").unwrap();
+        assert!(
+            opened.warnings.is_empty(),
+            "{method}: {:?}",
+            opened.warnings
+        );
+        assert_eq!(opened.project.solver.method, method);
+        assert_eq!(to_json(&opened.project, APP).unwrap(), text, "{method}");
+    }
+}

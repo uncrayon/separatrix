@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Symplectic methods for Hamiltonian systems (Strogatz §6.5): Störmer–Verlet (leapfrog, order 2)
+  and Yoshida 4 (order 4) integrate an `H(q, p)` that splits as `T(p) + V(q)`, and keep its energy
+  error bounded over long runs where Runge–Kutta drifts. The method picker offers them only for
+  such a system and says why otherwise; the core refuses them for any other flow and for Lyapunov
+  runs. Every trajectory of a Hamiltonian flow reports `H` at its start and its largest drift, and
+  the Solver panel reads it out as `|ΔH| max = 3.1 × 10⁻⁷`. Projects save the methods as
+  `"verlet"` and `"yoshida4"`. The chaos gate steps the pendulum over 10⁵ periods: Verlet at
+  h = 0.05 stays within 2.7·10⁻⁴ and Yoshida 4 at h = 0.1 within 3.9·10⁻⁶, with no growth from the
+  first 10³ periods to the last, while RK4 at h = 0.1 grows 98-fold.
 - Lyapunov spectrum (Strogatz §9.3, §10.5): `dyn_analysis::lyapunov_spectrum` measures every
   exponent of a flow or a map by Benettin's QR method. A flow integrates its variational
   equations with the exact Jacobian. Each exponent gets a block standard error, and the sum is

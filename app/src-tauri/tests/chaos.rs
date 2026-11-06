@@ -15,6 +15,15 @@
 //!   Feigenbaum's δ = 4.669… for information only: three doublings are too
 //!   few for it to converge.
 //!
+//! - The pendulum `H = p²/2 − cos q` from `(q, p) = (1, 0)` (the
+//!   `hamiltonian-pendulum` template, period `2π / AGM(1, cos ½) ≈ 6.70`),
+//!   stepped with `dyn_solve::Stepper` over 10⁵ periods with `H` read after
+//!   every step: Störmer–Verlet at h = 0.05 keeps `max |ΔH| ≤ 1e−3` and
+//!   Yoshida 4 at h = 0.1 keeps it `≤ 1e−4`. For both, the largest `|ΔH|`
+//!   over the last 10³ periods is at most twice the largest over the first
+//!   10³: the error oscillates instead of drifting. RK4 at h = 0.1 fails that
+//!   rule (its energy drifts), which a wrong claim checks.
+//!
 //! The Σ row of Lorenz uses its own run with RK4 at h = 0.001: RK4's
 //! truncation error on `ln det Φ` puts Σλ about 1e−4 from −41/3 at
 //! h = 0.01, shrinking like h⁴ (see `crates/dyn-analysis/tests/lyapunov.rs`).
@@ -131,14 +140,59 @@ enum Claim {
     Doubling {
         k: usize,
     },
+    /// The largest `|H − H₀|` over every step of the run.
+    EnergyError {
+        run: &'static EnergyRun,
+    },
+    /// The largest `|H − H₀|` over the last `WINDOW_PERIODS` periods over
+    /// the largest over the first: about 1 while the error stays bounded.
+    EnergyGrowth {
+        run: &'static EnergyRun,
+    },
+}
+
+/// What a claim says about its measured value.
+enum Expect {
+    /// Within `tol` of a published `value`.
+    Near { value: f64, tol: f64 },
+    /// At most `bound`.
+    AtMost { bound: f64 },
 }
 
 struct Check {
     claim: Claim,
     text: &'static str,
-    published: f64,
-    tol: f64,
+    expect: Expect,
 }
+
+/// The pendulum `H = p²/2 − cos q` from `(q, p) = (1, 0)`, stepped over
+/// `PERIODS` periods with the Stepper, `H` read after every step.
+struct EnergyRun {
+    label: &'static str,
+    method: Method,
+    h: f64,
+}
+
+const PERIODS: f64 = 1e5;
+const WINDOW_PERIODS: f64 = 1e3;
+
+const VERLET: EnergyRun = EnergyRun {
+    label: "pendulum, Störmer–Verlet h = 0.05, 1e5 periods",
+    method: Method::Verlet,
+    h: 0.05,
+};
+
+const YOSHIDA: EnergyRun = EnergyRun {
+    label: "pendulum, Yoshida 4 h = 0.1, 1e5 periods",
+    method: Method::Yoshida4,
+    h: 0.1,
+};
+
+const PENDULUM_RK4: EnergyRun = EnergyRun {
+    label: "pendulum, RK4 h = 0.1, 1e5 periods",
+    method: Method::Rk4,
+    h: 0.1,
+};
 
 const LN_0_3: f64 = -1.203_972_804_325_936_1;
 const LN_2: f64 = std::f64::consts::LN_2;
@@ -152,8 +206,10 @@ const CHECKS: &[Check] = &[
             index: 0,
         },
         text: "Lorenz λ1",
-        published: 0.9056,
-        tol: 0.01,
+        expect: Expect::Near {
+            value: 0.9056,
+            tol: 0.01,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -161,8 +217,10 @@ const CHECKS: &[Check] = &[
             index: 1,
         },
         text: "Lorenz λ2",
-        published: 0.0,
-        tol: 0.01,
+        expect: Expect::Near {
+            value: 0.0,
+            tol: 0.01,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -170,14 +228,18 @@ const CHECKS: &[Check] = &[
             index: 2,
         },
         text: "Lorenz λ3",
-        published: -14.5723,
-        tol: 0.02,
+        expect: Expect::Near {
+            value: -14.5723,
+            tol: 0.02,
+        },
     },
     Check {
         claim: Claim::Sum { run: &LORENZ_FINE },
         text: "Lorenz Σλ = −(σ + 1 + b) = −41/3",
-        published: -41.0 / 3.0,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: -41.0 / 3.0,
+            tol: 1e-6,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -185,8 +247,10 @@ const CHECKS: &[Check] = &[
             index: 0,
         },
         text: "Hénon λ1",
-        published: 0.41922,
-        tol: 0.005,
+        expect: Expect::Near {
+            value: 0.41922,
+            tol: 0.005,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -194,14 +258,18 @@ const CHECKS: &[Check] = &[
             index: 1,
         },
         text: "Hénon λ2",
-        published: -1.62319,
-        tol: 0.005,
+        expect: Expect::Near {
+            value: -1.62319,
+            tol: 0.005,
+        },
     },
     Check {
         claim: Claim::Sum { run: &HENON },
         text: "Hénon Σλ = ln 0.3",
-        published: LN_0_3,
-        tol: 1e-9,
+        expect: Expect::Near {
+            value: LN_0_3,
+            tol: 1e-9,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -209,32 +277,62 @@ const CHECKS: &[Check] = &[
             index: 0,
         },
         text: "logistic r = 4 λ = ln 2",
-        published: LN_2,
-        tol: 5e-3,
+        expect: Expect::Near {
+            value: LN_2,
+            tol: 5e-3,
+        },
     },
     Check {
         claim: Claim::Doubling { k: 1 },
         text: "logistic r1 = 3",
-        published: 3.0,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: 3.0,
+            tol: 1e-6,
+        },
     },
     Check {
         claim: Claim::Doubling { k: 2 },
         text: "logistic r2 = 1 + √6",
-        published: R2,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: R2,
+            tol: 1e-6,
+        },
     },
     Check {
         claim: Claim::Doubling { k: 3 },
         text: "logistic r3",
-        published: 3.544_090_3,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: 3.544_090_3,
+            tol: 1e-6,
+        },
     },
     Check {
         claim: Claim::Doubling { k: 4 },
         text: "logistic r4",
-        published: 3.564_407_3,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: 3.564_407_3,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        claim: Claim::EnergyError { run: &VERLET },
+        text: "Verlet h = 0.05 max |ΔH|",
+        expect: Expect::AtMost { bound: 1e-3 },
+    },
+    Check {
+        claim: Claim::EnergyGrowth { run: &VERLET },
+        text: "Verlet last/first 1e3 periods",
+        expect: Expect::AtMost { bound: 2.0 },
+    },
+    Check {
+        claim: Claim::EnergyError { run: &YOSHIDA },
+        text: "Yoshida 4 h = 0.1 max |ΔH|",
+        expect: Expect::AtMost { bound: 1e-4 },
+    },
+    Check {
+        claim: Claim::EnergyGrowth { run: &YOSHIDA },
+        text: "Yoshida 4 last/first 1e3 periods",
+        expect: Expect::AtMost { bound: 2.0 },
     },
 ];
 
@@ -245,14 +343,18 @@ const WRONG_CHECKS: &[Check] = &[
             index: 0,
         },
         text: "wrong: Lorenz λ1 = 1.0",
-        published: 1.0,
-        tol: 0.01,
+        expect: Expect::Near {
+            value: 1.0,
+            tol: 0.01,
+        },
     },
     Check {
         claim: Claim::Sum { run: &LORENZ_FINE },
         text: "wrong: Lorenz Σλ = −13",
-        published: -13.0,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: -13.0,
+            tol: 1e-6,
+        },
     },
     Check {
         claim: Claim::Exponent {
@@ -260,14 +362,23 @@ const WRONG_CHECKS: &[Check] = &[
             index: 0,
         },
         text: "wrong: Hénon λ1 = 0.5",
-        published: 0.5,
-        tol: 0.005,
+        expect: Expect::Near {
+            value: 0.5,
+            tol: 0.005,
+        },
     },
     Check {
         claim: Claim::Doubling { k: 2 },
         text: "wrong: logistic r2 = 3.45",
-        published: 3.45,
-        tol: 1e-6,
+        expect: Expect::Near {
+            value: 3.45,
+            tol: 1e-6,
+        },
+    },
+    Check {
+        claim: Claim::EnergyGrowth { run: &PENDULUM_RK4 },
+        text: "wrong: RK4 h = 0.1 stays bounded",
+        expect: Expect::AtMost { bound: 2.0 },
     },
 ];
 
@@ -404,6 +515,85 @@ fn doubling(k: usize) -> f64 {
         .map_or(f64::NAN, |d| d.r)
 }
 
+/// The pendulum's period from `(q0, 0)`: `T = 2π / AGM(1, cos(q0/2))`.
+fn pendulum_period(q0: f64) -> f64 {
+    let (mut a, mut b) = (1.0f64, (q0 / 2.0).cos());
+    while (a - b).abs() > 1e-15 {
+        (a, b) = ((a + b) / 2.0, (a * b).sqrt());
+    }
+    2.0 * std::f64::consts::PI / a
+}
+
+/// The largest `|H − H₀|` of one run: over all of it, its first
+/// `WINDOW_PERIODS` periods and its last.
+struct EnergyErrors {
+    all: f64,
+    first: f64,
+    last: f64,
+    completed: bool,
+}
+
+/// Each run is stepped once per test binary, whichever test asks first.
+fn energy_errors(run: &'static EnergyRun) -> Arc<EnergyErrors> {
+    static RUNS: OnceLock<Mutex<HashMap<&'static str, Arc<EnergyErrors>>>> = OnceLock::new();
+    let runs = RUNS.get_or_init(Default::default);
+    if let Some(done) = runs.lock().unwrap().get(run.label) {
+        return done.clone();
+    }
+    let started = Instant::now();
+    let (_, system, params, _) = compile(run.label, "hamiltonian-pendulum", &[]);
+    let x0 = [1.0, 0.0];
+    let period = pendulum_period(x0[0]);
+    let (t_end, window) = (PERIODS * period, WINDOW_PERIODS * period);
+    let h0 = system.hamiltonian_value(0.0, &x0, &params).expect("H");
+    let opts = dyn_solve::SolverOptions {
+        method: run.method,
+        h: run.h,
+        max_steps: usize::MAX,
+        ..dyn_solve::SolverOptions::default()
+    };
+    let mut stepper = dyn_solve::Stepper::new(&*system, &params, 0.0, &x0, t_end, &opts);
+    let mut e = EnergyErrors {
+        all: 0.0,
+        first: 0.0,
+        last: 0.0,
+        completed: false,
+    };
+    loop {
+        match stepper.step() {
+            dyn_solve::StepOutcome::Accepted => {}
+            dyn_solve::StepOutcome::AtEnd => {
+                e.completed = true;
+                break;
+            }
+            _ => break,
+        }
+        let t = stepper.t();
+        let drift = (system
+            .hamiltonian_value(t, stepper.x(), &params)
+            .expect("H")
+            - h0)
+            .abs();
+        e.all = e.all.max(drift);
+        if t <= window {
+            e.first = e.first.max(drift);
+        }
+        if t >= t_end - window {
+            e.last = e.last.max(drift);
+        }
+    }
+    println!(
+        "{}: period {period:.6}, {} steps, {} evaluations, {:.0} ms",
+        run.label,
+        stepper.stats().accepted,
+        stepper.stats().evals,
+        started.elapsed().as_secs_f64() * 1e3
+    );
+    let e = Arc::new(e);
+    runs.lock().unwrap().insert(run.label, e.clone());
+    e
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Verdict {
     Pass,
@@ -412,15 +602,23 @@ enum Verdict {
 
 struct Row {
     claim: &'static str,
-    published: f64,
+    expect: &'static Expect,
     measured: f64,
     uncertainty: Option<f64>,
-    delta: f64,
-    tol: f64,
     verdict: Verdict,
 }
 
-fn evaluate(check: &Check) -> Row {
+impl Row {
+    /// `|measured − published|` for a `Near` claim.
+    fn delta(&self) -> Option<f64> {
+        match *self.expect {
+            Expect::Near { value, .. } => Some((self.measured - value).abs()),
+            Expect::AtMost { .. } => None,
+        }
+    }
+}
+
+fn evaluate(check: &'static Check) -> Row {
     let (measured, uncertainty, completed) = match check.claim {
         Claim::Exponent { run, index } => {
             let s = spectrum(run);
@@ -435,17 +633,29 @@ fn evaluate(check: &Check) -> Row {
             (s.sum, None, s.status == Status::Completed)
         }
         Claim::Doubling { k } => (doubling(k), None, true),
+        Claim::EnergyError { run } => {
+            let e = energy_errors(run);
+            (e.all, None, e.completed)
+        }
+        Claim::EnergyGrowth { run } => {
+            let e = energy_errors(run);
+            (e.last / e.first, None, e.completed)
+        }
     };
-    let delta = (measured - check.published).abs();
-    let ok = completed && delta <= check.tol;
+    let holds = match check.expect {
+        Expect::Near { value, tol } => (measured - value).abs() <= tol,
+        Expect::AtMost { bound } => measured <= bound,
+    };
     Row {
         claim: check.text,
-        published: check.published,
+        expect: &check.expect,
         measured,
         uncertainty,
-        delta,
-        tol: check.tol,
-        verdict: if ok { Verdict::Pass } else { Verdict::Fail },
+        verdict: if completed && holds {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        },
     }
 }
 
@@ -468,20 +678,37 @@ fn print_table(rows: &[Row]) {
         "within 3·± (info)",
     ]);
     for r in rows {
-        let (pm, within) = match r.uncertainty {
-            Some(u) => (
+        let (pm, within) = match (r.uncertainty, r.delta()) {
+            (Some(u), Some(delta)) => (
                 format!("{u:.1e}"),
-                if r.delta <= 3.0 * u { "yes" } else { "no" }.to_string(),
+                if delta <= 3.0 * u { "yes" } else { "no" }.to_string(),
             ),
-            None => ("—".to_string(), "—".to_string()),
+            _ => ("—".to_string(), "—".to_string()),
+        };
+        let (published, measured, tol) = match *r.expect {
+            Expect::Near { value, tol } => (
+                format!("{value:.7}"),
+                format!("{:.9}", r.measured),
+                format!("{tol:.0e}"),
+            ),
+            Expect::AtMost { bound } if bound >= 1.0 => (
+                "—".to_string(),
+                format!("{:.4}", r.measured),
+                format!("≤ {bound}"),
+            ),
+            Expect::AtMost { bound } => (
+                "—".to_string(),
+                format!("{:.3e}", r.measured),
+                format!("≤ {bound:.0e}"),
+            ),
         };
         print_line([
             r.claim,
-            &format!("{:.7}", r.published),
-            &format!("{:.9}", r.measured),
+            &published,
+            &measured,
             &pm,
-            &format!("{:.1e}", r.delta),
-            &format!("{:.0e}", r.tol),
+            &r.delta().map_or("—".to_string(), |d| format!("{d:.1e}")),
+            &tol,
             match r.verdict {
                 Verdict::Pass => "PASS",
                 Verdict::Fail => "FAIL",

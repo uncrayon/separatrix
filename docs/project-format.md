@@ -75,7 +75,7 @@ from the `project_read` and `project_write` commands.
 | `initial_conditions[]` | object | no | `id`, `x0` (one number per state; required), `t0` (default 0), `color` (palette index 0–6, default 0), `hidden` (default false). |
 | `views[]` | object | no | See below. |
 | `analyses` | array | no | Reserved: v1 keeps the entries verbatim. |
-| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end` (for a map, the number of iterates N, shared by its time series and cobweb), `transient` (maps: iterates computed but not drawn before each orbit; a flow's section view: crossings computed but not drawn; absent = 0, written only when above 0, after `t_end`), `samples` (0 = automatic). Every key has a default. |
+| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`, and the symplectic `"verlet"` and `"yoshida4"`, which run only a Hamiltonian `H(q, p) = T(p) + V(q)`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end` (for a map, the number of iterates N, shared by its time series and cobweb), `transient` (maps: iterates computed but not drawn before each orbit; a flow's section view: crossings computed but not drawn; absent = 0, written only when above 0, after `t_end`), `samples` (0 = automatic). Every key has a default. |
 | `export_settings` | any | no | The export dialog's options for this file; opaque to the format. |
 
 ### Views

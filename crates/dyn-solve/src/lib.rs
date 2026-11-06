@@ -4,7 +4,8 @@
 //! equations, or by hand with [`dyn_core::FnField`]) into trajectories.
 //!
 //! * [`integrate`] solves `dx/dt = f(t, x; p)` from `t0` to `t1` (backwards
-//!   when `t1 < t0`) with one of four [`Method`]s.
+//!   when `t1 < t0`) with one of six [`Method`]s, two of them symplectic
+//!   for separable Hamiltonians.
 //! * [`integrate_with_events`] does the same and also reports when given
 //!   functions `g(t, x)` cross zero (used for Poincaré sections, turning
 //!   points, ...).
@@ -44,6 +45,7 @@ mod map;
 mod sampling;
 mod section;
 mod stepper;
+mod symplectic;
 
 pub use events::{Direction, Event, EventFn, EventHit};
 pub use map::iterate_map;
@@ -73,6 +75,12 @@ pub enum Method {
     /// Dormand–Prince 5(4) with adaptive step size (the default; what
     /// MATLAB's `ode45` and SciPy's `RK45` use).
     Dopri5,
+    /// Störmer–Verlet (leapfrog), symplectic, order 2, fixed step. For a
+    /// separable Hamiltonian only; see [`Method::is_symplectic`].
+    Verlet,
+    /// Yoshida's fourth-order symplectic composition of three Verlet steps,
+    /// fixed step. For a separable Hamiltonian only.
+    Yoshida4,
 }
 
 impl Method {
@@ -82,11 +90,13 @@ impl Method {
         matches!(self, Method::Dopri5)
     }
 
-    /// Preserves the symplectic form of a Hamiltonian flow. Such a method
-    /// needs a separable `H(q, p) = T(p) + V(q)` with the state laid out as
-    /// `[q; p]`, which the caller must check.
+    /// Preserves the symplectic form of a Hamiltonian flow, so the energy
+    /// error stays bounded over long times instead of drifting. Such a
+    /// method needs a separable `H(q, p) = T(p) + V(q)` with the state laid
+    /// out as `[q; p]` (`dyn_expr::CompiledSystem::is_separable`). The
+    /// [`Stepper`] trusts that; the caller must check it.
     pub fn is_symplectic(self) -> bool {
-        false
+        matches!(self, Method::Verlet | Method::Yoshida4)
     }
 }
 
@@ -366,6 +376,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Method::Dopri5).unwrap(),
             "\"dopri5\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Method::Verlet).unwrap(),
+            "\"verlet\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Method::Yoshida4).unwrap(),
+            "\"yoshida4\""
         );
         assert_eq!(
             serde_json::to_string(&Status::BlewUp).unwrap(),

@@ -1,5 +1,6 @@
 use dyn_core::VectorField;
 
+use crate::symplectic::splitting;
 use crate::{all_finite, blew_up, Method, SolverOptions, Stats, Status};
 
 /// Dormand–Prince 5(4) coefficients, as in Hairer's DOPRI5.
@@ -113,7 +114,7 @@ fn fixed_stage_points(method: Method) -> &'static [(f64, Option<usize>)] {
     match method {
         Method::Heun => &[(1.0, None)],
         Method::Rk4 => &[(0.5, None), (0.5, Some(0)), (1.0, Some(1))],
-        Method::Euler | Method::Dopri5 => &[],
+        Method::Euler | Method::Dopri5 | Method::Verlet | Method::Yoshida4 => &[],
     }
 }
 
@@ -833,6 +834,12 @@ impl<'a> Stepper<'a> {
             counted_eval(f, p, stats, t + c * h, xs, &mut k[j]);
         }
         let [k2, k3, k4, ..] = k;
+        if let Some(split) = splitting(*method) {
+            split.step(t, h, x, k1, k2, x_new, |t, x, out| {
+                counted_eval(f, p, stats, t, x, out)
+            });
+            return;
+        }
         match method {
             Method::Euler => {
                 for i in 0..n {
@@ -850,6 +857,7 @@ impl<'a> Stepper<'a> {
                 }
             }
             Method::Dopri5 => unreachable!("Dopri5 is handled by step_adaptive"),
+            Method::Verlet | Method::Yoshida4 => unreachable!("split steps return above"),
         }
     }
 

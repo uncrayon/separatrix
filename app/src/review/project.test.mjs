@@ -341,7 +341,7 @@ test("the solver: an unknown method falls back to dopri5 with a notice; missing 
   assert.match(load.warnings[0], /“rk45”/);
   const { applied } = openFixture(doc);
   assert.deepEqual(applied.solver, { ...DEFAULT_SOLVER, tEnd: 12 });
-  assert.deepEqual([...KNOWN_METHODS], ["euler", "heun", "rk4", "dopri5"]);
+  assert.deepEqual([...KNOWN_METHODS].sort(), ["dopri5", "euler", "heun", "rk4", "verlet", "yoshida4"]);
 });
 
 test("dirty tracking ignores the export options and the app version", () => {
