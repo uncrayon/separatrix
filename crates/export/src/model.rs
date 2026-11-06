@@ -1,5 +1,5 @@
 //! What an export is built from: one computed portrait, the names to label
-//! it with, and the figure's size and colours.
+//! it with, and the figure's size and colors.
 //!
 //! The shapes mirror the IPC types (`PortraitResponse` and its request) so
 //! the app crate can convert one into the other field by field; this crate
@@ -372,7 +372,7 @@ pub struct OrbitRun {
     pub diagram: OrbitDiagram,
 }
 
-/// The export's colour theme.
+/// The export's color theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
@@ -382,7 +382,7 @@ pub enum Theme {
     Dark,
 }
 
-/// The plot colours of one theme, as `#rrggbb`.
+/// The plot colors of one theme, as `#rrggbb`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Palette {
     /// `plot-bg`.
@@ -450,5 +450,5 @@ impl Palette {
     }
 }
 
-/// Number of trajectory colours.
+/// Number of trajectory colors.
 pub const PALETTE_SIZE: usize = 7;

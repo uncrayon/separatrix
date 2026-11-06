@@ -205,7 +205,7 @@ pub fn eigenvectors(kind: SystemKind, n: usize, a: &[f64], eigenvalues: &[(f64, 
 
 Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in the same order:
 
-- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalised so that its
+- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalized so that its
   largest-magnitude component is positive (the first one on a tie); `eigenvectorsIm[k]` is `null`.
 - **Repeated λ** (same resolution as the classification, `|λ1 - λ2| ≲ 3e-5·max|λ|`; for 2D flows
   `τ² - 4Δ ≈ 0`): as many vectors as the eigenspace has dimensions, the rest `null`. A star
@@ -224,7 +224,7 @@ Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in t
   and `eigenvectorsIm[k] = im`; the conjugate eigenvalue gets `(re, -im)`. The phase is fixed so
   that `|re|² + |im|² = 1`, `re ⊥ im` and `|re| ≥ |im|`: re and im are the major and minor
   semi-axes of the ellipses traced by the linearised orbits `Re(c·e^{λt}·v)` (spirals and
-  centres), and span the invariant plane. For a circle the largest component of `v` is made real
+  centers), and span the invariant plane. For a circle the largest component of `v` is made real
   and positive. Sign as for real vectors, by `re`.
 - No linearisation (non-finite Jacobian, or a one-dimensional `f` with a kink at the point, such
   as the tent map's peak or `|x|` at 0, found by one-sided difference quotients that disagree at
@@ -266,10 +266,10 @@ For a one-dimensional map the only multiplier is `λ = f′(x*)`, from the exact
 `fixedPoints[i].eigenvalues[0][0]`, classified by `|λ|` against 1 (Strogatz §10.1).
 
 Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stable/unstable spiral,
-centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
+center, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
 for higher dimensions; maps classify by |μ| relative to 1.
 
-Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it has at most
+Newton seeds: the grid of `seeds_per_axis^dim` cell centers of `search` when it has at most
 `max_seeds` points, otherwise the first `max_seeds` points of a Halton sequence in the box, so
 `max_seeds` (clamped to `MAX_SEEDS = 4096`; `fixed_points` uses `MAX_SEEDS`) is a hard cap in every
 dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
@@ -405,7 +405,7 @@ Benettin's method with QR by modified Gram–Schmidt, applied twice. A flow firs
 with `solver`, then integrates the orbit with `n` tangent vectors and one more state, the state
 `(x, Φ, s)` of length `n + n² + 1` with `Φ' = J(x)Φ` (`J` from `VectorField::jacobian`: exact
 forward-mode AD for compiled systems) and `s' = tr J(x)`. The integrator lands exactly on every
-`t_start + k·τ`, where the columns of `Φ` are orthonormalised and `ln R_ii` added to exponent `i`.
+`t_start + k·τ`, where the columns of `Φ` are orthonormalized and `ln R_ii` added to exponent `i`.
 The last interval is shortened to end at `t_start + total`, and `total / τ` within 1e−9 of an
 integer counts as that integer. `solver.maxSteps` bounds the accepted steps of the whole run. A
 map runs `transient` iterates, then `Q ← J(x_n) Q` and `x_{n+1} = f(x_n)` for `total` iterates
@@ -534,8 +534,8 @@ more than `MAX_ORBIT_POINTS = 4·10⁶` points (`columns · kept`), and `doublin
 than one state or one that depends on `n`. It runs on a blocking worker thread.
 
 The studio's orbit diagram sends one request per view of it (`buildOrbitJob` in state/model.ts):
-`columns` is the plot's width in device pixels (at most 4,096), `range` the centres of the first
-and last pixel across the view's `xRange`, so column `j` is the `j`-th pixel's centre and a click
+`columns` is the plot's width in device pixels (at most 4,096), `range` the centers of the first
+and last pixel across the view's `xRange`, so column `j` is the `j`-th pixel's center and a click
 there sets the parameter to exactly that column's `r` (`orbitColumnAt`). The swept parameter's
 own value is sent as `range[0]` (each column replaces it), so moving its slider asks for nothing;
 zooming or panning across, a wider plot, another start point (the selected one, else the first),

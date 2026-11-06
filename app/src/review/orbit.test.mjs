@@ -78,7 +78,7 @@ test("one column per device pixel, at most MAX_ORBIT_COLUMNS", () => {
   assert.ok(model.ORBIT_MAX_KEPT * MAX_ORBIT_COLUMNS <= MAX_ORBIT_POINTS, "the most iterates fit the widest plot");
 });
 
-test("column j is the j-th pixel's centre, and a click sets the r of the column under it", () => {
+test("column j is the j-th pixel's center, and a click sets the r of the column under it", () => {
   const xRange = [2.8, 4];
   const [lo, hi] = model.orbitRange(xRange, 1200);
   assert.ok(Math.abs(lo - 2.8005) < 1e-12 && Math.abs(hi - 3.9995) < 1e-12);

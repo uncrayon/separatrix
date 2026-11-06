@@ -1828,7 +1828,7 @@ export async function mockExportLyapunovLatex(req: LyapunovExportRequest): Promi
     "\\begin{table}",
     "\\centering",
     "\\sisetup{uncertainty-mode = separate}",
-    `\\caption{Lyapunov spectrum of ${req.title}: ${how}, \\num{${res.renormalizations}} renormalizations every $\\tau = ${req.run.interval}$.}`,
+    `\\caption{Lyapunov spectrum of ${/^the /i.test(req.title) ? "" : "the "}${req.title}: ${how}, \\num{${res.renormalizations}} renormalizations every $\\tau = ${req.run.interval}$.}`,
     "\\begin{tabular}{@{}ll@{}}",
     "\\toprule",
     "Exponent & Value \\\\",

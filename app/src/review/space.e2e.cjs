@@ -149,7 +149,7 @@ test("without WebGL the 3D view says so and draws the lines on the 2D canvas", a
       }
       return { line, drawn };
     });
-    assert.ok(traj.line > 2000, `${traj.line} px in the trajectory colour`);
+    assert.ok(traj.line > 2000, `${traj.line} px in the trajectory color`);
     assert.ok(traj.drawn > 5000, `${traj.drawn} px off the background`);
     const filled = await page.evaluate(() => window.__filled);
     for (const name of ["x", "y", "z"]) assert.ok(filled.includes(name), `axis name ${name} drawn`);
@@ -224,7 +224,7 @@ for (const webgl of [true, false]) {
       assert.deepEqual(png.types.slice(0, 2), ["IHDR", "pHYs"]);
       assert.equal(png.dpi, 192);
       assert.ok(png.ink > 0.01, `${(100 * png.ink).toFixed(2)}% of the pixels are not background`);
-      assert.ok(png.line > 20000, `${png.line} px in the trajectory's colour`);
+      assert.ok(png.line > 20000, `${png.line} px in the trajectory's color`);
     } finally {
       await browser.close();
     }

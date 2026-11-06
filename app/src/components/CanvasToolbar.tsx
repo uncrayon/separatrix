@@ -116,17 +116,26 @@ export function CanvasToolbar({ state, actions }: Props) {
     {
       key: "fit",
       label: "Zoom to fit",
-      tip: orbit ? "Zoom to fit the diagram over the slider's range" : "Zoom to fit the trajectories",
+      tip: orbit
+        ? "Zoom to fit the diagram over the slider's range"
+        : lyapunov
+          ? "Zoom to fit the run (or double-click the plot)"
+          : "Zoom to fit the trajectories",
       icon: <IconZoomFit />,
       onClick: zoomToFit,
     },
-    {
-      key: "reset",
-      label: "Reset view",
-      tip: lyapunov ? "Reset view: fit the run (or double-click the plot)" : "Reset view (or double-click the plot)",
-      icon: <IconResetView />,
-      onClick: lyapunov ? zoomToFit : actions.resetView,
-    },
+    // The Lyapunov view has no home framing to go back to: fitting the run is its reset.
+    ...(lyapunov
+      ? []
+      : [
+          {
+            key: "reset",
+            label: "Reset view",
+            tip: "Reset view (or double-click the plot)",
+            icon: <IconResetView />,
+            onClick: actions.resetView,
+          },
+        ]),
   ];
   const layers: IconButtonSpec[] = isSection(state.view) || analysis ? [] : [
     ...(!isMap && !space

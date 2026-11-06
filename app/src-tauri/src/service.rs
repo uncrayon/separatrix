@@ -1640,7 +1640,7 @@ mod tests {
     /// fixed point and the number of points found is the number of starts.
     /// In 1-D a zero field is one interval of fixed points, reported by its
     /// two ends, so there `x1'` vanishes at each of the 40 seeds (the cell
-    /// centres of the search box [−1, 1]) and nowhere between.
+    /// centers of the search box [−1, 1]) and nowhere between.
     fn zero_system_fixed_point_count(dim: usize) -> usize {
         let store = SystemStore::new();
         let src: Vec<String> = if dim == 1 {

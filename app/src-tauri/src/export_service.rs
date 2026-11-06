@@ -473,7 +473,7 @@ fn max_iterates(req: &PortraitRequest) -> usize {
         .unwrap_or(0)
 }
 
-/// The plot colours of `theme`.
+/// The plot colors of `theme`.
 pub fn palette(theme: ExportTheme) -> Result<Palette, String> {
     let theme = match theme {
         ExportTheme::Light => separatrix_export::Theme::Light,

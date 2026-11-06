@@ -781,6 +781,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   let primary: Action | null = null;
   let secondary: Action | null = null;
   let footNote: ReactNode = null;
+  const chaosCsv = chaos ? `${stem}-${chaos === "lyapunov" ? "lyapunov" : "orbit-diagram"}.csv` : null;
   if (format === "latex") {
     const file =
       content === "figure"
@@ -882,8 +883,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         Save… writes <span className="ds-num">{stem}.png</span>
       </>
     );
-  } else if (chaos) {
-    const file = `${stem}-${chaos === "lyapunov" ? "lyapunov" : "orbit-diagram"}.csv`;
+  } else if (chaosCsv) {
+    const file = chaosCsv;
     const ready = csvReady && !!csvFiles?.files.length;
     primary = {
       label: "Save…",
@@ -1415,7 +1416,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     format === "csv" ? (
       csvFiles?.files.length ? (
         <>
-          First rows of <code>{csvFiles.files[0].stem}.csv</code>
+          First rows of <code>{chaosCsv ?? `${csvFiles.files[0].stem}.csv`}</code>
           {csvFiles.files.length > 1 ? ` (1 of ${csvFiles.files.length} files)` : ""}
         </>
       ) : (

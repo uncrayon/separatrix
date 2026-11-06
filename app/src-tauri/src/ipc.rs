@@ -339,7 +339,7 @@ pub struct FixedPointOut {
     /// Eigenvalues as `[re, im]` pairs.
     pub eigenvalues: Vec<(f64, f64)>,
     /// One entry per eigenvalue (same order): the unit eigenvector of a real
-    /// eigenvalue, sign-normalised so its largest-magnitude component is
+    /// eigenvalue, sign-normalized so its largest-magnitude component is
     /// positive, or the real part of the eigenvector of a complex one.
     /// `null` for the missing direction of a defective eigenvalue (a
     /// degenerate node has one vector and one `null`); stars get an
@@ -711,7 +711,7 @@ pub struct TrajectoryTag {
     pub color: u8,
 }
 
-/// Colour theme of an exported figure.
+/// Color theme of an exported figure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]

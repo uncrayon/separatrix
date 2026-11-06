@@ -62,7 +62,7 @@ async function readoutRows(page) {
 
 const num = (text) => Number(text.replace("−", "-"));
 
-async function colourCounts(page, n) {
+async function colorCounts(page, n) {
   return page.evaluate((n) => {
     const css = getComputedStyle(document.documentElement);
     const canvas = document.querySelector(".lyapunov-canvas");
@@ -120,8 +120,8 @@ test("Lorenz: the Lyapunov view runs the first start point and reads out λ₁ �
       "10⁴ renormalizations · DOPRI5 · rtol 1e−6",
     );
     await page.waitForTimeout(300);
-    const counts = await colourCounts(page, 3);
-    assert.ok(counts.every((c) => c > 200), `pixels per colour: ${counts}`);
+    const counts = await colorCounts(page, 3);
+    assert.ok(counts.every((c) => c > 200), `pixels per color: ${counts}`);
     assert.equal(await page.getByRole("button", { name: "Direction field" }).count(), 0);
     assert.equal(await inspector(page).getByRole("heading", { name: "Fixed points" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Lyapunov spectrum: t horizontal, λ vertical" }).count(), 1);

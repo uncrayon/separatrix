@@ -23,7 +23,7 @@ All notable changes to this project are documented in this file.
 - The orbit diagram (Strogatz §10.2, Figure 10.2.7): a new choice of the View control, Orbit, for
   maps with a parameter (disabled with the reason for a map without one). It sweeps a parameter,
   the first by default, over its slider's range, or over From and To in the inspector's Orbit
-  diagram panel, with one column per device pixel, each at its pixel's centre. Every column is
+  diagram panel, with one column per device pixel, each at its pixel's center. Every column is
   iterated from the selected start point, else the first: `N₀ = 1,000` iterates are dropped and
   `N = 200` drawn as a density, binned per pixel with log-scaled opacity in `plot-fp`, on a 2D
   canvas. A vertical line in `accent` marks the parameter's value, and clicking a column sets the
@@ -41,7 +41,7 @@ All notable changes to this project are documented in this file.
 - The Lyapunov view (Strogatz §9.3, §10.5): a new choice of the View control, λ, for flows and
   maps. It runs `compute_lyapunov` on the selected start point (else the first) with the studio's
   solver and plots the running estimate of each exponent against `t` (or `n`) in its trajectory
-  colour, its final value dashed and λ₁ … λₙ beside it, fitted to each run and zoomed and panned
+  color, its final value dashed and λ₁ … λₙ beside it, fitted to each run and zoomed and panned
   like the phase plane. The inspector's Lyapunov panel sets the transient, the time (or iterates)
   measured, the renormalization interval τ and the blocks, and reads out `λ₁ = 0.906 ± 0.004`,
   `Σλ`, `⟨tr J⟩` (a map's `⟨ln |det J|⟩`) and their difference. The status bar reads
@@ -96,7 +96,7 @@ All notable changes to this project are documented in this file.
 - 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
   least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
   the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).
-  Trajectories keep their colours and get thicker in projector mode; fixed points are drawn in
+  Trajectories keep their colors and get thicker in projector mode; fixed points are drawn in
   Strogatz's glyphs and are searched over the third axis's range too, so the Lorenz points `C±`
   appear whatever the slice. The toolbar and the View panel pick the three states (a state
   already on another axis swaps with it). Lines are drawn with WebGL through three.js, loaded

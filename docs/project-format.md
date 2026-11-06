@@ -204,7 +204,7 @@ drawn (`crates/project/tests/fixtures/orbit-view.sepx`):
 | `kept` | integer, 1–976 | Iterates drawn in every column. 976 is the most that keep the widest plot (4,096 columns, one per device pixel) within 4·10⁶ points. |
 
 `x_range` is the range of the parameter swept: the app asks for one column per device pixel of the
-plot, each at its pixel's centre, so the number of columns is not saved. Every other parameter
+plot, each at its pixel's center, so the number of columns is not saved. Every other parameter
 keeps its value from `system.params`; the swept one's `value` is where the plot's marker stands.
 The diagram starts every column at the selected start point, else the first. Unknown keys inside
 `orbit` are kept.

@@ -125,7 +125,7 @@ export function exportPortraitRequest(job: FigureJob): ExportPortraitRequest {
 }
 
 /**
- * The scene of an exported figure: the screen's layers and colours, with no
+ * The scene of an exported figure: the screen's layers and colors, with no
  * selection, hover, eigenvectors, start-point handles or stale fade.
  */
 export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialCondition[]): Scene {

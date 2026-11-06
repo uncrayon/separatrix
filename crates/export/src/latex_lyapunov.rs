@@ -48,7 +48,12 @@ fn caption(sys: &SystemMeta, run: &LyapunovRun) -> String {
     let mut out = if title.is_empty() {
         "Lyapunov spectrum of the system".to_string()
     } else {
-        format!("Lyapunov spectrum of {}", escape_text(title))
+        let the = if title.to_lowercase().starts_with("the ") {
+            ""
+        } else {
+            "the "
+        };
+        format!("Lyapunov spectrum of {the}{}", escape_text(title))
     };
     let params: Vec<String> = sys
         .labels

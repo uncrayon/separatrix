@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use dyn_core::{SystemKind, VectorField};
 use dyn_solve::{SolverOptions, Stats, Status, StepOutcome, Stepper, BLOW_UP_THRESHOLD};
 
-/// How long to run and how often to renormalise.
+/// How long to run and how often to renormalize.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LyapunovOptions {
     /// Time (flow) or iterates (map, rounded) run before measuring, so the
@@ -18,10 +18,10 @@ pub struct LyapunovOptions {
     /// (rounded, at least 1). The last interval is shortened to end at
     /// `total`.
     pub interval: f64,
-    /// Consecutive blocks the renormalisations are split into; the spread
+    /// Consecutive blocks the renormalizations are split into; the spread
     /// of the per-block exponents gives the uncertainty. At least 2.
     pub blocks: usize,
-    /// Most running-estimate samples kept: every `k`-th renormalisation,
+    /// Most running-estimate samples kept: every `k`-th renormalization,
     /// with `k` the smallest stride that fits, and always the last one.
     pub history: usize,
 }
@@ -31,7 +31,7 @@ pub struct LyapunovOptions {
 pub struct LyapunovSpectrum {
     /// `λ1 … λn` in Gram–Schmidt column order (per unit time, or per
     /// iterate for a map); the first is the largest. Empty when no
-    /// renormalisation was completed.
+    /// renormalization was completed.
     pub exponents: Vec<f64>,
     /// Standard error of each exponent over the blocks reached: the sample
     /// standard deviation of the per-block exponents divided by `√B`.
@@ -58,7 +58,7 @@ pub struct LyapunovSpectrum {
 /// Measure the Lyapunov spectrum of `f` from `(t0, x0)`.
 ///
 /// For a flow, `solver` integrates the orbit together with its tangent
-/// vectors (landing exactly on every renormalisation time) and its
+/// vectors (landing exactly on every renormalization time) and its
 /// `max_steps` bounds the accepted steps of the whole run, transient
 /// included. A map ignores `solver`, and `t0` (iterate indices start at 0).
 ///

@@ -74,7 +74,7 @@ tangent vectors:
 \begin{table}
 \centering
 \sisetup{uncertainty-mode = separate}
-\caption{Lyapunov spectrum of Lorenz equations with $\sigma = 10$, $r = 28$ and $b = 2.66667$, from $(x, y, z) = (1, 1, 1)$: Runge--Kutta 4 with step $h = 0.01$, total time $T = 1000$ after a transient of $100$, \num{10000} renormalizations every $\tau = 0.1$. Uncertainties are standard errors over 10 blocks.}
+\caption{Lyapunov spectrum of the Lorenz equations with $\sigma = 10$, $r = 28$ and $b = 2.66667$, from $(x, y, z) = (1, 1, 1)$: Runge--Kutta 4 with step $h = 0.01$, total time $T = 1000$ after a transient of $100$, \num{10000} renormalizations every $\tau = 0.1$. Uncertainties are standard errors over 10 blocks.}
 \label{tab:lorenz-equations-lyapunov}
 \begin{tabular}{@{}ll@{}}
 \toprule
@@ -146,7 +146,7 @@ command returned.
 
 The orbit diagram (Strogatz §10.2) exports the view's iterates. A figure asks
 for its own diagram over the view's range, one column per pixel of its image
-(the column at each pixel's centre, as on screen): the PNG's pixels at its
+(the column at each pixel's center, as on screen): the PNG's pixels at its
 scale, 2× for the image an SVG embeds, and 300 dpi for a LaTeX figure's
 layer. The CSV is the screen's own diagram.
 
@@ -252,8 +252,8 @@ column) prints as 0. Types are the UI's `classificationTitle`.
 ## The figure
 
 The figure mirrors `draw.ts` in the projector (light) palette by default, the
-colours read from `app/src/styles/ds/tokens.json` (`Palette::from_tokens`; the
-app embeds the file with `include_str!`). The theme changes colours only; line
+colors read from `app/src/styles/ds/tokens.json` (`Palette::from_tokens`; the
+app embeds the file with `include_str!`). The theme changes colors only; line
 and glyph scale are 1, as on screen.
 
 - Lengths are big points: 1 CSS px = 0.75 bp, and the plot box is

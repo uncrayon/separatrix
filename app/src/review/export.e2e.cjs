@@ -342,7 +342,7 @@ test("Lyapunov view: the spectrum table with siunitx errors, the running estimat
     await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("\\sisetup{uncertainty-mode = separate}"));
     const tex = await snippet(page);
     assert.match(tex, /\$\\lambda_\{1\}\$ & \\num\{0\.9\d* \+- \d\.\d+\}/);
-    assert.match(tex, /\\caption\{Lyapunov spectrum of Lorenz equations: .*renormalizations every \$\\tau = 0\.1\$/);
+    assert.match(tex, /\\caption\{Lyapunov spectrum of the Lorenz equations: .*renormalizations every \$\\tau = 0\.1\$/);
     assert.equal((await d.locator(".export-fp-table tbody tr").count()), 6, "λ₁ … λ₃, Σλ, ⟨tr J⟩ and the difference");
     assert.match(await page.locator(".ds-export-foot-note").innerText(), /Save… writes lorenz-equations-lyapunov\.tex/);
     await d.locator(".ds-export-actions .ds-button--primary").click();

@@ -77,7 +77,7 @@ export const DEFAULT_FIGURE_FONTS: FigureFonts = {
 };
 
 export interface FigureOptions {
-  /** Fill the background with the plot colour (off: transparent). */
+  /** Fill the background with the plot color (off: transparent). */
   background: boolean;
   /** The axis names in LaTeX (as `axisLabelLatex` gives them); null leaves them out. */
   names: { x: string; y: string } | null;

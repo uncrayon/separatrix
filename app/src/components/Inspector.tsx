@@ -956,7 +956,7 @@ function LyapunovSection({ state, actions, open, onToggle }: SectionProps) {
           </dl>
           <p className="ds-panel-section-hint caption">
             ± is the standard error over the {whole(settings.blocks)} blocks. Σλ must equal {traceName} along the orbit;
-            the difference is the integrator&apos;s error.
+            the difference is {map ? "rounding error" : "the integrator's error"}.
           </p>
         </>
       )}

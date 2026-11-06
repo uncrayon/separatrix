@@ -268,7 +268,7 @@ test("SVG: the recorder writes exactly the primitives the canvas receives", () =
   assert.equal(c.rects, rec.log.filter((x) => x[0] === "fillRect").length, "rects");
   assert.equal(c.texts, rec.log.filter((x) => x[0] === "fillText" || x[0] === "strokeText").length, "texts");
   assert.ok(c.strokes > 5 && c.fills > 5 && c.texts > 4, "a real drawing");
-  // The same colours, in the same order.
+  // The same colors, in the same order.
   const svgColors = [...svg.matchAll(/<path [^>]*?(?:fill="none"[^>]*stroke="([^"]+)"|fill="([^"]+)")/g)].map((m) => m[1] ?? m[2]);
   const canvasColors = rec.log.filter((x) => (x[0] === "stroke" || x[0] === "fill") && x[1] && x[3] > 0).map((x) => x[2]);
   assert.deepEqual(svgColors, canvasColors);
@@ -344,7 +344,7 @@ test("SVG: arcs become SVG arcs: full circles in two halves, half discs closed",
   assert.match(svg, /d="M20 10A5 5 0 0 1 10 10A5 5 0 0 1 20 10"/, "no extra segment when the arc starts at the pen");
 });
 
-test("SVG: dashes, caps, joins, alpha and colours map to SVG attributes", () => {
+test("SVG: dashes, caps, joins, alpha and colors map to SVG attributes", () => {
   const ctx = new SvgContext(measure);
   ctx.strokeStyle = "rgba(10, 20, 30, 0.5)";
   ctx.globalAlpha = 0.5;
@@ -940,7 +940,7 @@ test("analysis views export their own run: the Lyapunov view's request, an orbit
   assert.equal(readExportOptions({ latexContent: "spectrum" }).latexContent, "spectrum");
 });
 
-test("SVG: a Lyapunov figure is vector paths in the trajectory colours, the names λ and t as text", () => {
+test("SVG: a Lyapunov figure is vector paths in the trajectory colors, the names λ and t as text", () => {
   const res = {
     exponents: [0.9, -0.1, -14.5],
     uncertainty: [],

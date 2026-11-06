@@ -369,7 +369,7 @@ x: Array<number>,
 eigenvalues: Array<[number, number]>, 
 /**
  * One entry per eigenvalue (same order): the unit eigenvector of a real
- * eigenvalue, sign-normalised so its largest-magnitude component is
+ * eigenvalue, sign-normalized so its largest-magnitude component is
  * positive, or the real part of the eigenvector of a complex one.
  * `null` for the missing direction of a defective eigenvalue (a
  * degenerate node has one vector and one `null`); stars get an

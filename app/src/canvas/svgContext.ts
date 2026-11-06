@@ -68,7 +68,7 @@ export function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/** A canvas colour as an SVG paint and its alpha (rgba() is not SVG 1.1). */
+/** A canvas color as an SVG paint and its alpha (rgba() is not SVG 1.1). */
 export function svgPaint(c: unknown): { color: string; alpha: number } {
   if (typeof c !== "string") return { color: "#000000", alpha: 1 };
   const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+%?))?\s*\)$/i.exec(c.trim());

@@ -99,7 +99,7 @@ pub struct FigureInput<'a> {
     pub height_cm: f64,
     /// Which theme the palette is.
     pub theme: Theme,
-    /// The plot colours.
+    /// The plot colors.
     pub palette: &'a Palette,
     /// Title, for the comments.
     pub title: &'a str,
@@ -808,7 +808,7 @@ impl Frame {
         }
 
         let mut body = String::new();
-        // The halo: the label's box filled in the background colour, 1.5 px
+        // The halo: the label's box filled in the background color, 1.5 px
         // (1.125 bp) round the text; the negative outer sep keeps the anchors
         // on the text itself.
         body.push_str(
@@ -980,7 +980,7 @@ pub struct OrbitFigureInput<'a> {
     pub height_cm: f64,
     /// Which theme the palette is.
     pub theme: Theme,
-    /// The plot colours.
+    /// The plot colors.
     pub palette: &'a Palette,
     /// Inline or external data.
     pub placement: Placement,
@@ -1231,7 +1231,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         )
         .collect();
 
-    // Colours used.
+    // Colors used.
     let mut colors: Vec<(String, String)> = vec![
         ("sepxbg".into(), pal.bg.clone()),
         ("sepxgrid".into(), pal.grid.clone()),

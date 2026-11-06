@@ -284,7 +284,7 @@ test("x0 follows the file's states by name", () => {
   let id = 1;
   const a = applyProjectLoad(stateFromProject(doc), sys, () => id++);
   assert.deepEqual(a.ics[0].x0, [1, 2]);
-  assert.equal(a.ics[0].color, 2, "colours are taken mod 7");
+  assert.equal(a.ics[0].color, 2, "colors are taken mod 7");
   assert.deepEqual(a.baseState, [0.5, 0.25]);
   assert.equal(a.fieldTime, 3);
 });

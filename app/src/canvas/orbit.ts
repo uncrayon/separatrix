@@ -18,7 +18,7 @@ export function canvasX(clientX: number, rectLeft: number, pixelRatio: number): 
   return clientX - Math.round(rectLeft * pixelRatio) / pixelRatio;
 }
 
-/** The centre (CSS pixels) of the device-pixel column that holds parameter `r`. */
+/** The center (CSS pixels) of the device-pixel column that holds parameter `r`. */
 export function markerX(vp: Viewport, r: number, pixelRatio: number): number {
   return vp.left + (Math.floor((sx(vp, r) - vp.left) * pixelRatio) + 0.5) / pixelRatio;
 }

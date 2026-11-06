@@ -263,8 +263,8 @@ export function OrbitCanvas({ state, actions, toolbar }: Props) {
       </div>
       <div className="legend-bar">
         <p className="legend-help caption">
-          Each column is the orbit at one {param?.name ?? "parameter"} value after the transient, darker where it returns
-          more often. Click to set {param?.name ?? "the parameter"}, drag to pan, scroll to zoom, double-click to reset.
+          Each column is the orbit at one {param?.name ?? "parameter"} value after the transient, more opaque where it
+          returns more often. Click to set {param?.name ?? "the parameter"}, drag to pan, scroll to zoom, double-click to reset.
         </p>
       </div>
     </>

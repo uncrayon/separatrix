@@ -186,7 +186,7 @@ test("the fit spans the measured t and every settled estimate, with λ = 0 in vi
   assert.ok(positive.yRange[0] < 0, "λ = 0 stays in view");
 });
 
-test("drawLyapunov draws each estimate in its own trajectory colour, its final value dashed, and λᵢ", () => {
+test("drawLyapunov draws each estimate in its own trajectory color, its final value dashed, and λᵢ", () => {
   const th = plotThemeFromTokens(tokens, "light");
   const measure = (font, text) => {
     const s = parseFloat(/([\d.]+)px/.exec(font)?.[1] ?? "10");
