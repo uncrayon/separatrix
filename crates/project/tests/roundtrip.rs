@@ -5,16 +5,18 @@ mod common;
 use common::{fixture, APP};
 use separatrix_project::{
     from_value_checked, parse, parse_named, to_json, Opened, ProjectAxis, ProjectError,
-    ProjectFile, CURRENT_VERSION, LYAPUNOV_MISFIT, MAX_FILE_BYTES, SECTION_MISFIT, SPACE_MISFIT,
+    ProjectFile, CURRENT_VERSION, LYAPUNOV_MISFIT, MAX_FILE_BYTES, ORBIT_MISFIT, SECTION_MISFIT,
+    SPACE_MISFIT,
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 9] = [
+const GOOD: [&str; 10] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
     "section-view.sepx",
     "space-view.sepx",
     "lyapunov-view.sepx",
+    "orbit-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -22,13 +24,14 @@ const GOOD: [&str; 9] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 6] = [
+const CANONICAL: [&str; 7] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
     "section-view.sepx",
     "space-view.sepx",
     "lyapunov-view.sepx",
+    "orbit-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -1385,4 +1388,75 @@ fn a_lyapunov_view_that_cannot_run_falls_back_to_the_default_view() {
         .unwrap_err()
         .to_string()
         .contains("views[0].lyapunov.total"));
+}
+
+#[test]
+fn an_orbit_diagram_is_read_and_written_back() {
+    let opened = open("orbit-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("orbit"));
+    assert_eq!(view.x_axis, ProjectAxis::param("r"));
+    assert_eq!(view.y_axis, ProjectAxis::state("x"));
+    let o = view.orbit.as_ref().unwrap();
+    assert_eq!((o.transient, o.kept), (Some(1000), Some(200)));
+    let text = to_json(&opened.project, APP).unwrap();
+    assert!(text.contains(
+        "\"y_range\": [\n        -0.05,\n        1.05\n      ],\n      \"orbit\": {\n        \"transient\": 1000,\n        \"kept\": 200\n      },\n      \"slice\": {"
+    ));
+    // A key from a newer version inside the columns is kept.
+    let mut v = value(&fixture("orbit-view.sepx"));
+    v["views"][0]["orbit"]["shading"] = json!("log");
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["orbit"]["shading"],
+        json!("log")
+    );
+}
+
+#[test]
+fn an_orbit_diagram_that_cannot_be_drawn_falls_back_to_the_default_view() {
+    let base = value(&fixture("orbit-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 7] = [
+        ("no columns", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("orbit");
+        }),
+        ("nothing drawn", &|v| {
+            v["views"][0]["orbit"]["kept"] = json!(0)
+        }),
+        ("more drawn than the widest plot fits", &|v| {
+            v["views"][0]["orbit"]["kept"] = json!(977)
+        }),
+        ("too long a transient", &|v| {
+            v["views"][0]["orbit"]["transient"] = json!(100_001)
+        }),
+        ("a parameter the system lacks", &|v| {
+            v["views"][0]["x_axis"] = json!({ "kind": "param", "name": "mu" })
+        }),
+        ("time up the side", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "time" })
+        }),
+        ("a flow", &|v| v["system"]["kind"] = json!("ode")),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [ORBIT_MISFIT], "{name}");
+    }
+    assert!(warns(&|v| v["views"][0]["orbit"]["kept"] = json!(976)).is_empty());
+    // A parameter axis outside an orbit diagram is an axis kind the view doesn't know.
+    let w = warns(&|v| {
+        v["views"][0].as_object_mut().unwrap().remove("kind");
+    });
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(w[0].contains("(\u{201c}param\u{201d})"), "{w:?}");
+    // A half iterate is not a whole number: the file itself is refused.
+    let mut v = base.clone();
+    v["views"][0]["orbit"]["kept"] = json!(0.5);
+    assert!(parse(&v.to_string()).is_err());
 }

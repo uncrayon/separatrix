@@ -6,10 +6,12 @@ import type {
   ConvertResponse,
   LyapunovRequest,
   LyapunovResponse,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
   PortraitRequest,
   PortraitResponse,
 } from "./types";
-import { mockCompile, mockConvert, mockLyapunov, mockPortrait } from "./mock";
+import { mockCompile, mockConvert, mockLyapunov, mockOrbitDiagram, mockPortrait } from "./mock";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -31,6 +33,11 @@ export function computePortrait(req: PortraitRequest): Promise<PortraitResponse>
 /** The Lyapunov spectrum of one orbit; see `compute_lyapunov` in docs/contracts.md. */
 export function computeLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
   return isTauri() ? invoke<LyapunovResponse>("compute_lyapunov", { req }) : mockLyapunov(req);
+}
+
+/** A map's orbit diagram over one parameter's range; see `compute_orbit_diagram` in docs/contracts.md. */
+export function computeOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
+  return isTauri() ? invoke<OrbitDiagramResponse>("compute_orbit_diagram", { req }) : mockOrbitDiagram(req);
 }
 
 /** A request without its `requestId`, which the scheduler numbers, and what the caller keeps with it. */

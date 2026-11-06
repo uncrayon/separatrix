@@ -3,12 +3,13 @@
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
 //! solver settings (the transient too), the field grid, `x0` lengths. View
-//! ranges, axes and a cobweb, section, 3D or Lyapunov view that doesn't fit
-//! the system are only reported: the UI falls back to the default view for a
-//! primary view whose range isn't usable (see [`range_ok`]), whose cobweb
-//! axes are wrong (see [`cobweb_axes_ok`]), whose section doesn't fit (see
-//! [`section_misfit`]), whose 3D axes don't (see [`space_misfit`]) or whose
-//! Lyapunov run can't be run (see [`lyapunov_misfit`]).
+//! ranges, axes and a cobweb, section, 3D, Lyapunov or orbit view that
+//! doesn't fit the system are only reported: the UI falls back to the default
+//! view for a primary view whose range isn't usable (see [`range_ok`]), whose
+//! cobweb axes are wrong (see [`cobweb_axes_ok`]), whose section doesn't fit
+//! (see [`section_misfit`]), whose 3D axes don't (see [`space_misfit`]),
+//! whose Lyapunov run can't be run (see [`lyapunov_misfit`]) or whose orbit
+//! diagram can't be drawn (see [`orbit_misfit`]).
 
 use std::collections::HashSet;
 
@@ -178,6 +179,46 @@ pub fn lyapunov_misfit(view: &ProjectView, kind: &str) -> Option<String> {
     None
 }
 
+/// The view kind of a map's orbit diagram.
+pub const ORBIT: &str = "orbit";
+/// The warning for a saved orbit diagram the app can't draw (the app gives
+/// the same one when it judges the view itself).
+pub const ORBIT_MISFIT: &str =
+    "The saved orbit diagram doesn't fit this system, so the default view is shown.";
+/// The most iterates an orbit diagram's column drops.
+pub const ORBIT_TRANSIENT_MAX: u32 = 100_000;
+/// The most iterates an orbit diagram's column draws.
+pub const ORBIT_KEPT_MAX: u32 = 976;
+
+/// Why the orbit diagram `view` can't be drawn for a system of `kind`, with
+/// `states` and `params` (each empty when not known until the app
+/// compiles), or `None` when it can: the system is a map, `x_axis` is
+/// `{ "kind": "param", "name": p }` of a parameter it has, `y_axis` a state
+/// it has, and `orbit` holds `transient` (0 to 100,000) and `kept` (1 to
+/// 976, so a diagram of the widest plot's 4,096 columns stays within
+/// `MAX_ORBIT_POINTS`).
+pub fn orbit_misfit(
+    view: &ProjectView,
+    kind: &str,
+    states: &[String],
+    params: &[String],
+) -> Option<String> {
+    let has = |list: &[String], name: &Option<String>| {
+        name.as_ref()
+            .is_some_and(|n| list.is_empty() || list.iter().any(|s| s == n))
+    };
+    let ok = (kind.is_empty() || kind == "map")
+        && view.x_axis.kind == "param"
+        && has(params, &view.x_axis.name)
+        && view.y_axis.kind == "state"
+        && has(states, &view.y_axis.name)
+        && view.orbit.as_ref().is_some_and(|o| {
+            o.transient.is_some_and(|t| t <= ORBIT_TRANSIENT_MAX)
+                && o.kept.is_some_and(|k| (1..=ORBIT_KEPT_MAX).contains(&k))
+        });
+    (!ok).then(|| ORBIT_MISFIT.to_string())
+}
+
 /// True when `view` has the shape of a cobweb plot: `x_axis` is the state
 /// `s` and `y_axis` is `{ "kind": "next", "name": s }`, for a state the
 /// system has (any, when `states` is empty).
@@ -312,9 +353,18 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 continue;
             }
         }
+        let orbit = kind == Some(ORBIT);
+        if orbit {
+            let params: Vec<String> = p.system.params.iter().map(|q| q.id.clone()).collect();
+            if let Some(w) = orbit_misfit(view, &p.system.kind, states, &params) {
+                warnings.push(w);
+                continue;
+            }
+        }
         let cobweb = !section
             && !space
             && !lyapunov
+            && !orbit
             && (kind.is_some_and(|k| k != "plane")
                 || [&view.x_axis, &view.y_axis]
                     .iter()
@@ -349,6 +399,8 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 // Checked above, with the view's kind.
                 "next" if cobweb || section => true,
                 "exponent" if lyapunov => true,
+                // Checked above, with the system's parameters.
+                "param" if orbit => true,
                 "state" => axis
                     .name
                     .as_ref()

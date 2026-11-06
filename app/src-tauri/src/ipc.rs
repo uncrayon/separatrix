@@ -562,8 +562,8 @@ pub struct OrbitDiagramResponse {
 
 pub use separatrix_project::{
     ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
-    ProjectLyapunov, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem,
-    ProjectView,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
+    ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -1001,6 +1001,7 @@ mod bindings {
             ProjectSection::decl(&cfg),
             ProjectCamera::decl(&cfg),
             ProjectLyapunov::decl(&cfg),
+            ProjectOrbit::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -1055,6 +1056,15 @@ mod bindings {
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),
+            ("ORBIT_MISFIT", text(separatrix_project::ORBIT_MISFIT)),
+            (
+                "ORBIT_MAX_TRANSIENT",
+                separatrix_project::ORBIT_TRANSIENT_MAX.to_string(),
+            ),
+            (
+                "ORBIT_MAX_KEPT",
+                separatrix_project::ORBIT_KEPT_MAX.to_string(),
+            ),
             (
                 "SPACE_LATEX_REFUSAL",
                 text(crate::export_service::SPACE_LATEX_REFUSAL),
@@ -1090,6 +1100,13 @@ mod bindings {
              typescript_bindings"
         );
         ui_types_are_the_generated_ones(&want);
+    }
+
+    #[test]
+    fn a_saved_orbit_diagram_fits_the_widest_plot() {
+        let kept = separatrix_project::ORBIT_KEPT_MAX as usize;
+        assert!(kept * MAX_ORBIT_COLUMNS <= MAX_ORBIT_POINTS);
+        assert!((kept + 1) * MAX_ORBIT_COLUMNS > MAX_ORBIT_POINTS);
     }
 
     /// The UI imports its IPC types from `types.ts`; it must re-export every

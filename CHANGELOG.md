@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- The orbit diagram (Strogatz §10.2, Figure 10.2.7): a new choice of the View control, Orbit, for
+  maps with a parameter (disabled with the reason for a map without one). It sweeps a parameter,
+  the first by default, over its slider's range, or over From and To in the inspector's Orbit
+  diagram panel, with one column per device pixel, each at its pixel's centre. Every column is
+  iterated from the selected start point, else the first: `N₀ = 1,000` iterates are dropped and
+  `N = 200` drawn as a density, binned per pixel with log-scaled opacity in `plot-fp`, on a 2D
+  canvas. A vertical line in `accent` marks the parameter's value, and clicking a column sets the
+  parameter to that column's `r`. Zooming or panning across asks the core for the new range;
+  moving the slider asks for nothing. For a one-dimensional map the inspector lists the period
+  doublings Strogatz's way (`r₁ = 3.000000`, `r₂ = 3.449490`, `r₃ = 3.544090`, `r₄ = 3.564407`
+  for the logistic map), from the same `period_doublings` the chaos gate checks. The status bar
+  reads `Orbit 19 ms` and `774 columns · 200 iterates each`, and its tooltip gives the round trip
+  and the drawing time. In the release app the default request takes 19 ms in Rust and 53 ms
+  round trip, and draws in 4 ms (medians of seven runs), so the plain JSON response is kept.
+  Projects save the view as kind `"orbit"` with the axis `{ "kind": "param", "name": "r" }` and an
+  `orbit` object of `transient` and `kept` (format version 1, additive). The browser preview
+  iterates the map and finds the doublings in JavaScript. The View control's segments have the
+  narrow padding, so five labels fit in projector mode at 1,024 px.
 - The Lyapunov view (Strogatz §9.3, §10.5): a new choice of the View control, λ, for flows and
   maps. It runs `compute_lyapunov` on the selected start point (else the first) with the studio's
   solver and plots the running estimate of each exponent against `t` (or `n`) in its trajectory

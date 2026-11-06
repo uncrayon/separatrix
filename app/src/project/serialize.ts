@@ -18,6 +18,7 @@ import type {
   ProjectFile,
   ProjectInitialCondition,
   ProjectLyapunov,
+  ProjectOrbit,
   ProjectParam,
   ProjectSection,
   ProjectView,
@@ -31,6 +32,7 @@ import type {
   InitialCondition,
   Layers,
   LyapunovSettings,
+  OrbitSettings,
   ParamState,
   SolverSettings,
   View,
@@ -52,6 +54,7 @@ export type LoadedAxis =
   | { kind: "state"; name: string }
   | { kind: "next"; name: string }
   | { kind: "exponent" }
+  | { kind: "param"; name: string }
   | { kind: "unknown"; kindName: string };
 
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
@@ -81,6 +84,8 @@ export interface LoadedView {
   camera?: Partial<Camera>;
   /** A Lyapunov view's run, the finite numbers only. */
   lyapunov?: Partial<LyapunovSettings>;
+  /** An orbit diagram's columns, the finite numbers only. */
+  orbit?: Partial<OrbitSettings>;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -255,12 +260,17 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const section = s.view.kind === "section" ? s.view.section : null;
     const space = s.view.kind === "space" ? s.view : null;
     const lyapunov = s.view.kind === "lyapunov" ? s.view.lyapunov : null;
+    const orbit = s.view.kind === "orbit" ? s.view : null;
     const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const exponent: ProjectAxis = { kind: "exponent" };
+    const paramAxis = (name: string | undefined): ProjectAxis => {
+      const fresh: ProjectAxis = name === undefined ? { kind: "param" } : { kind: "param", name };
+      return lv?.x_axis?.kind === "param" ? { ...lv.x_axis, ...fresh } : fresh;
+    };
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section || space || lyapunov ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space || lyapunov || orbit ? { kind: s.view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       ...(lyapunov
         ? {
@@ -273,7 +283,16 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
             } as ProjectLyapunov,
           }
         : {}),
-      x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
+      ...(orbit
+        ? {
+            orbit: {
+              ...(isObj(lv?.orbit) ? lv.orbit : {}),
+              transient: orbit.orbit.transient,
+              kept: orbit.orbit.kept,
+            } as ProjectOrbit,
+          }
+        : {}),
+      x_axis: orbit ? paramAxis(s.params[orbit.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
       y_axis: lyapunov
         ? lv?.y_axis?.kind === "exponent"
           ? { ...lv.y_axis, ...exponent }
@@ -302,9 +321,10 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    if (!cobweb && !section && !space && !lyapunov) delete primary.kind;
+    if (!cobweb && !section && !space && !lyapunov && !orbit) delete primary.kind;
     if (!section) delete primary.section;
     if (!lyapunov) delete primary.lyapunov;
+    if (!orbit) delete primary.orbit;
     if (!space) {
       delete primary.z_axis;
       delete primary.z_range;
@@ -380,6 +400,7 @@ function loadAxis(a: unknown): LoadedAxis {
   if (kind === "state" && isObj(a) && typeof a.name === "string") return { kind: "state", name: a.name };
   if (kind === "next" && isObj(a) && typeof a.name === "string") return { kind: "next", name: a.name };
   if (kind === "exponent") return { kind: "exponent" };
+  if (kind === "param" && isObj(a) && typeof a.name === "string") return { kind: "param", name: a.name };
   return { kind: "unknown", kindName: kind ?? "" };
 }
 
@@ -448,6 +469,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     const section = loadSection(v.section);
     const cam: Obj = isObj(v.camera) ? v.camera : {};
     const lyap: Obj = isObj(v.lyapunov) ? v.lyapunov : {};
+    const orb: Obj = isObj(v.orbit) ? v.orbit : {};
     view = {
       id: str(v.id) || "main",
       ...(kind !== undefined ? { kind } : {}),
@@ -469,6 +491,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
             }),
           }
         : {}),
+      ...(isObj(v.orbit) ? { orbit: definedOnly({ transient: num(orb.transient), kept: num(orb.kept) }) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({

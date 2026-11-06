@@ -22,6 +22,8 @@ import type {
   LyapunovResponse,
   NullclineOut,
   OpenedProject,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
@@ -422,6 +424,127 @@ export async function mockLyapunov(req: LyapunovRequest): Promise<LyapunovRespon
   const res = { ...lyapunovSpectrum(sys, req), elapsedMs: performance.now() - started };
   sepxMock().lastLyapunov = { req, res };
   return res;
+}
+
+/**
+ * `compute_orbit_diagram`, as `dyn_analysis::orbit_diagram` and
+ * `period_doublings` compute it (the multiplier from a central difference);
+ * the request and response are kept in `__sepxMock.lastOrbit` for the e2e tests.
+ */
+export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  if (sys.kind !== "map") throw new Error("Orbit diagrams are for maps; this system is a flow.");
+  const [lo, hi] = req.range;
+  const step = (hi - lo) / (req.columns - 1);
+  const r = Array.from({ length: req.columns }, (_, j) => lo + j * step);
+  const x: (number | null)[] = new Array(req.columns * req.kept).fill(null);
+  const p = req.params.slice();
+  const end = req.transient + req.kept;
+  r.forEach((rj, j) => {
+    p[req.param] = rj;
+    let state = req.x0.slice();
+    for (let k = 0; k < end; k++) {
+      if (k >= req.transient) x[j * req.kept + k - req.transient] = state[req.state];
+      if (k + 1 === end) break;
+      const next = sys.f(k, state, p);
+      if (!next.every((v) => Math.abs(v) <= BLOW_UP)) break;
+      state = next;
+    }
+  });
+  const doublings = req.doublings ? mockDoublings(sys, req.params, req.param, r, x, req.kept) : undefined;
+  const res: OrbitDiagramResponse = {
+    requestId: req.requestId,
+    r,
+    x,
+    ...(doublings ? { doublings } : {}),
+    elapsedMs: performance.now() - started,
+  };
+  sepxMock().lastOrbit = { req, res };
+  return res;
+}
+
+/** `BLOW_UP_THRESHOLD` in dyn-core. */
+const BLOW_UP = 1e12;
+
+function mockDoublings(
+  sys: MockSystem,
+  params: number[],
+  param: number,
+  r: number[],
+  x: (number | null)[],
+  kept: number,
+): { r: number; period: number }[] {
+  const p = params.slice();
+  const f = (v: number) => sys.f(0, [v], p)[0];
+  const orbitOf = (v: number, period: number): [number, number] => {
+    let mu = 1;
+    for (let i = 0; i < period; i++) {
+      const h = 1e-6 * (1 + Math.abs(v));
+      mu *= (f(v + h) - f(v - h)) / (2 * h);
+      v = f(v);
+    }
+    return [v, mu];
+  };
+  const cycle = (rr: number, seed: number, period: number): [number, number] | null => {
+    p[param] = rr;
+    let v = seed;
+    for (let i = 0; i < 50; i++) {
+      const [image, mu] = orbitOf(v, period);
+      const dx = (image - v) / (mu - 1);
+      v -= dx;
+      if (!Number.isFinite(v)) return null;
+      if (Math.abs(dx) <= 1e-14 * (1 + Math.abs(v))) return [v, orbitOf(v, period)[1]];
+    }
+    return null;
+  };
+  const column = (j: number) => x.slice(j * kept, (j + 1) * kept);
+  const periodOf = (c: (number | null)[]): number | null => {
+    for (let period = 1; 2 * period <= c.length; period *= 2) {
+      const repeats = c.every(
+        (a, n) => n + period >= c.length || (a !== null && c[n + period] !== null && Math.abs(c[n + period]! - a) <= 1e-7 * (1 + Math.abs(a))),
+      );
+      if (repeats) return period;
+    }
+    return null;
+  };
+  const found: { r: number; period: number }[] = [];
+  let previous: [number, number] | null = null;
+  for (let j = 0; j < r.length; j++) {
+    const period = periodOf(column(j));
+    if (period === null) continue;
+    if (previous && period === 2 * previous[1]) {
+      const [a, before] = previous;
+      let seed = column(a)[kept - 1]!;
+      let stable: [number, number] | null = null;
+      let bracket: [number, number, number] | null = null;
+      for (const rr of r.slice(Math.max(0, a - 1))) {
+        const c = cycle(rr, seed, before);
+        if (!c) break;
+        seed = c[0];
+        if (c[1] + 1 > 0) stable = [rr, c[0]];
+        else {
+          bracket = stable ? [stable[0], rr, stable[1]] : null;
+          break;
+        }
+      }
+      if (bracket) {
+        let [blo, bhi, bx] = bracket;
+        let ok = true;
+        while (ok && bhi - blo > 1e-12) {
+          const mid = 0.5 * (blo + bhi);
+          const c = cycle(mid, bx, before);
+          if (!c) ok = false;
+          else if (c[1] + 1 > 0) [blo, bx] = [mid, c[0]];
+          else [bhi, bx] = [mid, c[0]];
+        }
+        if (ok) found.push({ r: 0.5 * (blo + bhi), period: before });
+      }
+    }
+    previous = [j, period];
+  }
+  return found;
 }
 
 /** The core's history length (`LYAPUNOV_HISTORY` in service.rs). */
@@ -1404,6 +1527,8 @@ export interface SepxMock {
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
   /** The last `compute_lyapunov`. */
   lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
+  /** The last `compute_orbit_diagram`. */
+  lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
 }
 
 function sepxMock(): SepxMock {

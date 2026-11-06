@@ -26,8 +26,15 @@ import {
   VIEW_CHOICE_LABELS,
   VIEW_CHOICE_SHORT,
   countText,
+  doublingRows,
+  findsDoublings,
   isCobweb,
   isLyapunov,
+  isOrbit,
+  orbitFits,
+  orbitSettingsError,
+  stateAxis,
+  type OrbitSettings,
   isReturnMap,
   isSection,
   isSpace,
@@ -114,7 +121,16 @@ function optionName(latex: string): string {
   return latexToPlain(latex);
 }
 
-type SectionKey = "layers" | "axes" | "section" | "lyapunov" | "solver" | "fixedPoints" | "trajectories" | "selected";
+type SectionKey =
+  | "layers"
+  | "axes"
+  | "section"
+  | "lyapunov"
+  | "orbit"
+  | "solver"
+  | "fixedPoints"
+  | "trajectories"
+  | "selected";
 const SECTIONS_KEY = "separatrix.inspector.sections";
 
 export function Inspector({ state, actions }: Props) {
@@ -124,6 +140,7 @@ export function Inspector({ state, actions }: Props) {
     axes: true,
     section: true,
     lyapunov: true,
+    orbit: true,
     solver: true,
     fixedPoints: true,
     trajectories: state.ics.length <= 5,
@@ -131,6 +148,7 @@ export function Inspector({ state, actions }: Props) {
   });
 
   const lyapunov = isLyapunov(state.view);
+  const orbit = isOrbit(state.view);
   const sel = state.selection;
   const selKind = sel?.kind ?? null;
   const selId = sel ? (sel.kind === "ic" ? sel.id : sel.key) : null;
@@ -151,7 +169,7 @@ export function Inspector({ state, actions }: Props) {
         <p className="inspector-empty body ds-muted">Pick a template or type an equation to see its settings here.</p>
       ) : (
         <>
-          {!lyapunov && (
+          {!lyapunov && !orbit && (
             <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
           )}
           <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
@@ -163,6 +181,9 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("lyapunov", v)}
             />
           )}
+          {orbit && (
+            <OrbitSection state={state} actions={actions} open={open.orbit} onToggle={(v) => setOpen("orbit", v)} />
+          )}
           {isSection(state.view) && (
             <PoincareSection
               state={state}
@@ -171,10 +192,10 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("section", v)}
             />
           )}
-          {!(lyapunov && sys.kind === "map") && (
+          {!(lyapunov && sys.kind === "map") && !orbit && (
             <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
           )}
-          {!lyapunov && (
+          {!lyapunov && !orbit && (
             <FixedPointsSection
               state={state}
               actions={actions}
@@ -376,7 +397,50 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {isLyapunov(view) ? (
+      {isOrbit(view) ? (
+        <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+          <div className="ds-panel-section-kv-row">
+            <dt className="ds-panel-section-key body">
+              <label className="inspector-key-label" htmlFor={hId}>
+                Horizontal
+              </label>
+            </dt>
+            <dd className="ds-panel-section-value ds-panel-section-value--field">
+              <Select
+                id={hId}
+                size="sm"
+                math
+                value={`p${view.param}`}
+                options={sys.params.map((p, i) => ({ value: `p${i}`, label: optionName(p.latex) }))}
+                onChange={(v) => actions.setOrbitParam(Number(v.slice(1)))}
+              />
+            </dd>
+          </div>
+          <div className="ds-panel-section-kv-row">
+            <dt className="ds-panel-section-key body">
+              <label className="inspector-key-label" htmlFor={vId}>
+                Vertical
+              </label>
+            </dt>
+            <dd className="ds-panel-section-value ds-panel-section-value--field">
+              <Select
+                id={vId}
+                size="sm"
+                math
+                value={`s${view.yAxis.index}`}
+                options={sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) }))}
+                onChange={(v) => {
+                  const i = Number(v.slice(1));
+                  const ext = stateExtent(state.portrait?.res, sys.states.length, i);
+                  const pad = ext ? Math.max(0.1 * (ext[1] - ext[0]), 0.05) : 0;
+                  const yRange: [number, number] = ext ? [ext[0] - pad, ext[1] + pad] : view.yRange;
+                  actions.setView({ ...view, yAxis: stateAxis(i), yRange });
+                }}
+              />
+            </dd>
+          </div>
+        </dl>
+      ) : isLyapunov(view) ? (
         <>
           <dl className="ds-panel-section-kv">
             <KvRow label="Horizontal" text>
@@ -682,6 +746,112 @@ const LYAPUNOV_FIELDS: Record<keyof LyapunovSettings, string> = {
   interval: "renormalization interval",
   blocks: "blocks",
 };
+
+const ORBIT_FIELDS: Record<keyof OrbitSettings, string> = { transient: "transient", kept: "iterates drawn" };
+
+function OrbitSection({ state, actions, open, onToggle }: SectionProps) {
+  const sys = state.compiled!;
+  const view = state.view;
+  if (!isOrbit(view)) return null;
+  const settings = view.orbit;
+  const validate = (field: keyof OrbitSettings) => (v: number) => {
+    const err = orbitSettingsError({ ...settings, [field]: v });
+    if (!err) return null;
+    return err.field === field ? err.message : `Then the ${ORBIT_FIELDS[err.field]}: ${err.message.toLowerCase()}`;
+  };
+  const set = (field: keyof OrbitSettings) => (v: number) => actions.setOrbit({ [field]: Math.round(v) });
+  const whole = (v: number) => v.toLocaleString("en-US");
+  const p = sys.params[view.param];
+  const start = lyapunovStart(state.ics, state.selection, sys.states.length);
+  const startText = start
+    ? sys.states.length === 1
+      ? `${plainName(sys.states[0].latex)}${sub(0)} = ${dec(start.x0[0], 3)}`
+      : `(${sys.states.map((st) => plainName(st.latex) + sub(0)).join(", ")}) = (${start.x0.map((v) => dec(v, 3)).join(", ")})`
+    : null;
+  const which = state.selection?.kind === "ic" && start?.id === state.selection.id ? "the selected start point" : "the first start point";
+  const run = orbitFits(sys, state.shapeId, view, state.orbit) ? state.orbit : null;
+  const pName = p ? plainName(p.latex) : "the parameter";
+  const rows = run?.res.doublings ? doublingRows(run.res.doublings, p ? pName : "r") : null;
+  return (
+    <PanelSection title="Orbit diagram" id="orbit-settings" open={open} onToggle={onToggle}>
+      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+        <FieldRow label="From" tip={`The first value of ${pName} across`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={`${p?.latex ?? "r"} =`} />}
+            value={view.xRange[0]}
+            onCommit={(v) => actions.setOrbitRange(v, view.xRange[1])}
+            validate={(v) => (v < view.xRange[1] ? null : `Must be below ${dec(view.xRange[1], 6)}`)}
+            digits={6}
+            ariaLabel={`First value of ${pName}`}
+          />
+        </FieldRow>
+        <FieldRow label="To" tip={`The last value of ${pName} across`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex={`${p?.latex ?? "r"} =`} />}
+            value={view.xRange[1]}
+            onCommit={(v) => actions.setOrbitRange(view.xRange[0], v)}
+            validate={(v) => (v > view.xRange[0] ? null : `Must be above ${dec(view.xRange[0], 6)}`)}
+            digits={6}
+            ariaLabel={`Last value of ${pName}`}
+          />
+        </FieldRow>
+        <FieldRow label="Transient" tip="Iterates dropped in every column, so the orbit settles first">
+          <NumberField
+            size="sm"
+            lead={<Tex latex="N_0" />}
+            value={settings.transient}
+            onCommit={set("transient")}
+            validate={validate("transient")}
+            format={whole}
+            ariaLabel="Transient iterates in every column"
+          />
+        </FieldRow>
+        <FieldRow label="Drawn" tip="Iterates drawn in every column, after the transient">
+          <NumberField
+            size="sm"
+            lead={<Tex latex="N" />}
+            value={settings.kept}
+            onCommit={set("kept")}
+            validate={validate("kept")}
+            format={whole}
+            ariaLabel="Iterates drawn in every column"
+          />
+        </FieldRow>
+      </dl>
+      <p className="ds-panel-section-hint caption" data-orbit-start="">
+        {startText
+          ? `Every column starts at ${which}, ${startText}, one column per pixel of ${pName}.`
+          : "Add a start point: every column of the diagram starts there."}
+      </p>
+      {findsDoublings(sys) && (
+        <>
+          <h3 className="ds-panel-section-subhead label">Period doublings</h3>
+          {rows && rows.length > 0 ? (
+            <>
+              <dl className="ds-panel-section-kv" data-orbit-doublings="">
+                {rows.map((d) => (
+                  <KvRow key={d.r} label={d.label}>
+                    {withMinus(d.r.toFixed(6))}
+                  </KvRow>
+                ))}
+              </dl>
+              <p className="ds-panel-section-hint caption">
+                Where the cycle of period 2ⁿ⁻¹ loses stability and one of twice the period is born, as its multiplier
+                passes −1. Found in the columns shown, then refined to 10⁻¹².
+              </p>
+            </>
+          ) : (
+            <p className="ds-panel-section-hint caption" data-orbit-doublings="">
+              {run ? `None between ${pName} = ${dec(view.xRange[0], 4)} and ${dec(view.xRange[1], 4)}.` : "Computing…"}
+            </p>
+          )}
+        </>
+      )}
+    </PanelSection>
+  );
+}
 
 /** Plain-text subscripts: λ₁, x₀. */
 const sub = (n: number | string) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);

@@ -8,10 +8,13 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   VIEW_CHOICE_LABELS,
   fitLyapunovRanges,
+  fitOrbitRange,
   hasNullclineLayer,
   isCobweb,
   isLyapunov,
+  isOrbit,
   lyapunovFits,
+  orbitFits,
   isReturnMap,
   isSection,
   isSpace,
@@ -93,10 +96,18 @@ export function CanvasToolbar({ state, actions }: Props) {
   const isMap = sys.kind === "map";
   const space = isSpace(state.view) ? state.view : null;
   const lyapunov = isLyapunov(state.view);
+  const orbit = isOrbit(state.view);
+  const analysis = lyapunov || orbit;
 
   const zoomToFit = () => {
     const v = state.view;
-    const fit = isSpace(v) ? fitSpace(state, v) : isLyapunov(v) ? fitLyapunov(state) : fitView(state);
+    const fit = isSpace(v)
+      ? fitSpace(state, v)
+      : isLyapunov(v)
+        ? fitLyapunov(state)
+        : isOrbit(v)
+          ? fitOrbit(state)
+          : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
@@ -105,7 +116,7 @@ export function CanvasToolbar({ state, actions }: Props) {
     {
       key: "fit",
       label: "Zoom to fit",
-      tip: "Zoom to fit the trajectories",
+      tip: orbit ? "Zoom to fit the diagram over the slider's range" : "Zoom to fit the trajectories",
       icon: <IconZoomFit />,
       onClick: zoomToFit,
     },
@@ -117,7 +128,7 @@ export function CanvasToolbar({ state, actions }: Props) {
       onClick: lyapunov ? zoomToFit : actions.resetView,
     },
   ];
-  const layers: IconButtonSpec[] = isSection(state.view) || lyapunov ? [] : [
+  const layers: IconButtonSpec[] = isSection(state.view) || analysis ? [] : [
     ...(!isMap && !space
       ? [
           {
@@ -153,14 +164,14 @@ export function CanvasToolbar({ state, actions }: Props) {
     },
   ];
 
-  const tools = space || lyapunov ? [] : TOOLS;
+  const tools = space || analysis ? [] : TOOLS;
   const keys = [
     ...tools.map((t) => t.key as string),
     ...view.map((b) => b.key),
     ...layers.map((b) => b.key),
     "axes",
   ];
-  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space || lyapunov ? "axes" : tool;
+  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space || analysis ? "axes" : tool;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -311,6 +322,15 @@ function fitLyapunov(state: StudioState): { xRange: [number, number]; yRange: [n
   return lyapunovFits(state.compiled, state.shapeId, state.lyapunov) ? fitLyapunovRanges(state.lyapunov.res) : null;
 }
 
+/** The swept parameter's slider range across, the diagram's iterates up. */
+function fitOrbit(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
+  const v = state.view;
+  if (!isOrbit(v)) return null;
+  const p = state.params[v.param];
+  const y = orbitFits(state.compiled, state.shapeId, v, state.orbit) ? fitOrbitRange(state.orbit.res) : null;
+  return p && y ? { xRange: [p.min, p.max], yRange: y } : null;
+}
+
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
   if (!sys) return null;
@@ -418,14 +438,17 @@ function AxisPicker({
   ];
   const cobweb = isCobweb(state.view);
   const lyapunov = isLyapunov(state.view);
-  const viewOnly = cobweb || space || lyapunov;
+  const orbit = isOrbit(state.view) ? state.view : null;
+  const viewOnly = cobweb || space || lyapunov || !!orbit;
   const { x: xLatex, y: yLatex } = lyapunov
     ? { x: isMap ? "n" : "t", y: "\\lambda" }
-    : viewAxisLabels(state.view, sys.states, sys.kind);
+    : orbit
+      ? { x: sys.params[orbit.param]?.latex ?? "", y: sys.states[orbit.yAxis.index]?.latex ?? "" }
+      : viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
   const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
-  const xPlain = lyapunov ? xLatex : step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
-  const yPlain = lyapunov ? "λ" : step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
+  const xPlain = lyapunov ? xLatex : orbit ? latexToPlain(xLatex) : step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
+  const yPlain = lyapunov ? "λ" : orbit ? latexToPlain(yLatex) : step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -582,22 +605,22 @@ function AxisPicker({
         aria-label={
           space
             ? "View: 3D"
-            : `${lyapunov ? "Lyapunov spectrum" : cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`
+            : `${lyapunov ? "Lyapunov spectrum" : orbit ? "Orbit diagram" : cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`
         }
         data-tooltip={viewOnly ? "Choose the view" : "Choose the view and axes"}
         data-tooltip-desc={
-          lyapunov
+          lyapunov || orbit
             ? isMap
-              ? "Phase plane, time series, cobweb or Lyapunov spectrum."
+              ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram."
               : "Phase plane, time series, section, 3D or Lyapunov spectrum."
             : cobweb
-            ? "Phase plane, time series, cobweb or Lyapunov spectrum."
+            ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram."
             : space
               ? "Phase plane, time series, section, 3D or Lyapunov spectrum; the three states are picked beside it."
               : section
                 ? "Phase plane, time series, section, 3D or Lyapunov spectrum; a state on each axis, or one state on both for the return map."
                 : isMap
-                  ? "Phase plane, time series, cobweb or Lyapunov spectrum; each state, or time, on either axis."
+                  ? "Phase plane, time series, cobweb, Lyapunov spectrum or orbit diagram; each state, or time, on either axis."
                   : "Phase plane, time series, section, 3D or Lyapunov spectrum; each state, or time, on either axis."
         }
         tabIndex={tabIndex}

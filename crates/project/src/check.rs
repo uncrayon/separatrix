@@ -112,6 +112,11 @@ const LYAPUNOV: &[F] = &[
     opt("blocks", Ty::Nullable(&Ty::U32)),
 ];
 
+const ORBIT: &[F] = &[
+    opt("transient", Ty::Nullable(&Ty::U32)),
+    opt("kept", Ty::Nullable(&Ty::U32)),
+];
+
 const VIEW: &[F] = &[
     opt("id", Ty::Str),
     opt("kind", Ty::Nullable(&Ty::Str)),
@@ -124,6 +129,7 @@ const VIEW: &[F] = &[
     opt("z_range", Ty::Nullable(&Ty::Pair)),
     opt("camera", Ty::Nullable(&Ty::Obj(CAMERA))),
     opt("lyapunov", Ty::Nullable(&Ty::Obj(LYAPUNOV))),
+    opt("orbit", Ty::Nullable(&Ty::Obj(ORBIT))),
     opt("slice", Ty::Obj(SLICE)),
     opt("layers", Ty::Obj(LAYERS)),
 ];

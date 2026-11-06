@@ -53,6 +53,7 @@ export type {
   ProjectLayers,
   ProjectLyapunov,
   ProjectOpenRequested,
+  ProjectOrbit,
   ProjectParam,
   ProjectReadRequest,
   ProjectSection,
@@ -81,4 +82,4 @@ export type {
   TrajectoryTag,
 } from "./ipc.generated";
 
-export { MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS } from "./ipc.generated";
+export { MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS, ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT } from "./ipc.generated";

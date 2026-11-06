@@ -33,13 +33,14 @@ pub use io::{
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
     ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
-    ProjectLyapunov, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem,
-    ProjectView, DEFAULT_PITCH, DEFAULT_YAW, DEFAULT_ZOOM,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
+    ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW, DEFAULT_ZOOM,
 };
 pub use validate::{
-    cobweb_axes_ok, default_param_range, lyapunov_misfit, primary_view_index, range_ok,
-    section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, LYAPUNOV, LYAPUNOV_MISFIT, SECTION,
-    SECTION_MISFIT, SPACE, SPACE_MISFIT, TRANSIENT_MAX,
+    cobweb_axes_ok, default_param_range, lyapunov_misfit, orbit_misfit, primary_view_index,
+    range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, LYAPUNOV, LYAPUNOV_MISFIT,
+    ORBIT, ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION, SECTION_MISFIT, SPACE,
+    SPACE_MISFIT, TRANSIENT_MAX,
 };
 
 /// The value of the `format` key.
@@ -91,6 +92,7 @@ mod bindings {
             ProjectSection::decl(&cfg),
             ProjectCamera::decl(&cfg),
             ProjectLyapunov::decl(&cfg),
+            ProjectOrbit::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -118,6 +120,8 @@ mod bindings {
             decls[4]
         );
         assert!(decls[11].contains("blocks?: number"), "{}", decls[11]);
+        assert!(decls[4].contains("orbit?: ProjectOrbit"), "{}", decls[4]);
+        assert!(decls[12].contains("kept?: number"), "{}", decls[12]);
         assert!(
             decls[4].contains("x_range: [number, number]"),
             "{}",

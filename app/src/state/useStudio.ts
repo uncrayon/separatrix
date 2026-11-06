@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic, InputFormat, SectionSpec } from "../api/types";
-import { compileSystem, computeLyapunov, computePortrait, convertSource, RequestScheduler } from "../api/client";
+import {
+  compileSystem,
+  computeLyapunov,
+  computeOrbitDiagram,
+  computePortrait,
+  convertSource,
+  RequestScheduler,
+} from "../api/client";
 import { sameAxis } from "../math/format";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
@@ -12,13 +19,16 @@ import {
   adaptInitialConditions,
   adaptView,
   buildLyapunovJob,
+  buildOrbitJob,
   buildPortraitJob,
   clampCamera,
   clampTransient,
   cobwebAvailability,
   defaultView,
+  followOrbitParam,
   isCobweb,
   isLyapunov,
+  isOrbit,
   isSection,
   isSpace,
   knownStateRange,
@@ -45,6 +55,9 @@ import {
   type LyapunovSettings,
   type LyapunovState,
   type ModeSnapshot,
+  type OrbitMeta,
+  type OrbitSettings,
+  type OrbitState,
   type ParamState,
   type PortraitMeta,
   type PortraitState,
@@ -93,6 +106,10 @@ export interface StudioState extends StudioSnapshot {
   portrait: PortraitState | null;
   /** The last Lyapunov run (the Lyapunov view's), kept while other views are shown. */
   lyapunov: LyapunovState | null;
+  /** The last orbit diagram (the orbit view's), kept while other views are shown. */
+  orbit: OrbitState | null;
+  /** Columns an orbit diagram asks for: the plot's width in device pixels (0 until the plot reports it). */
+  orbitColumns: number;
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -148,6 +165,8 @@ export function useStudio() {
   const [selection, setSelection] = useState<Selection>(null);
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
   const [lyapunov, setLyapunovState] = useState<LyapunovState | null>(null);
+  const [orbit, setOrbitState] = useState<OrbitState | null>(null);
+  const [orbitColumns, setOrbitColumnsState] = useState(0);
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -176,6 +195,8 @@ export function useStudio() {
     selection,
     portrait,
     lyapunov,
+    orbit,
+    orbitColumns,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -244,6 +265,21 @@ export function useStudio() {
   );
   useEffect(() => () => lyapunovScheduler.dispose(), [lyapunovScheduler]);
 
+  const orbitScheduler = useMemo(
+    () =>
+      new RequestScheduler(
+        computeOrbitDiagram,
+        () => buildOrbitJob(latest.current),
+        (res, meta: OrbitMeta, roundTripMs) => {
+          setOrbitState({ res, meta, roundTripMs });
+          setComputeError(null);
+        },
+        (err) => setComputeError(err instanceof Error ? err.message : String(err)),
+      ),
+    [],
+  );
+  useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
+
   const viewKey = viewRequestKey(view);
   useEffect(() => {
     scheduler.request();
@@ -254,6 +290,12 @@ export function useStudio() {
   useEffect(() => {
     if (lyapunovKey !== null) lyapunovScheduler.request();
   }, [lyapunovScheduler, lyapunovKey]);
+
+  // Zooming or panning across asks for the new range; moving the swept parameter's slider asks for nothing.
+  const orbitKey = buildOrbitJob(state)?.meta.key ?? null;
+  useEffect(() => {
+    if (orbitKey !== null) orbitScheduler.request();
+  }, [orbitScheduler, orbitKey]);
 
   const runCompile = useCallback(
     async (lines: string[], format: InputFormat, template?: Template) => {
@@ -352,13 +394,19 @@ export function useStudio() {
         if (!sameShape) {
           setShapeId((n) => n + 1);
           const oldStates = old?.states ?? [];
-          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
+          const adapted = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
+          const kept = adapted && isOrbit(adapted) ? followOrbitParam(adapted, old?.params ?? [], res.params) : adapted;
           const v = kept ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
           setBaseState((b) => adaptBaseState(b, oldStates, res.states));
           setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
+        } else if (isOrbit(cur.view) && followOrbitParam(cur.view, old.params, res.params) !== cur.view) {
+          // The swept parameter moved in the list, or is gone (then the default view).
+          const v = followOrbitParam(cur.view, old.params, res.params) ?? defaultView(res, cur.solver);
+          setViewState(v);
+          setHomeView(v);
         } else if (isCobweb(cur.view) && !cobwebAvailability(res).ok) {
           // The same map, now changing with n: f has no single graph, so the default view (a time series).
           const v = defaultView(res, cur.solver);
@@ -663,6 +711,32 @@ export function useStudio() {
     setHomeView((v) => (isLyapunov(v) ? { ...v, lyapunov: { ...v.lyapunov, ...patch } } : v));
   }, []);
 
+  const setOrbit = useCallback((patch: Partial<OrbitSettings>) => {
+    setViewState((v) => (isOrbit(v) ? { ...v, orbit: { ...v.orbit, ...patch } } : v));
+    setHomeView((v) => (isOrbit(v) ? { ...v, orbit: { ...v.orbit, ...patch } } : v));
+  }, []);
+
+  /** Sweeps the parameter over [lo, hi]; Reset view comes back to it. */
+  const setOrbitRange = useCallback((lo: number, hi: number) => {
+    if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return;
+    setViewState((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
+    setHomeView((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
+  }, []);
+
+  /** Sweeps parameter `index` across its slider's range instead. */
+  const setOrbitParam = useCallback((index: number) => {
+    const cur = latest.current;
+    const p = cur.params[index];
+    if (!isOrbit(cur.view) || !p || index === cur.view.param) return;
+    const next = { ...cur.view, param: index, xRange: [p.min, p.max] as [number, number] };
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
+  const setOrbitColumns = useCallback((columns: number) => {
+    setOrbitColumnsState((old) => (old === columns ? old : columns));
+  }, []);
+
   const setSlice = useCallback((index: number, value: number) => {
     setBaseState((b) => {
       const copy = b.slice();
@@ -756,6 +830,10 @@ export function useStudio() {
       setViewKind,
       setSection,
       setLyapunov,
+      setOrbit,
+      setOrbitParam,
+      setOrbitRange,
+      setOrbitColumns,
       setCamera,
       setSpaceAxis,
       setSlice,
@@ -788,6 +866,10 @@ export function useStudio() {
       setViewKind,
       setSection,
       setLyapunov,
+      setOrbit,
+      setOrbitParam,
+      setOrbitRange,
+      setOrbitColumns,
       setCamera,
       setSpaceAxis,
       setSlice,

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { isTauri } from "./api/client";
 import { LyapunovCanvas } from "./canvas/LyapunovCanvas";
+import { OrbitCanvas } from "./canvas/OrbitCanvas";
 import { PortraitCanvas } from "./canvas/PortraitCanvas";
 import { CanvasToolbar } from "./components/CanvasToolbar";
 import { StatusBar, TopBar } from "./components/Chrome";
@@ -14,7 +15,7 @@ import { projectStem } from "./project/names";
 import { useProjectDocument } from "./project/useProjectDocument";
 import { useShortcuts } from "./project/useShortcuts";
 import { useStudio } from "./state/useStudio";
-import { isLyapunov, isSpace } from "./state/model";
+import { isLyapunov, isOrbit, isSpace } from "./state/model";
 import type { Template } from "./templates";
 
 type Theme = "dark" | "light";
@@ -189,6 +190,8 @@ export default function App() {
               </Suspense>
             ) : isLyapunov(state.view) ? (
               <LyapunovCanvas state={state} actions={actions} toolbar={<CanvasToolbar state={state} actions={actions} />} />
+            ) : isOrbit(state.view) ? (
+              <OrbitCanvas state={state} actions={actions} toolbar={<CanvasToolbar state={state} actions={actions} />} />
             ) : (
               <PortraitCanvas
                 state={state}

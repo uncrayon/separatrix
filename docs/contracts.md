@@ -533,6 +533,27 @@ doesn't fit, a non-finite start, `columns` outside `2..=MAX_ORBIT_COLUMNS = 4096
 more than `MAX_ORBIT_POINTS = 4·10⁶` points (`columns · kept`), and `doublings` on a map with more
 than one state or one that depends on `n`. It runs on a blocking worker thread.
 
+The studio's orbit diagram sends one request per view of it (`buildOrbitJob` in state/model.ts):
+`columns` is the plot's width in device pixels (at most 4,096), `range` the centres of the first
+and last pixel across the view's `xRange`, so column `j` is the `j`-th pixel's centre and a click
+there sets the parameter to exactly that column's `r` (`orbitColumnAt`). The swept parameter's
+own value is sent as `range[0]` (each column replaces it), so moving its slider asks for nothing;
+zooming or panning across, a wider plot, another start point (the selected one, else the first),
+the transient or the iterates drawn ask again, and zooming up the side asks for nothing.
+`doublings` is asked for exactly when the map is one-dimensional and autonomous. The inspector
+names the doublings Strogatz's way: `r₁, r₂, …` for the run of periods 1, 2, 4, … the list starts
+with (a zoomed range that starts past `r₁` begins at `r₂`), and any other doubling by its periods
+(`3 → 6`). The orbit view asks for no portrait.
+
+The screen path stays JSON with `f64` values (`null` for an escaped iterate), measured in the
+release app on Linux under Xvfb at its default size: the logistic map's default request (774
+columns × 200 iterates kept, 1,000 dropped, `r ∈ [0, 4]`, doublings asked for), seven runs
+alternated with another view, took 19 ms in Rust (16–22 ms), 53 ms round trip including the
+transfer (52–60 ms) and 4 ms to draw (3–5 ms): about 57 ms in all, under the 100 ms at which a
+binary `f32` response would be worth its second encoding. The transfer grows with the points: the
+widest plot (4,096 columns, 5.3 times as many) would take about 0.2 s by that measure (an
+estimate, not measured).
+
 ### Cobweb plots and transients
 
 `PortraitRequest` has two optional keys, `PortraitResponse` one (absent keys keep the earlier

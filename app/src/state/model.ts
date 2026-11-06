@@ -8,6 +8,9 @@ import type {
   LyapunovRequest,
   LyapunovResponse,
   Method,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
+  ParamInfo,
   PortraitRequest,
   PortraitResponse,
   SectionSpec,
@@ -19,7 +22,11 @@ import type {
 import {
   DEFAULT_CAMERA,
   LYAPUNOV_MISFIT,
+  MAX_ORBIT_COLUMNS,
   MAX_RENORMALIZATIONS,
+  ORBIT_MAX_KEPT,
+  ORBIT_MAX_TRANSIENT,
+  ORBIT_MISFIT,
   SECTION_MISFIT,
   SPACE_MISFIT,
 } from "../api/ipc.generated.ts";
@@ -88,7 +95,8 @@ export function clampCamera(c: Partial<Camera>): Camera {
  * map x_k -> x_{k+1} when both axes are one state (the cobweb's convention);
  * `space` is the 3D view of a flow, three states in a box seen from `camera`;
  * `lyapunov` is the running estimates of the Lyapunov spectrum against t (or
- * n), where neither axis is a state.
+ * n), where neither axis is a state; `orbit` is a map's orbit diagram, a
+ * parameter across and one state up.
  */
 interface ViewBase {
   xAxis: AxisRef;
@@ -128,12 +136,35 @@ export type LyapunovView = ViewBase & {
   yAxis: TimeAxis;
   lyapunov: LyapunovSettings;
 };
+
+/**
+ * An orbit diagram's columns (`compute_orbit_diagram`): `transient` iterates
+ * dropped, then `kept` iterates drawn, from the same start in every column.
+ */
+export interface OrbitSettings {
+  transient: number;
+  kept: number;
+}
+
+/**
+ * The parameter `param` (an index into the system's parameters) across over
+ * `xRange`, the state `yAxis` up. The horizontal axis is typed as time, as
+ * the Lyapunov view's are, so the axis helpers find no state across.
+ */
+export type OrbitView = ViewBase & {
+  kind: "orbit";
+  xAxis: TimeAxis;
+  yAxis: StateAxis;
+  param: number;
+  orbit: OrbitSettings;
+};
 export type View =
   | (ViewBase & { kind?: "plane" })
   | (ViewBase & { kind: "cobweb" })
   | SectionView
   | SpaceView
-  | LyapunovView;
+  | LyapunovView
+  | OrbitView;
 export type ViewKind = NonNullable<View["kind"]>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
@@ -141,16 +172,19 @@ export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
 export const isSection = (v: View): v is SectionView => v.kind === "section";
 export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
+export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
+/** A view of a run of its own (not the portrait): neither axis is a state across a phase portrait. */
+export const isAnalysis = (v: View): v is LyapunovView | OrbitView => isLyapunov(v) || isOrbit(v);
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space", "lyapunov"];
+export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov" | "orbit";
+export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space", "lyapunov", "orbit"];
 
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
   ode: ["phase", "series", "section", "space", "lyapunov"],
-  map: ["phase", "series", "cobweb", "lyapunov"],
+  map: ["phase", "series", "cobweb", "lyapunov", "orbit"],
 };
 
 export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
@@ -162,12 +196,13 @@ export function viewChoice(v: View): ViewChoice {
   if (isSection(v)) return "section";
   if (isSpace(v)) return "space";
   if (isLyapunov(v)) return "lyapunov";
+  if (isOrbit(v)) return "orbit";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
 export type Availability = { ok: true } | { ok: false; reason: string };
 
-type SystemShape = Pick<CompileResponse, "kind" | "autonomous" | "states">;
+type SystemShape = Pick<CompileResponse, "kind" | "autonomous" | "states"> & Partial<Pick<CompileResponse, "params">>;
 
 /**
  * The cobweb view can show `sys`: a one-dimensional autonomous map. `name`
@@ -203,6 +238,13 @@ export function planeSectionAvailability(sys: SystemShape | null | undefined, na
     : { ok: false, reason: `A plane section needs at least 2 states. ${name} has ${dim}; take a stroboscopic section.` };
 }
 
+/** The orbit diagram can show `sys`: a map with a parameter to sweep. */
+export function orbitAvailability(sys: SystemShape | null | undefined, name = "this system"): Availability {
+  const needs = "The orbit diagram needs a map with a parameter";
+  if (!sys || sys.kind !== "map") return { ok: false, reason: `${needs}; ${name} is a flow.` };
+  return sys.params?.length ? { ok: true } : { ok: false, reason: `${needs}; ${name} has none.` };
+}
+
 export function spaceAvailability(sys: SystemShape | null | undefined, name = "This system"): Availability {
   const needs = "The 3D view needs a flow with at least 3 states.";
   if (sys?.kind === "map") return { ok: false, reason: `${needs} ${name} is a map.` };
@@ -217,6 +259,7 @@ export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   section: "Poincaré section",
   space: "3D view",
   lyapunov: "Lyapunov spectrum",
+  orbit: "Orbit diagram",
 };
 
 /**
@@ -231,6 +274,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   section: "Section",
   space: "3D",
   lyapunov: "λ",
+  orbit: "Orbit",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -245,6 +289,7 @@ export function viewChoiceAvailability(
     section: sectionAvailability(sys, name),
     space: spaceAvailability(sys, name),
     lyapunov: { ok: true },
+    orbit: orbitAvailability(sys, name),
   };
 }
 
@@ -426,7 +471,7 @@ export function lyapunovSettingsError(
   return null;
 }
 
-/** The start point a Lyapunov run follows: the selected one, else the first that fits the system. */
+/** The start point a Lyapunov run (and an orbit diagram) follows: the selected one, else the first that fits the system. */
 export function lyapunovStart(
   ics: readonly InitialCondition[],
   selection: Selection,
@@ -631,6 +676,189 @@ export function scientificText(v: number): string {
   const [m, e] = v.toExponential(1).split("e");
   return `${withRealMinus(m)} × 10${superscript(Number(e))}`;
 }
+
+/** An orbit diagram's columns when the view first opens: settled after 1,000 iterates, 200 drawn. */
+export const ORBIT_DEFAULTS: OrbitSettings = { transient: 1000, kept: 200 };
+/**
+ * A column drops at most {@link ORBIT_MAX_TRANSIENT} iterates (at the widest
+ * plot 4·10⁸ iterates, a few seconds of work) and draws at most
+ * {@link ORBIT_MAX_KEPT}, so many that every width fits `MAX_ORBIT_POINTS`
+ * (crates/project's limits, which a saved view is checked against too).
+ */
+export { ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT };
+
+/**
+ * The orbit diagram of `sys` sweeping parameter `param` over its slider's
+ * range, with the state `state` up over `yRange`.
+ */
+export function orbitView(
+  params: readonly Pick<ParamState, "min" | "max">[],
+  yRange: [number, number],
+  param = 0,
+  state = 0,
+  settings: OrbitSettings = ORBIT_DEFAULTS,
+): OrbitView {
+  const p = params[param];
+  return {
+    kind: "orbit",
+    xAxis: TIME_AXIS,
+    yAxis: stateAxis(state),
+    xRange: p && p.min < p.max ? [p.min, p.max] : [0, 1],
+    yRange: [yRange[0], yRange[1]],
+    param,
+    orbit: { ...settings },
+  };
+}
+
+/** Columns for a plot `cssWidth` px wide: one per device pixel, 2 to {@link MAX_ORBIT_COLUMNS}. */
+export function orbitColumns(cssWidth: number, pixelRatio: number): number {
+  const n = Math.round(cssWidth * pixelRatio);
+  return Number.isFinite(n) ? Math.min(MAX_ORBIT_COLUMNS, Math.max(2, n)) : 2;
+}
+
+/**
+ * The parameter range a diagram of `columns` columns asks for over the view's
+ * `xRange`: the centres of the first and last column, so column j is the
+ * j-th pixel's centre, r_j = lo + j·(hi − lo)/(columns − 1).
+ */
+export function orbitRange(xRange: [number, number], columns: number): [number, number] {
+  const half = (xRange[1] - xRange[0]) / (2 * columns);
+  return [xRange[0] + half, xRange[1] - half];
+}
+
+/**
+ * The column under `x` (a parameter value inside `xRange`) and its r, the
+ * value `compute_orbit_diagram` iterated it at (the same sum as the core's).
+ */
+export function orbitColumnAt(xRange: [number, number], columns: number, x: number): { column: number; r: number } {
+  const [lo, hi] = orbitRange(xRange, columns);
+  const f = (x - xRange[0]) / (xRange[1] - xRange[0]);
+  const column = Math.min(columns - 1, Math.max(0, Math.floor(f * columns)));
+  return { column, r: lo + column * ((hi - lo) / (columns - 1)) };
+}
+
+/** Why the core would refuse `s` (or the studio caps it), by field; null when it runs. */
+export function orbitSettingsError(s: OrbitSettings): { field: keyof OrbitSettings; message: string } | null {
+  if (!(Number.isInteger(s.transient) && s.transient >= 0 && s.transient <= ORBIT_MAX_TRANSIENT))
+    return { field: "transient", message: `Must be a whole number from 0 to ${ORBIT_MAX_TRANSIENT.toLocaleString("en-US")}` };
+  if (!(Number.isInteger(s.kept) && s.kept >= 1 && s.kept <= ORBIT_MAX_KEPT))
+    return { field: "kept", message: `Must be a whole number from 1 to ${ORBIT_MAX_KEPT.toLocaleString("en-US")}` };
+  return null;
+}
+
+/** The period-doubling points are asked for: they are defined for a one-dimensional autonomous map. */
+export const findsDoublings = (sys: Pick<CompileResponse, "states" | "autonomous">): boolean =>
+  sys.states.length === 1 && sys.autonomous;
+
+export interface OrbitMeta {
+  /** The request without its id, as JSON: a diagram on hand is current when the job now has the same key. */
+  key: string;
+  systemId: number;
+  shapeId: number;
+  /** The parameter swept and the state drawn. */
+  param: number;
+  state: number;
+}
+
+export interface OrbitState {
+  res: OrbitDiagramResponse;
+  meta: OrbitMeta;
+  roundTripMs: number;
+}
+
+export type OrbitJob = Job<Omit<OrbitDiagramRequest, "requestId">, OrbitMeta>;
+
+/**
+ * The `compute_orbit_diagram` request of the orbit view, or null when there
+ * is nothing to draw (no start point, no plot width yet, a setting the core
+ * refuses). The swept parameter's own value is not sent (each column
+ * replaces it), so moving its slider asks for nothing.
+ */
+export function buildOrbitJob(
+  s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "shapeId"> & {
+    selection: Selection;
+    orbitColumns: number;
+  },
+): OrbitJob | null {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || sys.kind !== "map" || !isOrbit(s.view)) return null;
+  const v = s.view;
+  if (s.orbitColumns < 2 || v.param >= sys.params.length || v.yAxis.index >= sys.states.length) return null;
+  if (orbitSettingsError(v.orbit)) return null;
+  const ic = lyapunovStart(s.ics, s.selection, sys.states.length);
+  if (!ic) return null;
+  const range = orbitRange(v.xRange, s.orbitColumns);
+  const body: OrbitJob["body"] = {
+    systemId: sys.systemId,
+    params: s.params.map((p, i) => (i === v.param ? range[0] : p.value)),
+    param: v.param,
+    range,
+    columns: s.orbitColumns,
+    state: v.yAxis.index,
+    x0: ic.x0.slice(),
+    transient: v.orbit.transient,
+    kept: v.orbit.kept,
+    doublings: findsDoublings(sys),
+  };
+  return {
+    body,
+    meta: { key: JSON.stringify(body), systemId: sys.systemId, shapeId: s.shapeId, param: v.param, state: v.yAxis.index },
+  };
+}
+
+/** The diagram on hand belongs to the system shown, its parameter and its state. */
+export function orbitFits(
+  sys: CompileResponse | null,
+  shapeId: number,
+  view: View,
+  o: OrbitState | null,
+): o is OrbitState {
+  return !!sys && !!o && isOrbit(view) && o.meta.shapeId === shapeId && o.meta.param === view.param && o.meta.state === view.yAxis.index;
+}
+
+/** The diagram on hand is the one the view asks for now. */
+export function orbitCurrent(s: Parameters<typeof buildOrbitJob>[0] & { orbit: OrbitState | null }): boolean {
+  const job = buildOrbitJob(s);
+  return !!job && s.orbit?.meta.key === job.meta.key;
+}
+
+/**
+ * A vertical range that fits a diagram's finite iterates, padded by 8 % as
+ * {@link fitRanges} pads, or null when it has none.
+ */
+export function fitOrbitRange(res: Pick<OrbitDiagramResponse, "x">): [number, number] | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of res.x) {
+    if (v === null || !Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!(lo <= hi)) return null;
+  const pad = 0.08 * (hi - lo || Math.max(1, Math.abs(lo)));
+  return [lo - pad, hi + pad];
+}
+
+/**
+ * The inspector's rows for the period-doubling points of the parameter
+ * `name`: Strogatz's r₁, r₂, …
+ * (the 2ⁿ⁻¹-cycle loses stability at rₙ) for the run of doublings 1 → 2 →
+ * 4 → … the list starts with, each period twice the last; any other
+ * doubling (a window's 3 → 6) named by its periods.
+ */
+export function doublingRows(
+  doublings: readonly { r: number; period: number }[],
+  name = "r",
+): { label: string; r: number; period: number }[] {
+  let chain = true;
+  return doublings.map((d, i) => {
+    const n = Math.log2(d.period);
+    chain = chain && Number.isInteger(n) && (i === 0 || d.period === 2 * doublings[i - 1].period);
+    return { label: chain ? `${name}${subscriptDigits(n + 1)}` : `${d.period} → ${2 * d.period}`, r: d.r, period: d.period };
+  });
+}
+
+const subscriptDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
 
 export interface Layers {
   field: boolean;
@@ -984,7 +1212,7 @@ export function seriesRange(
 
 /** `v` with the range of its time axes moved by `dt` (the transient changed by `dt`); `v` itself when it has none. */
 export function shiftTimeAxes(v: View, dt: number): View {
-  if (dt === 0 || isCobweb(v) || isLyapunov(v)) return v;
+  if (dt === 0 || isCobweb(v) || isAnalysis(v)) return v;
   const shift = (r: [number, number]): [number, number] => [r[0] + dt, r[1] + dt];
   const x = v.xAxis.kind === "time";
   const y = v.yAxis.kind === "time";
@@ -1134,6 +1362,11 @@ export function adaptView(
   next?: Pick<CompileResponse, "kind" | "autonomous">,
 ): View | null {
   if (isLyapunov(view)) return view;
+  if (isOrbit(view)) {
+    const k = newStates.findIndex((s) => s.name === oldStates[view.yAxis.index]?.name);
+    const index = k >= 0 ? k : renamedSlot(view.yAxis.index, oldStates, newStates) ? view.yAxis.index : -1;
+    return index >= 0 && next?.kind !== "ode" ? { ...view, yAxis: stateAxis(index) } : null;
+  }
   if (isCobweb(view)) {
     // A cobweb stays while the system is still a one-dimensional autonomous map.
     const ok = newStates.length === 1 && (!next || cobwebAvailability({ ...next, states: newStates }).ok);
@@ -1162,6 +1395,22 @@ export function adaptView(
   }
   if (xAxis.kind === "state" && yAxis.kind === "state" && xAxis.index === yAxis.index) return null;
   return { ...view, xAxis, yAxis };
+}
+
+/**
+ * An orbit diagram after a recompile: its parameter followed by name (a
+ * renamed parameter in the same place keeps it). Null when the parameter is
+ * gone; `view` itself when it is where it was.
+ */
+export function followOrbitParam(
+  view: OrbitView,
+  oldParams: readonly Pick<ParamInfo, "name">[],
+  newParams: readonly Pick<ParamInfo, "name">[],
+): OrbitView | null {
+  const k = newParams.findIndex((p) => p.name === oldParams[view.param]?.name);
+  const index = k >= 0 ? k : oldParams.length === newParams.length && view.param < newParams.length ? view.param : -1;
+  if (index < 0) return null;
+  return index === view.param ? view : { ...view, param: index };
 }
 
 /** Slice values after a recompile that changed the states: by name, as {@link adaptView}; a new variable starts at 0. */
@@ -1295,7 +1544,7 @@ export function hasNullclineLayer(kind: SystemKind | undefined): boolean {
 
 export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> | null {
   const sys = s.compiled;
-  if (!sys || !sys.ok || sys.systemId === undefined || isLyapunov(s.view)) return null;
+  if (!sys || !sys.ok || sys.systemId === undefined || isAnalysis(s.view)) return null;
   const dim = sys.states.length;
   const isOde = sys.kind !== "map";
   const trajectories: TrajectoryRequest[] = [];
@@ -1402,7 +1651,7 @@ export function liftPlotPoint(
   return { x0, t0 };
 }
 
-export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view) && !isLyapunov(view);
+export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view) && !isAnalysis(view);
 
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
@@ -1416,11 +1665,15 @@ export type ViewMemory = Partial<Record<ViewChoice, View>>;
  * with the state's range, a phase plane of states 0 and 1 over their ranges
  * (else their extents in the portrait, as `setAxis` does), a 3D view of
  * states 0, 1 and 2 over their extents in the portrait, seen from
- * {@link DEFAULT_CAMERA}.
+ * {@link DEFAULT_CAMERA}, an orbit diagram of the first parameter over its
+ * slider's range with state 0 over its range now.
  */
 export function switchView(
   choice: ViewChoice,
-  s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & { portrait?: PortraitState | null },
+  s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & {
+    portrait?: PortraitState | null;
+    params?: readonly Pick<ParamState, "min" | "max">[];
+  },
   memory: ViewMemory,
 ): View | null {
   const sys = s.compiled;
@@ -1453,6 +1706,7 @@ export function switchView(
   }
   if (choice === "space") return spaceView([0, 1, 2], fromExtent);
   if (choice === "lyapunov") return lyapunovView(sys.kind ?? "ode");
+  if (choice === "orbit") return orbitView(s.params ?? [], shownRange(0) ?? fromExtent(0));
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -1527,7 +1781,7 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov") return null;
+  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov" || v.kind === "orbit") return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1606,11 +1860,29 @@ function loadLyapunovView(v: LoadedView, sys: CompileResponse): LyapunovView | s
   return { ...lyapunovView(kind, settings), xRange: [v.xRange[0], v.xRange[1]], yRange: [v.yRange[0], v.yRange[1]] };
 }
 
+/** A saved orbit diagram: a parameter of `sys` across, one of its states up, columns the core draws. */
+function loadOrbitView(v: LoadedView, sys: CompileResponse): OrbitView | string {
+  const o = v.orbit;
+  const settings: OrbitSettings | null =
+    o && o.transient !== undefined && o.kept !== undefined ? { transient: o.transient, kept: o.kept } : null;
+  const x = v.xAxis;
+  const y = v.yAxis;
+  const param = x.kind === "param" ? sys.params.findIndex((p) => p.name === x.name) : -1;
+  const state = y.kind === "state" ? sys.states.findIndex((st) => st.name === y.name) : -1;
+  if (!orbitAvailability(sys).ok || !settings || orbitSettingsError(settings) || param < 0 || state < 0) return ORBIT_MISFIT;
+  if (!v.xRange || !v.yRange) return VIEW_WARNING;
+  return { ...orbitView([], v.yRange, param, state, settings), xRange: [v.xRange[0], v.xRange[1]] };
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
   if (v?.kind === "lyapunov") {
     const fit = loadLyapunovView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
+  if (v?.kind === "orbit") {
+    const fit = loadOrbitView(v, sys);
     return typeof fit === "string" ? null : fit;
   }
   if (v?.kind === "section") {
@@ -1677,6 +1949,7 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
     if (load.view?.kind === "section") warnings.push(loadSectionView(load.view, sys) as string);
     else if (load.view?.kind === "space") warnings.push(loadSpaceView(load.view, sys) as string);
     else if (load.view?.kind === "lyapunov") warnings.push(loadLyapunovView(load.view, sys) as string);
+    else if (load.view?.kind === "orbit") warnings.push(loadOrbitView(load.view, sys) as string);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
   const slice = load.view?.slice ?? {};
