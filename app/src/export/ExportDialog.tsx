@@ -6,7 +6,8 @@ import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "..
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
 import { axisLatex, classificationTitle, fmt, latexToPlain } from "../math/format";
-import { hasNullclineLayer, isCobweb, systemTitle } from "../state/model";
+import { hasNullclineLayer, isCobweb, isReturnMap, isSection, isSpace, systemTitle, type SpaceView } from "../state/model";
+import { spaceNames } from "../canvas/space";
 import type { StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import {
@@ -30,10 +31,12 @@ import {
   buildFigureJob,
   exportPortraitRequest,
   exportScene,
+  exportSpaceFigure,
   icProjectId,
   screenPortrait,
   type FigureJob,
 } from "./job";
+import { SPACE_LATEX_REFUSAL } from "../api/ipc.generated";
 import {
   CSV_MAX_SAMPLES,
   fileStem,
@@ -48,7 +51,7 @@ import {
   type Notation,
   type PngScale,
 } from "./options";
-import { pngRaster, renderPng } from "./png";
+import { pngRaster, renderPng, spacePngDraw } from "./png";
 import { canvasMeasure, figureSvg } from "./svg";
 import type { ExportPalette } from "./theme";
 import { EXPORT_FONTS, exportTheme } from "./tokens";
@@ -243,6 +246,11 @@ function FixedPointsPreview({
   );
 }
 
+function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): string {
+  const [a, b, c] = spaceNames(v, states).map(latexToPlain);
+  return `${a}, ${b} and ${c}`;
+}
+
 const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const trajectories = (n: number) => plural(n, "trajectory", "trajectories");
 
@@ -280,20 +288,35 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
 
   const sys = state.compiled && state.compiled.ok ? state.compiled : null;
   const kind = sys?.kind;
-  // A cobweb's figure has no field or nullclines to offer: only Fixed points.
   const cobweb = !!sys && isCobweb(state.view);
+  const section = !!sys && isSection(state.view);
+  const space = !!sys && isSpace(state.view);
+  const returnMap = section && isReturnMap(state.view);
   const compiles = !!sys && state.compileOk;
+  const timeDependent = !!sys && !sys.autonomous;
   const reasons = {
-    field: kind === "map" ? "none: a map" : null,
-    nullclines: sys && !hasNullclineLayer(kind) ? "none: a map" : null,
-    fixedPoints: sys && !sys.autonomous ? "none: the field changes with time" : null,
+    field: kind === "map" ? "none: a map" : section ? "none: a Poincaré section" : space ? "none: a 3D view" : null,
+    nullclines:
+      sys && !hasNullclineLayer(kind)
+        ? "none: a map"
+        : section
+          ? "none: a Poincaré section"
+          : space
+            ? "none: a 3D view"
+            : null,
+    fixedPoints: timeDependent
+      ? "none: the field changes with time"
+      : section
+        ? "none: a Poincaré section shows only the crossings"
+        : null,
   };
   const contentReason: Record<LatexContent, string | null> = {
-    figure: sys ? null : "the equations have not compiled",
+    figure: !sys ? "the equations have not compiled" : space ? SPACE_LATEX_REFUSAL : null,
     equations: compiles ? null : "the equations don't compile",
-    fixedPoints: !compiles ? "the equations don't compile" : reasons.fixedPoints ? "the field changes with time" : null,
+    fixedPoints: !compiles ? "the equations don't compile" : timeDependent ? "the field changes with time" : null,
   };
-  const content: LatexContent = contentReason[opts.latexContent] ? "figure" : opts.latexContent;
+  const content: LatexContent =
+    ([opts.latexContent, "figure", "equations", "fixedPoints"] as const).find((c) => !contentReason[c]) ?? "figure";
   const format = opts.format;
   // Equations and Fixed points are not figures: no export portrait for them.
   const wantsFigure = format === "svg" || format === "png" || (format === "latex" && content === "figure");
@@ -354,6 +377,10 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const theme = exportTheme(opts.palette);
   const names = useMemo(() => axisNames(state), [state]);
   const figReady = !!fig && !!job && fig.job === job;
+  const spaceFig = useMemo(
+    () => (fig && scene && sys ? exportSpaceFigure(fig.job, scene, sys.states, EXPORT_FONTS) : null),
+    [fig, scene, sys],
+  );
 
   // The LaTeX snippet (or the CSV), from the core.
   const figureReq = (): FigureLatexRequest | null =>
@@ -522,11 +549,16 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         fonts: EXPORT_FONTS,
         title: name,
         desc: figureDesc,
+        space: spaceFig,
       },
       canvasMeasure(probe),
     );
   };
   const raster = pngRaster(opts.pngWidthPx, opts.pngHeightPx, opts.pngScale);
+  const pngDraw = async () =>
+    fig && spaceFig
+      ? spacePngDraw(spaceFig, fig.job.widthPx, fig.job.heightPx, raster.scale, theme, !opts.transparent)
+      : drawTo;
 
   const run = async (what: () => Promise<void>) => {
     if (working) return;
@@ -632,7 +664,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ready: figReady,
       act: () =>
         run(async () => {
-          const png = await renderPng(raster, drawTo);
+          const png = await renderPng(raster, await pngDraw());
           saveDone((await savePngFile(png, `${stem}.png`))?.names);
         }),
     };
@@ -642,7 +674,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       ready: figReady,
       act: () =>
         run(async () => {
-          await clipboardWritePng(await renderPng(raster, drawTo, false));
+          await clipboardWritePng(await renderPng(raster, await pngDraw(), false));
           copyDone("png", "Image");
         }),
     };
@@ -690,12 +722,22 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   }
 
   const trajectoriesShown = scene ? new Set(scene.trajectories.map((t) => t.meta.icId)).size : 0;
+  const crossingsShown = scene
+    ? scene.trajectories.reduce((n, t) => n + Math.max(0, t.out.t.length - (returnMap ? 1 : 0)), 0)
+    : 0;
+  const runWords = cobweb
+    ? plural(trajectoriesShown, "orbit")
+    : returnMap
+      ? plural(crossingsShown, "pair of crossings", "pairs of crossings")
+      : section
+        ? plural(crossingsShown, "crossing")
+        : trajectories(trajectoriesShown);
   const layerWords = [
     layers.field && "direction field",
     layers.nullclines && "nullclines",
     cobweb && "the graph of f",
-    cobweb && "the diagonal",
-    cobweb ? plural(trajectoriesShown, "orbit") : trajectories(trajectoriesShown),
+    (cobweb || returnMap) && "the diagonal",
+    runWords,
     layers.fixedPoints && plural(scene?.fixedPoints.length ?? 0, "fixed point"),
   ].filter(Boolean) as string[];
   // What the figure shows: the SVG's <desc>, and the preview's label after "Preview: ".
@@ -710,7 +752,13 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const viewWords = sys
     ? cobweb
       ? `cobweb of ${axisPlain(0)}`
-      : `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
+      : space
+        ? `3D view of ${spaceAxesPlain(state.view as SpaceView, sys.states)}`
+        : returnMap
+          ? `return map of ${axisPlain(0)}`
+          : section
+            ? `Poincaré section ${axisPlain(0)}–${axisPlain(1)}`
+            : `${timeView ? "time series" : kind === "map" ? "orbit" : "phase plane"} ${axisPlain(0)}–${axisPlain(1)}`
     : "no plot yet";
   const sizeCaption =
     format === "png" ? (
@@ -725,7 +773,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         <span className="ds-num">
           {withMinus(fmt(opts.widthCm, 3))} × {withMinus(fmt(opts.heightCm, 3))}
         </span>{" "}
-        cm, {cobweb ? plural(trajectoriesShown, "orbit") : trajectories(trajectoriesShown)}
+        cm, {runWords}
       </span>
     );
 
@@ -840,7 +888,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const includeGroup = (
     <fieldset className="ds-export-group">
       <legend className="ds-export-label">Include</legend>
-      {!cobweb && (
+      {!cobweb && !section && !space && (
         <>
           <Check
             checked={opts.field}
@@ -918,6 +966,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       transparent={transparent}
       label={previewLabel}
       busy={figBusy}
+      space={spaceFig}
       caption={
         <>
           <span>Preview</span>
@@ -1020,24 +1069,26 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
           })}
           <p className="ds-export-hint export-hint-flush">
             Columns {sys ? [kind === "map" ? "n" : "t", ...sys.states.map((s) => s.name)].join(", ") : "t"}; one file
-            per trajectory, backward run first.
+            per trajectory, {section ? "one row per crossing after the skipped ones." : "backward run first."}
           </p>
         </fieldset>
-        <fieldset className="ds-export-group export-csv-samples">
-          <legend className="ds-export-label">Samples per run</legend>
-          <NumberField
-            value={opts.csvSamples}
-            ariaLabel="Samples per run"
-            format={(v) => (v === 0 ? "auto" : String(Math.round(v)))}
-            validate={(v) =>
-              v === 0 || (Number.isInteger(v) && v >= 2 && v <= CSV_MAX_SAMPLES)
-                ? null
-                : `Use a whole number from 2 to ${CSV_MAX_SAMPLES.toLocaleString("en-US")}, or auto.`
-            }
-            hint="auto: as many as the plot uses"
-            onCommit={(v) => update({ csvSamples: v })}
-          />
-        </fieldset>
+        {!section && (
+          <fieldset className="ds-export-group export-csv-samples">
+            <legend className="ds-export-label">Samples per run</legend>
+            <NumberField
+              value={opts.csvSamples}
+              ariaLabel="Samples per run"
+              format={(v) => (v === 0 ? "auto" : String(Math.round(v)))}
+              validate={(v) =>
+                v === 0 || (Number.isInteger(v) && v >= 2 && v <= CSV_MAX_SAMPLES)
+                  ? null
+                  : `Use a whole number from 2 to ${CSV_MAX_SAMPLES.toLocaleString("en-US")}, or auto.`
+              }
+              hint="auto: as many as the plot uses"
+              onCommit={(v) => update({ csvSamples: v })}
+            />
+          </fieldset>
+        )}
       </div>
     );
   } else {
@@ -1059,6 +1110,15 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   }
 
   const showCode = format === "latex" || format === "csv";
+  const contentHint =
+    [
+      space && contentReason.figure,
+      contentReason.equations
+        ? "Equations and Fixed points need equations that compile."
+        : contentReason.fixedPoints && "Fixed points: none, because the field changes with time.",
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
   const figureContent = format === "svg" || format === "png" || (format === "latex" && content === "figure");
   const codeText =
     format === "csv"
@@ -1117,7 +1177,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                 : format === "latex" && content === "fixedPoints"
                   ? `${name}, the fixed points in view`
                   : format === "csv"
-                    ? `${name}, the trajectories as you see them now`
+                    ? `${name}, the ${section ? "crossings" : "trajectories"} as you see them now`
                     : `${name}, ${viewWords}, as you see it now`}
             </p>
           </div>
@@ -1141,19 +1201,17 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                 fill
                 ariaLabel="Content"
                 value={content}
-                describedBy={contentReason.equations || contentReason.fixedPoints ? reasonId : undefined}
+                describedBy={contentHint ? reasonId : undefined}
                 options={[
-                  { value: "figure", label: "Figure", disabled: !!contentReason.figure },
+                  { value: "figure", label: "Figure", disabled: !!contentReason.figure, title: space ? SPACE_LATEX_REFUSAL : undefined },
                   { value: "equations", label: "Equations", disabled: !!contentReason.equations, title: contentReason.equations ?? undefined },
                   { value: "fixedPoints", label: "Fixed points", disabled: !!contentReason.fixedPoints, title: contentReason.fixedPoints ?? undefined },
                 ]}
                 onChange={(v) => update({ latexContent: v })}
               />
-              {(contentReason.equations || contentReason.fixedPoints) && (
+              {contentHint && (
                 <p className="ds-export-hint export-hint-flush" id={reasonId}>
-                  {contentReason.equations
-                    ? "Equations and Fixed points need equations that compile."
-                    : "Fixed points: none, because the field changes with time."}
+                  {contentHint}
                 </p>
               )}
             </div>

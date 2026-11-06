@@ -13,13 +13,17 @@ import type {
   InputFormat,
   Method,
   ProjectAxis,
+  ProjectCamera,
   ProjectFile,
   ProjectInitialCondition,
   ProjectParam,
+  ProjectSection,
   ProjectView,
+  SectionSpec,
   SystemKind,
 } from "../api/types";
-import type { EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
+import type { Camera, EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
+
 
 /** Keys this version writes; anything else in a loaded object is kept as read. */
 type Obj = Record<string, unknown>;
@@ -47,15 +51,28 @@ export type LoadedAxis =
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
 export const MAX_TRANSIENT = 1_000_000;
 
+export interface LoadedSection {
+  kind: string;
+  state?: string;
+  value?: number;
+  direction?: string;
+  period?: number;
+  phase?: number;
+}
+
 export interface LoadedView {
   id: string;
   /** The saved `kind`; absent for a plane view (phase plane or time series). */
   kind?: string;
+  section?: LoadedSection;
   xAxis: LoadedAxis;
   yAxis: LoadedAxis;
+  zAxis?: LoadedAxis;
   /** Null when the saved range isn't finite with lo < hi. */
   xRange: [number, number] | null;
   yRange: [number, number] | null;
+  zRange?: [number, number] | null;
+  camera?: Partial<Camera>;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -163,6 +180,15 @@ function axisOut(prev: ProjectAxis | undefined, a: AxisRef, states: readonly str
   return out;
 }
 
+function sectionOut(prev: ProjectSection | undefined, s: SectionSpec, states: readonly string[]): ProjectSection {
+  const fresh: ProjectSection =
+    s.kind === "plane"
+      ? { kind: "plane", state: states[s.state], value: s.value, direction: s.direction }
+      : { kind: "stroboscopic", period: s.period, phase: s.phase };
+  if (fresh.state === undefined) delete fresh.state;
+  return prev && isObj(prev) && prev.kind === fresh.kind ? { ...prev, ...fresh } : fresh;
+}
+
 function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<unknown, T> {
   const out = new Map<unknown, T>();
   for (const t of list ?? []) if (isObj(t) && !out.has(key(t))) out.set(key(t), t);
@@ -217,16 +243,26 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const lviews = loaded?.views ?? [];
     const at = primaryViewIndex(lviews);
     const lv: ProjectView | undefined = at >= 0 ? lviews[at] : undefined;
-    // A cobweb's vertical axis is the state one iterate later, x_{n+1}.
     const cobweb = s.view.kind === "cobweb";
+    const section = s.view.kind === "section" ? s.view.section : null;
+    const space = s.view.kind === "space" ? s.view : null;
+    const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb ? { kind: "cobweb" } : {}),
+      ...(cobweb || section || space ? { kind: s.view.kind } : {}),
+      ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
-      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, cobweb),
+      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, next),
+      ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
+      ...(space
+        ? {
+            z_range: [space.zRange[0], space.zRange[1]] as [number, number],
+            camera: { ...(isObj(lv?.camera) ? lv.camera : {}), ...space.camera } as ProjectCamera,
+          }
+        : {}),
       slice: {
         ...lv?.slice,
         states: Object.fromEntries(states.map((name, i) => [name, s.baseState[i] ?? 0])),
@@ -241,8 +277,13 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    // A plane view has no `kind` (a file saved from one is byte-identical to before cobwebs).
-    if (!cobweb) delete primary.kind;
+    if (!cobweb && !section && !space) delete primary.kind;
+    if (!section) delete primary.section;
+    if (!space) {
+      delete primary.z_axis;
+      delete primary.z_range;
+      delete primary.camera;
+    }
     views = at >= 0 ? lviews.map((v, k) => (k === at ? primary : v)) : [primary];
 
     const transient = Math.round(s.solver.transient ?? 0);
@@ -289,6 +330,22 @@ export function dirtyKey(s: DocumentState, opts: Omit<SerializeOptions, "exportS
   delete p.export_settings;
   delete p.app_version;
   return JSON.stringify(p);
+}
+
+const sameStateAxes = (a: AxisRef, b: AxisRef) => a.kind === "state" && b.kind === "state" && a.index === b.index;
+
+function loadSection(s: unknown): LoadedSection | undefined {
+  if (!isObj(s)) return undefined;
+  return {
+    kind: str(s.kind) ?? "",
+    ...definedOnly({
+      state: str(s.state),
+      value: num(s.value),
+      direction: str(s.direction),
+      period: num(s.period),
+      phase: num(s.phase),
+    }),
+  };
 }
 
 function loadAxis(a: unknown): LoadedAxis {
@@ -361,13 +418,19 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     }
     const layers: Obj = isObj(v.layers) ? v.layers : {};
     const kind = str(v.kind);
+    const section = loadSection(v.section);
+    const cam: Obj = isObj(v.camera) ? v.camera : {};
     view = {
       id: str(v.id) || "main",
       ...(kind !== undefined ? { kind } : {}),
+      ...(section ? { section } : {}),
       xAxis: loadAxis(v.x_axis),
       yAxis: loadAxis(v.y_axis),
+      ...(v.z_axis !== undefined ? { zAxis: loadAxis(v.z_axis) } : {}),
       xRange: loadRange(v.x_range),
       yRange: loadRange(v.y_range),
+      ...(v.z_range !== undefined ? { zRange: loadRange(v.z_range) } : {}),
+      ...(isObj(v.camera) ? { camera: definedOnly({ yaw: num(cam.yaw), pitch: num(cam.pitch), zoom: num(cam.zoom) }) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({

@@ -83,9 +83,10 @@ export interface Scene {
    * and each orbit as a staircase instead of dots. Absent or null otherwise.
    */
   cobweb?: { graph: [number, number][][] } | null;
+  section?: { returnMap: boolean } | null;
 }
 
-export type SceneAxes = Pick<Scene, "kind" | "dim" | "xAxis" | "yAxis">;
+export type SceneAxes = Pick<Scene, "kind" | "dim" | "xAxis" | "yAxis" | "section">;
 
 export type FixedPointGlyphKind = "stable" | "unstable" | "half";
 
@@ -114,12 +115,27 @@ export function icPx(vp: Viewport, scene: SceneAxes, ic: InitialCondition): [num
 }
 
 export function trajectoryPx(vp: Viewport, scene: SceneAxes, out: TrajectoryOut): Float64Array {
+  if (scene.section?.returnMap && scene.xAxis.kind === "state") return returnMapPx(vp, out, scene.dim, scene.xAxis.index);
   const n = out.t.length;
   const pts = new Float64Array(n * 2);
   let m = 0;
   for (let k = 0; k < n; k++) {
     const a = scene.xAxis.kind === "time" ? out.t[k] : out.x[k * scene.dim + scene.xAxis.index];
     const b = scene.yAxis.kind === "time" ? out.t[k] : out.x[k * scene.dim + scene.yAxis.index];
+    if (!Number.isFinite(a) || !Number.isFinite(b)) break;
+    pts[m++] = clampPx(sx(vp, a));
+    pts[m++] = clampPx(sy(vp, b));
+  }
+  return pts.subarray(0, m);
+}
+
+export function returnMapPx(vp: Viewport, out: TrajectoryOut, dim: number, index: number): Float64Array {
+  const n = Math.max(0, Math.min(out.t.length, Math.floor(out.x.length / Math.max(1, dim))) - 1);
+  const pts = new Float64Array(n * 2);
+  let m = 0;
+  for (let k = 0; k < n; k++) {
+    const a = out.x[k * dim + index];
+    const b = out.x[(k + 1) * dim + index];
     if (!Number.isFinite(a) || !Number.isFinite(b)) break;
     pts[m++] = clampPx(sx(vp, a));
     pts[m++] = clampPx(sy(vp, b));
@@ -194,7 +210,10 @@ export function drawScene(
   drawField(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.field]);
   drawNullclines(ctx, vp, scene, th);
   if (scene.cobweb) drawCobweb(ctx, vp, scene, scene.cobweb.graph, th, fade);
-  else drawTrajectories(ctx, vp, scene, th, fade);
+  else {
+    if (scene.section?.returnMap) drawDiagonal(ctx, vp, th);
+    drawTrajectories(ctx, vp, scene, th, fade);
+  }
   ctx.globalAlpha = fade;
   const eigenLabels = scene.eigenvectors
     ? drawEigenvectors(ctx, vp, scene, th, [...labels.map((l) => l.box), ...scene.avoid.labels])
@@ -454,7 +473,7 @@ function drawTrajectories(
   const rank = (t: SceneTrajectory) =>
     (scene.selectedIc === t.meta.icId ? 2 : 0) + (t.meta.direction === "forward" ? 1 : 0);
   const ordered = [...scene.trajectories].sort((a, b) => rank(a) - rank(b));
-  const isMap = scene.kind === "map";
+  const dots = scene.kind === "map" || !!scene.section;
   const timeSeries = scene.xAxis.kind === "time" || scene.yAxis.kind === "time";
   const dense = scene.dim >= 3;
   const placed: number[] = [];
@@ -468,7 +487,7 @@ function drawTrajectories(
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
 
-    if (isMap) {
+    if (dots) {
       const n = pts.length / 2;
       if (timeSeries) {
         ctx.globalAlpha = fade * 0.4;
@@ -515,6 +534,20 @@ function drawTrajectories(
   ctx.globalAlpha = 1;
 }
 
+function drawDiagonal(ctx: DrawContext, vp: Viewport, th: PlotTheme) {
+  ctx.setLineDash([]);
+  const diag = diagonalSegment(vp.xRange, vp.yRange);
+  if (!diag) return;
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = th.axis;
+  ctx.lineWidth = th.lineScale;
+  ctx.lineCap = "butt";
+  ctx.beginPath();
+  ctx.moveTo(sx(vp, diag[0]), sy(vp, diag[1]));
+  ctx.lineTo(sx(vp, diag[2]), sy(vp, diag[3]));
+  ctx.stroke();
+}
+
 /**
  * A cobweb, in the PhasePlane z-order: the diagonal x_{n+1} = x_n (a thin
  * reference line in the axis colour, never dashed: dashes are nullclines),
@@ -533,18 +566,7 @@ export function drawCobweb(
 ) {
   const s = th.lineScale;
   const g = th.glyphScale;
-  ctx.setLineDash([]);
-  const diag = diagonalSegment(vp.xRange, vp.yRange);
-  if (diag) {
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = th.axis;
-    ctx.lineWidth = s;
-    ctx.lineCap = "butt";
-    ctx.beginPath();
-    ctx.moveTo(sx(vp, diag[0]), sy(vp, diag[1]));
-    ctx.lineTo(sx(vp, diag[2]), sy(vp, diag[3]));
-    ctx.stroke();
-  }
+  drawDiagonal(ctx, vp, th);
   ctx.globalAlpha = fade;
   const lines = graphPx(vp, graph as [number, number][][]);
   if (lines.length) {

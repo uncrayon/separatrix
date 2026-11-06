@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Tex } from "../math/Tex";
-import { TEMPLATES, strogatzRef, type Template } from "../templates";
+import { TEMPLATES, strogatzRef, templateChapters, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
 import { IconClose, IconPlus } from "./icons";
 import { TemplateThumb, compileTemplate } from "./TemplateThumb";
@@ -42,6 +42,78 @@ function TemplateTags({ template }: { template: Template }) {
         </span>
       ))}
     </span>
+  );
+}
+
+const CHAPTERS = templateChapters(TEMPLATES);
+
+const MIN_MATH_SCALE = 0.6;
+
+function useFitLines(ref: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => {
+      for (const line of Array.from(el.children) as HTMLElement[]) {
+        line.style.fontSize = "";
+        const over = line.scrollWidth / Math.max(1, line.clientWidth);
+        if (over > 1) line.style.fontSize = `${Math.max(MIN_MATH_SCALE, 1 / over)}em`;
+      }
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    let live = true;
+    document.fonts?.ready.then(() => live && fit());
+    return () => {
+      live = false;
+      ro.disconnect();
+    };
+  }, [ref]);
+}
+
+function TemplateCardButton({ template: t, onPick }: { template: Template; onPick: (t: Template) => void }) {
+  const id = `tpl-${t.id}`;
+  const math = useRef<HTMLSpanElement>(null);
+  useFitLines(math);
+  return (
+    <button
+      type="button"
+      className="ds-template-card card"
+      aria-labelledby={`${id}-name`}
+      aria-describedby={`${id}-eq ${id}-desc`}
+      onClick={() => onPick(t)}
+    >
+      <TemplateThumb template={t} />
+      <span className="ds-template-card-text">
+        <span className="ds-template-card-name" id={`${id}-name`}>
+          {t.title}
+        </span>
+        <span className="ds-template-card-math" id={`${id}-eq`} ref={math}>
+          {t.equations.map((e, k) => (
+            <span key={k}>
+              <Tex latex={e} />
+            </span>
+          ))}
+        </span>
+      </span>
+      <span className="ds-template-card-desc" id={`${id}-desc`}>
+        {t.description}
+      </span>
+      <span className="ds-template-card-meta">
+        <TemplateTags template={t} />
+        {strogatzRef(t) && <span className="ds-template-card-ref">{strogatzRef(t)}</span>}
+      </span>
+    </button>
+  );
+}
+
+function ChapterHeading({ id, chapter, title }: { id: string; chapter: string; title: string }) {
+  return (
+    <h2 className="heading gallery-chapter-head" id={id}>
+      <span>{chapter}</span>
+      {title && <span className="body gallery-chapter-title">{title}</span>}
+    </h2>
   );
 }
 
@@ -112,74 +184,54 @@ export function TemplateGallery({ onPick, onBlank, onClose, canClose, notice }: 
         </header>
         {notice && <div className="gallery-notice">{notice}</div>}
         <div className="gallery-grid">
-          <ul className="ds-template-grid template-grid" aria-label="Templates">
-            {TEMPLATES.map((t) => {
-              const id = `tpl-${t.id}`;
-              return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    className="ds-template-card card"
-                    aria-labelledby={`${id}-name`}
-                    aria-describedby={`${id}-eq ${id}-desc`}
-                    onClick={() => onPick(t)}
-                  >
-                    <TemplateThumb template={t} />
-                    <span className="ds-template-card-text">
-                      <span className="ds-template-card-name" id={`${id}-name`}>
-                        {t.title}
+          {CHAPTERS.map((ch) => (
+            <section className="gallery-chapter" key={ch.chapter} aria-labelledby={`gallery-ch-${ch.number}`}>
+              <ChapterHeading id={`gallery-ch-${ch.number}`} chapter={`Chapter ${ch.number}`} title={ch.title} />
+              <ul className="ds-template-grid template-grid">
+                {ch.templates.map((t) => (
+                  <li key={t.id}>
+                    <TemplateCardButton template={t} onPick={onPick} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <section className="gallery-chapter" aria-labelledby="gallery-own">
+            <ChapterHeading id="gallery-own" chapter="Your own system" title="" />
+            <ul className="ds-template-grid template-grid">
+              <li>
+                <button
+                  type="button"
+                  className="ds-template-card ds-template-card--blank card blank"
+                  aria-labelledby="tpl-blank-name"
+                  aria-describedby="tpl-blank-eq tpl-blank-foot"
+                  onClick={onBlank}
+                >
+                  <span className="ds-template-card-blank" aria-hidden="true">
+                    <IconPlus />
+                  </span>
+                  <span className="ds-template-card-text">
+                    <span className="ds-template-card-name" id="tpl-blank-name">
+                      Blank system
+                    </span>
+                    <span className="ds-template-card-math" id="tpl-blank-eq">
+                      <span>
+                        <Tex latex="\dot{x}=y" />
                       </span>
-                      <span className="ds-template-card-math" id={`${id}-eq`}>
-                        {t.equations.map((e, k) => (
-                          <span key={k}>
-                            <Tex latex={e} />
-                          </span>
-                        ))}
+                      <span>
+                        <Tex latex="\dot{y}=-x" />
                       </span>
                     </span>
-                    <span className="ds-template-card-desc" id={`${id}-desc`}>
-                      {t.description}
-                    </span>
-                    <span className="ds-template-card-meta">
-                      <TemplateTags template={t} />
-                      {strogatzRef(t) && <span className="ds-template-card-ref">{strogatzRef(t)}</span>}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-            <li>
-              <button
-                type="button"
-                className="ds-template-card ds-template-card--blank card blank"
-                aria-labelledby="tpl-blank-name"
-                aria-describedby="tpl-blank-eq tpl-blank-foot"
-                onClick={onBlank}
-              >
-                <span className="ds-template-card-blank" aria-hidden="true">
-                  <IconPlus />
-                </span>
-                <span className="ds-template-card-text">
-                  <span className="ds-template-card-name" id="tpl-blank-name">
-                    Blank system
                   </span>
-                  <span className="ds-template-card-math" id="tpl-blank-eq">
-                    <span>
-                      <Tex latex="\dot{x}=y" />
-                    </span>
-                    <span>
-                      <Tex latex="\dot{y}=-x" />
+                  <span className="ds-template-card-meta">
+                    <span className="ds-template-card-ref" id="tpl-blank-foot">
+                      Type your own equations
                     </span>
                   </span>
-                </span>
-                <span className="ds-template-card-meta">
-                  <span className="ds-template-card-ref" id="tpl-blank-foot">
-                    Type your own equations
-                  </span>
-                </span>
-              </button>
-            </li>
-          </ul>
+                </button>
+              </li>
+            </ul>
+          </section>
         </div>
       </div>
     </div>

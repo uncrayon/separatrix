@@ -124,20 +124,93 @@ pub struct ProjectView {
     #[serde(default)]
     pub id: String,
     /// `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
-    /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
-    /// phase plane and the time series, which the axes tell apart.
+    /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
+    /// for a Poincaré section of a flow (see `section`); `"space"` for a 3D
+    /// view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
+    /// `camera`); absent for the phase plane and the time series, which the
+    /// axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
+    /// The section of a `"section"` view. Its crossings are plotted in two
+    /// states (`x_axis`, `y_axis`), or as the return map when `y_axis` is
+    /// `{ "kind": "next", "name": s }` of the state `s` across.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub section: Option<ProjectSection>,
     pub x_axis: ProjectAxis,
     pub y_axis: ProjectAxis,
+    /// The third axis of a `"space"` view (a 3D view of a flow): a state, as
+    /// `x_axis` and `y_axis` are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub z_axis: Option<ProjectAxis>,
     /// The user's ranges (not the ones equalized for the plot's aspect).
     pub x_range: [f64; 2],
     pub y_range: [f64; 2],
+    /// The range of `z_axis` in a `"space"` view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub z_range: Option<[f64; 2]>,
+    /// Where a `"space"` view is seen from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub camera: Option<ProjectCamera>,
     #[serde(default)]
     pub slice: ProjectSlice,
     #[serde(default)]
     pub layers: ProjectLayers,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// A Poincaré section: `{ "kind": "plane", "state": "z", "value": 27,
+/// "direction": "rising" }` (the plane `z = 27`, crossed upwards; `"falling"`
+/// or `"both"` otherwise) or `{ "kind": "stroboscopic", "period": 6.28…,
+/// "phase": 0 }` (the state at `t = phase + k·period`).
+///
+/// A lenient struct like [`ProjectAxis`], so a section kind from a newer
+/// version is a warning, not an unreadable file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectSection {
+    pub kind: String,
+    /// The plane's state, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub value: Option<f64>,
+    /// `"rising"`, `"falling"` or `"both"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub direction: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub period: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub phase: Option<f64>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// The camera of a 3D view: `{ "yaw": -0.785…, "pitch": 0.523…, "zoom": 1 }`.
+/// `yaw` turns the box about its third axis and `pitch` tilts it towards the
+/// viewer, both in radians; `zoom` scales it. The app clamps `pitch` to
+/// ±(π/2 − 0.01) and `zoom` to 0.25–8 when it opens the file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectCamera {
+    #[serde(default = "default_yaw")]
+    pub yaw: f64,
+    #[serde(default = "default_pitch")]
+    pub pitch: f64,
+    #[serde(default = "default_zoom")]
+    pub zoom: f64,
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: Map<String, Value>,
@@ -297,6 +370,22 @@ fn nan() -> f64 {
 }
 fn yes() -> bool {
     true
+}
+/// The yaw of a camera that gives none.
+pub const DEFAULT_YAW: f64 = -std::f64::consts::FRAC_PI_4;
+/// The pitch of a camera that gives none.
+pub const DEFAULT_PITCH: f64 = std::f64::consts::PI / 6.0;
+/// The zoom of a camera that gives none.
+pub const DEFAULT_ZOOM: f64 = 1.0;
+
+fn default_yaw() -> f64 {
+    DEFAULT_YAW
+}
+fn default_pitch() -> f64 {
+    DEFAULT_PITCH
+}
+fn default_zoom() -> f64 {
+    DEFAULT_ZOOM
 }
 pub(crate) fn default_field_grid() -> u32 {
     21

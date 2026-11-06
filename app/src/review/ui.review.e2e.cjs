@@ -44,6 +44,41 @@ test("1024x768 (common projector): the centre column stays inside its grid track
   }
 });
 
+const thumbsDrawn = (page, selector) =>
+  page.$$eval(`${selector} .ds-template-card-thumb canvas`, (canvases) =>
+    canvases.map((c) => c.width > 0 && c.height > 0 && c.getContext("2d").getImageData(1, 1, 1, 1).data[3] > 0),
+  );
+
+test("gallery: 31 templates under Strogatz's chapters in book order, thumbnails drawn as they scroll into view", async () => {
+  const { browser, page } = await open();
+  try {
+    const heads = await page.$$eval(".gallery-chapter-head", (hs) => hs.map((h) => h.firstChild.textContent));
+    assert.deepEqual(heads, [2, 3, 4, 5, 6, 7, 8, 9, 10, 12].map((n) => `Chapter ${n}`).concat("Your own system"));
+    assert.equal(await page.locator(".gallery .card:not(.blank)").count(), 31);
+    const refs = await page.$$eval(".gallery .ds-template-card-ref", (r) => r.map((x) => x.textContent));
+    const order = refs.filter((r) => r.startsWith("Strogatz §")).map((r) => r.slice(10).split(".").map(Number));
+    const sorted = [...order].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    assert.deepEqual(order, sorted, "cards follow the book's sections");
+
+    await page.waitForFunction(() => {
+      const c = document.querySelector("#gallery-ch-2 + ul canvas");
+      return c && c.getContext("2d").getImageData(1, 1, 1, 1).data[3] > 0;
+    });
+    await page.waitForTimeout(800);
+    const far = '.gallery-chapter[aria-labelledby="gallery-ch-12"]';
+    assert.ok((await thumbsDrawn(page, far)).every((d) => !d), "chapter 12, far below the fold, isn't computed yet");
+    await page.locator("#gallery-ch-12").evaluate((h) => h.scrollIntoView({ block: "start" }));
+    await page.waitForFunction(
+      (sel) =>
+        [...document.querySelectorAll(`${sel} canvas`)].every((c) => c.getContext("2d").getImageData(1, 1, 1, 1).data[3] > 0),
+      far,
+      { timeout: 15000 },
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
 test("first-run gallery keeps keyboard focus inside the dialog", async () => {
   const { browser, page } = await open();
   try {

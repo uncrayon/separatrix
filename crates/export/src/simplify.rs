@@ -88,7 +88,8 @@ pub fn simplify_polyline(vp: &Viewport, poly: &[(f64, f64)], tol: f64) -> Vec<(f
 
 /// A run (`t`, row-major `x` with `dim` columns) cut at its first sample
 /// whose shown coordinates are not finite and, for a flow, simplified at
-/// `tol` figure pixels. A map's iterates are dots, so they are only cut.
+/// `tol` figure pixels. A map's iterates are dots, so they are only cut
+/// (pass [`SystemKind::Map`] for a section's crossings too).
 /// Returns the kept `t` and `x`.
 #[allow(clippy::too_many_arguments)]
 pub fn simplify_run(
@@ -134,8 +135,13 @@ pub fn simplify_portrait(p: &mut Portrait, width: f64, height: f64, tol: f64) {
     for line in &mut p.graph {
         *line = simplify_polyline(&vp, line, tol * GRAPH_TOLERANCE_PX / EXPORT_TOLERANCE_PX);
     }
+    let kind = if p.section.is_some() {
+        SystemKind::Map
+    } else {
+        p.kind
+    };
     for tr in &mut p.trajectories {
-        let (t, x) = simplify_run(&vp, p.kind, p.x_axis, p.y_axis, p.dim, &tr.t, &tr.x, tol);
+        let (t, x) = simplify_run(&vp, kind, p.x_axis, p.y_axis, p.dim, &tr.t, &tr.x, tol);
         tr.t = t;
         tr.x = x;
     }

@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { compileSystem, computePortrait } from "../api/client";
 import type { CompileResponse, PortraitResponse, SystemKind } from "../api/types";
-import { fixedPointGlyph } from "../canvas/draw";
+import { fixedPointGlyph, trajectoryPx } from "../canvas/draw";
 import { readPlotTheme } from "../canvas/theme";
 import { makeViewport, sx, sy, hasEqualScales, type Viewport } from "../canvas/viewport";
 import { cobwebPx, diagonalSegment, graphPx, orbitValues } from "../canvas/cobweb";
+import { drawSpaceLines } from "../canvas/space";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
   autoSamples,
   isCobweb,
+  isReturnMap,
+  isSection,
+  isSpace,
   portraitGraph,
   templateView,
   trajectorySpans,
@@ -79,8 +83,10 @@ function computeThumb(t: Template): Promise<Thumb | null> {
       });
       const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
       const shown = makeViewport(ASPECT * 100, 100, view.xRange, view.yRange, hasEqualScales(view, kind));
-      const planar = kind === "ode" && dim <= 2;
+      const section = isSection(view) ? view.section : null;
+      const planar = kind === "ode" && dim <= 2 && !section;
       const cobweb: MapRequestFields = isCobweb(view) ? { graphSamples: THUMB_GRAPH_SAMPLES, transient: 0 } : {};
+      const crossings = section ? { section, transient: t.transient ?? 0 } : {};
       const res = await computePortrait({
         requestId: nextRequestId++,
         systemId: sys.systemId,
@@ -98,6 +104,7 @@ function computeThumb(t: Template): Promise<Thumb | null> {
         solver: { method: "rk4", rtol: solver.rtol, atol: solver.atol, h: STEP, maxSteps: solver.maxSteps },
         samples: autoSamples(maxSpan),
         ...cobweb,
+        ...crossings,
       });
       return { kind, dim, view, res, icOf };
     })().catch(() => {
@@ -128,6 +135,12 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
 
   ctx.fillStyle = th.bg;
   ctx.fillRect(0, 0, w, h);
+
+  if (isSpace(view)) {
+    const lines = res.trajectories.map((out, i) => ({ out, color: icOf[i] ?? i, backward: false, selected: false }));
+    drawSpaceLines(ctx, view, w, h, lines, dim, { ...th, lineScale: 0.5 * s });
+    return;
+  }
 
   ctx.strokeStyle = th.axis;
   ctx.lineWidth = 1;
@@ -169,6 +182,11 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
 
   if (isCobweb(view)) {
     drawCobwebThumb(ctx, vp, thumb, th);
+    return;
+  }
+
+  if (isSection(view)) {
+    drawSectionThumb(ctx, vp, thumb, th);
     return;
   }
 
@@ -244,6 +262,33 @@ function drawThumbFixedPoint(
   }
 }
 
+function drawSectionThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thumb, th: ReturnType<typeof readPlotTheme>) {
+  const { view, res, kind, dim, icOf } = thumb;
+  if (!isSection(view)) return;
+  const returnMap = isReturnMap(view);
+  const d = returnMap ? diagonalSegment(vp.xRange, vp.yRange) : null;
+  if (d) {
+    ctx.strokeStyle = th.axis;
+    ctx.lineWidth = 0.75 * th.lineScale;
+    ctx.beginPath();
+    ctx.moveTo(sx(vp, d[0]), sy(vp, d[1]));
+    ctx.lineTo(sx(vp, d[2]), sy(vp, d[3]));
+    ctx.stroke();
+  }
+  const scene = { kind, dim, xAxis: view.xAxis, yAxis: view.yAxis, section: { returnMap } };
+  const r = 0.75 * th.lineScale;
+  res.trajectories.forEach((tr, i) => {
+    ctx.fillStyle = th.traj[(icOf[i] ?? i) % th.traj.length];
+    const pts = trajectoryPx(vp, scene, tr);
+    ctx.beginPath();
+    for (let k = 0; k < pts.length; k += 2) {
+      ctx.moveTo(pts[k] + r, pts[k + 1]);
+      ctx.arc(pts[k], pts[k + 1], r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+  });
+}
+
 /** A cobweb thumbnail: the diagonal, the graph of f and each orbit's staircase (canvas/cobweb.ts). */
 function drawCobwebThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thumb, th: ReturnType<typeof readPlotTheme>) {
   const s = th.lineScale;
@@ -286,14 +331,28 @@ function drawCobwebThumb(ctx: CanvasRenderingContext2D, vp: Viewport, thumb: Thu
 export function TemplateThumb({ template }: { template: Template }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [thumb, setThumb] = useState<Thumb | null>(null);
+  const [near, setNear] = useState(false);
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || near) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && setNear(true));
+    io.observe(canvas);
+    return () => io.disconnect();
+  }, [near]);
+
+  useEffect(() => {
+    if (!near) return;
     let live = true;
     void computeThumb(template).then((t) => live && setThumb(t));
     return () => {
       live = false;
     };
-  }, [template]);
+  }, [template, near]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

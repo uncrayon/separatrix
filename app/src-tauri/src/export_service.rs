@@ -21,7 +21,7 @@ use separatrix_export::{
 use crate::ipc::{
     AxisRef, CsvFileOut, CsvRequest, CsvResponse, ExportPortraitRequest, ExportTheme,
     FigureLatexRequest, FixedPointsLatexRequest, Notation, PortraitRequest, PortraitResponse,
-    SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
+    SectionSpec, SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
 };
 use crate::service;
 
@@ -75,10 +75,14 @@ fn to_axis(a: AxisRef) -> separatrix_export::Axis {
     }
 }
 
+pub const SPACE_LATEX_REFUSAL: &str =
+    "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
 /// `compute_export_portrait`: [`service::compute_portrait`], then every
 /// curve cut at its first non-finite point and simplified with RDP at
-/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates are only cut;
-/// the graph of a cobweb's `f` is simplified like the nullclines).
+/// [`EXPORT_TOLERANCE_PX`] in figure pixels (map iterates, a section's
+/// crossings and a 3D view's trajectories are only cut; the graph of a
+/// cobweb's `f` is simplified like the nullclines).
 /// The last result is cached by request (its `requestId` aside).
 pub fn export_portrait(
     cache: &ExportCache,
@@ -121,10 +125,15 @@ pub fn export_portrait(
     for line in out.graph.iter_mut().flatten() {
         *line = simplify_polyline(&vp, line, GRAPH_TOLERANCE_PX);
     }
+    let kind = if req.portrait.section.is_some() || req.portrait.z_axis.is_some() {
+        SystemKind::Map
+    } else {
+        f.kind()
+    };
     for tr in &mut out.trajectories {
         let (t, x) = simplify_run(
             &vp,
-            f.kind(),
+            kind,
             to_axis(req.portrait.x_axis),
             to_axis(req.portrait.y_axis),
             f.dim(),
@@ -216,10 +225,30 @@ pub fn to_export_portrait(
             req.transient
                 .unwrap_or(0)
                 .min(service::MAX_ITERATES.saturating_sub(max_iterates(req)))
+        } else if req.section.is_some() {
+            req.transient.unwrap_or(0)
         } else {
             0
         },
+        section: req.section.filter(|_| !is_map).map(to_section),
     })
+}
+
+fn to_section(s: SectionSpec) -> separatrix_export::SectionSpec {
+    match s {
+        SectionSpec::Plane {
+            state,
+            value,
+            direction,
+        } => separatrix_export::SectionSpec::Plane {
+            state,
+            value,
+            direction,
+        },
+        SectionSpec::Stroboscopic { period, phase } => {
+            separatrix_export::SectionSpec::Stroboscopic { period, phase }
+        }
+    }
 }
 
 /// The largest iterate count requested, as `service::trajectory` rounds it.
@@ -262,6 +291,9 @@ pub fn figure_latex(
             "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
             req.width_cm, req.height_cm
         ));
+    }
+    if req.portrait.z_axis.is_some() {
+        return Err(SPACE_LATEX_REFUSAL.to_string());
     }
     let res = export_portrait(
         cache,
@@ -370,6 +402,7 @@ pub fn csv(system: &CompiledSystem, req: &CsvRequest) -> Result<CsvResponse, Str
         title: &req.title,
         app_version: APP_VERSION,
         transient: portrait.transient,
+        section: portrait.section,
     });
     Ok(CsvResponse {
         files: files
@@ -532,6 +565,9 @@ mod tests {
             samples: 4000,
             graph_samples: None,
             transient: None,
+            section: None,
+            z_axis: None,
+            z_range: None,
         }
     }
 
@@ -825,6 +861,81 @@ mod tests {
             "{}",
             files[0].meta
         );
+    }
+
+    #[test]
+    fn a_3d_view_has_no_latex_figure_and_keeps_every_sample() {
+        let store = SystemStore::new();
+        let res = service::compile_system(
+            &store,
+            &CompileRequest {
+                source: "\\dot{x}=10(y-x)\n\\dot{y}=x(28-z)-y\n\\dot{z}=xy-\\frac{8}{3}z".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let id = res.system_id.unwrap();
+        let sys = store.get(id).unwrap();
+        let mut portrait = request(id);
+        portrait.x_range = (-25.0, 25.0);
+        portrait.y_range = (-30.0, 30.0);
+        portrait.base_state = vec![0.0, 0.0, 0.0];
+        portrait.field_grid = 0;
+        portrait.nullclines = false;
+        portrait.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0, 1.0, 1.0],
+            t0: 0.0,
+            t1: 25.0,
+        }];
+        portrait.z_axis = Some(AxisRef::State { index: 2 });
+        portrait.z_range = Some((0.0, 50.0));
+        let fig = FigureLatexRequest {
+            portrait: portrait.clone(),
+            tags: vec![tags()[0].clone()],
+            width_cm: 8.0,
+            height_cm: 6.4,
+            theme: ExportTheme::Light,
+            title: "Lorenz equations".into(),
+            source_ref: None,
+            lines: vec![],
+            format: InputFormat::Latex,
+            standalone: true,
+        };
+        let cache = ExportCache::new();
+        let refusal = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+        for placement in [
+            Placement::Inline,
+            Placement::External {
+                base: "lorenz".into(),
+            },
+        ] {
+            assert_eq!(
+                figure_latex(&cache, &sys, &fig, placement).unwrap_err(),
+                refusal
+            );
+        }
+        let mut plane = fig.clone();
+        plane.portrait.z_axis = None;
+        plane.portrait.z_range = None;
+        assert!(figure_latex(&cache, &sys, &plane, Placement::Inline).is_ok());
+
+        let at = |p: &PortraitRequest| {
+            export_portrait(
+                &ExportCache::new(),
+                &sys,
+                &ExportPortraitRequest {
+                    portrait: p.clone(),
+                    width_px: 400.0,
+                    height_px: 300.0,
+                },
+            )
+            .unwrap()
+            .trajectories[0]
+                .t
+                .len()
+        };
+        assert_eq!(at(&portrait), portrait.samples);
+        assert!(at(&plane.portrait) < portrait.samples / 2);
     }
 
     #[test]

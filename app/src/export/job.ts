@@ -18,12 +18,17 @@ import type {
   TrajectoryTag,
 } from "../api/types";
 import type { Scene } from "../canvas/draw";
+import type { FigureFonts } from "../canvas/figure";
+import { fitCamera, spaceNames, type SpaceFigure } from "../canvas/space";
 import { viewAxisLabels } from "../math/format";
 import {
   COBWEB_GRAPH_SAMPLES,
   MAX_GRAPH_SAMPLES,
   buildPortraitJob,
   isCobweb,
+  isReturnMap,
+  isSection,
+  isSpace,
   portraitGraph,
   type InitialCondition,
   type MapRequestFields,
@@ -71,6 +76,7 @@ export interface FigureJob {
   dim: number;
   /** A cobweb plot: the graph of f, the diagonal and the staircases. */
   cobweb: boolean;
+  section: { returnMap: boolean } | null;
 }
 
 /** The figure's portrait at `widthPx` × `heightPx` with `layers`, or null without a compiled system. */
@@ -104,6 +110,7 @@ export function buildFigureJob(
     kind: sys.kind === "map" ? "map" : "ode",
     dim: sys.states.length,
     cobweb,
+    section: isSection(s.view) ? { returnMap: isReturnMap(s.view) } : null,
   };
 }
 
@@ -140,6 +147,26 @@ export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialC
     stale: false,
     avoid: { labels: [], field: [] },
     cobweb: job.cobweb ? { graph: portraitGraph(res) ?? [] } : null,
+    section: job.section,
+  };
+}
+
+export function exportSpaceFigure(
+  job: FigureJob,
+  scene: Scene,
+  states: readonly { latex: string }[],
+  fonts?: FigureFonts,
+): SpaceFigure | null {
+  if (!isSpace(job.view)) return null;
+  return {
+    view: { ...job.view, camera: fitCamera(job.view, job.widthPx, job.heightPx) },
+    trajectories: scene.trajectories.map((t) => ({
+      out: t.out,
+      color: t.color,
+      backward: t.meta.direction === "backward",
+      selected: false,
+    })),
+    marks: { dim: job.dim, names: spaceNames(job.view, states), fixedPoints: scene.fixedPoints, ics: [], fonts },
   };
 }
 

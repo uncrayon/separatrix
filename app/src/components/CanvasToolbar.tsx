@@ -6,15 +6,22 @@ import { MathProse } from "../math/MathProse";
 import { axisLatex, latexToPlain, sameAxis, viewAxisLabels } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
-  VIEW_CHOICES,
   VIEW_CHOICE_LABELS,
   hasNullclineLayer,
   isCobweb,
+  isReturnMap,
+  isSection,
+  isSpace,
   portraitFits,
+  spaceStates,
+  stateExtent,
+  type SpaceView,
   viewChoice,
   viewChoiceAvailability,
+  viewChoicesFor,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
+import { Select } from "./controls";
 import { systemNameOf } from "./systemName";
 import {
   IconCheck,
@@ -81,10 +88,12 @@ export function CanvasToolbar({ state, actions }: Props) {
   const sys = state.compiled;
   if (!sys) return null;
   const isMap = sys.kind === "map";
+  const space = isSpace(state.view) ? state.view : null;
 
   const zoomToFit = () => {
-    const fit = fitView(state);
-    if (fit) actions.setView({ ...state.view, ...fit });
+    const v = state.view;
+    const fit = isSpace(v) ? fitSpace(state, v) : fitView(state);
+    if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
 
@@ -104,8 +113,8 @@ export function CanvasToolbar({ state, actions }: Props) {
       onClick: actions.resetView,
     },
   ];
-  const layers: IconButtonSpec[] = [
-    ...(!isMap
+  const layers: IconButtonSpec[] = isSection(state.view) ? [] : [
+    ...(!isMap && !space
       ? [
           {
             key: "field",
@@ -118,7 +127,7 @@ export function CanvasToolbar({ state, actions }: Props) {
         ]
       : []),
     // Shown whenever the layer is requested and drawn, time on an axis or not.
-    ...(hasNullclineLayer(sys.kind)
+    ...(hasNullclineLayer(sys.kind) && !space
       ? [
           {
             key: "nullclines",
@@ -140,13 +149,14 @@ export function CanvasToolbar({ state, actions }: Props) {
     },
   ];
 
+  const tools = space ? [] : TOOLS;
   const keys = [
-    ...TOOLS.map((t) => t.key as string),
+    ...tools.map((t) => t.key as string),
     ...view.map((b) => b.key),
     ...layers.map((b) => b.key),
     "axes",
   ];
-  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : tool;
+  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space ? "axes" : tool;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -201,8 +211,9 @@ export function CanvasToolbar({ state, actions }: Props) {
       aria-label="Plot tools"
       onKeyDown={onKeyDown}
     >
+      {tools.length > 0 && (
       <div className="ds-canvas-toolbar-group" role="group" aria-label="Tool">
-        {TOOLS.map((t) =>
+        {tools.map((t) =>
           button({
             ...t,
             ...(t.key === "add" && isCobweb(state.view)
@@ -214,14 +225,21 @@ export function CanvasToolbar({ state, actions }: Props) {
           }),
         )}
       </div>
-      <span className="ds-canvas-toolbar-divider toolbar-view" role="separator" aria-orientation="vertical" />
+      )}
+      {tools.length > 0 && (
+        <span className="ds-canvas-toolbar-divider toolbar-view" role="separator" aria-orientation="vertical" />
+      )}
       <div className="ds-canvas-toolbar-group toolbar-view" role="group" aria-label="View">
         {view.map(button)}
       </div>
-      <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
-      <div className="ds-canvas-toolbar-group" role="group" aria-label="Layers">
-        {layers.map(button)}
-      </div>
+      {layers.length > 0 && (
+        <>
+          <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
+          <div className="ds-canvas-toolbar-group" role="group" aria-label="Layers">
+            {layers.map(button)}
+          </div>
+        </>
+      )}
       <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
       <AxisPicker
         state={state}
@@ -229,14 +247,73 @@ export function CanvasToolbar({ state, actions }: Props) {
         tabIndex={tabStop === "axes" ? 0 : -1}
         onFocus={() => setStop("axes")}
       />
+      {space && <SpaceAxes view={space} state={state} actions={actions} />}
     </div>
   );
+}
+
+const SPACE_SLOTS = ["First", "Second", "Third"] as const;
+
+function SpaceAxes({ view, state, actions }: Props & { view: SpaceView }) {
+  const sys = state.compiled!;
+  const axes = spaceStates(view);
+  const options = sys.states.map((st, i) => ({ value: `s${i}`, label: latexToPlain(st.latex) }));
+  return (
+    <div className="ds-canvas-toolbar-group space-axes" role="group" aria-label="3D axes">
+      {axes.map((index, slot) => (
+        <Select
+          key={slot}
+          size="sm"
+          math
+          auto
+          value={`s${index}`}
+          options={options}
+          ariaLabel={`${SPACE_SLOTS[slot]} axis of the 3D view`}
+          onChange={(v) => actions.setSpaceAxis(slot as 0 | 1 | 2, Number(v.slice(1)))}
+        />
+      ))}
+    </div>
+  );
+}
+
+function fitSpace(state: StudioState, view: SpaceView): Pick<SpaceView, "xRange" | "yRange" | "zRange"> | null {
+  const sys = state.compiled;
+  if (!sys) return null;
+  const dim = sys.states.length;
+  const p = state.portrait;
+  const valid = portraitFits(sys, state.shapeId, p);
+  const ranges = spaceStates(view).map((i): [number, number] | null => {
+    const ext = valid ? stateExtent(p.res, dim, i) : null;
+    let [lo, hi] = ext ?? [Infinity, -Infinity];
+    const more = [
+      ...state.ics.filter((ic) => ic.x0.length === dim && !ic.hidden).map((ic) => ic.x0[i]),
+      ...(valid && state.layers.fixedPoints ? p.res.fixedPoints.map((fp) => fp.x[i]) : []),
+    ];
+    for (const v of more) {
+      if (!Number.isFinite(v)) continue;
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
+    }
+    if (!(lo <= hi)) return null;
+    const pad = Math.max(0.1 * (hi - lo), 0.5);
+    return [lo - pad, hi + pad];
+  });
+  if (ranges.some((r) => !r)) return null;
+  const [xRange, yRange, zRange] = ranges as [number, number][];
+  return { xRange, yRange, zRange };
 }
 
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
   if (!sys) return null;
   const dim = sys.states.length;
+  const { xAxis: rx } = state.view;
+  if (isReturnMap(state.view) && rx.kind === "state") {
+    const p = state.portrait;
+    const vs = portraitFits(sys, state.shapeId, p) ? p.res.trajectories.flatMap((out) => orbitValues(out, dim, rx.index)) : [];
+    const r = cobwebFit(vs);
+    return r ? { xRange: r, yRange: [r[0], r[1]] } : null;
+  }
   if (isCobweb(state.view)) {
     // The orbits and fixed points, as one square range on both axes (the diagonal stays at 45°).
     const vs: number[] = [];
@@ -312,25 +389,32 @@ function AxisPicker({
   const focusOnOpen = useRef<"current" | "first" | "last">("current");
   const menuId = useId();
 
+  const section = isSection(state.view);
+  const space = isSpace(state.view);
   const options: { key: string; value: AxisRef; latex: string; hint?: string }[] = [
     ...sys.states.map((_, i) => ({
       key: `s${i}`,
       value: { kind: "state", index: i } as AxisRef,
       latex: axisLatex({ kind: "state", index: i }, sys.states, sys.kind),
     })),
-    {
-      key: "time",
-      value: { kind: "time" } as AxisRef,
-      latex: isMap ? "n" : "t",
-      hint: isMap ? "iterate" : "time",
-    },
+    ...(section
+      ? []
+      : [
+          {
+            key: "time",
+            value: { kind: "time" } as AxisRef,
+            latex: isMap ? "n" : "t",
+            hint: isMap ? "iterate" : "time",
+          },
+        ]),
   ];
   const cobweb = isCobweb(state.view);
+  const viewOnly = cobweb || space;
   const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
-  // A cobweb's names spoken: "x n" and "x n+1".
-  const xPlain = cobweb ? `${plain(state.view.xAxis)} n` : plain(state.view.xAxis);
-  const yPlain = cobweb ? `${plain(state.view.yAxis)} n+1` : plain(state.view.yAxis);
+  const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
+  const xPlain = step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
+  const yPlain = step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -399,7 +483,7 @@ function AxisPicker({
         <div className="axes-menu-head caption" id={headId}>
           View
         </div>
-        {VIEW_CHOICES.map((c) => {
+        {viewChoicesFor(sys).map((c) => {
           const checked = c === current;
           const a = avail[c];
           return (
@@ -484,12 +568,18 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={`${cobweb ? "Cobweb" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
-        data-tooltip={cobweb ? "Choose the view" : "Choose the view and axes"}
+        aria-label={space ? "View: 3D" : `${cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
+        data-tooltip={viewOnly ? "Choose the view" : "Choose the view and axes"}
         data-tooltip-desc={
           cobweb
             ? "Phase plane, time series or cobweb."
-            : "Phase plane, time series or cobweb; each state, or time, on either axis."
+            : space
+              ? "Phase plane, time series, section or 3D; the three states are picked beside it."
+              : section
+                ? "Phase plane, time series or section; a state on each axis, or one state on both for the return map."
+                : isMap
+                  ? "Phase plane, time series or cobweb; each state, or time, on either axis."
+                  : "Phase plane, time series, section or 3D; each state, or time, on either axis."
         }
         tabIndex={tabIndex}
         onFocus={onFocus}
@@ -504,18 +594,26 @@ function AxisPicker({
           }
         }}
       >
-        <span className="ds-canvas-toolbar-dir" aria-hidden="true">
-          →
-        </span>
-        <span className="math">
-          <Tex latex={xLatex} />
-        </span>
-        <span className="ds-canvas-toolbar-dir" aria-hidden="true">
-          ↑
-        </span>
-        <span className="math">
-          <Tex latex={yLatex} />
-        </span>
+        {space ? (
+          <span className="ds-canvas-toolbar-dir" aria-hidden="true">
+            3D
+          </span>
+        ) : (
+          <>
+            <span className="ds-canvas-toolbar-dir" aria-hidden="true">
+              →
+            </span>
+            <span className="math">
+              <Tex latex={xLatex} />
+            </span>
+            <span className="ds-canvas-toolbar-dir" aria-hidden="true">
+              ↑
+            </span>
+            <span className="math">
+              <Tex latex={yLatex} />
+            </span>
+          </>
+        )}
         <IconChevronDown />
       </button>
       {open && (
@@ -528,7 +626,7 @@ function AxisPicker({
           onKeyDown={onMenuKey}
         >
           {viewGroup()}
-          {!cobweb && (
+          {!viewOnly && (
             <>
               <div role="separator" className="axes-menu-sep" />
               {group("x")}

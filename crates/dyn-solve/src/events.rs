@@ -24,6 +24,7 @@ pub struct Event {
 /// "Rising" means `g` goes from negative to non-negative *in the direction
 /// of integration* (so, backwards in time when integrating backwards).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum Direction {
     /// `g` goes from `< 0` to `>= 0`.
@@ -92,7 +93,10 @@ impl<'e> EventTracker<'e> {
                     s.interpolate(t, buf);
                     (event.g)(t, buf)
                 };
-                let tol = 1e-12 * ta.abs().max(tb.abs()).max(1.0);
+                // Relative to |t|, not 1e-12 · |t|: late in a long run the
+                // crossing time would be off by 1e-9, which a fast orbit turns
+                // into a visible distance from the plane.
+                let tol = 4.0 * f64::EPSILON * ta.abs().max(tb.abs()).max(1.0);
                 let bracket = Bracket::new(ta, tb, ga, gb).expect("a wanted crossing changes sign");
                 let t = brent(&mut g_dense, bracket, tol);
                 let mut x = vec![0.0; s.dim()];

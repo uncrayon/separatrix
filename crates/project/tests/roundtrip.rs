@@ -5,13 +5,15 @@ mod common;
 use common::{fixture, APP};
 use separatrix_project::{
     from_value_checked, parse, parse_named, to_json, Opened, ProjectAxis, ProjectError,
-    ProjectFile, CURRENT_VERSION, MAX_FILE_BYTES,
+    ProjectFile, CURRENT_VERSION, MAX_FILE_BYTES, SECTION_MISFIT, SPACE_MISFIT,
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 6] = [
+const GOOD: [&str; 8] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
+    "section-view.sepx",
+    "space-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -19,10 +21,12 @@ const GOOD: [&str; 6] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 3] = [
+const CANONICAL: [&str; 5] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
+    "section-view.sepx",
+    "space-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -1024,4 +1028,227 @@ fn a_cobweb_view_that_does_not_fit_falls_back_to_the_default_view() {
     second["id"] = json!("other");
     v["views"].as_array_mut().unwrap().push(second);
     assert!(parse(&v.to_string()).unwrap().warnings.is_empty());
+}
+
+#[test]
+fn a_section_view_is_read_and_written_back() {
+    let opened = open("section-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("section"));
+    let s = view.section.as_ref().unwrap();
+    assert_eq!(
+        (
+            s.kind.as_str(),
+            s.state.as_deref(),
+            s.value,
+            s.direction.as_deref()
+        ),
+        ("plane", Some("z"), Some(27.0), Some("rising"))
+    );
+    assert_eq!((s.period, s.phase), (None, None));
+    assert_eq!(opened.project.solver.transient, Some(10));
+    let text = to_json(&opened.project, APP).unwrap();
+    assert!(text.contains(
+        "\"kind\": \"section\",\n      \"section\": {\n        \"kind\": \"plane\",\n        \"state\": \"z\",\n        \"value\": 27.0,\n        \"direction\": \"rising\"\n      },\n      \"x_axis\""
+    ));
+}
+
+#[test]
+fn stroboscopic_and_return_map_sections_round_trip_identically() {
+    let base = value(&fixture("section-view.sepx"));
+    let strobe = {
+        let mut v = base.clone();
+        v["views"][0]["section"] =
+            json!({ "kind": "stroboscopic", "period": std::f64::consts::TAU, "phase": 0.5 });
+        v
+    };
+    let return_map = {
+        let mut v = base.clone();
+        v["views"][0]["y_axis"] = json!({ "kind": "next", "name": "x" });
+        v
+    };
+    let strobe_return_map = {
+        let mut v = strobe.clone();
+        v["views"][0]["y_axis"] = json!({ "kind": "next", "name": "x" });
+        v
+    };
+    for (name, v) in [
+        ("stroboscopic", strobe),
+        ("return map", return_map),
+        ("stroboscopic return map", strobe_return_map),
+    ] {
+        let first = parse(&v.to_string()).unwrap();
+        assert!(first.warnings.is_empty(), "{name}: {:?}", first.warnings);
+        let a = to_json(&first.project, APP).unwrap();
+        assert_eq!(value(&a)["views"][0], v["views"][0], "{name}");
+        let second = parse(&a).unwrap();
+        assert_eq!(to_json(&second.project, APP).unwrap(), a, "{name}");
+    }
+}
+
+#[test]
+fn a_section_view_that_does_not_fit_falls_back_to_the_default_view() {
+    let base = value(&fixture("section-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    assert_eq!(
+        warns(&|v| v["views"][0]["section"]["kind"] = json!("hyperbola")),
+        ["The section of the view \u{201c}main\u{201d} is of a kind (\u{201c}hyperbola\u{201d}) this version doesn't know, so the default view is used."]
+    );
+    assert_eq!(
+        warns(&|v| v["views"][0]["section"]["state"] = json!("w")),
+        ["The section of the view \u{201c}main\u{201d} holds the state w fixed, which the system doesn't have, so the default view is used."]
+    );
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 9] = [
+        ("no section", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("section");
+        }),
+        ("a map", &|v| v["system"]["kind"] = json!("map")),
+        ("no value", &|v| {
+            v["views"][0]["section"]
+                .as_object_mut()
+                .unwrap()
+                .remove("value");
+        }),
+        ("an unknown direction", &|v| {
+            v["views"][0]["section"]["direction"] = json!("sideways")
+        }),
+        ("a plane of one state", &|v| {
+            v["system"]["states"] = json!(["z"]);
+            v["initial_conditions"] = json!([]);
+            v["views"][0]["x_axis"] = json!({ "kind": "state", "name": "z" });
+            v["views"][0]["y_axis"] = json!({ "kind": "next", "name": "z" });
+        }),
+        ("a period of 0", &|v| {
+            v["views"][0]["section"] = json!({ "kind": "stroboscopic", "period": 0.0 })
+        }),
+        ("a time axis", &|v| {
+            v["views"][0]["x_axis"] = json!({ "kind": "time" })
+        }),
+        ("one state on both axes", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "state", "name": "x" })
+        }),
+        ("the next crossing of another state", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "next", "name": "y" })
+        }),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [SECTION_MISFIT], "{name}");
+    }
+    let mut v = base.clone();
+    v["views"][0]["section"]["kind"] = json!("hyperbola");
+    v["views"][0]["section"]["focus"] = json!([1, 2]);
+    let opened = parse(&v.to_string()).unwrap();
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["section"],
+        v["views"][0]["section"]
+    );
+    // JSON can't hold a non-finite section value.
+    let mut p = open("section-view.sepx").project;
+    p.views[0].section.as_mut().unwrap().value = Some(f64::NAN);
+    assert!(to_json(&p, APP)
+        .unwrap_err()
+        .to_string()
+        .contains("views[0].section.value"));
+}
+
+#[test]
+fn a_space_view_is_read_and_written_back() {
+    let opened = open("space-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("space"));
+    assert_eq!(view.z_axis, Some(ProjectAxis::state("z")));
+    assert_eq!(view.z_range, Some([0.0, 50.0]));
+    let c = view.camera.as_ref().unwrap();
+    assert_eq!(
+        (c.yaw, c.pitch, c.zoom),
+        (
+            -std::f64::consts::FRAC_PI_4,
+            std::f64::consts::PI / 6.0,
+            1.0
+        )
+    );
+    let text = to_json(&opened.project, APP).unwrap();
+    assert!(text.contains(
+        "\"y_axis\": {\n        \"kind\": \"state\",\n        \"name\": \"y\"\n      },\n      \"z_axis\": {"
+    ));
+    assert!(text.contains(
+        "\"z_range\": [\n        0.0,\n        50.0\n      ],\n      \"camera\": {\n        \"yaw\": -0.7853981633974483,"
+    ));
+    let mut v = value(&fixture("space-view.sepx"));
+    v["views"][0]["camera"] = json!({ "zoom": 2.5, "roll": 0.1 });
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let c = opened.project.views[0].camera.as_ref().unwrap();
+    assert_eq!(
+        (c.yaw, c.pitch, c.zoom),
+        (
+            -std::f64::consts::FRAC_PI_4,
+            std::f64::consts::PI / 6.0,
+            2.5
+        )
+    );
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["camera"]["roll"],
+        json!(0.1)
+    );
+}
+
+#[test]
+fn a_space_view_that_does_not_fit_falls_back_to_the_default_view() {
+    let base = value(&fixture("space-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 6] = [
+        ("a map", &|v| v["system"]["kind"] = json!("map")),
+        ("two states", &|v| {
+            v["system"]["states"] = json!(["x", "y"]);
+            v["initial_conditions"] = json!([]);
+        }),
+        ("no third axis", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("z_axis");
+        }),
+        ("no third range", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("z_range");
+        }),
+        ("a time axis", &|v| {
+            v["views"][0]["z_axis"] = json!({ "kind": "time" })
+        }),
+        ("one state twice", &|v| {
+            v["views"][0]["z_axis"] = json!({ "kind": "state", "name": "x" })
+        }),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [SPACE_MISFIT], "{name}");
+    }
+    assert_eq!(
+        warns(&|v| v["views"][0]["z_axis"]["name"] = json!("w")),
+        ["The z axis of the view \u{201c}main\u{201d} uses the state w, which the system doesn't have, so the default view is used."]
+    );
+    assert_eq!(
+        warns(&|v| v["views"][0]["z_range"] = json!([5.0, 5.0])),
+        ["The z range of the view \u{201c}main\u{201d} (5 to 5) is empty, so the default view is used."]
+    );
+    assert!(warns(&|v| {
+        v["views"][0].as_object_mut().unwrap().remove("kind");
+        v["views"][0]["z_range"] = json!([5.0, 5.0]);
+    })
+    .is_empty());
+    // JSON can't hold a non-finite camera.
+    let mut p = open("space-view.sepx").project;
+    p.views[0].camera.as_mut().unwrap().zoom = f64::INFINITY;
+    assert!(to_json(&p, APP)
+        .unwrap_err()
+        .to_string()
+        .contains("views[0].camera.zoom"));
 }

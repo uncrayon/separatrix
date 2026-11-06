@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Scene } from "../canvas/draw";
 import { drawFigure, type FigureFonts } from "../canvas/figure";
+import { drawSpaceFigure, type SpaceFigure } from "../canvas/space";
 import type { PlotTheme } from "../canvas/theme";
 import { makeViewport } from "../canvas/viewport";
 
@@ -18,11 +19,12 @@ interface Props {
   label: string;
   caption: ReactNode;
   busy: boolean;
+  space?: SpaceFigure | null;
 }
 
 /**
- * The exported figure, drawn by the same code as the PNG and SVG (drawFigure)
- * at the figure's own size and scaled into the well, so line weights and
+ * The exported figure, drawn by the same code as the PNG and SVG (drawFigure,
+ * or drawSpaceFigure for a 3D view) at the figure's own size and scaled into the well, so line weights and
  * type sit as they will in the file.
  */
 export function ExportPreview({
@@ -38,6 +40,7 @@ export function ExportPreview({
   label,
   caption,
   busy,
+  space,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -68,9 +71,13 @@ export function ExportPreview({
     // One scale for both directions: the well has the figure's aspect, so this fills it.
     const k = Math.min(box.w / widthPx, box.h / heightPx) * dpr;
     ctx.setTransform(k, 0, 0, k, 0, 0);
-    const vp = makeViewport(widthPx, heightPx, xRange, yRange);
-    drawFigure(ctx, widthPx, heightPx, vp, scene, theme, { background: !transparent, names, fonts });
-  }, [box, widthPx, heightPx, xRange, yRange, scene, theme, names, fonts, transparent]);
+    if (space) drawSpaceFigure(ctx, widthPx, heightPx, space, theme, !transparent);
+    else drawFigure(ctx, widthPx, heightPx, makeViewport(widthPx, heightPx, xRange, yRange), scene, theme, {
+      background: !transparent,
+      names,
+      fonts,
+    });
+  }, [box, widthPx, heightPx, xRange, yRange, scene, theme, names, fonts, transparent, space]);
 
   return (
     <figure className="ds-export-preview">

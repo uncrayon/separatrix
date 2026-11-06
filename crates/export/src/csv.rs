@@ -10,7 +10,7 @@ use dyn_expr::InputFormat;
 use serde::Serialize;
 
 use crate::latex_util::slug;
-use crate::model::{Labels, SystemKind, Trajectory};
+use crate::model::{Labels, SectionSpec, SystemKind, Trajectory};
 use crate::num::shortest;
 use crate::words::{status_id, time_name};
 
@@ -123,6 +123,10 @@ struct Meta<'a> {
     /// Maps only: iterates computed but not written (the first row is `n = T`).
     #[serde(skip_serializing_if = "Option::is_none")]
     transient: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    section: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped_crossings: Option<usize>,
     segments: Vec<MetaSegment>,
     notes: Vec<&'static str>,
 }
@@ -146,8 +150,11 @@ pub struct CsvInput<'a> {
     pub title: &'a str,
     /// The app's version, for the metadata.
     pub app_version: &'a str,
-    /// Map iterates computed but not written before each orbit (maps only).
+    /// Map iterates, or a section's crossings, computed but not written
+    /// before each orbit.
     pub transient: usize,
+    /// A Poincaré section: each run is the orbit's crossings of it.
+    pub section: Option<SectionSpec>,
 }
 
 /// One exported initial condition.
@@ -194,7 +201,15 @@ pub fn meta(
     if let Some(f) = forward {
         segments.push(segment(f, false));
     }
-    let mut notes = vec!["Rows are in increasing time; the start row appears once."];
+    let mut notes = vec![match input.section {
+        Some(SectionSpec::Plane { .. }) => {
+            "Rows are the orbit's crossings of the section, in increasing time; the start point is not one."
+        }
+        Some(SectionSpec::Stroboscopic { .. }) => {
+            "Rows are the samples at t = phase + k·period inside the run, in increasing time; t0 is a row when it is a sample time."
+        }
+        None => "Rows are in increasing time; the start row appears once.",
+    }];
     if backward.is_some() && forward.is_some() && input.kind == SystemKind::Ode {
         notes.push("The time step can differ between the backward and forward segments.");
     }
@@ -229,6 +244,8 @@ pub fn meta(
                 .filter(|n| n.is_finite() && **n >= 0.0)
                 .map_or(input.transient, |&n| n as usize)
         }),
+        section: input.section.map(|s| s.describe(input.labels)),
+        skipped_crossings: input.section.map(|_| input.transient),
         segments,
         notes,
     };

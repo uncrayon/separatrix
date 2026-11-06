@@ -248,6 +248,7 @@ fn rabbits_vs_sheep() {
         title: &case.template.title,
         app_version: "0.2.0",
         transient: case.portrait.transient,
+        section: None,
     });
     assert_eq!(csv_files.len(), 1);
     assert_eq!(csv_files[0].stem, "rabbits-vs-sheep-trajectory-1");
@@ -279,6 +280,119 @@ fn lorenz() {
     check_figure("lorenz-figure", &fig);
     // One head per trajectory in 3D.
     assert_eq!(fig.tex.matches("\\fill[sepxtraj1]").count(), 1);
+}
+
+/// The Lorenz orbit's crossings of the plane z = 27, upward, after `skip`
+/// crossings. Fixed-step RK4: no step-size `powf`, and the
+/// right-hand side is polynomial, so every crossing is plain arithmetic.
+fn lorenz_section(case: &Case, skip: usize) -> dyn_solve::Solution {
+    let opts = dyn_solve::SolverOptions {
+        method: dyn_solve::Method::Rk4,
+        h: 0.005,
+        max_steps: 200_000,
+        ..dyn_solve::SolverOptions::default()
+    };
+    let plane = dyn_solve::Section::Plane {
+        state: 2,
+        value: 27.0,
+        direction: dyn_solve::Direction::Rising,
+    };
+    let x0 = &case.template.initial_conditions[0];
+    dyn_solve::section(
+        &case.system,
+        &case.params,
+        0.0,
+        x0,
+        60.0,
+        &opts,
+        &plane,
+        skip,
+        100_000,
+    )
+}
+
+#[test]
+fn lorenz_section_in_x_and_y() {
+    let mut case = case(
+        "lorenz",
+        &Options {
+            field_grid: 0,
+            ..Options::default()
+        },
+    );
+    let sol = lorenz_section(&case, 10);
+    let all = lorenz_section(&case, 0);
+    assert_eq!(sol.t.len() + 10, all.t.len(), "ten crossings are skipped");
+    assert_eq!(
+        sol.t[0], all.t[10],
+        "the first crossing written is the eleventh"
+    );
+    assert!(sol.x.chunks(3).all(|x| (x[2] - 27.0).abs() < 1e-9));
+    let p = &mut case.portrait;
+    p.x_axis = separatrix_export::Axis::State { index: 0 };
+    p.y_axis = separatrix_export::Axis::State { index: 1 };
+    (p.x_range, p.y_range) = equalize((-20.0, 20.0), (-25.0, 25.0), 8.0 / 6.0);
+    p.nullclines.clear();
+    p.fixed_points.clear();
+    p.transient = 10;
+    p.section = Some(separatrix_export::SectionSpec::Plane {
+        state: 2,
+        value: 27.0,
+        direction: separatrix_export::Direction::Rising,
+    });
+    p.trajectories[0].t = sol.t.clone();
+    p.trajectories[0].x = sol.x.clone();
+    p.trajectories[0].status = sol.status;
+    let crossings = sol.t.len();
+
+    let fig = figure_of(&case, Placement::Inline, Theme::Light, false);
+    check_figure("lorenz-section-figure", &fig);
+    let tex = &fig.tex;
+    for want in [
+        "% Section: plane z = 27 (increasing).\n",
+        "% Skipped crossings: the first 10 of each orbit are not drawn.\n",
+        "% Section of ic-1\n\\addplot[sepxtraj1, only marks, mark=*, mark size=1.95bp",
+        "{$x$}",
+        "{$y$}",
+    ] {
+        assert!(tex.contains(want), "no {want:?}");
+    }
+    assert!(
+        !tex.contains("\\fill[sepxtraj1]"),
+        "crossings have no arrow heads"
+    );
+    assert!(
+        !tex.contains("% Diagonal"),
+        "a section in two states has no diagonal"
+    );
+    let rest = &tex[tex.find("% Section of ic-1").unwrap()..];
+    let body = &rest[rest.find("]{\n").unwrap() + 3..];
+    let rows = body[..body.find('}').unwrap()].lines().skip(1).count();
+    assert_eq!(rows, crossings);
+
+    let files = csv::files(&CsvInput {
+        kind: case.portrait.kind,
+        labels: &case.labels,
+        trajectories: &case.portrait.trajectories,
+        ic_ids: &[],
+        lines: &case.template.equations,
+        format: case.template.format,
+        title: "Lorenz section",
+        app_version: "0.2.0",
+        transient: case.portrait.transient,
+        section: case.portrait.section,
+    });
+    assert_eq!(files.len(), 1);
+    check("lorenz-section-trajectory-1.csv", &files[0].csv);
+    assert_eq!(files[0].csv.lines().count(), 1 + crossings);
+    let meta = &files[0].meta;
+    assert!(
+        meta.contains("\n  \"section\": \"plane z = 27 (increasing)\",\n"),
+        "{meta}"
+    );
+    assert!(meta.contains("\n  \"skipped_crossings\": 10,\n"), "{meta}");
+    assert!(meta.contains("crossings of the section"), "{meta}");
+    assert!(!meta.contains("\"transient\""), "{meta}");
 }
 
 #[test]
@@ -345,6 +459,7 @@ fn logistic_map_time_series() {
         title: &case.template.title,
         app_version: "0.2.0",
         transient: case.portrait.transient,
+        section: None,
     });
     assert!(csv_files[0].csv.starts_with("n,x\n0,0.1\n1,0.288"));
     assert!(csv_files[0].meta.contains("\"transient\": 0,"));
@@ -413,6 +528,7 @@ fn logistic_map_cobweb() {
         title: &case.template.title,
         app_version: "0.2.0",
         transient: 0,
+        section: None,
     });
     assert!(csv_files[0].csv.starts_with("n,x\n0,0.1\n"));
     assert_eq!(csv_files[0].csv.lines().count(), 1 + 61);
@@ -451,6 +567,7 @@ fn a_cobweb_with_a_transient_starts_at_x_t() {
         title: &case.template.title,
         app_version: "0.2.0",
         transient: 200,
+        section: None,
     });
     assert!(csv_files[0].csv.starts_with("n,x\n200,"));
     assert_eq!(csv_files[0].csv.lines().count(), 1 + 1001);

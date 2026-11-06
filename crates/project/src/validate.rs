@@ -3,10 +3,11 @@
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
 //! solver settings (the transient too), the field grid, `x0` lengths. View
-//! ranges, axes and a cobweb view that doesn't fit the system are only
-//! reported: the UI falls back to the default view for a primary view whose
-//! range isn't usable (see [`range_ok`]) or whose cobweb axes are wrong (see
-//! [`cobweb_axes_ok`]).
+//! ranges, axes and a cobweb, section or 3D view that doesn't fit the system
+//! are only reported: the UI falls back to the default view for a primary
+//! view whose range isn't usable (see [`range_ok`]), whose cobweb axes are
+//! wrong (see [`cobweb_axes_ok`]), whose section doesn't fit (see
+//! [`section_misfit`]) or whose 3D axes don't (see [`space_misfit`]).
 
 use std::collections::HashSet;
 
@@ -28,6 +29,102 @@ pub const COBWEB: &str = "cobweb";
 /// autonomous map.
 pub const COBWEB_MISFIT: &str =
     "The saved cobweb view doesn't fit this system, so the default view is shown.";
+
+/// The view kind of a Poincaré section.
+pub const SECTION: &str = "section";
+/// The warning for a saved section view the app can't show (the app gives
+/// the same one when the compiled system can't take it).
+pub const SECTION_MISFIT: &str =
+    "The saved Poincaré section doesn't fit this system, so the default view is shown.";
+
+/// Why the section view `view` can't be shown for a system of `kind` with
+/// `states` (either may be empty: not known until the app compiles), or
+/// `None` when it can. A section kind this version doesn't know and a plane
+/// through a state the system lacks are named; anything else is
+/// [`SECTION_MISFIT`]: no section, a map, a plane of a one-state system, a
+/// missing value or an unknown direction, a period that isn't positive, or
+/// axes other than two states or a state and its next crossing.
+pub fn section_misfit(view: &ProjectView, kind: &str, states: &[String]) -> Option<String> {
+    let misfit = || Some(SECTION_MISFIT.to_string());
+    let Some(s) = &view.section else {
+        return misfit();
+    };
+    let has = |n: &String| states.is_empty() || states.contains(n);
+    match s.kind.as_str() {
+        "plane" => {
+            if let Some(n) = s.state.as_ref().filter(|n| !has(n)) {
+                return Some(format!(
+                    "The section of the view \u{201c}{}\u{201d} holds the state {n} fixed, which the system doesn't have, so the default view is used.",
+                    view.id
+                ));
+            }
+            let direction = s.direction.as_deref();
+            let two = states.is_empty() || states.len() >= 2;
+            if s.state.is_none()
+                || s.value.is_none()
+                || !matches!(direction, Some("rising" | "falling" | "both"))
+                || !two
+            {
+                return misfit();
+            }
+        }
+        "stroboscopic" => {
+            if !s.period.is_some_and(|p| p > 0.0) {
+                return misfit();
+            }
+        }
+        other => {
+            return Some(format!(
+                "The section of the view \u{201c}{}\u{201d} is of a kind (\u{201c}{other}\u{201d}) this version doesn't know, so the default view is used.",
+                view.id
+            ))
+        }
+    }
+    let (x, y) = (&view.x_axis, &view.y_axis);
+    let pair = x.kind == "state"
+        && x.name.is_some()
+        && match y.kind.as_str() {
+            "state" => y.name.is_some() && y.name != x.name,
+            "next" => y.name == x.name,
+            _ => false,
+        };
+    if kind == "map" || !pair {
+        return misfit();
+    }
+    None
+}
+
+/// The view kind of a 3D view of a flow.
+pub const SPACE: &str = "space";
+/// The warning for a saved 3D view the app can't show (the app gives the
+/// same one when the compiled system can't take it).
+pub const SPACE_MISFIT: &str =
+    "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+/// Why the 3D view `view` can't be shown for a system of `kind` with
+/// `states` (either may be empty: not known until the app compiles), or
+/// `None` when it can: a map, a system with fewer than three states, or axes
+/// other than three different states with a third range. A state the system
+/// lacks and an empty range are reported with the other axes and ranges.
+pub fn space_misfit(view: &ProjectView, kind: &str, states: &[String]) -> Option<String> {
+    let names: Vec<Option<&String>> =
+        [Some(&view.x_axis), Some(&view.y_axis), view.z_axis.as_ref()]
+            .iter()
+            .map(|a| {
+                a.filter(|a| a.kind == "state")
+                    .and_then(|a| a.name.as_ref())
+            })
+            .collect();
+    let distinct = names.iter().all(Option::is_some)
+        && names[0] != names[1]
+        && names[0] != names[2]
+        && names[1] != names[2];
+    let three = states.is_empty() || states.len() >= 3;
+    if kind == "map" || !three || !distinct || view.z_range.is_none() {
+        return Some(SPACE_MISFIT.to_string());
+    }
+    None
+}
 
 /// True when `view` has the shape of a cobweb plot: `x_axis` is the state
 /// `s` and `y_axis` is `{ "kind": "next", "name": s }`, for a state the
@@ -141,14 +238,27 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
         if Some(i) != primary {
             continue;
         }
-        // A view of a kind other than the plane, or with an x_{n+1} axis, must
-        // be a cobweb plot of a one-dimensional map. Whether that map is
-        // autonomous is only known once the app compiles it.
         let kind = view.kind.as_deref();
-        let cobweb = kind.is_some_and(|k| k != "plane")
-            || [&view.x_axis, &view.y_axis]
-                .iter()
-                .any(|a| a.kind == "next");
+        let section = kind == Some(SECTION);
+        if section {
+            if let Some(w) = section_misfit(view, &p.system.kind, states) {
+                warnings.push(w);
+                continue;
+            }
+        }
+        let space = kind == Some(SPACE);
+        if space {
+            if let Some(w) = space_misfit(view, &p.system.kind, states) {
+                warnings.push(w);
+                continue;
+            }
+        }
+        let cobweb = !section
+            && !space
+            && (kind.is_some_and(|k| k != "plane")
+                || [&view.x_axis, &view.y_axis]
+                    .iter()
+                    .any(|a| a.kind == "next"));
         if cobweb {
             let one_d_map =
                 states.len() <= 1 && (p.system.kind.is_empty() || p.system.kind == "map");
@@ -157,7 +267,10 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 continue;
             }
         }
-        for (axis, r) in [("x", &view.x_range), ("y", &view.y_range)] {
+        let z_range = view.z_range.filter(|_| space);
+        let ranges = [("x", Some(&view.x_range)), ("y", Some(&view.y_range))];
+        for (axis, r) in ranges.into_iter().chain([("z", z_range.as_ref())]) {
+            let Some(r) = r else { continue };
             if !range_ok(r) {
                 warnings.push(format!(
                     "The {axis} range of the view \u{201c}{}\u{201d} ({} to {}) is empty, so the default view is used.",
@@ -167,11 +280,14 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 ));
             }
         }
-        for (name, axis) in [("x", &view.x_axis), ("y", &view.y_axis)] {
+        let z_axis = view.z_axis.as_ref().filter(|_| space);
+        let axes = [("x", Some(&view.x_axis)), ("y", Some(&view.y_axis))];
+        for (name, axis) in axes.into_iter().chain([("z", z_axis)]) {
+            let Some(axis) = axis else { continue };
             let known = match axis.kind.as_str() {
                 "time" => true,
                 // Checked above, with the view's kind.
-                "next" if cobweb => true,
+                "next" if cobweb || section => true,
                 "state" => axis
                     .name
                     .as_ref()

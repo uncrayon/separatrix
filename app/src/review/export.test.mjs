@@ -35,9 +35,10 @@ const { makeViewport } = await import("../canvas/viewport.ts");
 const { plotThemeFromTokens } = await import("../export/theme.ts");
 const { readExportOptions, DEFAULT_EXPORT_OPTIONS, sizeError, fileStem, figurePx } = await import("../export/options.ts");
 const { pngRaster, withPhys, pngChunks, physDpi, crc32, pixelsPerMetre, PNG_MAX_PIXELS } = await import("../export/png.ts");
-const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, icProjectId } = await import("../export/job.ts");
+const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, exportSpaceFigure, icProjectId } =
+  await import("../export/job.ts");
 const { figureSvg } = await import("../export/svg.ts");
-const { DEFAULT_LAYERS, DEFAULT_SOLVER } = await import("../state/model.ts");
+const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA } = await import("../state/model.ts");
 
 const light = plotThemeFromTokens(tokens, "light");
 const dark = plotThemeFromTokens(tokens, "dark");
@@ -661,6 +662,138 @@ test("exportScene: no selection, hover, handles, eigenvectors or fade", () => {
   assert.equal(scene.stale, false);
   assert.deepEqual(scene.fixedPoints, [], "fixed points were not asked for");
   assert.deepEqual(scene.trajectories.map((t) => t.color), [2, 2, 4, 4]);
+});
+
+test("a section's export: crossings as dots, one SVG circle per crossing, a return map pairs them over the diagonal", () => {
+  const plane = { kind: "plane", state: 1, value: 0, direction: "falling" };
+  const view = (yIndex) => ({
+    kind: "section",
+    section: plane,
+    xAxis: { kind: "state", index: 0 },
+    yAxis: { kind: "state", index: yIndex },
+    xRange: [0, 10],
+    yRange: [0, 10],
+  });
+  const all = { field: true, nullclines: true, fixedPoints: true };
+  const crossings = (xs) => ({ t: xs.map((_, k) => k), x: xs.flatMap((v) => [v, 0]), status: "completed" });
+  const svgOf = (yIndex, xs) => {
+    const s = snapshot({ view: view(yIndex), ics: [{ id: 1, x0: [5, 0], t0: 0, color: 2 }], solver: { ...DEFAULT_SOLVER, transient: 3 } });
+    const job = buildFigureJob(s, { widthPx: 400, heightPx: 400 }, all);
+    const res = { requestId: 0, arrows: [], nullclines: [], fixedPoints: [], trajectories: [crossings(xs)], stats: {} };
+    const scene = exportScene(job, res, s.ics);
+    const svg = figureSvg({ widthPx: 400, heightPx: 400, xRange: job.portrait.xRange, yRange: job.portrait.yRange, scene, theme: light, names: { x: "x", y: "y" }, transparent: false }, measure);
+    return { job, scene, svg };
+  };
+  const dotsIn = (svg) => {
+    const fill = light.traj[2];
+    const paths = [...svg.matchAll(new RegExp(`<path d="([^"]*)" fill="${fill}"`, "g"))].map((m) => m[1]);
+    const rects = [...svg.matchAll(new RegExp(`<rect [^>]*fill="${fill}"`, "g"))].length;
+    return paths.reduce((n, d) => n + (d.match(/A/g) ?? []).length / 2, 0) + rects;
+  };
+
+  const ret = svgOf(0, [1, 2, 4, 8]);
+  assert.deepEqual(ret.job.section, { returnMap: true });
+  assert.deepEqual(ret.job.portrait.section, plane);
+  assert.equal(ret.job.portrait.transient, 3, "skipped crossings ride along");
+  assert.equal(ret.job.portrait.fieldGrid, 0, "no field on a section");
+  assert.equal(ret.job.portrait.nullclines, false);
+  assert.equal(ret.job.portrait.fixedPoints, false);
+  assert.deepEqual(ret.scene.section, { returnMap: true });
+  assert.equal(dotsIn(ret.svg), 3, "pairs (1,2), (2,4), (4,8)");
+  assertWellFormedXml(ret.svg);
+
+  const sec = svgOf(1, [1, 2, 4, 8]);
+  assert.deepEqual(sec.scene.section, { returnMap: false });
+  assert.equal(dotsIn(sec.svg), 4, "one dot per crossing");
+  const many = svgOf(1, Array.from({ length: 2500 }, (_, k) => k / 250));
+  assert.equal(dotsIn(many.svg), 2500, "squares above 2,000, one each");
+});
+
+test("a 3D view's SVG: one path per trajectory, the three axis names, Strogatz glyphs, the same bytes twice", () => {
+  const states = ["x", "y", "z"].map((n) => ({ name: n, latex: n, derived: false }));
+  const axis = (index) => ({ kind: "state", index });
+  const view = {
+    kind: "space",
+    xAxis: axis(0),
+    yAxis: axis(1),
+    zAxis: axis(2),
+    xRange: [-20, 20],
+    yRange: [-25, 25],
+    zRange: [0, 50],
+    camera: { yaw: 0.4, pitch: 0.5, zoom: 1.1 },
+  };
+  const s = snapshot({
+    compiled: { ...compiled, states },
+    view,
+    baseState: [0, 0, 0],
+    ics: [
+      { id: 1, x0: [1, 1, 1], t0: 0, color: 0 },
+      { id: 2, x0: [-1, 2, 20], t0: 0, color: 1 },
+    ],
+    layers: { ...DEFAULT_LAYERS, backward: false },
+  });
+  const job = buildFigureJob(s, { widthPx: 480, heightPx: 360 }, { field: true, nullclines: true, fixedPoints: true });
+  assert.deepEqual(job.portrait.zAxis, axis(2));
+  assert.deepEqual(job.portrait.zRange, [0, 50]);
+  assert.deepEqual(job.portrait.xRange, [-20, 20], "a 3D box keeps its ranges at any aspect");
+  assert.equal(job.portrait.fieldGrid, 0);
+  assert.equal(job.portrait.nullclines, false);
+  const helix = (r, z0) => {
+    const t = Array.from({ length: 200 }, (_, k) => k / 20);
+    return { t, x: t.flatMap((v) => [r * Math.cos(v), r * Math.sin(v), z0 + 3 * v]), status: "completed" };
+  };
+  const c = Math.sqrt((8 / 3) * 27);
+  const res = {
+    requestId: 0,
+    arrows: [],
+    nullclines: [],
+    fixedPoints: [fp([0, 0, 0], "saddle", false), fp([c, c, 27], "stable-spiral", true), fp([-c, -c, 27], "stable-spiral", true)],
+    trajectories: [helix(10, 5), helix(15, 2)],
+    stats: {},
+  };
+  const scene = exportScene(job, res, s.ics);
+  const fig = exportSpaceFigure(job, scene, states);
+  assert.deepEqual({ ...fig.view.camera, zoom: 0 }, { ...view.camera, zoom: 0 }, "the studio's angles");
+  assert.ok(fig.view.camera.zoom < view.camera.zoom, "zoomed out to make room for the names");
+  assert.deepEqual(fig.marks.ics, [], "no start points in a figure");
+  assert.equal(exportSpaceFigure(buildFigureJob(snapshot(), { widthPx: 9, heightPx: 9 }, {}), scene, states), null);
+
+  const svgOf = (camera = fig.view.camera) =>
+    figureSvg(
+      { widthPx: 480, heightPx: 360, xRange: [0, 1], yRange: [0, 1], scene, theme: light, names: null, transparent: false, space: { ...fig, view: { ...fig.view, camera } } },
+      measure,
+    );
+  const svg = svgOf();
+  assertWellFormedXml(svg);
+  assert.equal(svg, svgOf(), "the same bytes twice");
+  assert.notEqual(svg, svgOf(DEFAULT_CAMERA), "the camera is drawn");
+  const big = buildFigureJob(s, { widthPx: 1600, heightPx: 1200 }, { field: false, nullclines: false, fixedPoints: true });
+  assert.deepEqual(exportSpaceFigure(big, scene, states).view.camera, view.camera, "a large figure keeps the zoom");
+  assert.match(svg, new RegExp(`<rect x="0" y="0" width="480" height="360" fill="${light.bg}"/>`));
+  for (const k of [0, 1]) {
+    const lines = [...svg.matchAll(new RegExp(`<path d="([^"]*)"[^>]*stroke="${light.traj[k]}"`, "g"))];
+    assert.equal(lines.length, 1, `one path in traj-${k + 1}`);
+    assert.equal((lines[0][1].match(/[ML]/g) ?? []).length, 200, "every sample");
+  }
+  const grid = svg.indexOf(`stroke="${light.grid}"`);
+  assert.ok(grid > 0, "the box's edges are drawn");
+  for (const k of [0, 1]) assert.ok(grid < svg.indexOf(`stroke="${light.traj[k]}"`), `the box's edges are under traj-${k + 1}`);
+  const namesOf = (text) =>
+    [...text.matchAll(/<text x="([\d.-]+)" y="([\d.-]+)" font-family="'KaTeX_Main'[^>]*fill="#[^>]*>(.*?)<\/text>/g)].map((m) => ({
+      x: Number(m[1]),
+      y: Number(m[2]),
+      text: m[3].replace(/<[^>]+>/g, ""),
+    }));
+  const names = namesOf(svg);
+  assert.deepEqual(names.map((n) => n.text), ["x", "y", "z"]);
+  for (const n of names) assert.ok(n.x > 0 && n.x < 480 && n.y > 0 && n.y < 360, `${n.text} at (${n.x}, ${n.y}) is inside the figure`);
+  const zoomed = namesOf(svgOf({ ...fig.view.camera, zoom: 8 }));
+  assert.deepEqual(zoomed.map((n) => n.text), ["x", "y", "z"]);
+  for (const n of zoomed) assert.ok(n.x > 0 && n.x < 480 && n.y > 0 && n.y < 360, `zoom 8: ${n.text} at (${n.x}, ${n.y}) is inside the figure`);
+  const ring = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*"[^>]*stroke="${light.fp}"`, "g"))].length;
+  const filled = [...svg.matchAll(new RegExp(`<path d="[^"]*A[^"]*" fill="${light.fp}"`, "g"))].length;
+  assert.equal(ring, 3, "three fixed-point glyphs");
+  assert.equal(filled, 2, "two stable (filled), one saddle (open)");
 });
 
 test("buildCsvRequest: the screen's runs, the CSV's own samples, the chosen initial conditions", () => {

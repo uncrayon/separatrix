@@ -75,7 +75,7 @@ from the `project_read` and `project_write` commands.
 | `initial_conditions[]` | object | no | `id`, `x0` (one number per state; required), `t0` (default 0), `color` (palette index 0–6, default 0), `hidden` (default false). |
 | `views[]` | object | no | See below. |
 | `analyses` | array | no | Reserved: v1 keeps the entries verbatim. |
-| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end` (for a map, the number of iterates N, shared by its time series and cobweb), `transient` (maps: iterates computed but not drawn before each orbit; absent = 0, written only when above 0, after `t_end`), `samples` (0 = automatic). Every key has a default. |
+| `solver` | object | no | `method` (`"euler"`, `"heun"`, `"rk4"`, `"dopri5"`), `rtol`, `atol`, `h` (fixed step, 0 = the method's default), `max_steps`, `t_end` (for a map, the number of iterates N, shared by its time series and cobweb), `transient` (maps: iterates computed but not drawn before each orbit; a flow's section view: crossings computed but not drawn; absent = 0, written only when above 0, after `t_end`), `samples` (0 = automatic). Every key has a default. |
 | `export_settings` | any | no | The export dialog's options for this file; opaque to the format. |
 
 ### Views
@@ -83,9 +83,13 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `kind` | `"plane"` \| `"cobweb"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, after `id`. |
-| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` | Axes are stored by state name, never by index. `next` is the state one iterate later, `x_{n+1}`: only the `y_axis` of a cobweb view, whose `x_axis` is `{ "kind": "state" }` of the same state. |
+| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section or a 3D view, after `id`. |
+| `section` | object | Only in a `"section"` view, after `kind`: the Poincaré section (below). |
+| `z_axis` | `{ "kind": "state", "name": "z" }` | Only in a `"space"` view, after `y_axis`: the third state of the 3D view. |
+| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` | Axes are stored by state name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
+| `z_range` | `[lo, hi]` | Only in a `"space"` view, after `y_range`: the range of `z_axis`. |
+| `camera` | `{ "yaw": number, "pitch": number, "zoom": number }` | Only in a `"space"` view, after `z_range`: where the box is seen from (below). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
 
@@ -103,12 +107,78 @@ A cobweb view (Strogatz §10.1) of the logistic map:
 }
 ```
 
-`kind` and `transient` are additive: a file without them reads exactly as before, a file
+A section view (Strogatz §8.7) of the Lorenz equations: where orbits cross the plane `z = 27`
+upward, plotted in `x` and `y`, after the first `solver.transient` crossings of each orbit
+(`crates/project/tests/fixtures/section-view.sepx`):
+
+```json
+{
+  "id": "main",
+  "kind": "section",
+  "section": { "kind": "plane", "state": "z", "value": 27.0, "direction": "rising" },
+  "x_axis": { "kind": "state", "name": "x" },
+  "y_axis": { "kind": "state", "name": "y" },
+  "x_range": [-20.0, 20.0],
+  "y_range": [-25.0, 25.0],
+  "…": "slice and layers as in any view; a section draws neither"
+}
+```
+
+A 3D view of the Lorenz equations (Strogatz §9.2), three states in a box seen from the default
+camera (`crates/project/tests/fixtures/space-view.sepx`):
+
+```json
+{
+  "id": "main",
+  "kind": "space",
+  "x_axis": { "kind": "state", "name": "x" },
+  "y_axis": { "kind": "state", "name": "y" },
+  "z_axis": { "kind": "state", "name": "z" },
+  "x_range": [-20.0, 20.0],
+  "y_range": [-25.0, 25.0],
+  "z_range": [0.0, 50.0],
+  "camera": { "yaw": -0.7853981633974483, "pitch": 0.5235987755982988, "zoom": 1.0 },
+  "…": "slice and layers as in any view; a 3D view draws no field or nullclines"
+}
+```
+
+The three axes are three different states of a flow with at least 3 states. `yaw` turns the box
+about its third axis and `pitch` tilts it towards the viewer, both in radians; `zoom` scales it.
+A missing camera key takes its default (`yaw = −π/4`, `pitch = π/6` as `Math.PI / 6` computes
+it, `zoom = 1`); the app clamps `pitch` to ±(π/2 − 0.01) and `zoom` to 0.25–8 when it opens the
+file. Unknown keys inside `camera` are kept.
+
+| `section` key | Type | Meaning |
+|---|---|---|
+| `kind` | `"plane"` \| `"stroboscopic"` | A plane `x_i = c`, or the state once per forcing period. |
+| `state` | string | Plane: the state held fixed, by name. Needs a system with at least 2 states. |
+| `value` | number | Plane: where it cuts that state's axis. |
+| `direction` | `"rising"` \| `"falling"` \| `"both"` | Plane: which crossings count (the studio's Increasing, Decreasing, Both). |
+| `period` | number > 0 | Stroboscopic: the forcing period `T`. |
+| `phase` | number | Stroboscopic: the samples are at `t = phase + k·T` (absolute time, not from each start's `t0`); absent = 0. |
+
+The axes of a section view are two different states, or a state across and `next` of the same
+state up: the return map `x_k → x_{k+1}`. Unknown keys inside `section` are kept.
+
+`kind`, `section` and `transient` are additive: a file without them reads exactly as before, a file
 saved from a plane view is byte for byte what this build wrote before cobwebs, and
 `format_version` and `min_reader_version` stay 1 (no migration step). An older 0.2.0 build that
 opens a cobweb file sees the axis kind `next` ("an axis kind this version doesn't know"),
 shows its default view and keeps `kind` and `transient` as unknown keys; it misreads nothing,
-so `min_reader_version` is not raised (the rule below).
+so `min_reader_version` is not raised (the rule below). The 0.2.0 reader that knows cobwebs
+(trunk before section views) opens a section file with its view-kind warning, "The saved cobweb
+view doesn't fit this system, so the default view is shown.", shows its default view, and keeps
+`kind` and `section` as unknown keys (written back after the known keys, so not byte for byte).
+Its studio drops `kind` when it saves from its default view and keeps `section`; this build reads
+such a view as the plane view its axes say, and drops the stale `section` on its next save.
+
+`z_axis`, `z_range` and `camera` are additive in the same way, so `format_version` and
+`min_reader_version` stay 1. The 0.2.0 reader that knows section views (trunk before 3D views)
+opens a 3D view with its view-kind warning, "The saved cobweb view doesn't fit this system, so
+the default view is shown.", shows its default view and keeps `kind`, `z_axis`, `z_range` and
+`camera` as unknown keys (written back after the known keys, so not byte for byte). Its studio
+drops `kind` when it saves from its default view; this build then reads the plane view the
+`x_axis` and `y_axis` say and drops the stale z keys and camera on its next save.
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -192,6 +262,10 @@ Everything else is repaired on open, with one warning per repair:
 | `field_grid` outside 2–200 | Clamped. |
 | `transient` outside 0–1,000,000 | Clamped (a whole number written as a float, `200.0`, is accepted; `0` is dropped). |
 | A primary view of `kind` `"cobweb"` whose axes are not state `s` across and `next` `s` up, a `next` axis outside a cobweb, a kind this version doesn't know, or a cobweb for a system that is not a one-dimensional map (`states`, `system.kind`) | "The saved cobweb view doesn't fit this system, so the default view is shown." The app gives the same warning when the compiled system turns out not to be a one-dimensional autonomous map. The view is kept as written. |
+| A primary `"section"` view whose `section.kind` this version doesn't know | "The section of the view “main” is of a kind (“…”) this version doesn't know, so the default view is used." The view is kept as written. |
+| A primary `"section"` plane through a state the system doesn't have | "The section of the view “main” holds the state w fixed, which the system doesn't have, so the default view is used." |
+| Any other section that doesn't fit: no `section`, a map, a plane of a one-state system, no `value`, an unknown `direction`, a `period` that isn't above 0, or axes other than two states or a state and its `next` | "The saved Poincaré section doesn't fit this system, so the default view is shown." The app gives the same sentences when the compiled system can't take the section. The view is kept as written. |
+| A primary `"space"` view of a map or of a system with fewer than 3 states, with no `z_axis` or `z_range`, or whose three axes are not three different states | "The saved 3D view doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `z_axis` naming a state the system lacks, or an empty `z_range`, gets the axis and range warnings of `x` and `y` (with "z"). The view is kept as written. |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |

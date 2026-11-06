@@ -24,6 +24,8 @@ rejected: number,
  */
 evals: number, };
 
+export type Direction = "rising" | "falling" | "both";
+
 export type Classification = "saddle" | "stable node" | "unstable node" | "stable spiral" | "unstable spiral" | "center" | "stable star" | "unstable star" | "stable degenerate node" | "unstable degenerate node" | "non-isolated" | "sink" | "source" | "saddle (n-D)" | "non-hyperbolic";
 
 export type CompileRequest = { 
@@ -276,11 +278,51 @@ samples: number,
  */
 graphSamples?: number, 
 /**
- * Map iterates computed but not returned, before each orbit's `n`
- * iterates (maps only; ignored for flows). Absent = 0. Clamped so that
- * `transient + n <= MAX_ITERATES`.
+ * Iterates computed but not returned at the start of each orbit:
+ * map iterates before the orbit's `n` (clamped so that
+ * `transient + n <= MAX_ITERATES`), or, for a flow with a `section`,
+ * crossings of the section (iterates of the Poincaré map). Ignored for
+ * a flow without one. Absent = 0.
  */
-transient?: number, };
+transient?: number, 
+/**
+ * A Poincaré section of a flow: each trajectory in the response is then
+ * the orbit's crossings of it (at most `MAX_SECTION_POINTS` after the
+ * transient), not its samples. Absent = whole trajectories.
+ */
+section?: SectionSpec, 
+/**
+ * The third axis of a 3D view: a state plotted along the box's depth.
+ * The fixed-point search treats it as a visible axis over `z_range`, as
+ * it does `x_axis` and `y_axis`. Absent = a plane view.
+ */
+zAxis?: AxisRef, 
+/**
+ * The range of `z_axis` in view `[min, max]`; required with `z_axis`.
+ */
+zRange?: [number, number], };
+
+export type SectionSpec = { "kind": "plane", 
+/**
+ * Index of the state held fixed.
+ */
+state: number, 
+/**
+ * Where the plane cuts that state's axis.
+ */
+value: number, 
+/**
+ * Which crossings count.
+ */
+direction: Direction, } | { "kind": "stroboscopic", 
+/**
+ * Forcing period, `> 0`.
+ */
+period: number, 
+/**
+ * The sample times modulo `period`, in absolute time (not from `t0`).
+ */
+phase: number, };
 
 export type Arrow = { 
 /**
@@ -471,14 +513,48 @@ export type ProjectView = {
 id: string, 
 /**
  * `"cobweb"` for a cobweb plot of a one-dimensional map (`x_axis` is
- * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); absent for the
- * phase plane and the time series, which the axes tell apart.
+ * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
+ * for a Poincaré section of a flow (see `section`); `"space"` for a 3D
+ * view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
+ * `camera`); absent for the phase plane and the time series, which the
+ * axes tell apart.
  */
-kind?: string, x_axis: ProjectAxis, y_axis: ProjectAxis, 
+kind?: string, 
+/**
+ * The section of a `"section"` view. Its crossings are plotted in two
+ * states (`x_axis`, `y_axis`), or as the return map when `y_axis` is
+ * `{ "kind": "next", "name": s }` of the state `s` across.
+ */
+section?: ProjectSection, x_axis: ProjectAxis, y_axis: ProjectAxis, 
+/**
+ * The third axis of a `"space"` view (a 3D view of a flow): a state, as
+ * `x_axis` and `y_axis` are.
+ */
+z_axis?: ProjectAxis, 
 /**
  * The user's ranges (not the ones equalized for the plot's aspect).
  */
-x_range: [number, number], y_range: [number, number], slice: ProjectSlice, layers: ProjectLayers, };
+x_range: [number, number], y_range: [number, number], 
+/**
+ * The range of `z_axis` in a `"space"` view.
+ */
+z_range?: [number, number], 
+/**
+ * Where a `"space"` view is seen from.
+ */
+camera?: ProjectCamera, slice: ProjectSlice, layers: ProjectLayers, };
+
+export type ProjectSection = { kind: string, 
+/**
+ * The plane's state, by name.
+ */
+state?: string, value?: number, 
+/**
+ * `"rising"`, `"falling"` or `"both"`.
+ */
+direction?: string, period?: number, phase?: number, };
+
+export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -856,3 +932,13 @@ export type ClipboardTextRequest = {
  * The text to copy.
  */
 text: string, };
+
+export const MAX_SECTION_POINTS = 100000;
+
+export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
+
+export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
+export const DEFAULT_CAMERA = { yaw: -0.7853981633974483, pitch: 0.5235987755982988, zoom: 1.0 };

@@ -10,8 +10,9 @@
 //! crates are reused directly, and their TypeScript comes from the same
 //! derive (the crates' `ts` feature): [`SystemKind`] (`"ode"`/`"map"`),
 //! [`InputFormat`] (`"latex"`/`"text"`), [`Severity`], [`Method`]
-//! (`"dopri5"`, ...), [`Status`] (`"blewUp"`, ...), [`Stats`] and
-//! [`Classification`] (`"stable spiral"`, ...).
+//! (`"dopri5"`, ...), [`Status`] (`"blewUp"`, ...), [`Stats`],
+//! [`Direction`] (`"rising"`, ...) and [`Classification`]
+//! (`"stable spiral"`, ...).
 //!
 //! The project file types ([`ProjectFile`] and its parts) come from
 //! `separatrix-project` (its `ts` feature) and keep the file's snake_case
@@ -23,7 +24,7 @@ use serde::{Deserialize, Serialize};
 pub use dyn_analysis::Classification;
 pub use dyn_core::SystemKind;
 pub use dyn_expr::{InputFormat, Severity};
-pub use dyn_solve::{Method, Stats, Status};
+pub use dyn_solve::{Direction, Method, Stats, Status};
 
 /// Request of the `compile_system` command.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,12 +247,56 @@ pub struct PortraitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub graph_samples: Option<usize>,
-    /// Map iterates computed but not returned, before each orbit's `n`
-    /// iterates (maps only; ignored for flows). Absent = 0. Clamped so that
-    /// `transient + n <= MAX_ITERATES`.
+    /// Iterates computed but not returned at the start of each orbit:
+    /// map iterates before the orbit's `n` (clamped so that
+    /// `transient + n <= MAX_ITERATES`), or, for a flow with a `section`,
+    /// crossings of the section (iterates of the Poincaré map). Ignored for
+    /// a flow without one. Absent = 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub transient: Option<usize>,
+    /// A Poincaré section of a flow: each trajectory in the response is then
+    /// the orbit's crossings of it (at most `MAX_SECTION_POINTS` after the
+    /// transient), not its samples. Absent = whole trajectories.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub section: Option<SectionSpec>,
+    /// The third axis of a 3D view: a state plotted along the box's depth.
+    /// The fixed-point search treats it as a visible axis over `z_range`, as
+    /// it does `x_axis` and `y_axis`. Absent = a plane view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub z_axis: Option<AxisRef>,
+    /// The range of `z_axis` in view `[min, max]`; required with `z_axis`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub z_range: Option<(f64, f64)>,
+}
+
+/// Where a Poincaré section samples a flow (`dyn_solve::Section`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SectionSpec {
+    /// The hyperplane `x[state] = value`, crossed in `direction` (judged in
+    /// the direction of integration, so backwards in time when `t1 < t0`).
+    Plane {
+        /// Index of the state held fixed.
+        state: usize,
+        /// Where the plane cuts that state's axis.
+        value: f64,
+        /// Which crossings count.
+        direction: Direction,
+    },
+    /// The state at `t_k = phase + k·period` (a periodically forced
+    /// flow's stroboscopic map: `t mod period = phase`), for every `t_k`
+    /// from each trajectory's `t0` to its `t1`.
+    Stroboscopic {
+        /// Forcing period, `> 0`.
+        period: f64,
+        /// The sample times modulo `period`, in absolute time (not from `t0`).
+        phase: f64,
+    },
 }
 
 /// One arrow of the direction field.
@@ -356,8 +401,8 @@ pub struct PortraitResponse {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSlice,
-    ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
+    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -761,6 +806,7 @@ mod bindings {
             Method::decl(&cfg),
             Status::decl(&cfg),
             Stats::decl(&cfg),
+            Direction::decl(&cfg),
             Classification::decl(&cfg),
             CompileRequest::decl(&cfg),
             Diagnostic::decl(&cfg),
@@ -774,6 +820,7 @@ mod bindings {
             SolverOptions::decl(&cfg),
             TrajectoryRequest::decl(&cfg),
             PortraitRequest::decl(&cfg),
+            SectionSpec::decl(&cfg),
             Arrow::decl(&cfg),
             NullclineOut::decl(&cfg),
             FixedPointOut::decl(&cfg),
@@ -784,6 +831,8 @@ mod bindings {
             ProjectParam::decl(&cfg),
             ProjectInitialCondition::decl(&cfg),
             ProjectView::decl(&cfg),
+            ProjectSection::decl(&cfg),
+            ProjectCamera::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -822,6 +871,31 @@ mod bindings {
         );
         for d in decls {
             out.push_str(&format!("\nexport {d}\n"));
+        }
+        let text = |s: &str| serde_json::to_string(s).expect("a string is JSON");
+        let consts = [
+            (
+                "MAX_SECTION_POINTS",
+                crate::service::MAX_SECTION_POINTS.to_string(),
+            ),
+            ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
+            ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
+            (
+                "SPACE_LATEX_REFUSAL",
+                text(crate::export_service::SPACE_LATEX_REFUSAL),
+            ),
+            (
+                "DEFAULT_CAMERA",
+                format!(
+                    "{{ yaw: {:?}, pitch: {:?}, zoom: {:?} }}",
+                    separatrix_project::DEFAULT_YAW,
+                    separatrix_project::DEFAULT_PITCH,
+                    separatrix_project::DEFAULT_ZOOM
+                ),
+            ),
+        ];
+        for (name, value) in consts {
+            out.push_str(&format!("\nexport const {name} = {value};\n"));
         }
         out
     }

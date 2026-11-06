@@ -1,0 +1,116 @@
+% Separatrix figure: Lorenz equations
+%   x' = sigma*(y - x)
+%   y' = r*x - y - x*z
+%   z' = x*y - b*z
+% Parameters: sigma = 10, r = 28, b = 2.6666666666666665
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{arrows.meta,calc}
+% Section: plane z = 27 (increasing).
+% Skipped crossings: the first 10 of each orbit are not drawn.
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxtraj1}{HTML}{0072B2}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-33.33333333333333, xmax=33.33333333333333, ymin=-25, ymax=25,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={-20,0,20}, ytick={-20,0,20}, xticklabels={}, yticklabels={},
+  minor xtick={-30,-10,10,30}, minor ytick={-10,10},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(113.386bp,-153.071bp)$) -- ($(rel axis cs:0,1)+(110.386bp,-153.071bp)$)
+  ($(rel axis cs:0,1)+(113.386bp,-17.008bp)$) -- ($(rel axis cs:0,1)+(110.386bp,-17.008bp)$)
+  ($(rel axis cs:0,1)+(45.354bp,-85.039bp)$) -- ($(rel axis cs:0,1)+(45.354bp,-88.039bp)$)
+  ($(rel axis cs:0,1)+(181.417bp,-85.039bp)$) -- ($(rel axis cs:0,1)+(181.417bp,-88.039bp)$);
+% Section of ic-1
+\addplot[sepxtraj1, only marks, mark=*, mark size=1.95bp, mark options={draw opacity=0, fill=sepxtraj1}] table[row sep=\\]{
+x y\\
+-9.75 -10.98\\
+-9.84 -11.16\\
+-9.93 -11.34\\
+-10.03 -11.55\\
+-10.14 -11.77\\
+-10.26 -12.02\\
+-10.4 -12.3\\
+-10.55 -12.61\\
+-10.72 -12.96\\
+-10.92 -13.37\\
+-11.14 -13.84\\
+-11.41 -14.41\\
+-11.74 -15.11\\
+-12.17 -16.04\\
+-12.78 -17.38\\
+-13.89 -19.87\\
+13.5 18.99\\
+-14.43 -21.12\\
+12.59 16.96\\
+13.5 18.97\\
+-14.45 -21.18\\
+12.55 16.88\\
+13.43 18.81\\
+-14.71 -21.78\\
+12.18 16.07\\
+12.81 17.43\\
+13.94 19.99\\
+-13.4 -18.76\\
+14.8 21.98\\
+-12.06 -15.81\\
+-12.63 -17.03\\
+-13.56 -19.12\\
+14.26 20.73\\
+-12.85 -17.53\\
+-14.06 -20.26\\
+13.19 18.29\\
+15.39 23.41\\
+-11.26 -14.14\\
+-11.58 -14.77\\
+-11.96 -15.58\\
+-12.48 -16.7\\
+-13.28 -18.48\\
+15.63 24\\
+-10.96 -13.51\\
+-11.22 -14\\
+-11.51 -14.61\\
+-11.86 -15.37\\
+-12.34 -16.4\\
+-13.04 -17.95\\
+-14.62 -21.56\\
+12.31 16.36\\
+13.01 17.88\\
+14.51 21.3\\
+-12.47 -16.71\\
+-13.28 -18.49\\
+15.56 23.82\\
+-11.05 -13.7\\
+-11.33 -14.23\\
+-11.64 -14.89\\
+-12.03 -15.74\\
+-12.58 -16.92\\
+-13.47 -18.9\\
+14.56 21.43\\
+-12.39 -16.53\\
+-13.14 -18.18\\
+-15.06 -22.61\\
+11.7 15.06\\
+12.14 15.96\\
+12.73 17.25\\
+13.77 19.59\\
+-13.76 -19.56\\
+13.78 19.61\\
+-13.73 -19.51\\
+};
+\node[anchor=north, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(45.354bp,-92.164bp)$) {$-20$};
+\node[anchor=north, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(181.417bp,-92.164bp)$) {$20$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(106.261bp,-153.071bp)$) {$-20$};
+\node[anchor=east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(106.261bp,-17.008bp)$) {$20$};
+\node[anchor=north east, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(106.261bp,-92.164bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-82.039bp)$) {$x$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(119.386bp,-4.5bp)$) {$y$};
+\end{axis}
+\end{tikzpicture}

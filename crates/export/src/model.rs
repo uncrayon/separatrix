@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 pub use dyn_analysis::Classification;
 pub use dyn_core::SystemKind;
-pub use dyn_solve::Status;
+pub use dyn_solve::{Direction, Status};
+
+use crate::num::shortest;
 
 /// What a plot axis shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,9 +197,65 @@ pub struct Portrait {
     #[serde(default)]
     pub graph: Vec<Vec<(f64, f64)>>,
     /// Map iterates computed but not drawn before each orbit (its first
-    /// sample is `x_T`).
+    /// sample is `x_T`), or, with a `section`, the crossings skipped before
+    /// each orbit's first.
     #[serde(default)]
     pub transient: usize,
+    /// A Poincaré section of a flow: each trajectory is the orbit's
+    /// crossings, drawn as dots; with both axes one state, the return map
+    /// `(x_k, x_{k+1})` and the diagonal.
+    #[serde(default)]
+    pub section: Option<SectionSpec>,
+}
+
+/// Where a Poincaré section samples a flow, as the IPC's `SectionSpec`
+/// (a stroboscopic phase is absolute time modulo the period).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SectionSpec {
+    /// The plane `x[state] = value`, crossed in `direction`.
+    Plane {
+        /// Index of the state held fixed.
+        state: usize,
+        /// Where the plane cuts that state's axis.
+        value: f64,
+        /// Which crossings count.
+        direction: Direction,
+    },
+    /// The state at every `t` with `t mod period = phase`.
+    Stroboscopic {
+        /// Forcing period.
+        period: f64,
+        /// Sample time modulo `period`.
+        phase: f64,
+    },
+}
+
+impl SectionSpec {
+    /// The section in words, for the CSV metadata and the figure's header:
+    /// `plane z = 27 (increasing)` or `stroboscopic, period 6.28, phase 0`.
+    pub fn describe(&self, labels: &Labels) -> String {
+        match *self {
+            SectionSpec::Plane {
+                state,
+                value,
+                direction,
+            } => {
+                let name = labels.states.get(state).map_or("?", |s| s.name.as_str());
+                let way = match direction {
+                    Direction::Rising => "increasing",
+                    Direction::Falling => "decreasing",
+                    Direction::Both => "both directions",
+                };
+                format!("plane {name} = {} ({way})", shortest(value))
+            }
+            SectionSpec::Stroboscopic { period, phase } => format!(
+                "stroboscopic, period {}, phase {}",
+                shortest(period),
+                shortest(phase)
+            ),
+        }
+    }
 }
 
 /// A state's names.

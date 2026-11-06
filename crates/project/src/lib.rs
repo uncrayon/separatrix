@@ -32,11 +32,13 @@ pub use io::{
 };
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
-    ProjectAxis, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam, ProjectSlice,
-    ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
+    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH,
+    DEFAULT_YAW, DEFAULT_ZOOM,
 };
 pub use validate::{
-    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, COBWEB, COBWEB_MISFIT,
+    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, section_misfit,
+    space_misfit, COBWEB, COBWEB_MISFIT, SECTION, SECTION_MISFIT, SPACE, SPACE_MISFIT,
     TRANSIENT_MAX,
 };
 
@@ -78,6 +80,8 @@ mod bindings {
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
             ProjectSolver::decl(&cfg),
+            ProjectSection::decl(&cfg),
+            ProjectCamera::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -86,6 +90,19 @@ mod bindings {
         assert!(decls[4].contains("kind?: string"), "{}", decls[4]);
         assert!(decls[8].contains("transient?: number"), "{}", decls[8]);
         assert!(decls[1].contains("template: string | null"), "{}", decls[1]);
+        assert!(
+            decls[4].contains("section?: ProjectSection"),
+            "{}",
+            decls[4]
+        );
+        assert!(decls[9].contains("value?: number"), "{}", decls[9]);
+        assert!(decls[4].contains("camera?: ProjectCamera"), "{}", decls[4]);
+        assert!(
+            decls[4].contains("z_range?: [number, number]"),
+            "{}",
+            decls[4]
+        );
+        assert!(decls[10].contains("zoom: number"), "{}", decls[10]);
         assert!(
             decls[4].contains("x_range: [number, number]"),
             "{}",

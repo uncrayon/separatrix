@@ -1,0 +1,128 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=\\sigma\\left(y-x\\right)",
+      "\\dot{y}=rx-y-xz",
+      "\\dot{z}=xy-bz"
+    ],
+    "states": [
+      "x",
+      "y",
+      "z"
+    ],
+    "params": [
+      {
+        "id": "sigma",
+        "value": 10.0,
+        "min": 0.0,
+        "max": 20.0
+      },
+      {
+        "id": "r",
+        "value": 28.0,
+        "min": 0.0,
+        "max": 50.0
+      },
+      {
+        "id": "b",
+        "value": 2.6666666666666665,
+        "min": 0.0,
+        "max": 5.0
+      }
+    ],
+    "template": "lorenz"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    },
+    {
+      "id": "ic-2",
+      "x0": [
+        1.0,
+        1.0,
+        20.0
+      ],
+      "t0": 0.0,
+      "color": 1,
+      "hidden": false
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "kind": "section",
+      "section": {
+        "kind": "plane",
+        "state": "z",
+        "value": 27.0,
+        "direction": "rising"
+      },
+      "x_axis": {
+        "kind": "state",
+        "name": "x"
+      },
+      "y_axis": {
+        "kind": "state",
+        "name": "y"
+      },
+      "x_range": [
+        -20.0,
+        20.0
+      ],
+      "y_range": [
+        -25.0,
+        25.0
+      ],
+      "slice": {
+        "states": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "t": 0.0
+      },
+      "layers": {
+        "field": true,
+        "field_grid": 21,
+        "nullclines": true,
+        "fixed_points": true,
+        "backward": false
+      }
+    }
+  ],
+  "analyses": [],
+  "solver": {
+    "method": "dopri5",
+    "rtol": 1e-6,
+    "atol": 1e-9,
+    "h": 0.0,
+    "max_steps": 200000,
+    "t_end": 500.0,
+    "transient": 10,
+    "samples": 0
+  },
+  "export_settings": {
+    "latex": {
+      "content": "figure",
+      "widthCm": 8
+    },
+    "png": {
+      "scale": 2
+    }
+  }
+}

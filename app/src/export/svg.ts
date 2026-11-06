@@ -3,6 +3,7 @@
 
 import type { Scene } from "../canvas/draw";
 import { drawFigure, type FigureFonts } from "../canvas/figure";
+import { drawSpaceFigure, type SpaceFigure } from "../canvas/space";
 import { createSvgContext, type TextMeasure } from "../canvas/svgContext";
 import type { PlotTheme } from "../canvas/theme";
 import { makeViewport } from "../canvas/viewport";
@@ -23,18 +24,22 @@ export interface SvgFigure {
   fonts?: FigureFonts;
   title?: string;
   desc?: string;
+  space?: SpaceFigure | null;
 }
 
 const cm = (v: number) => `${Math.round(v * 1000) / 1000}cm`;
 
 export function figureSvg(fig: SvgFigure, measure: TextMeasure): string {
   const ctx = createSvgContext(measure);
-  const vp = makeViewport(fig.widthPx, fig.heightPx, fig.xRange, fig.yRange);
-  drawFigure(ctx, fig.widthPx, fig.heightPx, vp, fig.scene, fig.theme, {
-    background: !fig.transparent,
-    names: fig.names,
-    fonts: fig.fonts,
-  });
+  if (fig.space) drawSpaceFigure(ctx, fig.widthPx, fig.heightPx, fig.space, fig.theme, !fig.transparent);
+  else {
+    const vp = makeViewport(fig.widthPx, fig.heightPx, fig.xRange, fig.yRange);
+    drawFigure(ctx, fig.widthPx, fig.heightPx, vp, fig.scene, fig.theme, {
+      background: !fig.transparent,
+      names: fig.names,
+      fonts: fig.fonts,
+    });
+  }
   return ctx.toSvg({
     width: fig.widthPx,
     height: fig.heightPx,

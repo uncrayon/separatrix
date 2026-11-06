@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { AxisRef, FixedPointOut, Method, SystemKind, TrajectoryOut } from "../api/types";
+import type { AxisRef, Direction, FixedPointOut, Method, SectionSpec, SystemKind, TrajectoryOut } from "../api/types";
+import { MAX_SECTION_POINTS } from "../api/ipc.generated";
 import { Tex } from "../math/Tex";
 import { MathProse } from "../math/MathProse";
 import {
@@ -13,6 +14,7 @@ import {
   sameAxis,
   viewAxisLabels,
   withSubscript,
+  texMinus,
 } from "../math/format";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
@@ -20,15 +22,21 @@ import {
   DEFAULT_FIXED_STEP,
   MAX_ITERATES,
   PALETTE_SIZE,
-  VIEW_CHOICES,
   VIEW_CHOICE_LABELS,
   VIEW_CHOICE_SHORT,
   isCobweb,
+  isReturnMap,
+  isSection,
+  isSpace,
+  spaceStates,
+  planeSectionAvailability,
   viewChoice,
   viewChoiceAvailability,
+  viewChoicesFor,
   portraitFits,
   searchedFixedPoints,
   selectFixedPoint,
+  stateExtent,
   selectedFixedPointIndex,
   trajectorySpans,
   type InitialCondition,
@@ -95,7 +103,7 @@ function optionName(latex: string): string {
   return latexToPlain(latex);
 }
 
-type SectionKey = "layers" | "axes" | "solver" | "fixedPoints" | "trajectories" | "selected";
+type SectionKey = "layers" | "axes" | "section" | "solver" | "fixedPoints" | "trajectories" | "selected";
 const SECTIONS_KEY = "separatrix.inspector.sections";
 
 export function Inspector({ state, actions }: Props) {
@@ -103,6 +111,7 @@ export function Inspector({ state, actions }: Props) {
   const [open, setOpen] = useSections<SectionKey>(SECTIONS_KEY, {
     layers: true,
     axes: true,
+    section: true,
     solver: true,
     fixedPoints: true,
     trajectories: state.ics.length <= 5,
@@ -131,6 +140,14 @@ export function Inspector({ state, actions }: Props) {
         <>
           <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
           <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
+          {isSection(state.view) && (
+            <PoincareSection
+              state={state}
+              actions={actions}
+              open={open.section}
+              onToggle={(v) => setOpen("section", v)}
+            />
+          )}
           <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
           <FixedPointsSection
             state={state}
@@ -190,17 +207,20 @@ function KvRow({ label, children, text }: { label: ReactNode; children: ReactNod
 
 function LayersSection({ state, actions, open, onToggle }: SectionProps) {
   const isMap = state.compiled?.kind === "map";
+  const section = isSection(state.view);
+  const space = isSpace(state.view);
   const L = state.layers;
   const mapHint = useId();
+  const noField = isMap || section || space;
   return (
     <PanelSection title="Layers" open={open} onToggle={onToggle} flush>
       <Switch
         row
         icon={<IconField />}
         label="Direction field"
-        checked={L.field && !isMap}
-        disabled={isMap}
-        describedBy={isMap ? mapHint : undefined}
+        checked={L.field && !noField}
+        disabled={noField}
+        describedBy={noField ? mapHint : undefined}
         title="Direction field (arrows of normalized length)"
         onChange={(field) => actions.setLayers({ field })}
       />
@@ -208,9 +228,9 @@ function LayersSection({ state, actions, open, onToggle }: SectionProps) {
         row
         icon={<IconNullcline />}
         label="Nullclines"
-        checked={L.nullclines && !isMap}
-        disabled={isMap}
-        describedBy={isMap ? mapHint : undefined}
+        checked={L.nullclines && !noField}
+        disabled={noField}
+        describedBy={noField ? mapHint : undefined}
         title="Nullclines (where one component of the field vanishes)"
         onChange={(nullclines) => actions.setLayers({ nullclines })}
       />
@@ -218,12 +238,22 @@ function LayersSection({ state, actions, open, onToggle }: SectionProps) {
         row
         icon={<IconFixedPoint />}
         label="Fixed points"
-        checked={L.fixedPoints}
+        checked={L.fixedPoints && !section}
+        disabled={section}
+        describedBy={section ? mapHint : undefined}
         title="Fixed points (filled when stable, open when unstable)"
         onChange={(fixedPoints) => actions.setLayers({ fixedPoints })}
       />
       <div className="inspector-inset">
-        {isMap ? (
+        {section ? (
+          <p className="ds-panel-section-hint caption" id={mapHint}>
+            A Poincaré section shows only the crossings: no field, nullclines or fixed points.
+          </p>
+        ) : space ? (
+          <p className="ds-panel-section-hint caption" id={mapHint}>
+            The 3D view draws trajectories and fixed points: no direction field or nullclines.
+          </p>
+        ) : isMap ? (
           <p className="ds-panel-section-hint caption" id={mapHint}>
             Maps have no direction field or nullclines.
           </p>
@@ -260,9 +290,12 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const kind = sys.kind;
   const view = state.view;
   const cobweb = isCobweb(view);
+  const section = isSection(view);
+  const space = isSpace(view) ? view : null;
   const reasonBase = useId();
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
-  const viewOptions: SegmentOption<(typeof VIEW_CHOICES)[number]>[] = VIEW_CHOICES.map((c) => {
+  const choices = viewChoicesFor(sys);
+  const viewOptions: SegmentOption<(typeof choices)[number]>[] = choices.map((c) => {
     const a = avail[c];
     return {
       value: c,
@@ -274,21 +307,25 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   });
   // The group is described by every reason too: arrow keys skip the disabled options, so it is
   // what a screen reader announces on entering the control.
-  const reasonIds = VIEW_CHOICES.filter((c) => !avail[c].ok)
+  const reasonIds = choices.filter((c) => !avail[c].ok)
     .map((c) => `${reasonBase}-${c}`)
     .join(" ");
   const names = viewAxisLabels(view, sys.states, kind);
   const options: SelectOption<string>[] = [
     ...sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) })),
-    { value: "time", label: kind === "map" ? "n" : "t" },
+    ...(section ? [] : [{ value: "time", label: kind === "map" ? "n" : "t" }]),
   ];
+  // A return map's axes are one state at successive crossings, named xₖ and xₖ₊₁ as on the plot.
+  const named = (axis: AxisRef, step: string) =>
+    isReturnMap(view) ? options.map((o) => (o.value === axisValue(axis) ? { ...o, label: `${o.label}${step}` } : o)) : options;
   const sliceStates =
-    kind === "ode"
+    kind === "ode" && !section && !space
       ? sys.states
           .map((s, i) => ({ s, i }))
           .filter(({ i }) => !sameAxis(view.xAxis, { kind: "state", index: i }) && !sameAxis(view.yAxis, { kind: "state", index: i }))
       : [];
-  const timeSlice = kind === "ode" && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
+  const timeSlice =
+    kind === "ode" && !section && !space && !sys.autonomous && view.xAxis.kind !== "time" && view.yAxis.kind !== "time";
   const hId = useId();
   const vId = useId();
   return (
@@ -303,7 +340,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           onChange={actions.setViewKind}
           describedBy={reasonIds || undefined}
         />
-        {VIEW_CHOICES.map((c) => {
+        {choices.map((c) => {
           const a = avail[c];
           return a.ok ? null : (
             <p key={c} className="ds-panel-section-hint caption" id={`${reasonBase}-${c}`}>
@@ -312,7 +349,27 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {cobweb ? (
+      {space ? (
+        <>
+          <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+            {spaceStates(space).map((index, slot) => (
+              <FieldRow key={slot} label={`${["First", "Second", "Third"][slot]} axis`}>
+                <Select
+                  size="sm"
+                  math
+                  value={`s${index}`}
+                  options={sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) }))}
+                  onChange={(v) => actions.setSpaceAxis(slot as 0 | 1 | 2, Number(v.slice(1)))}
+                  ariaLabel={`${["First", "Second", "Third"][slot]} axis of the 3D view`}
+                />
+              </FieldRow>
+            ))}
+          </dl>
+          <p className="ds-panel-section-hint caption">
+            Drag the plot to turn the box and scroll to zoom. A state already on another axis swaps with it.
+          </p>
+        </>
+      ) : cobweb ? (
         <>
           <dl className="ds-panel-section-kv">
             <KvRow label="Horizontal" text>
@@ -344,7 +401,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.xAxis)}
-                options={options}
+                options={named(view.xAxis, "ₖ")}
                 onChange={(v) => actions.setAxis("x", axisFromValue(v))}
               />
             </dd>
@@ -361,7 +418,7 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
                 size="sm"
                 math
                 value={axisValue(view.yAxis)}
-                options={options}
+                options={named(view.yAxis, "ₖ₊₁")}
                 onChange={(v) => actions.setAxis("y", axisFromValue(v))}
               />
             </dd>
@@ -409,6 +466,171 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   );
 }
 
+const CROSSINGS: SelectOption<Direction>[] = [
+  { value: "rising", label: "Increasing" },
+  { value: "falling", label: "Decreasing" },
+  { value: "both", label: "Both" },
+];
+
+const CROSSING_WORDS: Record<Direction, string> = { rising: "upward", falling: "downward", both: "either way" };
+
+
+function PoincareSection({ state, actions, open, onToggle }: SectionProps) {
+  const sys = state.compiled!;
+  const view = state.view;
+  const kindHint = useId();
+  const stateId = useId();
+  const crossingId = useId();
+  if (!isSection(view)) return null;
+  const sec = view.section;
+  const plane = planeSectionAvailability(sys, systemNameOf(state));
+  const skip = state.solver.transient ?? 0;
+  const latexOf = (i: number) => sys.states[i]?.latex ?? "x";
+  const set = (spec: SectionSpec) => actions.setSection(spec);
+  const toKind = (k: SectionSpec["kind"]) => {
+    if (k === sec.kind) return;
+    if (k === "stroboscopic") set({ kind: "stroboscopic", period: 2 * Math.PI, phase: 0 });
+    else {
+      const on = (a: AxisRef, i: number) => a.kind === "state" && a.index === i;
+      const free = sys.states.findIndex((_, i) => !on(view.xAxis, i) && !on(view.yAxis, i));
+      const i = Math.max(0, free);
+      const r = on(view.xAxis, i)
+        ? view.xRange
+        : on(view.yAxis, i)
+          ? view.yRange
+          : (stateExtent(state.portrait?.res, sys.states.length, i) ?? [-1, 1]);
+      set({ kind: "plane", state: i, value: (r[0] + r[1]) / 2, direction: "rising" });
+    }
+  };
+  const what =
+    sec.kind === "plane"
+      ? `Dots where an orbit crosses ${plainName(latexOf(sec.state))} = ${withMinus(fmt(sec.value, 4))} ${CROSSING_WORDS[sec.direction]}`
+      : `Dots at t = ${withMinus(fmt(sec.phase, 4))} + k·${withMinus(fmt(sec.period, 4))}, k = 0, 1, 2, …`;
+  const skipped = skip === 0 ? "." : `, after the first ${skip.toLocaleString("en-US")} ${skip === 1 ? "one" : "ones"}.`;
+  return (
+    <PanelSection title="Section" open={open} onToggle={onToggle}>
+      <SegmentedControl
+        size="sm"
+        fill
+        ariaLabel="Section kind"
+        value={sec.kind}
+        options={[
+          {
+            value: "plane",
+            label: "Plane",
+            title: "Where orbits cross a plane: one state held at a value",
+            ...(plane.ok ? {} : { disabled: true, describedBy: kindHint }),
+          },
+          { value: "stroboscopic", label: "Stroboscopic", title: "The state once per forcing period" },
+        ]}
+        onChange={toKind}
+      />
+      {!plane.ok && (
+        <p className="ds-panel-section-hint caption" id={kindHint}>
+          {plane.reason}
+        </p>
+      )}
+      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+        {sec.kind === "plane" ? (
+          <>
+            <div className="ds-panel-section-kv-row">
+              <dt className="ds-panel-section-key body">
+                <label className="inspector-key-label" htmlFor={stateId}>
+                  State
+                </label>
+              </dt>
+              <dd className="ds-panel-section-value ds-panel-section-value--field">
+                <Select
+                  id={stateId}
+                  size="sm"
+                  math
+                  value={`s${sec.state}`}
+                  options={sys.states.map((s, i) => ({ value: `s${i}`, label: optionName(s.latex) }))}
+                  onChange={(v) => set({ ...sec, state: Number(v.slice(1)) })}
+                />
+              </dd>
+            </div>
+            <FieldRow label="Value" tip="Where the plane cuts the state's axis">
+              <NumberField
+                size="sm"
+                lead={<Tex latex={`${latexOf(sec.state)} =`} />}
+                value={sec.value}
+                onCommit={(value) => set({ ...sec, value })}
+                step={0.1}
+                digits={4}
+                ariaLabel="Value of the section plane"
+              />
+            </FieldRow>
+            <div className="ds-panel-section-kv-row">
+              <dt className="ds-panel-section-key body">
+                <label className="inspector-key-label" htmlFor={crossingId}>
+                  Crossing
+                </label>
+              </dt>
+              <dd className="ds-panel-section-value ds-panel-section-value--field">
+                <Select
+                  id={crossingId}
+                  size="sm"
+                  value={sec.direction}
+                  options={CROSSINGS}
+                  onChange={(direction) => set({ ...sec, direction })}
+                />
+              </dd>
+            </div>
+          </>
+        ) : (
+          <>
+            <FieldRow label="Period" tip="The forcing period: one sample per period">
+              <NumberField
+                size="sm"
+                lead={<Tex latex="T =" />}
+                value={sec.period}
+                onCommit={(period) => set({ ...sec, period })}
+                validate={(v) => (v > 0 ? null : "Must be above 0")}
+                step={0.1}
+                digits={4}
+                ariaLabel="Stroboscopic period"
+              />
+            </FieldRow>
+            <FieldRow label="Phase" tip="The sample times modulo the period">
+              <NumberField
+                size="sm"
+                lead={<Tex latex="\varphi =" />}
+                value={sec.phase}
+                onCommit={(phase) => set({ ...sec, phase })}
+                step={0.1}
+                digits={4}
+                ariaLabel="Stroboscopic phase"
+              />
+            </FieldRow>
+          </>
+        )}
+        <FieldRow label="Skip crossings" tip="Crossings computed but not drawn, so the attractor stands out">
+          <NumberField
+            size="sm"
+            value={skip}
+            onCommit={(v) => actions.setSolver({ transient: Math.round(v) })}
+            validate={(v) =>
+              Number.isInteger(v) && v >= 0 && v <= MAX_SECTION_POINTS
+                ? null
+                : `Must be a whole number from 0 to ${MAX_SECTION_POINTS.toLocaleString("en-US")}`
+            }
+            step={1}
+            steppers
+            format={(v) => String(v)}
+            ariaLabel="Crossings skipped at the start of each orbit"
+          />
+        </FieldRow>
+      </dl>
+      <p className="ds-panel-section-hint caption" aria-live="polite">
+        {what}
+        {skipped}
+        {isReturnMap(view) ? " Each dot pairs a crossing with the next." : ""}
+      </p>
+    </PanelSection>
+  );
+}
+
 const METHODS: (SelectOption<Method> & { about: string })[] = [
   {
     value: "dopri5",
@@ -446,6 +668,7 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const methodHint = useId();
   const backHint = useId();
+  const section = isSection(state.view);
   if (sys.kind === "map") {
     const n = Math.max(1, Math.round(state.solver.tEnd));
     const T = state.solver.transient ?? 0;
@@ -601,14 +824,17 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
         <Switch
           row
           label="Backward time"
-          checked={state.layers.backward}
+          checked={state.layers.backward && !section}
+          disabled={section}
           describedBy={backHint}
           onChange={(backward) => actions.setLayers({ backward })}
         />
       </div>
       <p className="ds-panel-section-hint caption" id={backHint}>
-        Also follow each start point backward in time, drawn fainter. Step limit{" "}
-        {s.maxSteps.toLocaleString("en-US")} per run.
+        {section
+          ? "A Poincaré section follows each start point forward only."
+          : "Also follow each start point backward in time, drawn fainter."}{" "}
+        Step limit {s.maxSteps.toLocaleString("en-US")} per run.
       </p>
     </PanelSection>
   );
@@ -738,7 +964,8 @@ function FixedPointsSection({ state, actions, open, onToggle }: SectionProps) {
     dim === 1 ? `${plainName(sys.states[0].latex)}* = ${dec(fp.x[0], 3)}` : `(${fp.x.map((v) => dec(v, 3)).join(", ")})`;
 
   let empty: string | null = null;
-  if (!state.layers.fixedPoints) empty = "Turn on Fixed points in Layers to find them.";
+  if (isSection(state.view)) empty = "Not searched: a Poincaré section shows only the crossings.";
+  else if (!state.layers.fixedPoints) empty = "Turn on Fixed points in Layers to find them.";
   else if (!sys.autonomous)
     empty =
       sys.kind === "map"
@@ -1061,7 +1288,7 @@ function SelectedTrajectorySection({ state, actions, id, open, onToggle }: Secti
               <KvRow label="Function evaluations">{out.stats.evals.toLocaleString("en-US")}</KvRow>
               {len > 0 && (
                 <KvRow label="Ends at" text>
-                  <Tex latex={`${isMap ? "n" : "t"} = ${atTime(tEnd).replace("−", "-")}`} />
+                  <Tex latex={`${isMap ? "n" : "t"} = ${texMinus(atTime(tEnd))}`} />
                 </KvRow>
               )}
               {last.length > 0 && (

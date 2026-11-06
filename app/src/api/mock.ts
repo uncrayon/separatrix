@@ -23,6 +23,7 @@ import type {
   PortraitRequest,
   PortraitResponse,
   ProjectChooseSaveRequest,
+  SectionSpec,
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
@@ -40,6 +41,7 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
+import { MAX_SECTION_POINTS } from "./ipc.generated";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -160,6 +162,152 @@ const SYSTEMS: Record<string, MockSystem> = {
     ],
     f: (_t, [q, p]) => [p, -Math.sin(q)],
   },
+  "sin-x": {
+    kind: "ode",
+    states: [s("x")],
+    params: [],
+    equationsLatex: ["\\dot{x} = \\sin x"],
+    f: (_t, [x]) => [Math.sin(x)],
+  },
+  "logistic-growth": {
+    kind: "ode",
+    states: [s("N")],
+    params: [par("r"), par("K")],
+    equationsLatex: ["\\dot{N} = r N \\left(1 - \\frac{N}{K}\\right)"],
+    f: (_t, [n], [r, k]) => [r * n * (1 - n / k)],
+  },
+  transcritical: {
+    kind: "ode",
+    states: [s("x")],
+    params: [par("r")],
+    equationsLatex: ["\\dot{x} = r x - x^{2}"],
+    f: (_t, [x], [r]) => [r * x - x * x],
+  },
+  pitchfork: {
+    kind: "ode",
+    states: [s("x")],
+    params: [par("r")],
+    equationsLatex: ["\\dot{x} = r x - x^{3}"],
+    f: (_t, [x], [r]) => [r * x - x * x * x],
+  },
+  "bead-on-hoop": {
+    kind: "ode",
+    states: [s("phi", "\\phi")],
+    params: [par("gamma", "\\gamma")],
+    equationsLatex: ["\\dot{\\phi} = \\left(\\gamma \\cos\\phi - 1\\right) \\sin\\phi"],
+    f: (_t, [ph], [g]) => [(g * Math.cos(ph) - 1) * Math.sin(ph)],
+  },
+  "imperfect-bifurcation": {
+    kind: "ode",
+    states: [s("x")],
+    params: [par("h"), par("r")],
+    equationsLatex: ["\\dot{x} = h + r x - x^{3}"],
+    f: (_t, [x], [h, r]) => [h + r * x - x * x * x],
+  },
+  "nonuniform-oscillator": {
+    kind: "ode",
+    states: [s("theta", "\\theta")],
+    params: [par("omega", "\\omega"), par("a")],
+    equationsLatex: ["\\dot{\\theta} = \\omega - a \\sin\\theta"],
+    f: (_t, [th], [w, a]) => [w - a * Math.sin(th)],
+  },
+  "romeo-juliet": {
+    kind: "ode",
+    states: [s("R"), s("J")],
+    params: [par("a"), par("b")],
+    equationsLatex: ["\\dot{R} = a J", "\\dot{J} = -b R"],
+    f: (_t, [r, j], [a, b]) => [a * j, -b * r],
+  },
+  "double-well": {
+    kind: "ode",
+    states: [s("x"), s("x'", "\\dot{x}", true)],
+    params: [],
+    equationsLatex: ["\\dot{x} = \\dot{x}", "\\ddot{x} = x - x^{3}"],
+    f: (_t, [x, v]) => [v, x - x * x * x],
+  },
+  reversible: {
+    kind: "ode",
+    states: xy,
+    params: [],
+    equationsLatex: ["\\dot{x} = y - y^{3}", "\\dot{y} = -x - y^{2}"],
+    f: (_t, [x, y]) => [y - y * y * y, -x - y * y],
+  },
+  "relaxation-oscillator": {
+    kind: "ode",
+    states: xy,
+    params: [par("mu", "\\mu")],
+    equationsLatex: [
+      "\\dot{x} = \\mu \\left(y - \\frac{x^{3}}{3} + x\\right)",
+      "\\dot{y} = -\\frac{x}{\\mu}",
+    ],
+    f: (_t, [x, y], [mu]) => [mu * (y - (x * x * x) / 3 + x), -x / mu],
+  },
+  "saddle-node-2d": {
+    kind: "ode",
+    states: xy,
+    params: [par("mu", "\\mu")],
+    equationsLatex: ["\\dot{x} = \\mu - x^{2}", "\\dot{y} = -y"],
+    f: (_t, [x, y], [mu]) => [mu - x * x, -y],
+  },
+  "hopf-supercritical": {
+    kind: "ode",
+    states: xy,
+    params: [par("mu", "\\mu")],
+    equationsLatex: [
+      "\\dot{x} = \\mu x - y - x \\left(x^{2} + y^{2}\\right)",
+      "\\dot{y} = x + \\mu y - y \\left(x^{2} + y^{2}\\right)",
+    ],
+    f: (_t, [x, y], [mu]) => {
+      const r2 = x * x + y * y;
+      return [mu * x - y - x * r2, x + mu * y - y * r2];
+    },
+  },
+  cdima: {
+    kind: "ode",
+    states: xy,
+    params: [par("a"), par("b")],
+    equationsLatex: [
+      "\\dot{x} = a - x - \\frac{4 x y}{1 + x^{2}}",
+      "\\dot{y} = b x \\left(1 - \\frac{y}{1 + x^{2}}\\right)",
+    ],
+    f: (_t, [x, y], [a, b]) => [a - x - (4 * x * y) / (1 + x * x), b * x * (1 - y / (1 + x * x))],
+  },
+  "driven-pendulum": {
+    kind: "ode",
+    states: [s("phi", "\\phi"), s("phi'", "\\dot{\\phi}", true)],
+    params: [par("alpha", "\\alpha"), par("I")],
+    equationsLatex: ["\\dot{\\phi} = \\dot{\\phi}", "\\ddot{\\phi} = -\\alpha \\dot{\\phi} - \\sin\\phi + I"],
+    f: (_t, [ph, w], [al, i]) => [w, -al * w - Math.sin(ph) + i],
+  },
+  "coupled-oscillators": {
+    kind: "ode",
+    states: [s("theta_1", "\\theta_{1}"), s("theta_2", "\\theta_{2}")],
+    params: [par("omega_1", "\\omega_{1}"), par("K_1", "K_{1}"), par("omega_2", "\\omega_{2}"), par("K_2", "K_{2}")],
+    equationsLatex: [
+      "\\dot{\\theta}_{1} = \\omega_{1} + K_{1} \\sin\\left(\\theta_{2} - \\theta_{1}\\right)",
+      "\\dot{\\theta}_{2} = \\omega_{2} + K_{2} \\sin\\left(\\theta_{1} - \\theta_{2}\\right)",
+    ],
+    f: (_t, [t1, t2], [w1, k1, w2, k2]) => [w1 + k1 * Math.sin(t2 - t1), w2 + k2 * Math.sin(t1 - t2)],
+  },
+  "poincare-map-forced": {
+    kind: "ode",
+    autonomous: false,
+    states: [s("x")],
+    params: [par("A")],
+    equationsLatex: ["\\dot{x} = -x + A \\sin t"],
+    f: (t, [x], [a]) => [-x + a * Math.sin(t)],
+  },
+  "forced-double-well": {
+    kind: "ode",
+    autonomous: false,
+    states: [s("x"), s("x'", "\\dot{x}", true)],
+    params: [par("delta", "\\delta"), par("F"), par("omega", "\\omega")],
+    equationsLatex: [
+      "\\dot{x} = \\dot{x}",
+      "\\ddot{x} = -\\delta \\dot{x} + x - x^{3} + F \\cos\\left(\\omega t\\right)",
+    ],
+    f: (t, [x, v], [d, f, w]) => [v, -d * v + x - x * x * x + f * Math.cos(w * t)],
+  },
   blank: {
     kind: "ode",
     states: xy,
@@ -254,6 +402,31 @@ function cobwebError(sys: MockSystem, xAxis: AxisRef): string | null {
   return null;
 }
 
+function thirdAxisError(dim: number, req: PortraitRequest): string | null {
+  const { zAxis, zRange } = req;
+  if (!zAxis && !zRange) return null;
+  if (zAxis?.kind === "time") return "The third axis of a 3D view must be a state.";
+  if (!zAxis || !zRange) return "A 3D view needs both a third axis and its range.";
+  if (zAxis.index >= dim) return `The third axis shows state ${zAxis.index + 1} but the system only has ${dim}.`;
+  const [lo, hi] = zRange;
+  if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return `The third axis range [${lo}, ${hi}] is not a valid interval.`;
+  return null;
+}
+
+function sectionError(sys: MockSystem, section: SectionSpec): string | null {
+  const dim = sys.states.length;
+  if (sys.kind === "map") return "A Poincaré section needs a flow; this system is a map.";
+  if (section.kind === "plane") {
+    if (section.state >= dim) return `The section's state is out of range: this system has ${dim} ${dim === 1 ? "state" : "states"}.`;
+    if (!Number.isFinite(section.value)) return "The section's value must be a finite number.";
+  } else {
+    if (!(section.period > 0 && Number.isFinite(section.period))) return "The stroboscopic period must be a positive number.";
+    if (!Number.isFinite(section.phase)) return "The stroboscopic phase must be a finite number.";
+  }
+  return null;
+}
+
+
 /** MAX_GRAPH_SAMPLES in dyn-analysis. */
 const MAX_GRAPH_SAMPLES = 4096;
 
@@ -346,6 +519,12 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
     const err = cobwebError(sys, req.xAxis);
     if (err) throw err;
   }
+  if (req.section) {
+    const err = sectionError(sys, req.section);
+    if (err) throw err;
+  }
+  const zErr = thirdAxisError(dim, req);
+  if (zErr) throw zErr;
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -398,7 +577,12 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
 
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
   const transient = req.transient ?? 0;
-  const trajectories = req.trajectories.map((tr) => solve(sys, p, tr, req.samples, req.solver.maxSteps, transient));
+  const section = sys.kind === "ode" ? req.section : undefined;
+  const trajectories = req.trajectories.map((tr) =>
+    section
+      ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
+      : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
+  );
   const graph =
     req.graphSamples === undefined
       ? undefined
@@ -491,6 +675,76 @@ function solve(
   return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
 }
 
+function rk4(sys: MockSystem, p: number[], t: number, x: number[], h: number): number[] {
+  const k1 = sys.f(t, x, p);
+  const k2 = sys.f(t + h / 2, x.map((v, i) => v + (h / 2) * k1[i]), p);
+  const k3 = sys.f(t + h / 2, x.map((v, i) => v + (h / 2) * k2[i]), p);
+  const k4 = sys.f(t + h, x.map((v, i) => v + h * k3[i]), p);
+  return x.map((v, i) => v + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+}
+
+function crossings(
+  sys: MockSystem,
+  p: number[],
+  tr: TrajectoryRequest,
+  maxSteps: number,
+  section: SectionSpec,
+  transient: number,
+): TrajectoryOut {
+  const dim = sys.states.length;
+  const ts: number[] = [];
+  const xs: number[] = [];
+  let seen = 0;
+  const skip = Math.max(0, Math.round(transient));
+  const full = () => seen >= skip + MAX_SECTION_POINTS;
+  const take = (t: number, v: number[]) => {
+    if (seen++ >= skip) {
+      ts.push(t);
+      xs.push(...v);
+    }
+  };
+  const lerp = (a: number[], b: number[], u: number) => a.map((v, i) => v + u * (b[i] - v));
+  const span = tr.t1 - tr.t0;
+  const needed = Math.max(1, Math.ceil(Math.abs(span) / 0.01));
+  const steps = Math.min(needed, Math.max(1, maxSteps));
+  const h = span / needed;
+  let t = tr.t0;
+  let x = tr.x0.slice(0, dim);
+  const g = (v: number[]) => (section.kind === "plane" ? v[section.state] - section.value : 0);
+  let k = section.kind === "stroboscopic" ? Math.ceil((tr.t0 - section.phase) / section.period) : 0;
+  const strobe = (n: number) => (section.kind === "stroboscopic" ? section.phase + n * section.period : NaN);
+  if (section.kind === "stroboscopic" && strobe(k) === t) {
+    take(t, x);
+    k++;
+  }
+  for (let s = 1; s <= steps && !full(); s++) {
+    const next = rk4(sys, p, t, x, h);
+    const tn = tr.t0 + s * h;
+    if (next.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12))
+      return { t: ts, x: xs, status: "blewUp", stats: { accepted: s, rejected: 0, evals: 4 * s } };
+    if (section.kind === "plane") {
+      const [a, b] = [g(x), g(next)];
+      const up = a < 0 && b >= 0;
+      const down = a > 0 && b <= 0;
+      const dir = section.direction;
+      if ((up && dir !== "falling") || (down && dir !== "rising")) {
+        const u = a / (a - b);
+        take(t + u * h, lerp(x, next, u));
+      }
+    } else {
+      while (strobe(k) <= tn && !full()) {
+        const u = (strobe(k) - t) / h;
+        take(strobe(k), lerp(x, next, u));
+        k++;
+      }
+    }
+    t = tn;
+    x = next;
+  }
+  const status = steps < needed && !full() ? "maxSteps" : "completed";
+  return { t: ts, x: xs, status, stats: { accepted: steps, rejected: 0, evals: 4 * steps } };
+}
+
 function findFixedPoints(
   sys: MockSystem,
   req: PortraitRequest,
@@ -503,14 +757,20 @@ function findFixedPoints(
   };
   const found: number[][] = [];
   const seeds = 9;
+  const z = req.zAxis?.kind === "state" && req.zRange ? { index: req.zAxis.index, range: req.zRange } : null;
+  const zSeeds = z ? 5 : 1;
   for (let i = 0; i < seeds; i++) {
     for (let j = 0; j < seeds; j++) {
-      const px = req.xRange[0] + ((i + 0.5) / seeds) * (req.xRange[1] - req.xRange[0]);
-      const py = req.yRange[0] + ((j + 0.5) / seeds) * (req.yRange[1] - req.yRange[0]);
-      const root = newton(g, lift(px, py)[1], dim);
-      if (!root) continue;
-      const scale = 1e-6 * (1 + Math.hypot(...root));
-      if (!found.some((q) => Math.hypot(...q.map((v, k) => v - root[k])) < scale)) found.push(root);
+      for (let l = 0; l < zSeeds; l++) {
+        const px = req.xRange[0] + ((i + 0.5) / seeds) * (req.xRange[1] - req.xRange[0]);
+        const py = req.yRange[0] + ((j + 0.5) / seeds) * (req.yRange[1] - req.yRange[0]);
+        const start = lift(px, py)[1];
+        if (z) start[z.index] = z.range[0] + ((l + 0.5) / zSeeds) * (z.range[1] - z.range[0]);
+        const root = newton(g, start, dim);
+        if (!root) continue;
+        const scale = 1e-6 * (1 + Math.hypot(...root));
+        if (!found.some((q) => Math.hypot(...q.map((v, k) => v - root[k])) < scale)) found.push(root);
+      }
     }
   }
   return found.map((x) => {

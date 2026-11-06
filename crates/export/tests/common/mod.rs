@@ -331,6 +331,7 @@ pub fn case_of(t: Template, o: &Options) -> Case {
             Vec::new()
         },
         transient: if is_map { o.transient } else { 0 },
+        section: None,
     };
     let labels = Labels::from_info(info, &params);
     Case {

@@ -13,12 +13,14 @@
     "@tauri-apps/api": "~2.12.4",
     "mathlive": "0.111.4",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "three": "0.170.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "~2.12.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "0.170.0",
     "@vitejs/plugin-react": "^6.2.1",
     "typescript": "~5.9.3",
     "vite": "^8.3.5"

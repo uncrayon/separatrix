@@ -13,13 +13,38 @@ text and files.
 | LaTeX fixed points | `latex_fixed_points::table` | booktabs `table` float |
 | LaTeX figure | `latex_figure::figure` | pgfplots; inline data (Copy) or `.dat` files (Save) |
 | CSV + `.meta.json` | `csv::files` | one pair per initial condition |
-| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed) |
+| Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed); a section's crossings and a 3D view's trajectories are only cut |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
 Every LaTeX snippet starts with comment lines: the title, the equations as
 plain text (`convert` to text), the parameter values, and a `% Needs:` line
 with the packages it uses. Nothing in a `.tex` output is U+2212 (TeX's default
 input encoding can't read it); the real minus sign stays in SVG and PNG.
+
+## 3D view
+
+A 3D view (the request's `zAxis`) exports as a picture of the box seen from
+the studio's camera. PNG draws the trajectories with three.js offscreen (a
+`WebGLRenderer` with `preserveDrawingBuffer` at `w·scale × h·scale` px),
+copies them into the 2D canvas and draws the box, ticks, axis names and fixed
+points over them at the same scale (`renderSpaceFigure`); without WebGL it
+draws the lines in 2D through the same projection. The PNG keeps its pHYs at
+`96·scale` dpi. SVG is the same drawing projected to 2D (`drawSpaceLines` and
+`drawSpaceOverlay` on the SVG recorder), with one path per trajectory. Where
+the figure is too small for the axis names (they sit a fixed number of px
+outside the box), the camera is zoomed out until they and the end tick labels
+are inside. The export portrait cuts a 3D view's trajectories but does not
+simplify them: an x–y simplification can't know which samples the turned box
+needs. The LaTeX figure is refused: the dialog disables it with the reason,
+and `export_figure_latex` returns the same sentence for a request with
+`zAxis`, so no path draws an x–y plane instead:
+
+```
+LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.
+```
+
+The LaTeX equations and fixed points, and the CSV (every state of each
+trajectory), are the same as in any other view of the flow.
 
 ## The system
 
@@ -166,6 +191,26 @@ and glyph scale are 1, as on screen.
   With a transient `T > 0` the header says `% Transient: the first T iterates
   are not drawn.` The graph and the staircases are curves for the 5,000-point
   rule (simplified further, never thinned or rasterised).
+- Sections. A Poincaré section of a flow (the request's `section`, carried
+  into `Portrait::section`) draws each orbit's crossings with the map
+  iterates' dot and square rule, preceded by `% Section of <ic>`. No field,
+  nullclines, fixed points or arrow heads. Crossings are points: the export
+  portrait only cuts them, never simplifies them, and for the 5,000-point rule
+  they are rasterised (Save) or thinned (Copy) as map iterates are. With both
+  axes one state the figure is the return map: the pairs `(x_k, x_{k+1})` of
+  successive crossings under `% Return map of <ic>`, over the diagonal
+  `% Diagonal x_{k+1} = x_k` (drawn as a cobweb's), with the axis names
+  `x_{k}` and `x_{k+1}`. The header names the section and the skipped
+  crossings:
+
+  ```
+  % Section: plane z = 27 (increasing).
+  % Skipped crossings: the first 10 of each orbit are not drawn.
+  ```
+
+  A stroboscopic section reads `% Section: stroboscopic, period 6.283185307179586, phase 0.`
+  (the phase in absolute time, as the IPC has it). SVG and PNG draw the same
+  scene through `draw.ts` (one disc, or above 2,000 one square, per crossing).
 - Every curve is clipped (Liang–Barsky) to the view grown by two field cells
   (cells of 1/20 of the shorter side without a field) before it is written, so
   no coordinate reaches TeX's dimension limit; where a curve leaves and comes
@@ -202,7 +247,7 @@ and glyph scale are 1, as on screen.
   | `<base>-graph.dat` | `x y`, the graph of `f` in a cobweb |
   | `<base>-<icid>-cobweb.dat` | `x y`, an orbit's staircase |
   | `<base>-fixed-points.dat` | `x y glyph` (0 stable, 1 open, 2 half) |
-  | `<base>-points.png` | the map iterates' PNG layer (see below) |
+  | `<base>-points.png` | the map iterates' or crossings' PNG layer (see below) |
 
   `<base>` is a slug of the name the user saved (`latex_figure::file_base`).
 
@@ -211,7 +256,7 @@ and glyph scale are 1, as on screen.
 1. Count the data rows.
 2. Simplify the curves again at 0.5, then 1, then 2 px (the error stays within
    the sum of the tolerances) until the figure fits.
-3. Then the map iterates: Save draws them all into `<base>-points.png`
+3. Then the map iterates (or a section's crossings): Save draws them all into `<base>-points.png`
    (`raster.rs`, 300 dpi, transparent, discs or squares by the screen rule,
    `pHYs` set), included with `\addplot graphics[xmin=…,xmax=…,ymin=…,ymax=…]
    {\sepxdir <base>-points.png};` under vector axes. Copy keeps every k-th
@@ -260,6 +305,18 @@ A map's file also has `"transient": T` after `t0` (the iterates computed but
 not written; its first row is `n = T`), an additive key: the meta
 `format_version` stays 1. The time-series and cobweb views of one map export
 the same file: the staircase is a drawing of the orbit, not new data.
+
+Sections. In a Poincaré section view each row is a crossing (`t` and every
+state at the located crossing time), in increasing time. For a plane section
+the start point is not a row, and the held state is exactly the plane's value
+(`z` is `27` in every row of a `z = 27` section). For a stroboscopic section
+the rows are the samples at `t = phase + k·period`, so `t0` is a row when it is
+a sample time. The first note says which. The export dialog has no samples
+field for a section. The metadata adds, after `t0`, `"section": "plane z = 27
+(increasing)"` (or `"stroboscopic, period T, phase φ"`) and
+`"skipped_crossings": k`, the crossings computed but not written before the
+first row; both additive. A return map exports the same file as the section in
+two states.
 
 `x0` is in `columns[1..]` order. `status` is the IPC name (`blewUp`, …).
 `stem` is `<title-slug>-trajectory-<k>`, k numbering the trajectories as the export

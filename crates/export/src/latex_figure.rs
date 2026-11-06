@@ -28,12 +28,19 @@
 //!   starts, `(x_T, x_T)`. Each of the three gets a comment line (`% Diagonal x_{n+1} =
 //!   x_n`, `% Graph of f`, `% Cobweb of <ic>`), the figure's only per-plot
 //!   comments, and a transient is named in the header.
+//! - A Poincaré section (`Portrait::section`, Strogatz §8.7) draws each
+//!   orbit's crossings as map iterates are drawn, under a `% Section of
+//!   <ic>` comment. With both axes one state it is the return map: the
+//!   pairs `(x_k, x_{k+1})` under `% Return map of <ic>`, over the diagonal
+//!   (`% Diagonal x_{k+1} = x_k`), with the axis names `x_{k}` and
+//!   `x_{k+1}`. The header names the section and the skipped crossings.
 //! - Every curve is clipped to the view grown by two field cells, and
 //!   breaks are `nan` rows with `unbounded coords=jump`.
 //! - Data is inline (`table[row sep=\\]{…}`, for Copy) or in `.dat` files
 //!   next to the `.tex`, read through `\sepxdir` (for Save).
 //! - At most [`MAX_POINTS`] rows per figure: curves are simplified further,
-//!   then map iterates go to a PNG layer (Save) or are thinned (Copy).
+//!   then map iterates and crossings go to a PNG layer (Save) or are
+//!   thinned (Copy).
 
 use dyn_expr::InputFormat;
 use serde::{Deserialize, Serialize};
@@ -125,7 +132,7 @@ pub struct FigureOutput {
     pub files: Vec<FigureFile>,
     /// Data rows written.
     pub points: usize,
-    /// Map iterates were thinned to stay under [`MAX_POINTS`].
+    /// Map iterates or crossings were thinned to stay under [`MAX_POINTS`].
     pub thinned: bool,
     /// What the user should know (one sentence each).
     pub notes: Vec<String>,
@@ -651,7 +658,6 @@ struct Plot {
     table: Option<(String, Table)>,
     /// Curves that may be simplified further, as pieces (data coords).
     curve: Option<Vec<Vec<(f64, f64)>>>,
-    /// Map iterates that may be rasterised or thinned.
     cloud: Option<Cloud>,
     raw: String,
 }
@@ -687,6 +693,10 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     let vp = Viewport::new(w, h, p.x_range, p.y_range);
     let (upx, upy) = vp.units_per_px();
     let is_map = p.kind == SystemKind::Map;
+    let section = p.section.filter(|_| !is_map);
+    let dots = is_map || section.is_some();
+    let return_map = section.is_some() && p.x_axis == p.y_axis && p.x_axis != Axis::Time;
+    let points_word = if is_map { "map iterates" } else { "crossings" };
     let time_series = p.x_axis == Axis::Time || p.y_axis == Axis::Time;
     let mut notes: Vec<String> = Vec::new();
 
@@ -723,6 +733,9 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
     let cobweb = p.cobweb && is_map;
     let (xn, yn) = if cobweb {
         cobweb_axis_latex(input.labels)
+    } else if return_map {
+        let base = axis_latex(p.x_axis, p.y_axis, p.kind, input.labels);
+        (with_subscript(&base, "k"), with_subscript(&base, "k+1"))
     } else {
         (
             axis_latex(p.x_axis, p.y_axis, p.kind, input.labels),
@@ -843,23 +856,25 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         });
     }
 
-    // A cobweb's diagonal and the graph of f, under the staircases.
-    if cobweb {
+    if cobweb || return_map {
         if let Some((a, b)) = crate::cobweb::diagonal(p.x_range, p.y_range) {
             let pt = |(x, y): (f64, f64)| format!("({},{})", quant.write(0, x), quant.write(1, y));
+            let k = if cobweb { "n" } else { "k" };
             plots.push(Plot {
                 options: String::new(),
                 table: None,
                 curve: None,
                 cloud: None,
                 raw: format!(
-                    "% Diagonal x_{{n+1}} = x_n\n\\addplot[sepxaxis, line width={}, line cap=butt] coordinates {{{} {}}};\n",
+                    "% Diagonal x_{{{k}+1}} = x_{k}\n\\addplot[sepxaxis, line width={}, line cap=butt] coordinates {{{} {}}};\n",
                     bp(1.0),
                     pt(a),
                     pt(b)
                 ),
             });
         }
+    }
+    if cobweb {
         let mut pieces = Vec::new();
         for line in &p.graph {
             let line = &line[..finite_prefix(line)];
@@ -899,16 +914,17 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
         let tr = &p.trajectories[i];
         let dim = p.dim;
         let n = tr.t.len().min(tr.x.len().checked_div(dim).unwrap_or(0));
-        let shown: Vec<(f64, f64)> = (0..n)
+        let next = usize::from(return_map);
+        let shown: Vec<(f64, f64)> = (0..n.saturating_sub(next))
             .map(|k| {
                 (
                     ax_value(p.x_axis, &tr.t, &tr.x, dim, k),
-                    ax_value(p.y_axis, &tr.t, &tr.x, dim, k),
+                    ax_value(p.y_axis, &tr.t, &tr.x, dim, k + next),
                 )
             })
             .collect();
         let shown = &shown[..finite_prefix(&shown)];
-        if shown.len() < 2 && !(is_map && shown.len() == 1) {
+        if shown.len() < 2 && !(dots && shown.len() == 1) {
             continue;
         }
         let ci = usize::from(tr.tag.color) % PALETTE_SIZE;
@@ -991,7 +1007,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
             continue;
         }
 
-        if is_map {
+        if dots {
             if time_series && shown.len() >= 2 {
                 let pieces = clip_polyline(&rect, shown);
                 if !pieces.is_empty() {
@@ -1031,6 +1047,16 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                 .collect();
             if pts.is_empty() {
                 continue;
+            }
+            if section.is_some() {
+                let what = if return_map { "Return map" } else { "Section" };
+                plots.push(Plot {
+                    options: String::new(),
+                    table: None,
+                    curve: None,
+                    cloud: None,
+                    raw: comment(&format!("{what} of {}", tr.tag.ic_id)),
+                });
             }
             let mut t = Table::new(&["x", "y"]);
             t.rows.extend(pts.iter().map(|&(a, b)| Some(vec![a, b])));
@@ -1264,7 +1290,7 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                 };
                 plots.retain(|p| p.cloud.is_none());
                 notes.push(format!(
-                    "The map iterates ({cloud_rows} points) are drawn as a {RASTER_DPI}-dpi PNG \
+                    "The {points_word} ({cloud_rows} points) are drawn as a {RASTER_DPI}-dpi PNG \
                      layer under vector axes."
                 ));
             }
@@ -1281,8 +1307,9 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
                 }
                 thinned = true;
                 notes.push(format!(
-                    "One map iterate in {stride} is kept so the copied figure stays under \
-                     5,000 points; Save… keeps them all."
+                    "One {} in {stride} is kept so the copied figure stays under \
+                     5,000 points; Save… keeps them all.",
+                    if is_map { "map iterate" } else { "crossing" }
                 ));
             }
         }
@@ -1332,13 +1359,22 @@ pub fn figure(input: &FigureInput) -> FigureOutput {
             p.transient
         )));
     }
+    if let Some(s) = section {
+        tex.push_str(&comment(&format!("Section: {}.", s.describe(input.labels))));
+        if p.transient > 0 {
+            tex.push_str(&comment(&format!(
+                "Skipped crossings: the first {} of each orbit are not drawn.",
+                p.transient
+            )));
+        }
+    }
     for n in &notes {
         tex.push_str(&comment(n));
     }
     if thinned {
-        tex.push_str(&comment(
-            "Thinned: some map iterates were left out of this copy (see above).",
-        ));
+        tex.push_str(&comment(&format!(
+            "Thinned: some {points_word} were left out of this copy (see above)."
+        )));
     }
     if over {
         tex.push_str(&comment(
