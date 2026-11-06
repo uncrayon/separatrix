@@ -1086,6 +1086,20 @@ path: string,
  */
 name: string, };
 
+export type RecentProject = { 
+/**
+ * The path, for `project_read`.
+ */
+path: string, 
+/**
+ * Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+ */
+name: string, 
+/**
+ * The folder it is in, as the system writes it.
+ */
+folder: string, };
+
 export type DocumentStateRequest = { 
 /**
  * Window title, e.g. `"● rabbits-vs-sheep — Separatrix"`.
@@ -1103,6 +1117,28 @@ export type ProjectOpenRequested = {
 path: string, };
 
 export type CloseRequested = Record<symbol, never>;
+
+export type UpdateCheck = { "kind": "off" } | { "kind": "upToDate", 
+/**
+ * The running version, e.g. `"1.0.0"`.
+ */
+version: string, } | { "kind": "available", 
+/**
+ * Its version, e.g. `"1.0.1"`.
+ */
+version: string, 
+/**
+ * Its release notes, from `latest.json`.
+ */
+notes: string | null, 
+/**
+ * Its publication date (RFC 3339), from `latest.json`.
+ */
+date: string | null, } | { "kind": "failed", 
+/**
+ * The reason, for the log.
+ */
+message: string, };
 
 export type ExportPortraitRequest = { 
 /**

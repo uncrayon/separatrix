@@ -16,6 +16,7 @@ import {
   mockProjectChooseSavePath,
   mockProjectRead,
   mockProjectWrite,
+  mockRecentProjects,
   mockSetDocumentState,
 } from "../api/mock";
 import type {
@@ -26,6 +27,7 @@ import type {
   ProjectOpenRequested,
   ProjectReadRequest,
   ProjectWriteRequest,
+  RecentProject,
   SavedProject,
 } from "../api/types";
 
@@ -54,6 +56,9 @@ export const chooseSavePath = (req: ProjectChooseSaveRequest): Promise<ChosenSav
 
 export const writeProject = (req: ProjectWriteRequest): Promise<SavedProject> =>
   isTauri() ? invoke<SavedProject>("project_write", { req }) : mockProjectWrite(req);
+
+export const recentProjects = (): Promise<RecentProject[]> =>
+  isTauri() ? invoke<RecentProject[]>("recent_projects") : mockRecentProjects();
 
 export const launchReady = (): Promise<string[]> => (isTauri() ? invoke<string[]>("launch_ready") : mockLaunchReady());
 

@@ -43,6 +43,7 @@ import {
 } from "./icons";
 import { diagnosticLine } from "./diagnostics";
 import { looksStiff, sectionCounts } from "./runStatus";
+import { UpdateButton } from "../update/UpdateButton";
 
 type Theme = "dark" | "light";
 
@@ -362,9 +363,11 @@ function useDelayed(on: boolean, delay: number): boolean {
 interface StatusBarProps {
   state: StudioState;
   actions: StudioActions;
+  /** Asks about unsaved changes before an update restarts the app. */
+  beforeUpdate: () => Promise<boolean>;
 }
 
-export function StatusBar({ state, actions }: StatusBarProps) {
+export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
   const lyapunov = isLyapunov(state.view) ? state.view : null;
   const orbit = isOrbit(state.view) ? state.view : null;
   const branch = isContinuation(state.view) ? state.view : null;
@@ -639,6 +642,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             </button>
           </span>
         )}
+        <UpdateButton beforeInstall={beforeUpdate} />
       </div>
     </footer>
   );

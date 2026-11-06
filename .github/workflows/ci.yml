@@ -53,3 +53,7 @@ jobs:
         run: cargo build -p separatrix
       - name: IPC TypeScript bindings are up to date
         run: cargo test -p separatrix --lib typescript_bindings_are_up_to_date
+      - name: Versions agree and suit MSI
+        run: cargo test -p separatrix --test version
+      - name: Release readiness (without the numerical gates, which the core job runs)
+        run: bash scripts/release-check.sh --skip-gates

@@ -1,0 +1,9 @@
+os        arch       variant  target                 need     bundle_path                       suffix                         updater
+linux     x86_64     -        -                      always   appimage/Separatrix_@V@_amd64.AppImage  linux_x86_64.AppImage          linux-x86_64
+linux     x86_64     -        -                      always   deb/Separatrix_@V@_amd64.deb      linux_amd64.deb                linux-x86_64-deb
+linux     x86_64     -        -                      always   rpm/Separatrix-@V@-1.x86_64.rpm   linux_x86_64.rpm               linux-x86_64-rpm
+windows   x64        -        -                      always   nsis/Separatrix_@V@_x64-setup.exe windows_x64-setup.exe          windows-x86_64
+windows   x64        -        -                      always   msi/Separatrix_@V@_x64_en-US.msi  windows_x64.msi                windows-x86_64-msi
+windows   x64        offline  -                      always   nsis/Separatrix_@V@_x64-setup.exe windows_x64_offline-setup.exe  -
+macos     universal  -        universal-apple-darwin always   dmg/Separatrix_@V@_universal.dmg  macos_universal.dmg            -
+macos     universal  -        universal-apple-darwin optional macos/Separatrix.app.tar.gz       macos_universal.app.tar.gz     darwin-x86_64,darwin-aarch64

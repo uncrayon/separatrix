@@ -46,6 +46,7 @@ import type {
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
+  RecentProject,
   SaveFigureRequest,
   SaveOrbitFigureRequest,
   SaveTextRequest,
@@ -55,6 +56,7 @@ import type {
   SystemLatexResponse,
   TrajectoryOut,
   TrajectoryRequest,
+  UpdateCheck,
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
@@ -1814,6 +1816,10 @@ export interface SepxMock {
   nextSavePath?: string | null;
   /** Paths "passed on the command line", returned once by `launch_ready`. */
   launchFiles: string[];
+  recent?: string[];
+  update?: UpdateCheck;
+  /** How many times Install and restart reached the backend. */
+  installs?: number;
   /** The last text copied. */
   clipboardText?: string;
   /** Size of the last image copied, in bytes. */
@@ -1846,6 +1852,20 @@ if (typeof window !== "undefined") sepxMock();
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 const q = (name: string) => `“${name}”`;
+
+const RECENT_MAX = 8;
+
+function remember(path: string) {
+  const m = sepxMock();
+  m.recent = [path, ...(m.recent ?? []).filter((p) => p !== path)].slice(0, RECENT_MAX);
+}
+
+export async function mockRecentProjects(): Promise<RecentProject[]> {
+  const m = sepxMock();
+  return (m.recent ?? [])
+    .filter((p) => m.files.has(p))
+    .map((path) => ({ path, name: fileName(path), folder: path.replace(/[\\/][^\\/]*$/, "") || "/" }));
+}
 
 function takeDialog(key: "nextOpenPath" | "nextSavePath", fallback: string | null): string | null {
   const m = sepxMock();
@@ -1881,6 +1901,7 @@ export async function mockProjectRead(req: ProjectReadRequest): Promise<OpenedPr
     throw `${q(name)} needs a newer version of Separatrix to open. Update Separatrix, then open it again.`;
   }
   const newer = (d.format_version ?? 1) > 1 ? d.format_version : undefined;
+  remember(req.path);
   return {
     path: req.path,
     name,
@@ -1904,8 +1925,9 @@ export async function mockProjectWrite(req: ProjectWriteRequest): Promise<SavedP
   if (!req.path.toLowerCase().endsWith(".sepx")) throw `Projects are saved as .sepx files, not ${q(name)}.`;
   const p = req.project as Record<string, unknown> | null;
   if (!p || typeof p !== "object") throw "The project can't be saved: it isn't an object.";
-  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: "0.2.0" };
+  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: __APP_VERSION__ };
   sepxMock().files.set(req.path, JSON.stringify(stamped, null, 2) + "\n");
+  remember(req.path);
   return { path: req.path, name };
 }
 
@@ -1914,6 +1936,16 @@ export async function mockLaunchReady(): Promise<string[]> {
   const out = m.launchFiles;
   m.launchFiles = [];
   return out;
+}
+
+export async function mockCheckForUpdate(): Promise<UpdateCheck> {
+  return sepxMock().update ?? { kind: "off" };
+}
+
+export async function mockInstallUpdate(): Promise<void> {
+  const m = sepxMock();
+  m.installs = (m.installs ?? 0) + 1;
+  if (m.update?.kind !== "available") throw new Error("Updates are off in this build.");
 }
 
 export async function mockSetDocumentState(req: DocumentStateRequest): Promise<void> {
@@ -2104,7 +2136,7 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
     const meta = {
       format: "separatrix-trajectory",
       format_version: 1,
-      app_version: "0.2.0",
+      app_version: __APP_VERSION__,
       title: req.title,
       csv: `${stem}.csv`,
       ic_id: id,

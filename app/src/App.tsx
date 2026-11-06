@@ -1,5 +1,6 @@
-import { lazy, Suspense, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isTauri } from "./api/client";
+import type { RecentProject } from "./api/types";
 import { BranchCanvas } from "./canvas/BranchCanvas";
 import { LyapunovCanvas } from "./canvas/LyapunovCanvas";
 import { OrbitCanvas } from "./canvas/OrbitCanvas";
@@ -12,6 +13,7 @@ import { TemplateGallery } from "./components/TemplateGallery";
 import { TooltipLayer } from "./components/Tooltip";
 import { ExportDialog } from "./export/ExportDialog";
 import { ConfirmDialog, ProjectAnnouncer, ProjectBanner } from "./project/ConfirmDialog";
+import { recentProjects } from "./project/ipc";
 import { projectStem } from "./project/names";
 import { useProjectDocument } from "./project/useProjectDocument";
 import { useShortcuts } from "./project/useShortcuts";
@@ -143,6 +145,19 @@ export default function App() {
     });
   }, [doc.newBlank]);
   const openFile = useCallback(() => void doc.open(), [doc.open]);
+  const openRecent = useCallback((path: string) => void doc.openPath(path), [doc.openPath]);
+
+  const [recent, setRecent] = useState<RecentProject[]>([]);
+  useEffect(() => {
+    if (!galleryOpen) return;
+    let live = true;
+    recentProjects()
+      .then((list) => live && setRecent(list))
+      .catch(() => live && setRecent([]));
+    return () => {
+      live = false;
+    };
+  }, [galleryOpen]);
   const save = useCallback(() => void doc.save(), [doc.save]);
   const saveAs = useCallback(() => void doc.saveAs(), [doc.saveAs]);
 
@@ -212,7 +227,7 @@ export default function App() {
           </main>
           <Inspector state={state} actions={actions} />
         </div>
-        <StatusBar state={state} actions={actions} />
+        <StatusBar state={state} actions={actions} beforeUpdate={doc.guard} />
       </div>
       {/* Outside `.app`, which is inert under a dialog: always there, so a
           new message is announced (errors assertively). */}
@@ -222,6 +237,9 @@ export default function App() {
           onPick={pick}
           onBlank={blank}
           onClose={closeGallery}
+          onOpen={openFile}
+          recent={recent}
+          onOpenRecent={openRecent}
           canClose={state.compiled !== null}
           notice={
             doc.banner.length > 0 ? <ProjectBanner messages={doc.banner} onDismiss={doc.dismissBanner} /> : null

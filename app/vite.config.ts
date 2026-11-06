@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tauriConf from "./src-tauri/tauri.conf.json" with { type: "json" };
+import pkg from "./package.json" with { type: "json" };
 
 const CHUNK_WARN_KB = 500;
 const MATHLIVE_CHUNK_WARN_KB = 900;
@@ -31,6 +32,7 @@ function chunkSizeGuard(): Plugin {
 
 export default defineConfig({
   plugins: [react(), chunkSizeGuard()],
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   clearScreen: false,
   server: { port: DEV_PORT, strictPort: true, watch: { ignored: ["**/src-tauri/**"] } },
   build: {

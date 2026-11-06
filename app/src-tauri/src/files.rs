@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime, Url};
 
 use crate::ipc::ProjectOpenRequested;
@@ -82,6 +83,98 @@ impl GrantedPaths {
     pub fn contains(&self, path: &Path) -> bool {
         let set = lock(&self.0);
         set.contains(path) || path.canonicalize().is_ok_and(|c| set.contains(&c))
+    }
+}
+
+pub const RECENT_FILE: &str = "recent-projects.json";
+pub const RECENT_MAX: usize = 8;
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentList {
+    pub paths: Vec<PathBuf>,
+}
+
+impl RecentList {
+    pub fn parse(bytes: &[u8]) -> Self {
+        serde_json::from_slice(bytes).unwrap_or_default()
+    }
+
+    pub fn to_json(&self) -> Vec<u8> {
+        let mut out = serde_json::to_vec_pretty(self).unwrap_or_default();
+        out.push(b'\n');
+        out
+    }
+
+    pub fn push(mut self, path: &Path) -> Self {
+        let path = canonical(path);
+        self.paths.retain(|p| *p != path);
+        self.paths.insert(0, path);
+        self.paths.truncate(RECENT_MAX);
+        self
+    }
+}
+
+/// `path` canonicalized, for de-duplication and for display: the gallery
+/// and the window title show it, so Windows' `\\?\C:\` verbatim prefix
+/// is dropped.
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .map(|c| without_verbatim_prefix(&c))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// `\\?\C:\dir\a.sepx` → `C:\dir\a.sepx`; any other path (a verbatim
+/// UNC path included) is kept as it is.
+fn without_verbatim_prefix(path: &Path) -> PathBuf {
+    match path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if matches!(rest.as_bytes(), [d, b':', b'\\', ..] if d.is_ascii_alphabetic()) => {
+            PathBuf::from(rest)
+        }
+        _ => path.to_path_buf(),
+    }
+}
+
+fn save_recent(file: &Path, list: &MutexGuard<'_, RecentList>) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    separatrix_project::write_atomic(file, &list.to_json())
+}
+
+pub struct RecentProjects {
+    file: Option<PathBuf>,
+    list: Mutex<RecentList>,
+}
+
+impl RecentProjects {
+    pub fn load(file: Option<PathBuf>) -> Self {
+        let list = file
+            .as_deref()
+            .and_then(|f| std::fs::read(f).ok())
+            .map(|b| RecentList::parse(&b))
+            .unwrap_or_default();
+        Self {
+            file,
+            list: Mutex::new(list),
+        }
+    }
+
+    pub fn remember(&self, path: &Path) -> std::io::Result<()> {
+        let mut list = lock(&self.list);
+        *list = std::mem::take(&mut *list).push(path);
+        match &self.file {
+            Some(file) => save_recent(file, &list),
+            None => Ok(()),
+        }
+    }
+
+    pub fn existing(&self) -> Vec<PathBuf> {
+        lock(&self.list)
+            .paths
+            .iter()
+            .filter(|p| p.is_file() && p.to_str().is_some())
+            .cloned()
+            .collect()
     }
 }
 
@@ -341,6 +434,140 @@ mod tests {
         let new = dir.join("new.sepx");
         g.grant(&new);
         assert!(g.contains(&new));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn recent(paths: &[&str]) -> RecentList {
+        RecentList {
+            paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
+    #[test]
+    fn recent_puts_the_newest_first_and_keeps_each_file_once() {
+        let list = RecentList::default()
+            .push(Path::new("a.sepx"))
+            .push(Path::new("b.sepx"))
+            .push(Path::new("c.sepx"));
+        assert_eq!(list, recent(&["c.sepx", "b.sepx", "a.sepx"]));
+        let list = list.push(Path::new("a.sepx"));
+        assert_eq!(
+            list,
+            recent(&["a.sepx", "c.sepx", "b.sepx"]),
+            "moved, not added"
+        );
+        assert_eq!(
+            list.clone().push(Path::new("a.sepx")),
+            list,
+            "already first"
+        );
+    }
+
+    #[test]
+    fn recent_keeps_at_most_eight() {
+        let list = (0..12).fold(RecentList::default(), |l, k| {
+            l.push(Path::new(&format!("{k}.sepx")))
+        });
+        assert_eq!(list.paths.len(), RECENT_MAX);
+        assert_eq!(list.paths[0], PathBuf::from("11.sepx"));
+        assert_eq!(list.paths[RECENT_MAX - 1], PathBuf::from("4.sepx"));
+    }
+
+    #[test]
+    fn recent_garbage_parses_to_an_empty_list() {
+        for bytes in [
+            &b""[..],
+            b"not json",
+            b"null",
+            b"[]",
+            b"{}",
+            b"{\"paths\": 3}",
+            b"{\"paths\": [1, 2]}",
+            b"\xff\xfe",
+        ] {
+            assert_eq!(
+                RecentList::parse(bytes),
+                RecentList::default(),
+                "{:?}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+        let list = recent(&["/w/a.sepx", "/w/b c.sepx"]);
+        assert_eq!(RecentList::parse(&list.to_json()), list, "round trip");
+        assert_eq!(
+            RecentList::parse(br#"{"paths":["/w/a.sepx"],"later":true}"#),
+            recent(&["/w/a.sepx"]),
+            "unknown keys are ignored"
+        );
+    }
+
+    #[test]
+    fn a_windows_verbatim_drive_prefix_is_dropped() {
+        let cases = [
+            (
+                r"\\?\C:\Users\ada\pendulum.sepx",
+                r"C:\Users\ada\pendulum.sepx",
+            ),
+            (r"\\?\d:\x.sepx", r"d:\x.sepx"),
+            (
+                r"\\?\UNC\server\share\x.sepx",
+                r"\\?\UNC\server\share\x.sepx",
+            ),
+            (r"C:\plain.sepx", r"C:\plain.sepx"),
+            ("/home/ada/pendulum.sepx", "/home/ada/pendulum.sepx"),
+        ];
+        for (given, want) in cases {
+            assert_eq!(
+                without_verbatim_prefix(Path::new(given)),
+                PathBuf::from(want),
+                "{given}"
+            );
+        }
+    }
+
+    #[test]
+    fn recent_is_stored_by_canonical_path_and_lists_only_files_that_exist() {
+        let dir = std::env::temp_dir().join(format!("sepx-recent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let a = dir.join("a.sepx");
+        let b = dir.join("b.sepx");
+        std::fs::write(&a, "{}").unwrap();
+        std::fs::write(&b, "{}").unwrap();
+        let file = dir.join("config").join(RECENT_FILE);
+
+        let store = RecentProjects::load(Some(file.clone()));
+        assert!(store.existing().is_empty(), "no file yet: empty");
+        store.remember(&a).unwrap();
+        store.remember(&b).unwrap();
+        store
+            .remember(&dir.join("sub").join("..").join("a.sepx"))
+            .unwrap();
+        let (a, b) = (canonical(&a), canonical(&b));
+        assert_eq!(
+            store.existing(),
+            vec![a.clone(), b.clone()],
+            "a once, first"
+        );
+
+        let reloaded = RecentProjects::load(Some(file.clone()));
+        assert_eq!(reloaded.existing(), vec![a.clone(), b.clone()], "persisted");
+        std::fs::remove_file(&b).unwrap();
+        assert_eq!(
+            reloaded.existing(),
+            vec![a.clone()],
+            "a deleted file is not listed"
+        );
+        assert_eq!(
+            RecentList::parse(&std::fs::read(&file).unwrap())
+                .paths
+                .len(),
+            2,
+            "but stays stored"
+        );
+
+        std::fs::write(&file, "garbage").unwrap();
+        assert!(RecentProjects::load(Some(file)).existing().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

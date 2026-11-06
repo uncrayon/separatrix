@@ -6,7 +6,9 @@
 //! - [`service`]: what the maths commands do, testable without a window.
 //! - [`export_service`]: what the export commands do, testable without a window.
 //! - [`files`]: launch arguments, single instance, macOS `Opened`, drops,
-//!   the close guard and the paths the webview may read or write.
+//!   the close guard, the paths the webview may read or write and the
+//!   recent projects.
+//! - [`updater`]: updates from GitHub Releases, off without a signing key.
 //!
 //! Commands (called from `app/src/api/client.ts` as `invoke(name, { req })`;
 //! see `docs/contracts.md`):
@@ -23,6 +25,7 @@
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
 //! | `project_write` | [`ipc::ProjectWriteRequest`] | [`ipc::SavedProject`] |
+//! | `recent_projects` | none | [`ipc::RecentProject`]`[]` |
 //! | `launch_ready` | none | `string[]` |
 //! | `set_document_state` | [`ipc::DocumentStateRequest`] | `()` |
 //! | `close_window` | none | `()` |
@@ -40,22 +43,27 @@
 //! | `save_png_file` | raw PNG body, header `x-sepx-name` | [`ipc::SavedFiles`] or `null` |
 //! | `clipboard_write_text` | [`ipc::ClipboardTextRequest`] | `()` |
 //! | `clipboard_write_png` | raw PNG body | `()` |
+//! | `check_for_update` | none | [`ipc::UpdateCheck`] |
+//! | `install_update` | none | `()` |
+//! | `start_update_check` | none | `()` |
 //!
-//! Every plugin (dialog, clipboard, single instance) is used from Rust
-//! only, so no plugin command is exposed to the webview (the capability
+//! Every plugin (dialog, clipboard, single instance, updater) is used from
+//! Rust only, so no plugin command is exposed to the webview (the capability
 //! stays `core:default`).
 
 pub mod export_service;
 pub mod files;
 pub mod ipc;
 pub mod service;
+pub mod updater;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use export_service::ExportCache;
-use files::{DocState, GrantedPaths, LaunchFiles, MAIN_WINDOW};
+use files::{DocState, GrantedPaths, LaunchFiles, RecentProjects, MAIN_WINDOW};
 use separatrix_export::Placement;
 use service::SystemStore;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
@@ -155,6 +163,26 @@ impl LastDir {
     }
 }
 
+/// Whether a file dialog is showing. On Linux the dialog isn't modal, so a
+/// second Open… would stack another one and the last to close would win.
+#[derive(Default)]
+struct DialogShowing(AtomicBool);
+
+/// Clears [`DialogShowing`] when the dialog's call ends.
+struct DialogTurn<'a>(&'a AtomicBool);
+
+impl Drop for DialogTurn<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl DialogShowing {
+    fn begin(&self) -> Option<DialogTurn<'_>> {
+        (!self.0.swap(true, Ordering::SeqCst)).then(|| DialogTurn(&self.0))
+    }
+}
+
 enum DialogKind {
     Open,
     Save,
@@ -162,6 +190,7 @@ enum DialogKind {
 
 /// Shows a file dialog over the main window, on a blocking thread, starting
 /// in `dir` (or the last folder used). `filter` is (name, extensions).
+/// While one is showing, another request returns `None`, as if cancelled.
 async fn file_dialog<R: Runtime>(
     app: &AppHandle<R>,
     kind: DialogKind,
@@ -169,6 +198,10 @@ async fn file_dialog<R: Runtime>(
     file_name: Option<String>,
     dir: Option<PathBuf>,
 ) -> Result<Option<PathBuf>, String> {
+    let showing = app.state::<DialogShowing>();
+    let Some(_turn) = showing.begin() else {
+        return Ok(None);
+    };
     let dir = dir.or_else(|| app.state::<LastDir>().get());
     let app2 = app.clone();
     let picked = blocking(move || {
@@ -249,18 +282,24 @@ async fn project_choose_open_path<R: Runtime>(app: AppHandle<R>) -> Result<Optio
     Ok(Some(s))
 }
 
-/// Reads a granted project file.
+/// Reads a granted project file, and puts it first in the recent projects.
 #[tauri::command]
 async fn project_read(
     req: ipc::ProjectReadRequest,
     granted: State<'_, GrantedPaths>,
+    recent: State<'_, Arc<RecentProjects>>,
 ) -> Result<ipc::OpenedProject, String> {
     let path = PathBuf::from(&req.path);
     if !granted.contains(&path) {
         return Err(not_granted(&path));
     }
-    let opened =
-        blocking(move || separatrix_project::read_file(&path).map_err(|e| e.to_string())).await?;
+    let recent = Arc::clone(&recent);
+    let opened = blocking(move || {
+        let opened = separatrix_project::read_file(&path).map_err(|e| e.to_string())?;
+        remember_recent_best_effort(&recent, &path);
+        Ok(opened)
+    })
+    .await?;
     Ok(ipc::OpenedProject {
         name: separatrix_project::file_name(Path::new(&req.path)),
         path: req.path,
@@ -306,11 +345,13 @@ async fn project_choose_save_path<R: Runtime>(
     }))
 }
 
-/// Checks and writes a project to a granted `.sepx` path.
+/// Checks and writes a project to a granted `.sepx` path, and puts it first
+/// in the recent projects.
 #[tauri::command]
 async fn project_write(
     req: ipc::ProjectWriteRequest,
     granted: State<'_, GrantedPaths>,
+    recent: State<'_, Arc<RecentProjects>>,
 ) -> Result<ipc::SavedProject, String> {
     let path = PathBuf::from(&req.path);
     if !files::is_project_path(&path) {
@@ -323,17 +364,46 @@ async fn project_write(
         return Err(not_granted(&path));
     }
     let name = separatrix_project::file_name(&path);
+    let recent = Arc::clone(&recent);
     blocking(move || {
         let project =
             separatrix_project::from_value_checked(req.project).map_err(|e| e.to_string())?;
         separatrix_project::write_file(&path, &project, export_service::APP_VERSION)
             .map_err(|e| e.with_file(&name).to_string())?;
+        remember_recent_best_effort(&recent, &path);
         Ok(ipc::SavedProject {
             path: req.path,
             name,
         })
     })
     .await
+}
+
+fn remember_recent_best_effort(recent: &RecentProjects, path: &Path) {
+    if let Err(e) = recent.remember(path) {
+        eprintln!("separatrix: couldn't save the recent projects: {e}");
+    }
+}
+
+/// The recent projects that still exist, most recent first, each granted
+/// for `project_read`.
+#[tauri::command]
+fn recent_projects(
+    recent: State<'_, Arc<RecentProjects>>,
+    granted: State<'_, GrantedPaths>,
+) -> Vec<ipc::RecentProject> {
+    recent
+        .existing()
+        .into_iter()
+        .filter_map(|p| {
+            granted.grant(&p);
+            Some(ipc::RecentProject {
+                path: p.to_str()?.to_owned(),
+                name: separatrix_project::file_name(&p),
+                folder: p.parent()?.to_str()?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// The UI listens for `project-open-requested`: returns the files that
@@ -809,6 +879,8 @@ async fn clipboard_write_png<R: Runtime>(
 
 #[cfg(target_os = "macos")]
 const QUIT_MENU_ID: &str = "quit";
+#[cfg(target_os = "macos")]
+const CHECK_UPDATES_MENU_ID: &str = "check-updates";
 
 /// The default macOS menu with Quit replaced by an item that closes the
 /// window, so Cmd+Q and the app menu's Quit go through the unsaved-changes
@@ -836,6 +908,14 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
         true,
         Some("CmdOrCtrl+Q"),
     )?;
+    // Title Case, as macOS menus are; the in-app button keeps the brand's sentence case.
+    let check_updates = MenuItem::with_id(
+        app,
+        CHECK_UPDATES_MENU_ID,
+        "Check for Updates\u{2026}",
+        true,
+        None::<&str>,
+    )?;
     Menu::with_items(
         app,
         &[
@@ -845,6 +925,7 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
                 true,
                 &[
                     &PredefinedMenuItem::about(app, None, Some(about))?,
+                    &check_updates,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::services(app, None)?,
                     &PredefinedMenuItem::separator(app)?,
@@ -900,6 +981,8 @@ fn macos_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::menu::Menu
 /// Starts the desktop app.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    let plugins = serde_json::to_value(&context.config().plugins).unwrap_or_default();
     let builder = tauri::Builder::default()
         // Managed on the builder, not in `setup`: macOS `Opened` can arrive
         // before `setup` has finished.
@@ -909,6 +992,7 @@ pub fn run() {
         .manage(DocState::default())
         .manage(GrantedPaths::default())
         .manage(LastDir::default())
+        .manage(DialogShowing::default())
         // First, so a second instance exits before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             let paths = files::project_paths_from_args(
@@ -918,8 +1002,15 @@ pub fn run() {
             files::deliver(app, paths);
         }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
+    let builder = updater::register(builder, updater::updater_setup(&plugins))
         .setup(|app| {
+            let recent = app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|d| d.join(files::RECENT_FILE));
+            app.manage(Arc::new(RecentProjects::load(recent)));
             let cwd = std::env::current_dir().unwrap_or_default();
             // `args_os`: `args` panics on an argument that isn't UTF-8.
             let paths = files::project_paths_from_args(std::env::args_os(), &cwd);
@@ -929,7 +1020,9 @@ pub fn run() {
                 let menu = macos_menu(app.handle())?;
                 app.set_menu(menu)?;
                 app.on_menu_event(|app, event| {
-                    if event.id() == QUIT_MENU_ID {
+                    if event.id() == CHECK_UPDATES_MENU_ID {
+                        let _ = app.emit_to(MAIN_WINDOW, updater::EVENT_CHECK_REQUESTED, ());
+                    } else if event.id() == QUIT_MENU_ID {
                         match app.get_webview_window(MAIN_WINDOW) {
                             // Raises CloseRequested: the guard below runs.
                             Some(w) => {
@@ -977,6 +1070,7 @@ pub fn run() {
             project_read,
             project_choose_save_path,
             project_write,
+            recent_projects,
             launch_ready,
             set_document_state,
             close_window,
@@ -1000,9 +1094,12 @@ pub fn run() {
             save_png_file,
             clipboard_write_text,
             clipboard_write_png,
+            updater::check_for_update,
+            updater::install_update,
+            updater::start_update_check,
         ]);
     builder
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building the app")
         .run(|_app, _event| {
             #[cfg(target_os = "macos")]
@@ -1015,8 +1112,25 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::body_bytes;
+    use super::{body_bytes, DialogShowing};
     use tauri::ipc::InvokeBody;
+
+    #[test]
+    fn one_file_dialog_at_a_time() {
+        let showing = DialogShowing::default();
+        let first = showing.begin();
+        assert!(first.is_some());
+        assert!(showing.begin().is_none(), "a second dialog while one shows");
+        assert!(
+            showing.begin().is_none(),
+            "a refused request leaves the first one's turn"
+        );
+        drop(first);
+        assert!(
+            showing.begin().is_some(),
+            "free again once the first closes"
+        );
+    }
 
     #[test]
     fn image_bytes_arrive_raw_or_as_a_json_array() {

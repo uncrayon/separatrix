@@ -2,8 +2,69 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [1.0.0] - Unreleased
+
+The first release of Separatrix, the desktop rewrite of the old Python tool.
+
+### Highlights
+- Type a flow or a map as you write it on the board, in LaTeX or plain text, and see its phase
+  portrait change as you drag a parameter.
+- Eight views: phase plane, time series, cobweb, Poincaré section, 3D, Lyapunov spectrum, orbit
+  diagram and continuation, with folds, Hopf points, branch points, flips and Neimark–Sacker
+  points marked.
+- A gallery of 31 examples from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition). Three
+  gates check the numbers on every change: the book's chapter 2–8 results, published Lyapunov
+  exponents, and closed-form bifurcation points.
+- Exports to LaTeX, SVG, PNG and CSV, `.sepx` project files to share with a class, and a
+  projector mode for the lecture hall.
+- Installers for Windows, macOS and Linux with SHA-256 checksums, an offline Windows installer
+  that bundles WebView2, and an updater that the owner switches on with a signing key.
+
 ### Added
+- The user guide, `docs/guide/`: a getting-started tutorial, entering equations, one page per
+  view, exports, project files, projector mode and keyboard shortcuts. Each view's page has a
+  screenshot from the real app and an example project in `docs/guide/examples/`.
+  `bash scripts/docs-screenshots.sh` opens each example in the release build under Xvfb and saves
+  `docs/media/<view>.png`. The README is rewritten for v1, and CONTRIBUTING.md lists the checks
+  and gates.
+- Install guides for Windows, macOS and Linux (`docs/install/`), written for readers who are not
+  software people: which file to download, how to check it against `SHA256SUMS.txt`, and the
+  first-launch steps for SmartScreen, Gatekeeper and an AppImage. The owner's release checklist
+  is `docs/release-checklist.md`, and the notice that retires the PyPI package is
+  `docs/pypi-deprecation.md`.
+- The Release workflow names each installer by OS and architecture
+  (`Separatrix_1.0.0_windows_x64-setup.exe`, `Separatrix_1.0.0_macos_universal.dmg`, …), attaches
+  `SHA256SUMS.txt`, and builds `Separatrix_1.0.0_windows_x64_offline-setup.exe` with WebView2
+  inside for a PC with neither WebView2 nor internet. Linux bundles are built on Ubuntu 22.04, and
+  the macOS dmg is universal. The workflow creates a draft release, and the owner publishes it. The
+  asset names and their updater platforms live in one table, `scripts/release/assets.txt`, and
+  `scripts/release/manifest.sh` writes the checksums and, once updates are signed, `latest.json`,
+  which lists the AppImage, .deb, .rpm, setup `.exe`, MSI and macOS app so each install updates
+  with its own kind of file. `bash scripts/smoke/linux-bundle.sh` builds the Linux packages,
+  installs the .deb and opens projects in the AppImage under Xvfb.
+- One version, 1.0.0, in Cargo and `app/package.json`. `tauri.conf.json` inherits it, and a test
+  fails if they disagree or the version isn't one an MSI installer accepts.
+  `bash scripts/release-check.sh` prints PASS or FAIL for each release requirement: versions, a
+  guide page per view, the install guides, this changelog, the workflow, the updater staying off
+  without a key, the checklist, the docs' links, and the three gates.
+- Check for updates. The status bar's right end shows the version (`v1.0.0`); a click checks
+  GitHub Releases and says "Separatrix is up to date", "Separatrix 1.0.1 is available" with
+  Install and restart, or "Couldn't check for updates. You can keep working offline." The macOS
+  app menu has Check for Updates…. A quiet check runs once after launch, gives up after 15 s and
+  never delays the gallery; it only speaks up when a newer version exists ("Update available"
+  beside the version). Install and restart first asks to save unsaved changes, and Cancel installs
+  nothing. The version shown is the running app's. The updater stays off ("Updates are off in this build") until the owner
+  adds a signing key, as docs/updater.md describes, so no placeholder key ships. New commands:
+  `check_for_update` and `install_update`. New dependency: `tauri-plugin-updater` 2.14.0.
+- Open a project from the launch gallery. The gallery has an Open… button (Ctrl+O, ⌘O on a Mac)
+  from the first launch on, and Ctrl+O now works while the gallery is open. A Recent section above
+  Chapter 2 lists the last 8 projects opened or saved that still exist, newest first, with their
+  folders, and a click reopens one. Both go through the unsaved-changes question, and Cancel keeps
+  the gallery open. A `.sepx` file dropped on the window while the gallery is open opens too. The
+  list is `recent-projects.json` in the app's config folder. A damaged list is read as empty. New
+  command: `recent_projects`. Only one file dialog shows at a time: on Linux, where it isn't modal, a
+  second Open… while one is up does nothing. `scripts/smoke/xdnd_drop.py` drops a file on an X11 window over XDND,
+  for checking drag-and-drop in the real app.
 - Branch plot exports. In the Branch view, Export… offers LaTeX, SVG, PNG and CSV. The LaTeX
   Figure is a pgfplots branch plot with the screen's frame: each branch in its trajectory colour,
   stable stretches solid and unstable ones dashed, and each special point as a fixed-point glyph
@@ -280,6 +341,11 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- On Linux, the first click on a plot after choosing from a dropdown (the integration method, the
+  continuation parameter, an axis) takes effect instead of being ignored. WebKitGTK never sends
+  the pointerup for the press that opens a dropdown, so it sends no pointerdown for the next
+  press, and the plots (and closing a menu or tooltip) start on pointerdown. After a mouse
+  press on a dropdown, the first press that arrives without a pointerdown now gets one.
 - An apostrophe in a document title separates words in LaTeX labels and export file names
   (`Sel'kov glycolysis` → `sel-kov-glycolysis`, as the app suggests) instead of reading as a
   prime (`sel-primekov-glycolysis`). State names keep `theta'` → `theta-prime`.

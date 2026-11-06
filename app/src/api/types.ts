@@ -84,6 +84,7 @@ export type {
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
+  RecentProject,
   SaveFigureRequest,
   SaveOrbitFigureRequest,
   SaveTextRequest,
@@ -103,6 +104,7 @@ export type {
   TrajectoryOut,
   TrajectoryRequest,
   TrajectoryTag,
+  UpdateCheck,
 } from "./ipc.generated";
 
 export { MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS, ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT } from "./ipc.generated";

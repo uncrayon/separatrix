@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type {
   CompileRequest,
   CompileResponse,
@@ -12,8 +13,18 @@ import type {
   OrbitDiagramResponse,
   PortraitRequest,
   PortraitResponse,
+  UpdateCheck,
 } from "./types";
-import { mockCompile, mockContinuation, mockConvert, mockLyapunov, mockOrbitDiagram, mockPortrait } from "./mock";
+import {
+  mockCheckForUpdate,
+  mockCompile,
+  mockContinuation,
+  mockConvert,
+  mockInstallUpdate,
+  mockLyapunov,
+  mockOrbitDiagram,
+  mockPortrait,
+} from "./mock";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -42,6 +53,30 @@ export function computeOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiag
 
 export function computeContinuation(req: ContinuationRequest): Promise<ContinuationResponse> {
   return isTauri() ? invoke<ContinuationResponse>("compute_continuation", { req }) : mockContinuation(req);
+}
+
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return isTauri() ? invoke<UpdateCheck>("check_for_update") : mockCheckForUpdate();
+}
+
+export function installUpdate(): Promise<void> {
+  return isTauri() ? invoke<void>("install_update") : mockInstallUpdate();
+}
+
+export async function startUpdateCheck(): Promise<void> {
+  if (isTauri()) await invoke<void>("start_update_check");
+}
+
+export async function listenUpdateEvents(handlers: {
+  onAvailable: (check: UpdateCheck) => void;
+  onCheckRequested: () => void;
+}): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const offs = await Promise.all([
+    listen<UpdateCheck>("update-available", (e) => handlers.onAvailable(e.payload)),
+    listen("update-check-requested", () => handlers.onCheckRequested()),
+  ]);
+  return () => offs.forEach((off) => off());
 }
 
 export interface Job<B, M> {

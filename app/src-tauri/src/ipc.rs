@@ -862,6 +862,20 @@ pub struct SavedProject {
     pub name: String,
 }
 
+/// One entry of `recent_projects`: a project opened or saved lately that
+/// still exists, granted for `project_read`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RecentProject {
+    /// The path, for `project_read`.
+    pub path: String,
+    /// Its file name, e.g. `"rabbits-vs-sheep.sepx"`.
+    pub name: String,
+    /// The folder it is in, as the system writes it.
+    pub folder: String,
+}
+
 /// Request of `set_document_state`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -890,6 +904,39 @@ pub struct ProjectOpenRequested {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct CloseRequested {}
+
+/// Response of `check_for_update`, and payload of the `update-available`
+/// event (always `available` there).
+///
+/// On the wire: `{ "kind": "off" }`, `{ "kind": "upToDate", "version":
+/// "1.0.0" }`, `{ "kind": "available", "version": "1.0.1", "notes": …,
+/// "date": … }` or `{ "kind": "failed", "message": … }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UpdateCheck {
+    /// This build has no updater key (docs/updater.md).
+    Off,
+    /// The running version is the newest.
+    UpToDate {
+        /// The running version, e.g. `"1.0.0"`.
+        version: String,
+    },
+    /// A newer release is on GitHub Releases.
+    Available {
+        /// Its version, e.g. `"1.0.1"`.
+        version: String,
+        /// Its release notes, from `latest.json`.
+        notes: Option<String>,
+        /// Its publication date (RFC 3339), from `latest.json`.
+        date: Option<String>,
+    },
+    /// The check failed (offline, or the server answered badly).
+    Failed {
+        /// The reason, for the log.
+        message: String,
+    },
+}
 
 // ---------------------------------------------------------------------
 // Exports (docs/exports.md)
@@ -1438,9 +1485,11 @@ mod bindings {
             ChosenSavePath::decl(&cfg),
             ProjectWriteRequest::decl(&cfg),
             SavedProject::decl(&cfg),
+            RecentProject::decl(&cfg),
             DocumentStateRequest::decl(&cfg),
             ProjectOpenRequested::decl(&cfg),
             CloseRequested::decl(&cfg),
+            UpdateCheck::decl(&cfg),
             ExportPortraitRequest::decl(&cfg),
             TrajectoryTag::decl(&cfg),
             ExportTheme::decl(&cfg),

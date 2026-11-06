@@ -451,6 +451,57 @@ interface SelectProps<T extends string> {
   className?: string;
 }
 
+/**
+ * WebKitGTK sends no pointerup for the mouse press that opens a <select>'s
+ * popup, so it still counts that button as down: the next press brings a
+ * mousedown but no pointerdown, and everything that starts on pointerdown (the
+ * plots, closing a menu or a tooltip) misses it.
+ */
+let selectPressId: number | null = null;
+let disarmPressRepair: (() => void) | null = null;
+
+function repairNextPress(pointerId: number) {
+  disarmPressRepair?.();
+  const stop = () => disarmPressRepair?.();
+  const onMouseDown = (e: MouseEvent) => {
+    stop();
+    e.target?.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        pointerId,
+        pointerType: "mouse",
+        isPrimary: true,
+        width: 1,
+        height: 1,
+        pressure: 0.5,
+        detail: e.detail,
+        button: e.button,
+        buttons: e.buttons,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        screenX: e.screenX,
+        screenY: e.screenY,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+      }),
+    );
+  };
+  window.addEventListener("mousedown", onMouseDown, true);
+  window.addEventListener("pointerdown", stop, true);
+  window.addEventListener("pointerup", stop, true);
+  disarmPressRepair = () => {
+    window.removeEventListener("mousedown", onMouseDown, true);
+    window.removeEventListener("pointerdown", stop, true);
+    window.removeEventListener("pointerup", stop, true);
+    disarmPressRepair = null;
+  };
+}
+
 export function Select<T extends string>({
   value,
   options,
@@ -473,6 +524,8 @@ export function Select<T extends string>({
         auto && "ds-select--auto",
         className,
       )}
+      onPointerDown={(e) => (selectPressId = e.pointerType === "mouse" ? e.pointerId : null)}
+      onMouseDown={() => selectPressId !== null && repairNextPress(selectPressId)}
     >
       <select
         id={id}
