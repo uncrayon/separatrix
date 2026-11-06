@@ -10,13 +10,14 @@ use separatrix_project::{
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 10] = [
+const GOOD: [&str; 11] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
     "section-view.sepx",
     "space-view.sepx",
     "lyapunov-view.sepx",
     "orbit-view.sepx",
+    "continuation-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -24,7 +25,7 @@ const GOOD: [&str; 10] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 7] = [
+const CANONICAL: [&str; 8] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
@@ -32,6 +33,7 @@ const CANONICAL: [&str; 7] = [
     "space-view.sepx",
     "lyapunov-view.sepx",
     "orbit-view.sepx",
+    "continuation-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -1451,4 +1453,147 @@ fn an_orbit_diagram_that_cannot_be_drawn_falls_back_to_the_default_view() {
     let mut v = base.clone();
     v["views"][0]["orbit"]["kept"] = json!(0.5);
     assert!(parse(&v.to_string()).is_err());
+}
+
+#[test]
+fn continuation_view_round_trips_byte_for_byte() {
+    let name = "continuation-view.sepx";
+    let opened = open(name);
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("continuation"));
+    assert_eq!(view.x_axis, ProjectAxis::param("r"));
+    assert_eq!(view.y_axis, ProjectAxis::state("x"));
+    let c = view.continuation.as_ref().unwrap();
+    assert_eq!(
+        (c.range, c.ds, c.max_points),
+        (Some([2.8, 3.57]), Some(0.05), Some(1000))
+    );
+    let seeds: Vec<_> = c
+        .seeds
+        .iter()
+        .map(|s| {
+            (
+                s.from.as_str(),
+                s.period,
+                s.kind.as_deref(),
+                s.tangent.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seeds,
+        [
+            ("point", 1, None, false),
+            ("switch", 1, Some("flip"), true),
+            ("switch", 2, Some("flip"), true),
+            ("switch", 4, Some("flip"), true),
+        ]
+    );
+    assert_eq!(to_json(&opened.project, APP).unwrap(), fixture(name));
+
+    let mut v = value(&fixture(name));
+    v["views"][0]["continuation"]["seeds"][0]["label"] = json!("the r = 2.8 node");
+    v["views"][0]["continuation"]["ds_max"] = json!(0.1);
+    v["views"][0]["y_axis"] = json!({ "kind": "norm" });
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let back = value(&to_json(&opened.project, APP).unwrap());
+    assert_eq!(back["views"][0], v["views"][0]);
+}
+
+#[test]
+fn a_continuation_seed_that_does_not_fit_is_left_out() {
+    let base = value(&fixture("continuation-view.sepx"));
+    let open_edited = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap()
+    };
+    let seeds = |o: &Opened| -> Vec<f64> {
+        o.project.views[0]
+            .continuation
+            .as_ref()
+            .unwrap()
+            .seeds
+            .iter()
+            .map(|s| s.param)
+            .collect()
+    };
+    let all = seeds(&open_edited(&|_| {}));
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, usize, Edit); 4] = [
+        ("two values for one state", 2, &|v| {
+            v["views"][0]["continuation"]["seeds"][1]["x"] = json!([0.6, 0.6])
+        }),
+        ("no state at all", 1, &|v| {
+            v["views"][0]["continuation"]["seeds"][0]["x"] = json!([])
+        }),
+        ("a switch without a tangent", 4, &|v| {
+            v["views"][0]["continuation"]["seeds"][3]
+                .as_object_mut()
+                .unwrap()
+                .remove("tangent");
+        }),
+        ("a tangent of the wrong length", 3, &|v| {
+            v["views"][0]["continuation"]["seeds"][2]["tangent"] = json!([1.0])
+        }),
+    ];
+    for (name, branch, edit) in misfits {
+        let opened = open_edited(edit);
+        assert_eq!(
+            opened.warnings,
+            [format!(
+                "The saved continuation's branch {branch} doesn't fit this system, so it was left out."
+            )],
+            "{name}"
+        );
+        let mut kept = all.clone();
+        kept.remove(branch - 1);
+        assert_eq!(seeds(&opened), kept, "{name}");
+    }
+    let opened = open_edited(&|v| {
+        v["views"][0]["continuation"]["seeds"][0]["x"] = json!([0.6, 0.6]);
+        v["views"][0]["continuation"]["seeds"][2]["tangent"] = json!(null);
+    });
+    assert_eq!(
+        opened.warnings,
+        [
+            "The saved continuation's branch 1 doesn't fit this system, so it was left out.",
+            "The saved continuation's branch 3 doesn't fit this system, so it was left out.",
+        ]
+    );
+    assert_eq!(seeds(&opened), [all[1], all[3]]);
+    let opened = open_edited(&|v| {
+        v["views"][0]["continuation"]["seeds"][0]["tangent"] = json!(null);
+        v["views"][0]["continuation"]["seeds"][0]["from"] = json!("point");
+    });
+    assert!(
+        opened.warnings.is_empty(),
+        "a point seed needs no tangent: {:?}",
+        opened.warnings
+    );
+}
+
+#[test]
+fn a_branch_plot_names_a_parameter_the_system_has() {
+    let mut v = value(&fixture("continuation-view.sepx"));
+    v["views"][0]["x_axis"] = json!({ "kind": "param", "name": "mu" });
+    let opened = parse(&v.to_string()).unwrap();
+    assert_eq!(
+        opened.warnings,
+        ["The x axis of the view \u{201c}main\u{201d} uses the parameter mu, which the system doesn't have, so the default view is used."]
+    );
+    let mut v = value(&fixture("continuation-view.sepx"));
+    v["views"][0]["continuation"]["seeds"][0]["period"] = json!(-1);
+    assert!(parse(&v.to_string()).is_err());
+    v["views"][0]["continuation"]["seeds"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("period");
+    let opened = parse(&v.to_string()).unwrap();
+    assert_eq!(
+        opened.project.views[0].continuation.as_ref().unwrap().seeds[0].period,
+        1
+    );
 }

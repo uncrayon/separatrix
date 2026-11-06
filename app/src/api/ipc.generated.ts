@@ -888,7 +888,8 @@ id: string,
  * `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
  * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
  * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
- * absent for the phase plane and the time series, which the axes tell
+ * `"continuation"` for a branch plot of fixed points against a
+ * parameter (see `continuation`); absent for the phase plane and the time series, which the axes tell
  * apart.
  */
 kind?: string, 
@@ -925,7 +926,13 @@ lyapunov?: ProjectLyapunov,
  * The columns of an `"orbit"` view (the orbit diagram of a map over
  * the range of the parameter across).
  */
-orbit?: ProjectOrbit, slice: ProjectSlice, layers: ProjectLayers, };
+orbit?: ProjectOrbit, 
+/**
+ * The requests of a `"continuation"` view (a branch plot: `x_axis` is
+ * `{ "kind": "param", "name": p }`, `y_axis` a state or
+ * `{ "kind": "norm" }`).
+ */
+continuation?: ProjectContinuation, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -942,6 +949,18 @@ export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
 export type ProjectLyapunov = { transient?: number, total?: number, interval?: number, blocks?: number, };
 
 export type ProjectOrbit = { transient?: number, kept?: number, };
+
+export type ProjectContinuation = { range?: [number, number], ds?: number, max_points?: number, seeds: Array<ProjectSeed>, };
+
+export type ProjectSeed = { from: string, 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, 
+/**
+ * The value of the view's parameter.
+ */
+param: number, period: number, direction: string, kind?: string, tangent?: Array<number>, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 

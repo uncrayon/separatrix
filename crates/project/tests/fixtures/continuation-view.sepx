@@ -1,0 +1,140 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "map",
+    "input_format": "latex",
+    "lines": [
+      "x_{n+1}=rx_n\\left(1-x_n\\right)"
+    ],
+    "states": [
+      "x"
+    ],
+    "params": [
+      {
+        "id": "r",
+        "value": 2.8,
+        "min": 0.0,
+        "max": 4.0
+      }
+    ],
+    "template": "logistic-map"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.1
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "kind": "continuation",
+      "x_axis": {
+        "kind": "param",
+        "name": "r"
+      },
+      "y_axis": {
+        "kind": "state",
+        "name": "x"
+      },
+      "x_range": [
+        2.8,
+        3.6
+      ],
+      "y_range": [
+        0.3,
+        1.0
+      ],
+      "continuation": {
+        "range": [
+          2.8,
+          3.57
+        ],
+        "ds": 0.05,
+        "max_points": 1000,
+        "seeds": [
+          {
+            "from": "point",
+            "x": [
+              0.6428571428571428
+            ],
+            "param": 2.8,
+            "period": 1,
+            "direction": "forward"
+          },
+          {
+            "from": "switch",
+            "x": [
+              0.6666666666666541
+            ],
+            "param": 2.9999999999998868,
+            "period": 1,
+            "direction": "both",
+            "kind": "flip",
+            "tangent": [
+              0.11043152607485479,
+              0.993883734673618
+            ]
+          },
+          {
+            "from": "switch",
+            "x": [
+              0.8499377795547777
+            ],
+            "param": 3.449489742783138,
+            "period": 2,
+            "direction": "both",
+            "kind": "flip",
+            "tangent": [
+              0.14796587630275168,
+              0.9889924668317543
+            ]
+          },
+          {
+            "from": "switch",
+            "x": [
+              0.8840495454013735
+            ],
+            "param": 3.5440903595520115,
+            "period": 4,
+            "direction": "both",
+            "kind": "flip",
+            "tangent": [
+              0.17241773404661015,
+              0.9850239210223437
+            ]
+          }
+        ]
+      },
+      "slice": {
+        "states": {},
+        "t": 0.0
+      },
+      "layers": {
+        "field": true,
+        "field_grid": 21,
+        "nullclines": true,
+        "fixed_points": true,
+        "backward": true
+      }
+    }
+  ],
+  "analyses": [],
+  "solver": {
+    "method": "dopri5",
+    "rtol": 1e-6,
+    "atol": 1e-9,
+    "h": 0.0,
+    "max_steps": 200000,
+    "t_end": 60.0,
+    "samples": 0
+  }
+}

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Continuation views in `.sepx` (format version 1, additive). A view of `kind` `"continuation"` is a
+  branch plot: a parameter across (`{ "kind": "param" }`), a state or the new axis kind
+  `{ "kind": "norm" }` (‖x‖₂) up, and a `continuation` object with the parameter `range`, `ds`,
+  `max_points` and the `seeds` the branches are followed from: a fixed point, or a switch at a
+  branch point or a flip with the old branch's tangent. Seeds are saved, never computed branches,
+  so a file stays small and replays the same requests. A seed that doesn't fit the system is left
+  out on open with "The saved continuation's branch N doesn't fit this system, so it was left out."
+  New fixture `continuation-view.sepx`: the logistic map with its fixed point and the flips at
+  `r1`, `r2` and `r3`, written back byte for byte.
 - Branch switching (`dyn_analysis::switch_branch`, and `compute_continuation` with `start: { kind:
   "switch", at }`). At a branch point it follows the second branch, along the kernel direction of
   `[g_x | g_p]` orthogonal to the old tangent, corrected on a hyperplane parallel to the old

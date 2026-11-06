@@ -744,9 +744,9 @@ pub enum SpecialKindOut {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
-    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
-    ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectContinuation, ProjectFile, ProjectInitialCondition,
+    ProjectLayers, ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed,
+    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -1283,6 +1283,8 @@ mod bindings {
             ProjectCamera::decl(&cfg),
             ProjectLyapunov::decl(&cfg),
             ProjectOrbit::decl(&cfg),
+            ProjectContinuation::decl(&cfg),
+            ProjectSeed::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),

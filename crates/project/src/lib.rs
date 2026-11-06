@@ -32,15 +32,16 @@ pub use io::{
 };
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
-    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
-    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
-    ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW, DEFAULT_ZOOM,
+    ProjectAxis, ProjectCamera, ProjectContinuation, ProjectFile, ProjectInitialCondition,
+    ProjectLayers, ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed,
+    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW,
+    DEFAULT_ZOOM,
 };
 pub use validate::{
     cobweb_axes_ok, default_param_range, lyapunov_misfit, orbit_misfit, primary_view_index,
-    range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, LYAPUNOV, LYAPUNOV_MISFIT,
-    ORBIT, ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION, SECTION_MISFIT, SPACE,
-    SPACE_MISFIT, TRANSIENT_MAX,
+    range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, CONTINUATION, LYAPUNOV,
+    LYAPUNOV_MISFIT, ORBIT, ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION,
+    SECTION_MISFIT, SPACE, SPACE_MISFIT, TRANSIENT_MAX,
 };
 
 /// The value of the `format` key.
@@ -93,6 +94,8 @@ mod bindings {
             ProjectCamera::decl(&cfg),
             ProjectLyapunov::decl(&cfg),
             ProjectOrbit::decl(&cfg),
+            ProjectContinuation::decl(&cfg),
+            ProjectSeed::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -122,6 +125,27 @@ mod bindings {
         assert!(decls[11].contains("blocks?: number"), "{}", decls[11]);
         assert!(decls[4].contains("orbit?: ProjectOrbit"), "{}", decls[4]);
         assert!(decls[12].contains("kept?: number"), "{}", decls[12]);
+        assert!(
+            decls[4].contains("continuation?: ProjectContinuation"),
+            "{}",
+            decls[4]
+        );
+        assert!(
+            decls[13].contains("range?: [number, number]"),
+            "{}",
+            decls[13]
+        );
+        assert!(
+            decls[13].contains("seeds: Array<ProjectSeed>"),
+            "{}",
+            decls[13]
+        );
+        assert!(
+            decls[14].contains("tangent?: Array<number>"),
+            "{}",
+            decls[14]
+        );
+        assert!(decls[14].contains("period: number"), "{}", decls[14]);
         assert!(
             decls[4].contains("x_range: [number, number]"),
             "{}",

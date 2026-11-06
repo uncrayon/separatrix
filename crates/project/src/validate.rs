@@ -2,7 +2,8 @@
 //!
 //! Only the structure is a hard error (see [`crate::check`]); everything
 //! here is fixed in place: duplicate or empty ids, slider ranges, colors,
-//! solver settings (the transient too), the field grid, `x0` lengths. View
+//! solver settings (the transient too), the field grid, `x0` lengths, and
+//! the primary branch plot's seeds that don't fit the system (dropped). View
 //! ranges, axes and a cobweb, section, 3D, Lyapunov or orbit view that
 //! doesn't fit the system are only reported: the UI falls back to the default
 //! view for a primary view whose range isn't usable (see [`range_ok`]), whose
@@ -14,7 +15,7 @@
 use std::collections::HashSet;
 
 use crate::schema::{default_atol, default_method, default_rtol, default_t_end};
-use crate::{ProjectFile, ProjectView, KNOWN_METHODS};
+use crate::{ProjectFile, ProjectSeed, ProjectView, KNOWN_METHODS};
 
 /// Number of trajectory colors (`traj-1` … `traj-7`).
 pub const COLORS: i32 = 7;
@@ -219,6 +220,18 @@ pub fn orbit_misfit(
     (!ok).then(|| ORBIT_MISFIT.to_string())
 }
 
+/// The view kind of a branch plot (continuation of fixed points).
+pub const CONTINUATION: &str = "continuation";
+
+/// True when a branch plot can replay `seed` for a system with `dim` states
+/// (`None`: not known until the app compiles): `x` has one value per state,
+/// and a switch seed has a tangent of `dim + 1` values.
+fn seed_fits(seed: &ProjectSeed, dim: Option<usize>) -> bool {
+    let n = dim.unwrap_or(seed.x.len());
+    seed.x.len() == n
+        && (seed.from != "switch" || seed.tangent.as_ref().is_some_and(|t| t.len() == n + 1))
+}
+
 /// True when `view` has the shape of a cobweb plot: `x_axis` is the state
 /// `s` and `y_axis` is `{ "kind": "next", "name": s }`, for a state the
 /// system has (any, when `states` is empty).
@@ -332,6 +345,21 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
             continue;
         }
         let kind = view.kind.as_deref();
+        let continuation = kind == Some(CONTINUATION);
+        if let Some(c) = view.continuation.as_mut().filter(|_| continuation) {
+            let dim = (!states.is_empty()).then_some(states.len());
+            let mut n = 0;
+            c.seeds.retain(|seed| {
+                n += 1;
+                let fits = seed_fits(seed, dim);
+                if !fits {
+                    warnings.push(format!(
+                        "The saved continuation's branch {n} doesn't fit this system, so it was left out."
+                    ));
+                }
+                fits
+            });
+        }
         let section = kind == Some(SECTION);
         if section {
             if let Some(w) = section_misfit(view, &p.system.kind, states) {
@@ -354,8 +382,8 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
             }
         }
         let orbit = kind == Some(ORBIT);
+        let params: Vec<String> = p.system.params.iter().map(|q| q.id.clone()).collect();
         if orbit {
-            let params: Vec<String> = p.system.params.iter().map(|q| q.id.clone()).collect();
             if let Some(w) = orbit_misfit(view, &p.system.kind, states, &params) {
                 warnings.push(w);
                 continue;
@@ -365,6 +393,7 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
             && !space
             && !lyapunov
             && !orbit
+            && !continuation
             && (kind.is_some_and(|k| k != "plane")
                 || [&view.x_axis, &view.y_axis]
                     .iter()
@@ -400,6 +429,8 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 "next" if cobweb || section => true,
                 "exponent" if lyapunov => true,
                 "param" if orbit => true,
+                "param" if continuation => axis.name.as_ref().is_some_and(|n| params.contains(n)),
+                "norm" if continuation => true,
                 "state" => axis
                     .name
                     .as_ref()
@@ -410,6 +441,9 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 let what = match (axis.kind.as_str(), &axis.name) {
                     ("state", Some(n)) => format!("the state {n}, which the system doesn't have"),
                     ("state", None) => "a state without a name".to_string(),
+                    ("param", Some(n)) if continuation => {
+                        format!("the parameter {n}, which the system doesn't have")
+                    }
                     (kind, _) => {
                         format!("an axis kind (\u{201c}{kind}\u{201d}) this version doesn't know")
                     }
