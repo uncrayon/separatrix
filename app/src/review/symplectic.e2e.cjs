@@ -111,7 +111,7 @@ test("a system written as equations of motion disables both symplectic methods a
   }
 });
 
-test("the core's refusal shows when a symplectic method meets equations of motion", async () => {
+test("loading equations of motion after a symplectic method switches to Dormand–Prince and still draws", async () => {
   const { browser, page } = await open();
   try {
     await pick(page, "Hamiltonian pendulum");
@@ -119,16 +119,19 @@ test("the core's refusal shows when a symplectic method meets equations of motio
     await waitPortrait(page, "req.solver.method === 'verlet'");
     await page.getByRole("button", { name: "Templates…" }).click();
     await page.waitForSelector(".gallery");
-    await page.locator(".gallery .card", { hasText: "Simple pendulum" }).first().click();
+    await page.locator(".gallery .card", { hasText: "Lorenz equations" }).first().click();
     await page.getByRole("button", { name: "Don't save" }).click();
     await page.waitForSelector(".gallery", { state: "detached" });
-    await page.waitForSelector(".statusbar .ds-statusbar-item--danger");
-    assert.match(
-      await page.locator(".statusbar .ds-statusbar-item--danger .ds-sr").innerText(),
-      /Störmer–Verlet needs a Hamiltonian H\(q, p\); this system is given by its equations of motion\./,
+    await waitPortrait(page, "req.solver.method === 'dopri5' && req.solver.h === 0 && res.trajectories.length > 0");
+    assert.equal(await methodSelect(page).inputValue(), "dopri5");
+    assert.equal(
+      await inspector(page).locator("[data-method-note]").innerText(),
+      "Switched from Störmer–Verlet to Dormand–Prince 5(4).",
     );
+    assert.equal(await page.locator(".statusbar .ds-statusbar-item--danger").count(), 0, "no failed computation");
+    assert.equal(await page.getByText(/^Could not compute/).count(), 0, "no error banner");
     await methodSelect(page).selectOption("rk4");
-    await page.waitForSelector(".statusbar .ds-statusbar-item--danger", { state: "detached" });
+    await page.waitForSelector("[data-method-note]", { state: "detached" });
   } finally {
     await browser.close();
   }

@@ -1092,6 +1092,11 @@ function SolverSection({ state, actions, open, onToggle }: SectionProps) {
         }
       />
       <p className="ds-panel-section-hint caption" id={methodHint}>
+        {state.methodNote && (
+          <>
+            <span data-method-note="">{state.methodNote}</span>{" "}
+          </>
+        )}
         {METHODS[s.method].about}
       </p>
       {refusal && (

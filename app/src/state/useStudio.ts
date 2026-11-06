@@ -9,6 +9,7 @@ import {
   LatestRequestScheduler,
 } from "../api/client";
 import { sameAxis } from "../math/format";
+import { DEFAULT_METHOD, METHODS, methodFits } from "./methods";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
 import {
@@ -129,6 +130,12 @@ export interface StudioState extends StudioSnapshot {
   autoAdjustCount: number;
   /** Notices from the last project load, for the open banner. */
   loadWarnings: string[];
+  /**
+   * The last compile replaced a method the new system cannot use (a
+   * symplectic method without a separable H(q, p)); says which, until the
+   * method is chosen again.
+   */
+  methodNote: string | null;
 }
 
 export type Studio = ReturnType<typeof useStudio>;
@@ -172,6 +179,7 @@ export function useStudio() {
   const [docEpoch, setDocEpoch] = useState(0);
   const [autoAdjustCount, setAutoAdjustCount] = useState(0);
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
+  const [methodNote, setMethodNote] = useState<string | null>(null);
 
   const state: StudioState = {
     format,
@@ -202,6 +210,7 @@ export function useStudio() {
     docEpoch,
     autoAdjustCount,
     loadWarnings,
+    methodNote,
   };
   const latest = useRef(state);
   latest.current = state;
@@ -328,6 +337,7 @@ export function useStudio() {
       const sourceTemplate = cur.sourceTemplateId ? templateById(cur.sourceTemplateId) : undefined;
 
       const load = template ? null : pendingLoad.current;
+      let method = cur.solver.method;
       if (!load) {
         setParams(
           res.params.map((p) =>
@@ -356,6 +366,7 @@ export function useStudio() {
         setIcs(applied.ics);
         setLayersState(applied.layers);
         setSolverState(applied.solver);
+        method = applied.solver.method;
         setSelection(null);
         if (applied.warnings.length) setLoadWarnings((w) => [...w, ...applied.warnings]);
       } else if (template) {
@@ -407,6 +418,12 @@ export function useStudio() {
           setViewState(v);
           setHomeView(v);
         }
+      }
+      if (methodFits(method, res)) {
+        setMethodNote(null);
+      } else {
+        setSolverState((s) => ({ ...s, method: DEFAULT_METHOD, h: 0 }));
+        setMethodNote(`Switched from ${METHODS[method].label} to ${METHODS[DEFAULT_METHOD].label}.`);
       }
       setCompiled(res);
       settle();
@@ -791,6 +808,7 @@ export function useStudio() {
     const next = { ...merged, transient: clampTransient(merged.transient, merged.tEnd) };
     latest.current = { ...cur, solver: next };
     setSolverState(next);
+    if (patch.method) setMethodNote(null);
     // A map's orbits start at n = T: a time series follows the transient.
     if (cur.compiled?.kind === "map") {
       const dt = next.transient - clampTransient(cur.solver.transient, cur.solver.tEnd);
