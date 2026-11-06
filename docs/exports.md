@@ -307,16 +307,16 @@ not written; its first row is `n = T`), an additive key: the meta
 the same file: the staircase is a drawing of the orbit, not new data.
 
 Sections. In a Poincaré section view each row is a crossing (`t` and every
-state at the located crossing time), in increasing time, and the start point
-is not a row. The export dialog has no samples field for it. The metadata
-adds, after `t0`, `"section": "plane z = 27 (increasing)"` (or
-`"stroboscopic, period T, phase φ"`) and `"skipped_crossings": k`, the
-crossings computed but not written before the first row; both additive. A
-return map exports the same file as the section in two states. A plane
-crossing's held state is the plane's value to the event location's accuracy:
-Brent's method stops when the time bracket is within `1e-12·max(|t|, 1)`, so
-`|z − 27|` grows with `t` (up to about `3·10⁻⁸` on the Lorenz attractor by
-`t = 500`).
+state at the located crossing time), in increasing time. For a plane section
+the start point is not a row, and the held state is exactly the plane's value
+(`z` is `27` in every row of a `z = 27` section). For a stroboscopic section
+the rows are the samples at `t = phase + k·period`, so `t0` is a row when it is
+a sample time. The first note says which. The export dialog has no samples
+field for a section. The metadata adds, after `t0`, `"section": "plane z = 27
+(increasing)"` (or `"stroboscopic, period T, phase φ"`) and
+`"skipped_crossings": k`, the crossings computed but not written before the
+first row; both additive. A return map exports the same file as the section in
+two states.
 
 `x0` is in `columns[1..]` order. `status` is the IPC name (`blewUp`, …).
 `stem` is `<title-slug>-trajectory-<k>`, k numbering the trajectories as the export

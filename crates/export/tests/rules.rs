@@ -605,4 +605,7 @@ fn a_stroboscopic_section_is_named_in_the_csv_metadata() {
     assert_eq!(meta["section"], "stroboscopic, period 6, phase 0.5");
     assert_eq!(meta["skipped_crossings"], 3);
     assert!(meta.get("transient").is_none());
+    let note = meta["notes"][0].as_str().unwrap();
+    assert!(note.contains("t0 is a row"), "{note}");
+    assert!(!note.contains("the start point is not one"), "{note}");
 }

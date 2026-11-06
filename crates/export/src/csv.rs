@@ -201,10 +201,14 @@ pub fn meta(
     if let Some(f) = forward {
         segments.push(segment(f, false));
     }
-    let mut notes = vec![if input.section.is_some() {
-        "Rows are the orbit's crossings of the section, in increasing time; the start point is not one."
-    } else {
-        "Rows are in increasing time; the start row appears once."
+    let mut notes = vec![match input.section {
+        Some(SectionSpec::Plane { .. }) => {
+            "Rows are the orbit's crossings of the section, in increasing time; the start point is not one."
+        }
+        Some(SectionSpec::Stroboscopic { .. }) => {
+            "Rows are the samples at t = phase + k·period inside the run, in increasing time; t0 is a row when it is a sample time."
+        }
+        None => "Rows are in increasing time; the start row appears once.",
     }];
     if backward.is_some() && forward.is_some() && input.kind == SystemKind::Ode {
         notes.push("The time step can differ between the backward and forward segments.");
