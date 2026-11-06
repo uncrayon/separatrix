@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Branch switching (`dyn_analysis::switch_branch`, and `compute_continuation` with `start: { kind:
+  "switch", at }`). At a branch point it follows the second branch, along the kernel direction of
+  `[g_x | g_p]` orthogonal to the old tangent, corrected on a hyperplane parallel to the old
+  branch so it cannot fall back onto it. At a flip of `f^k` it follows the `2k`-cycle born there
+  as fixed points of `f^{2k}`. The switch point is self-contained, so a saved project can replay
+  it without the parent branch. Switching at any other kind of point is refused. The continuation
+  gate gains six rows: the switched pitchfork branch `r = x²` with both signs of `x`, the switched
+  transcritical branch `x = r`, the logistic cascade `r2 = 1 + √6`, `r3` and `r4` to 1e−6 by
+  switching at each flip, and `r1 … r4` within 1e−9 of `period_doublings` (measured: 1.4e−13). It
+  also prints the Feigenbaum estimate `(r3 − r2)/(r4 − r3)`, and two more wrong claims must fail.
 - Pseudo-arclength continuation in the core (`dyn_analysis::continue_branch`), modelled on
   BifurcationKit.jl (MIT). It follows a branch of equilibria of a flow, or of fixed points of `f^k`
   for a map, as one parameter varies, through folds. Each step predicts along the tangent (first

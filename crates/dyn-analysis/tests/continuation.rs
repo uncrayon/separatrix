@@ -1,4 +1,7 @@
-use dyn_analysis::{continue_branch, Branch, BranchEnd, ContinuationOptions, SpecialKind};
+use dyn_analysis::{
+    continue_branch, orbit_diagram, period_doublings, switch_branch, Branch, BranchEnd,
+    ContinuationError, ContinuationOptions, OrbitDiagramOptions, SpecialKind,
+};
 use dyn_expr::{compile, CompiledSystem, InputFormat};
 
 fn system(source: &str) -> CompiledSystem {
@@ -561,4 +564,200 @@ fn unstable_count_is_explained() {
             assert_eq!((at.p, &at.x), (sp.p, &sp.x), "{name}");
         }
     }
+}
+
+/// Both halves of the branch switched onto at the one special point of
+/// `kind` on `parent`, from `ds = ±0.05`.
+fn switched_halves(
+    sys: &CompiledSystem,
+    params: &[f64],
+    parent: &Branch,
+    kind: SpecialKind,
+    o: &ContinuationOptions,
+) -> [Branch; 2] {
+    let at = only(parent, kind);
+    [1.0, -1.0].map(|sign| {
+        let o = ContinuationOptions {
+            ds: sign * o.ds.abs(),
+            ..o.clone()
+        };
+        switch_branch(sys, params, at, &o).expect("a second branch")
+    })
+}
+
+#[test]
+fn pitchfork_switch_gives_r_equals_x_squared() {
+    let sys = system("x' = r*x - x^3");
+    let o = opts(0, (-1.0, 1.0), 0.05);
+    let parent = run(&sys, &[-1.0], &[0.0], &o);
+    let halves = switched_halves(&sys, &[-1.0], &parent, SpecialKind::BranchPoint, &o);
+    for (b, sign) in halves.iter().zip([1.0, -1.0]) {
+        assert_eq!(b.end, BranchEnd::Range, "half {sign}");
+        assert_eq!(b.period, 1);
+        assert!(b.special.is_empty(), "{:?}", kinds(b));
+        let (start, last) = (&b.points[0], b.points.last().unwrap());
+        assert!(start.p.abs() <= 1e-10 && start.x[0].abs() <= 1e-9);
+        assert_eq!(last.p, 1.0);
+        assert!(
+            (last.x[0] - sign).abs() <= 1e-10,
+            "ends at x = {}",
+            last.x[0]
+        );
+        for pt in &b.points[1..] {
+            let (x, r) = (pt.x[0], pt.p);
+            assert!(
+                (r - x * x).abs() <= 1e-10,
+                "r − x² = {} at x = {x}",
+                r - x * x
+            );
+            assert!(x * sign > 0.0, "half {sign} has x = {x}");
+            assert!(pt.stable, "f′ = −2r < 0 at r = {r}");
+        }
+    }
+}
+
+#[test]
+fn transcritical_switch_gives_x_equals_r() {
+    let sys = system("x' = r*x - x^2");
+    let o = opts(0, (-1.0, 1.0), 0.05);
+    let parent = run(&sys, &[-1.0], &[0.0], &o);
+    let halves = switched_halves(&sys, &[-1.0], &parent, SpecialKind::BranchPoint, &o);
+    for (b, sign) in halves.iter().zip([1.0, -1.0]) {
+        assert_eq!(b.end, BranchEnd::Range, "half {sign}");
+        assert_eq!(b.points.last().unwrap().p, sign);
+        for pt in &b.points[1..] {
+            let (x, r) = (pt.x[0], pt.p);
+            assert!((x - r).abs() <= 1e-10, "x − r = {} at r = {r}", x - r);
+            assert!(x * sign > 0.0, "half {sign} has x = {x}");
+            assert_eq!(pt.stable, r > 0.0, "f′ = −r at r = {r}");
+        }
+    }
+}
+
+#[test]
+fn flip_switch_doubles_the_period() {
+    let sys = system("x_{n+1} = r*x_n*(1 - x_n)");
+    let o = opts(0, (2.5, 3.4), 0.05);
+    let parent = run(&sys, &[2.5], &[0.6], &o);
+    let halves = switched_halves(&sys, &[2.5], &parent, SpecialKind::Flip, &o);
+    let f = |r: f64, x: f64| r * x * (1.0 - x);
+    for (b, sign) in halves.iter().zip([1.0, -1.0]) {
+        assert_eq!(b.period, 2);
+        assert_eq!(b.end, BranchEnd::Range, "half {sign}");
+        assert_eq!(b.points.last().unwrap().p, 3.4);
+        let start = &b.points[0];
+        assert!((start.p - 3.0).abs() <= 1e-10, "starts at r = {}", start.p);
+        for pt in &b.points[1..] {
+            let r = pt.p;
+            let [a, c] = pt.cycle[..] else {
+                panic!("cycle {:?}", pt.cycle)
+            };
+            assert!(r > 3.0, "a 2-cycle at r = {r}");
+            assert!((f(r, a) - c).abs() <= 1e-10 && (f(r, c) - a).abs() <= 1e-10);
+            let root = ((r - 3.0) * (r + 1.0)).sqrt();
+            let want = (r + 1.0 + sign * root) / (2.0 * r);
+            assert!((a - want).abs() <= 1e-9, "x = {a} vs {want} at r = {r}");
+            assert!((a - c) * sign > 0.0, "distinct points {a}, {c}");
+            assert_eq!(pt.stable, r < 1.0 + 6f64.sqrt(), "r = {r}");
+        }
+    }
+
+    let flip = henon(0.05);
+    let at = only(&flip, SpecialKind::Flip);
+    let hen = system("x_{n+1} = 1 - a*x_n^2 + y_n\ny_{n+1} = b*x_n");
+    let (ia, ib) = (param(&hen, "a"), param(&hen, "b"));
+    let mut params = vec![0.0; 2];
+    params[ia] = 0.2;
+    params[ib] = HENON_B;
+    let o = ContinuationOptions {
+        max_points: 300,
+        ..opts(ia, (-0.5, 1.0), 0.05)
+    };
+    let b = switch_branch(&hen, &params, at, &o).expect("the 2-cycle");
+    assert_eq!((b.period, b.end), (2, BranchEnd::Range));
+    for pt in &b.points[1..] {
+        let a = pt.p;
+        let [x1, y1, x2, y2] = pt.cycle[..] else {
+            panic!("cycle {:?}", pt.cycle)
+        };
+        assert!((x1 + x2 - (1.0 - HENON_B) / a).abs() <= 1e-9, "a = {a}");
+        assert!((y1 - HENON_B * x2).abs() <= 1e-10 && (y2 - HENON_B * x1).abs() <= 1e-10);
+        assert!((x1 - x2).abs() > 1e-6, "distinct at a = {a}");
+    }
+}
+
+/// `r` of the flip on each branch of the cascade: the fixed point's from
+/// `r = 2.8`, then the flip of each `2^k`-cycle, switched onto at the flip
+/// before it.
+fn cascade(sys: &CompiledSystem, steps: usize) -> Vec<f64> {
+    let o = opts(0, (2.8, 3.57), 0.05);
+    let mut b = run(sys, &[2.8], &[1.0 - 1.0 / 2.8], &o);
+    let mut found = Vec::new();
+    for _ in 0..steps {
+        let at = b
+            .special
+            .iter()
+            .find(|sp| sp.kind == SpecialKind::Flip)
+            .unwrap_or_else(|| panic!("no flip on period {}: {:?}", b.period, kinds(&b)))
+            .clone();
+        found.push(at.p);
+        b = switch_branch(sys, &[2.8], &at, &o).expect("the doubled cycle");
+        assert_eq!(b.period, 2 * at.period);
+        let (start, first) = (&b.points[0], &b.points[1]);
+        assert!(first.stable, "the {}-cycle is born stable", b.period);
+        assert!(
+            !start.stable && start.unstable == 0,
+            "the flip at r = {} is neutral",
+            at.p
+        );
+    }
+    found
+}
+
+#[test]
+fn logistic_cascade_reaches_r4() {
+    let sys = system("x_{n+1} = r*x_n*(1 - x_n)");
+    let found = cascade(&sys, 4);
+    let diagram_opts = OrbitDiagramOptions {
+        param: 0,
+        range: (2.8, 3.57),
+        columns: 2000,
+        state: 0,
+        transient: 2000,
+        kept: 64,
+    };
+    let diagram = orbit_diagram(&sys, &[2.8], &[0.1], &diagram_opts);
+    let doublings = period_doublings(&sys, &[2.8], 0, &diagram, 4);
+    assert_eq!(doublings.len(), 4);
+    for (k, (r, d)) in found.iter().zip(&doublings).enumerate() {
+        assert!(
+            (r - d.r).abs() <= 1e-9,
+            "r{} = {r} vs period_doublings {}",
+            k + 1,
+            d.r
+        );
+    }
+    assert!((found[0] - 3.0).abs() <= 1e-10);
+    assert!(
+        (found[1] - (1.0 + 6f64.sqrt())).abs() <= 1e-10,
+        "r2 = {}",
+        found[1]
+    );
+}
+
+#[test]
+fn switching_at_a_hopf_is_refused() {
+    let sys = system("x' = mu*x - y - x*(x^2 + y^2)\ny' = x + mu*y - y*(x^2 + y^2)");
+    let o = opts(0, (-1.0, 1.0), 0.05);
+    let at = only(&hopf("-"), SpecialKind::Hopf).clone();
+    assert_eq!(
+        switch_branch(&sys, &[-1.0], &at, &o),
+        Err(ContinuationError::CannotSwitch)
+    );
+    let saddle = system("x' = r + x^2");
+    let lp = only(&saddle_node(), SpecialKind::Fold).clone();
+    assert_eq!(
+        switch_branch(&saddle, &[-1.0], &lp, &o),
+        Err(ContinuationError::CannotSwitch)
+    );
 }

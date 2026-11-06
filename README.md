@@ -67,7 +67,7 @@ It also solves Robertson's stiff reaction to t = 40 with Rosenbrock 2(3) at rtol
 bash scripts/continuation-gate.sh
 ```
 
-runs `cargo test --workspace --release --test continuation` and prints one row per claim with its reference value, the measured value, the difference Δ, the tolerance and PASS or FAIL. It exits non-zero if any row fails. Every reference is derived in closed form, and every branch is followed through the same `compute_continuation` command the UI calls, so the gate checks the request path as well as the maths. It covers 21 rows:
+runs `cargo test --workspace --release --test continuation` and prints one row per claim with its reference value, the measured value, the difference Δ, the tolerance and PASS or FAIL. It exits non-zero if any row fails. Every reference is derived in closed form, and every branch is followed through the same `compute_continuation` command the UI calls, so the gate checks the request path as well as the maths. It covers 27 rows:
 
 - the fold (LP) of the saddle-node `ẋ = r + x²` and the branch points (BP) of the transcritical `ẋ = rx − x²` and pitchfork `ẋ = rx − x³`, all at `r = 0`, with the transcritical branch staying on `x = 0` to 10⁻¹²;
 - the Hopf normal form at `μ = 0` with `ω = 1`, and `ℓ₁ = −1` (supercritical) or `+1` (subcritical) to 10⁻⁶;
@@ -76,9 +76,11 @@ runs `cargo test --workspace --release --test continuation` and prints one row p
 - the Brusselator's Hopf point `b = 1 + a² = 5` with `ω = a = 2`;
 - the logistic map's flip (PD) at `r1 = 3` to 10⁻⁶;
 - the Hénon map's fold `a0 = −0.1225` and flip `a1 = 0.3675` at `b = 0.3`, from one branch followed both ways;
-- the delayed logistic map's Neimark–Sacker point (NS) at `r = 2` with `θ = π/3`.
+- the delayed logistic map's Neimark–Sacker point (NS) at `r = 2` with `θ = π/3`;
+- branch switching at the pitchfork's BP onto `r = x²`, with both signs of `x`, and at the transcritical's onto `x = r`, both to 10⁻¹⁰;
+- the logistic period-doubling cascade, switching at each flip onto the doubled cycle over `r ∈ [2.8, 3.57]`: `r2 = 1 + √6`, `r3 = 3.544090360` and `r4 = 3.564407266` to 10⁻⁶, and `r1 … r4` within 10⁻⁹ of the chaos gate's `period_doublings` on its 2,000-column orbit diagram.
 
-Every other row has a tolerance of 10⁻⁹. `ℓ₁` uses Kuznetsov's normalization `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`, so `ṙ = μr + a r³, θ̇ = ω` has `ℓ₁ = a/ω`. A second test hands the gate five wrong claims and requires each to fail: a pitchfork at `r = 10⁻⁴`, Sel'kov's first Hopf point at `b = 0.35`, `ω = 1.001`, a Hopf point on the neutral saddle and `r1 = 3.00001`. `app/src-tauri/tests/continuation.rs` holds the claims.
+The Δ of `r3` and `r4` (about 10⁻¹⁰) is the rounding of their 9-decimal references; the cascade agrees with `period_doublings` to about 10⁻¹³. An info row prints the Feigenbaum estimate `(r3 − r2)/(r4 − r3)` beside `δ = 4.669201609…`, ungated. Every other row has a tolerance of 10⁻⁹. `ℓ₁` uses Kuznetsov's normalization `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`, so `ṙ = μr + a r³, θ̇ = ω` has `ℓ₁ = a/ω`. A second test hands the gate seven wrong claims and requires each to fail: a pitchfork at `r = 10⁻⁴`, Sel'kov's first Hopf point at `b = 0.35`, `ω = 1.001`, a Hopf point on the neutral saddle, `r1 = 3.00001`, `r3 = 3.5441` and a switched pitchfork branch `x = r`. `app/src-tauri/tests/continuation.rs` holds the claims.
 
 ### Evaluation speed
 

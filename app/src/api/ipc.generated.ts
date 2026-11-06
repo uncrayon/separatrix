@@ -695,7 +695,11 @@ x0: Array<number>,
 /**
  * `k` of `f^k` for a map, 1 for a flow.
  */
-period: number, };
+period: number, } | { "kind": "switch", 
+/**
+ * A special point of kind `branchPoint` or `flip`.
+ */
+at: SpecialPointOut, };
 
 export type ContinuationDirection = "forward" | "backward" | "both";
 

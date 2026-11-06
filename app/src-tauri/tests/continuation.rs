@@ -22,6 +22,13 @@
 //! - The delayed logistic map `x ↦ r x (1 − y), y ↦ x` has multipliers with
 //!   `μ² − μ + (r − 1) = 0` at `x = y = 1 − 1/r`: `|μ|² = r − 1`, so a
 //!   Neimark–Sacker point at `r = 2` with `μ = e^{±iπ/3}`.
+//! - Switching at the pitchfork's branch point gives `r = x²` on both sides,
+//!   and at the transcritical's gives `x = r`.
+//! - Switching at each flip of the logistic map onto the doubled cycle
+//!   gives the cascade `r2 = 1 + √6` (Strogatz §10.3), `r3 = 3.544090360`
+//!   and `r4 = 3.564407266` (the milestone's values; Strogatz Table 10.2.1
+//!   gives them to fewer digits), and `r1 … r4` agree with M3's
+//!   `period_doublings` on the chaos gate's 2,000-column orbit diagram.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -29,7 +36,7 @@ use std::time::Instant;
 
 use separatrix_lib::ipc::{
     BranchOut, CompileRequest, ContinuationDirection, ContinuationRequest, ContinuationStart,
-    InputFormat, Severity, SpecialKindOut,
+    InputFormat, OrbitDiagramRequest, Severity, SpecialKindOut,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -47,10 +54,20 @@ struct Run {
     params: &'static [(&'static str, f64)],
     param: &'static str,
     range: (f64, f64),
-    x0: &'static [f64],
+    start: Start,
     direction: ContinuationDirection,
     ds: f64,
     ds_max: f64,
+}
+
+enum Start {
+    Point(&'static [f64]),
+    /// At the first special point of `kind` on `parent`, which has the same
+    /// system and parameters.
+    Switch {
+        parent: &'static Run,
+        kind: SpecialKindOut,
+    },
 }
 
 const DEFAULT: Run = Run {
@@ -59,7 +76,7 @@ const DEFAULT: Run = Run {
     params: &[],
     param: "",
     range: (-1.0, 1.0),
-    x0: &[0.0],
+    start: Start::Point(&[0.0]),
     direction: ContinuationDirection::Forward,
     ds: 0.05,
     ds_max: 0.1,
@@ -70,7 +87,7 @@ const SADDLE_NODE: Run = Run {
     source: Source::Template("saddle-node"),
     params: &[("r", -1.0)],
     param: "r",
-    x0: &[-1.0],
+    start: Start::Point(&[-1.0]),
     ..DEFAULT
 };
 
@@ -95,7 +112,7 @@ const HOPF: Run = Run {
     source: Source::Template("hopf-supercritical"),
     params: &[("mu", -1.0)],
     param: "mu",
-    x0: &[0.0, 0.0],
+    start: Start::Point(&[0.0, 0.0]),
     ..DEFAULT
 };
 
@@ -119,7 +136,7 @@ const SELKOV: Run = Run {
     params: &[("a", SELKOV_A), ("b", 0.05)],
     param: "b",
     range: (0.05, 1.5),
-    x0: &[0.06, 0.6],
+    start: Start::Point(&[0.06, 0.6]),
     ..DEFAULT
 };
 
@@ -136,7 +153,7 @@ const BRUSSELATOR: Run = Run {
     params: &[("a", 2.0), ("b", 1.0)],
     param: "b",
     range: (1.0, 8.0),
-    x0: &[2.0, 0.5],
+    start: Start::Point(&[2.0, 0.5]),
     ..DEFAULT
 };
 
@@ -146,7 +163,7 @@ const LOGISTIC: Run = Run {
     params: &[("r", 2.5)],
     param: "r",
     range: (2.5, 3.5),
-    x0: &[0.6],
+    start: Start::Point(&[0.6]),
     ..DEFAULT
 };
 
@@ -160,10 +177,69 @@ const HENON: Run = Run {
     params: &[("a", 0.2), ("b", HENON_B)],
     param: "a",
     range: (-0.5, 1.0),
-    x0: &[1.09, 0.327],
+    start: Start::Point(&[1.09, 0.327]),
     direction: ContinuationDirection::Both,
     ..DEFAULT
 };
+
+const PITCHFORK_SWITCH: Run = Run {
+    label: "pitchfork, switched at BP, both halves",
+    start: Start::Switch {
+        parent: &PITCHFORK,
+        kind: BranchPoint,
+    },
+    direction: ContinuationDirection::Both,
+    ..PITCHFORK
+};
+
+const TRANSCRITICAL_SWITCH: Run = Run {
+    label: "transcritical, switched at BP, both halves",
+    start: Start::Switch {
+        parent: &TRANSCRITICAL,
+        kind: BranchPoint,
+    },
+    direction: ContinuationDirection::Both,
+    ..TRANSCRITICAL
+};
+
+/// The logistic map's fixed point over the chaos gate's diagram range.
+const CASCADE_1: Run = Run {
+    label: "logistic map, period 1, r ∈ [2.8, 3.57]",
+    params: &[("r", 2.8)],
+    range: (2.8, 3.57),
+    start: Start::Point(&[0.642_857_142_857_142_9]),
+    ..LOGISTIC
+};
+
+const CASCADE_2: Run = Run {
+    label: "logistic map, period 2, switched at r1",
+    start: Start::Switch {
+        parent: &CASCADE_1,
+        kind: Flip,
+    },
+    ..CASCADE_1
+};
+
+const CASCADE_4: Run = Run {
+    label: "logistic map, period 4, switched at r2",
+    start: Start::Switch {
+        parent: &CASCADE_2,
+        kind: Flip,
+    },
+    ..CASCADE_1
+};
+
+const CASCADE_8: Run = Run {
+    label: "logistic map, period 8, switched at r3",
+    start: Start::Switch {
+        parent: &CASCADE_4,
+        kind: Flip,
+    },
+    ..CASCADE_1
+};
+
+/// The branches whose first flips are `r1, …, r4`.
+const CASCADE: [&Run; 4] = [&CASCADE_1, &CASCADE_2, &CASCADE_4, &CASCADE_8];
 
 const DELAYED_LOGISTIC: Run = Run {
     label: "delayed logistic map",
@@ -171,7 +247,7 @@ const DELAYED_LOGISTIC: Run = Run {
     params: &[("r", 1.5)],
     param: "r",
     range: (1.5, 2.5),
-    x0: &[0.333, 0.333],
+    start: Start::Point(&[0.333, 0.333]),
     ..DEFAULT
 };
 
@@ -186,6 +262,14 @@ enum Measure {
     Count(SpecialKindOut),
     /// The largest `|x|` over the branch.
     MaxAbsX,
+    /// The largest `|residual(x, p)|` over a one-dimensional branch; `NaN`
+    /// when `both_signs` and `x` doesn't take both signs.
+    MaxResidual {
+        residual: fn(f64, f64) -> f64,
+        both_signs: bool,
+    },
+    /// The largest `|r_k − period_doublings r_k|` over the [`CASCADE`].
+    CascadeAgreement,
 }
 
 enum Expect {
@@ -205,6 +289,9 @@ const TOL: f64 = 1e-9;
 const SELKOV_TOL: f64 = 1e-8;
 const LYAPUNOV_TOL: f64 = 1e-6;
 const DOUBLING_TOL: f64 = 1e-6;
+const ON_BRANCH_TOL: f64 = 1e-10;
+const AGREEMENT_TOL: f64 = 1e-9;
+const FEIGENBAUM_DELTA: f64 = 4.669_201_609_102_99;
 
 const fn near(value: f64, tol: f64) -> Expect {
     Expect::Near { value, tol }
@@ -339,6 +426,54 @@ const CHECKS: &[Check] = &[
         measure: Measure::Omega(NeimarkSacker, 0),
         expect: near(std::f64::consts::FRAC_PI_3, TOL),
     },
+    Check {
+        text: "pitchfork switched at BP: max |r − x²|, ±x",
+        run: &PITCHFORK_SWITCH,
+        measure: Measure::MaxResidual {
+            residual: |x, r| r - x * x,
+            both_signs: true,
+        },
+        expect: Expect::AtMost {
+            bound: ON_BRANCH_TOL,
+        },
+    },
+    Check {
+        text: "transcritical switched at BP: max |x − r|",
+        run: &TRANSCRITICAL_SWITCH,
+        measure: Measure::MaxResidual {
+            residual: |x, r| x - r,
+            both_signs: true,
+        },
+        expect: Expect::AtMost {
+            bound: ON_BRANCH_TOL,
+        },
+    },
+    Check {
+        text: "logistic, period 2 from r1: PD r2 = 1 + √6",
+        run: &CASCADE_2,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.449_489_742_783_178, DOUBLING_TOL),
+    },
+    Check {
+        text: "logistic, period 4 from r2: PD r3",
+        run: &CASCADE_4,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.544_090_360, DOUBLING_TOL),
+    },
+    Check {
+        text: "logistic, period 8 from r3: PD r4",
+        run: &CASCADE_8,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.564_407_266, DOUBLING_TOL),
+    },
+    Check {
+        text: "r1..r4 vs period_doublings: max |Δ|",
+        run: &CASCADE_1,
+        measure: Measure::CascadeAgreement,
+        expect: Expect::AtMost {
+            bound: AGREEMENT_TOL,
+        },
+    },
 ];
 
 const WRONG_CHECKS: &[Check] = &[
@@ -371,6 +506,23 @@ const WRONG_CHECKS: &[Check] = &[
         run: &LOGISTIC,
         measure: Measure::P(Flip, 0),
         expect: near(3.00001, DOUBLING_TOL),
+    },
+    Check {
+        text: "wrong: logistic r3 = 3.5441",
+        run: &CASCADE_4,
+        measure: Measure::P(Flip, 0),
+        expect: near(3.5441, DOUBLING_TOL),
+    },
+    Check {
+        text: "wrong: switched pitchfork branch is x = r",
+        run: &PITCHFORK_SWITCH,
+        measure: Measure::MaxResidual {
+            residual: |x, r| x - r,
+            both_signs: false,
+        },
+        expect: Expect::AtMost {
+            bound: ON_BRANCH_TOL,
+        },
     },
 ];
 
@@ -430,16 +582,28 @@ fn branch(run: &'static Run) -> Arc<BranchOut> {
         .position(|p| p.name == run.param)
         .unwrap_or_else(|| panic!("{}: no parameter {}", run.label, run.param));
     let system_id = res.system_id.expect("compiled");
+    let start = match run.start {
+        Start::Point(x0) => ContinuationStart::Point {
+            x0: x0.to_vec(),
+            period: 1,
+        },
+        Start::Switch { parent, kind } => {
+            let at = branch(parent)
+                .special
+                .iter()
+                .find(|sp| sp.kind == kind)
+                .unwrap_or_else(|| panic!("{}: no {kind:?} on {}", run.label, parent.label))
+                .clone();
+            ContinuationStart::Switch { at }
+        }
+    };
     let req = ContinuationRequest {
         request_id: 1,
         system_id,
         params,
         param,
         range: run.range,
-        start: ContinuationStart::Point {
-            x0: run.x0.to_vec(),
-            period: 1,
-        },
+        start,
         direction: run.direction,
         ds: run.ds,
         ds_max: run.ds_max,
@@ -463,7 +627,70 @@ fn measure(check: &Check) -> f64 {
         Measure::Lyapunov(n) => nth(Hopf, n).and_then(|sp| sp.lyapunov).unwrap_or(missing),
         Measure::Count(kind) => b.special.iter().filter(|sp| sp.kind == kind).count() as f64,
         Measure::MaxAbsX => b.x.iter().fold(0.0, |m, x| x.abs().max(m)),
+        Measure::MaxResidual {
+            residual,
+            both_signs,
+        } => {
+            let signs = b.x.iter().any(|x| *x > 0.0) && b.x.iter().any(|x| *x < 0.0);
+            if both_signs && !signs {
+                return missing;
+            }
+            b.x.iter()
+                .zip(&b.p)
+                .fold(0.0, |m, (x, p)| residual(*x, *p).abs().max(m))
+        }
+        Measure::CascadeAgreement => cascade()
+            .iter()
+            .zip(period_doublings())
+            .fold(0.0, |m, (r, d)| (r - d).abs().max(m)),
     }
+}
+
+/// `r1, …, r4`, each the first flip on its branch of the [`CASCADE`].
+fn cascade() -> Vec<f64> {
+    CASCADE
+        .iter()
+        .map(|run| {
+            branch(run)
+                .special
+                .iter()
+                .find(|sp| sp.kind == Flip)
+                .map_or(f64::NAN, |sp| sp.p)
+        })
+        .collect()
+}
+
+/// `r1, …, r4` from M3's orbit diagram, exactly as the chaos gate asks
+/// for it: `r ∈ [2.8, 3.57]`, 2,000 columns from `x0 = 0.1`, 2,000
+/// transient iterates and 64 kept; `NaN` for a doubling it didn't find.
+fn period_doublings() -> Vec<f64> {
+    let res = service::compile_system(
+        store(),
+        &CompileRequest {
+            source: "x_{n+1} = r*x_n*(1 - x_n)".into(),
+            format: InputFormat::Text,
+        },
+    );
+    let system_id = res.system_id.expect("the logistic map compiles");
+    let req = OrbitDiagramRequest {
+        request_id: 1,
+        system_id,
+        params: vec![2.8],
+        param: 0,
+        range: (2.8, 3.57),
+        columns: 2000,
+        state: 0,
+        x0: vec![0.1],
+        transient: 2000,
+        kept: 64,
+        doublings: true,
+    };
+    let system = store().get(system_id).expect("stored");
+    let out = service::compute_orbit_diagram(&system, &req).expect("the orbit diagram");
+    let found = out.doublings.unwrap_or_default();
+    (0..CASCADE.len())
+        .map(|k| found.get(k).map_or(f64::NAN, |d| d.r))
+        .collect()
 }
 
 struct Row {
@@ -550,6 +777,16 @@ fn continuation_claims_reproduce() {
         "\nℓ₁ is Kuznetsov's (§3.5) with ⟨p, q⟩ = 1 and ⟨q, q⟩ = 1/2, so ṙ = μr + a r³, \
          θ̇ = ω has ℓ₁ = a/ω."
     );
+    let r = cascade();
+    let ratio = (r[2] - r[1]) / (r[3] - r[2]);
+    print_line([
+        "info: Feigenbaum δ ≈ (r3 − r2)/(r4 − r3)",
+        &format!("{FEIGENBAUM_DELTA:.12}"),
+        &format!("{ratio:.12}"),
+        &format!("{:.1e}", (ratio - FEIGENBAUM_DELTA).abs()),
+        "—",
+        "info",
+    ]);
     println!(
         "{} rows, wall time {:.2} s (budget 10 s)",
         rows.len(),

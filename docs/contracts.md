@@ -480,6 +480,8 @@ pub struct ContinuationOptions { pub param: usize, pub period: usize, pub range:
                                  pub max_points: usize, pub max_angle: f64 }
 pub fn continue_branch(f: &dyn VectorField, params: &[f64], x0: &[f64],
                        opts: &ContinuationOptions) -> Result<Branch, ContinuationError>;
+pub fn switch_branch(f: &dyn VectorField, params: &[f64], at: &SpecialPoint,
+                     opts: &ContinuationOptions) -> Result<Branch, ContinuationError>;
 pub struct Branch { pub period: usize, pub points: Vec<BranchPoint>,
                     pub special: Vec<SpecialPoint>, pub end: BranchEnd /* Range | MaxPoints | StepTooSmall */ }
 pub struct BranchPoint { pub s: f64, pub p: f64, pub x: Vec<f64>, pub cycle: Vec<f64>,
@@ -489,7 +491,8 @@ pub struct SpecialPoint { pub kind: SpecialKind /* Fold | Hopf | BranchPoint | F
                           pub index: usize, pub p: f64, pub x: Vec<f64>, pub period: usize,
                           pub tangent: Vec<f64>, pub eigenvalues: Vec<(f64, f64)>,
                           pub omega: Option<f64>, pub lyapunov: Option<f64> }
-pub enum ContinuationError { NotAFixedPoint, Singular, NotAutonomous }
+pub enum ContinuationError { NotAFixedPoint, Singular, NotAutonomous,
+                             CannotSwitch, NoSecondBranch }
 ```
 
 `continue_branch` follows the zeros of `g(x, p) = f(x, p)` (a flow) or `g = f^k(x, p) − x` (a map,
@@ -525,12 +528,37 @@ and no `lyapunov`. The start fails with `NotAFixedPoint` when Newton's method do
 `Singular` when the start is itself a fold or branch point, and `NotAutonomous` for a system that
 depends on `t` or `n`.
 
+`switch_branch` follows the other branch through a special point `at` of a branch of the same
+system, parameters and `param`. Only a branch point (BP), or a flip (PD) of a map, can be switched
+at; any other kind fails with `CannotSwitch`. At a BP the kernel of `[g_x | g_p]` is
+two-dimensional, and the new direction `d` is its unit vector orthogonal to `at.tangent`: the null
+vector of the bordered Jacobian `[g_x g_p; τᵀ]`, by inverse iteration on its normal matrix with a
+shift of `1e−12 (1 + trace)`. A flip of `f^k` is handled the same way on `g = f^{2k} − x`, whose
+kernel there is spanned by the old tangent and `(v, 0)` (`v` the eigenvector of the multiplier
+`−1`), so the new branch is the `2k`-cycle born at the flip and has `period = 2k`. The first new
+point is corrected on the hyperplane through `z* + h d` orthogonal to `d`, with `h = |ds|` (clamped
+to `[ds_min, ds_max]`). That hyperplane is parallel to the old tangent, so every point of it lies
+`h` from the old branch's tangent line and the correction cannot fall back onto the old branch to
+first order. `h` is halved up to 8 times when Newton's method fails there or the point lies outside
+`range`; then the branch continues as `continue_branch` does, away from `at`. `d` is oriented so
+that its largest component is positive for `ds > 0` and negative for `ds < 0`, which picks one half
+of the new branch (`x > 0` or `x < 0` of a pitchfork, either point of the 2-cycle). The branch
+starts at `at` itself, neutral (not `stable`, with the unstable count of the first new point), so
+the halves for `±ds` share their first point; the special point itself is not repeated in
+`special`. A start outside `range`, or a first point outside it at every offset, gives the start
+alone with `Range`; no point at any offset gives `NoSecondBranch`. Only `+ − × ÷` and `sqrt`
+choose `d` and its sign.
+
 `compute_continuation` takes `ContinuationRequest { requestId, systemId, params, param, range:
-[lo, hi], start: { kind: "point", x0, period }, direction: "forward" | "backward" | "both", ds,
-dsMax, maxPoints }` and returns `ContinuationResponse { requestId, branch, elapsedMs }` with
+[lo, hi], start: { kind: "point", x0, period } | { kind: "switch", at: SpecialPointOut },
+direction: "forward" | "backward" | "both", ds, dsMax, maxPoints }` and returns `ContinuationResponse { requestId, branch, elapsedMs }` with
 `branch: BranchOut { period, p, x, stable, unstable, special, end: { first, last } }`. That is
-`continue_branch` with `ds_min = 1e−8` and `max_angle = 0.3`, and `ds` signed by the direction:
-`forward` starts with `p` increasing, `backward` decreasing. `both` runs backward and forward from
+`continue_branch` (start `point`) or `switch_branch` (start `switch`) with `ds_min = 1e−8` and
+`max_angle = 0.3`, and `ds` signed by the direction: `forward` starts with `p` increasing,
+`backward` decreasing, or for a switch `forward` and `backward` take the halves for `ds > 0` and
+`ds < 0`, so `both` gives the whole second branch through the switch point. A switch seed is
+self-contained: only its `kind`, `p`, `x`, `period` and `tangent` are read, so a saved project
+replays it without the branch it came from, and `params[param]` is replaced by its `p`. `both` runs backward and forward from
 the same start and joins them into one polyline: the backward half reversed, then the forward half,
 with the shared start once, the special indices shifted to match and the backward tangents negated,
 so they point along the polyline. The arrays are flat, as in `OrbitDiagramResponse`: `p`,
@@ -545,12 +573,15 @@ so a `both` branch has at most `2·maxPoints − 1` points, plus the special poi
 The command refuses a system that depends on `t` or `n`; a parameter count that doesn't fit, a
 system with no parameter or a parameter index outside it; a range that is not finite with
 `lo < hi`; a start of the wrong dimension or a non-finite start or parameter; `period = 0`, or
-`period > 1` for a flow; `ds` that is not a positive number, `dsMax < ds`; and `maxPoints` outside
+`period > 1` for a flow; a switch seed whose tangent doesn't have `dim + 1` finite components, not
+all zero, or whose `p` is not finite; `ds` that is not a positive number, `dsMax < ds`; and `maxPoints` outside
 `2..=MAX_CONTINUATION_POINTS = 20000`. `NotAFixedPoint` and `Singular` come back as messages that
-name an equilibrium (flow) or a fixed point (map). It runs on a blocking worker thread. A start
+name an equilibrium (flow) or a fixed point (map), and `CannotSwitch` and `NoSecondBranch` as
+messages that say where switching works and to try a smaller `ds`. It runs on a blocking worker thread. A start
 whose `p` lies outside `range` is that point alone, with `end.last = "range"`. The continuation
-gate (`scripts/continuation-gate.sh`, see the README) checks this command against 21 values
-derived in closed form.
+gate (`scripts/continuation-gate.sh`, see the README) checks this command against 27 values
+derived in closed form or published, among them the logistic cascade `r2 … r4` to 1e−6 by
+switching at each flip, and its agreement with `period_doublings` to 1e−9.
 
 ## IPC (Tauri commands)
 

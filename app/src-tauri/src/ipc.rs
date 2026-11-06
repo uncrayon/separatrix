@@ -592,7 +592,8 @@ pub struct ContinuationRequest {
 
 /// Where a branch starts.
 ///
-/// On the wire: `{ "kind": "point", "x0": [0.5], "period": 1 }`.
+/// On the wire: `{ "kind": "point", "x0": [0.5], "period": 1 }` or
+/// `{ "kind": "switch", "at": { "kind": "branchPoint", … } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -603,6 +604,14 @@ pub enum ContinuationStart {
         x0: Vec<f64>,
         /// `k` of `f^k` for a map, 1 for a flow.
         period: usize,
+    },
+    /// Onto the other branch through a branch point, or onto the
+    /// `2·period`-cycle born at a flip (`dyn_analysis::switch_branch`).
+    /// The point is self-contained, so the branch it came from is not
+    /// needed; only its `kind`, `p`, `x`, `period` and `tangent` are read.
+    Switch {
+        /// A special point of kind `branchPoint` or `flip`.
+        at: SpecialPointOut,
     },
 }
 
@@ -682,7 +691,7 @@ pub enum BranchStop {
 }
 
 /// A located bifurcation on a branch.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SpecialPointOut {
@@ -712,7 +721,7 @@ pub struct SpecialPointOut {
 }
 
 /// The kinds of special point; their labels are `LP`, `H`, `BP`, `PD`, `NS`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum SpecialKindOut {

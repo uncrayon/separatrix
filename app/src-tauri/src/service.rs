@@ -421,11 +421,10 @@ pub fn compute_continuation(
     let started = Instant::now();
     let f: &dyn VectorField = system;
     validate_continuation(f, req)?;
-    let ContinuationStart::Point { x0, period } = &req.start;
     let follow = |sign: f64| {
-        let opts = dyn_analysis::ContinuationOptions {
+        let opts = |period| dyn_analysis::ContinuationOptions {
             param: req.param,
-            period: *period,
+            period,
             range: req.range,
             ds: sign * req.ds,
             ds_min: CONTINUATION_DS_MIN,
@@ -433,8 +432,26 @@ pub fn compute_continuation(
             max_points: req.max_points,
             max_angle: CONTINUATION_MAX_ANGLE,
         };
-        dyn_analysis::continue_branch(f, &req.params, x0, &opts)
-            .map_err(|e| continuation_refusal(f, e))
+        match &req.start {
+            ContinuationStart::Point { x0, period } => {
+                dyn_analysis::continue_branch(f, &req.params, x0, &opts(*period))
+            }
+            ContinuationStart::Switch { at } => {
+                let at = dyn_analysis::SpecialPoint {
+                    kind: kind_in(at.kind),
+                    index: 0,
+                    p: at.p,
+                    x: at.x.clone(),
+                    period: at.period,
+                    tangent: at.tangent.clone(),
+                    eigenvalues: at.eigenvalues.clone(),
+                    omega: at.omega,
+                    lyapunov: at.lyapunov,
+                };
+                dyn_analysis::switch_branch(f, &req.params, &at, &opts(at.period))
+            }
+        }
+        .map_err(|e| continuation_refusal(f, e))
     };
     let branch = match req.direction {
         ContinuationDirection::Forward => join(None, follow(1.0)?),
@@ -463,7 +480,45 @@ fn continuation_refusal(f: &dyn VectorField, e: dyn_analysis::ContinuationError)
              direction; start a little away from it."
         ),
         dyn_analysis::ContinuationError::NotAutonomous => NOT_AUTONOMOUS.into(),
+        dyn_analysis::ContinuationError::CannotSwitch => {
+            "Branches can be switched only at a branch point (BP), or at a flip (PD) of a map."
+                .into()
+        }
+        dyn_analysis::ContinuationError::NoSecondBranch => {
+            "No second branch was found near this point; try a smaller ds.".into()
+        }
     }
+}
+
+/// Each core kind of special point and its name on the wire.
+const SPECIAL_KINDS: [(dyn_analysis::SpecialKind, SpecialKindOut); 5] = [
+    (dyn_analysis::SpecialKind::Fold, SpecialKindOut::Fold),
+    (dyn_analysis::SpecialKind::Hopf, SpecialKindOut::Hopf),
+    (
+        dyn_analysis::SpecialKind::BranchPoint,
+        SpecialKindOut::BranchPoint,
+    ),
+    (dyn_analysis::SpecialKind::Flip, SpecialKindOut::Flip),
+    (
+        dyn_analysis::SpecialKind::NeimarkSacker,
+        SpecialKindOut::NeimarkSacker,
+    ),
+];
+
+fn kind_out(kind: dyn_analysis::SpecialKind) -> SpecialKindOut {
+    SPECIAL_KINDS
+        .iter()
+        .find(|k| k.0 == kind)
+        .expect("every kind")
+        .1
+}
+
+fn kind_in(kind: SpecialKindOut) -> dyn_analysis::SpecialKind {
+    SPECIAL_KINDS
+        .iter()
+        .find(|k| k.1 == kind)
+        .expect("every kind")
+        .0
 }
 
 const NOT_AUTONOMOUS: &str =
@@ -479,13 +534,7 @@ fn join(backward: Option<dyn_analysis::Branch>, forward: dyn_analysis::Branch) -
         dyn_analysis::BranchEnd::StepTooSmall => BranchStop::StepTooSmall,
     };
     let special_out = |sp: dyn_analysis::SpecialPoint, index: usize, sign: f64| SpecialPointOut {
-        kind: match sp.kind {
-            dyn_analysis::SpecialKind::Fold => SpecialKindOut::Fold,
-            dyn_analysis::SpecialKind::Hopf => SpecialKindOut::Hopf,
-            dyn_analysis::SpecialKind::BranchPoint => SpecialKindOut::BranchPoint,
-            dyn_analysis::SpecialKind::Flip => SpecialKindOut::Flip,
-            dyn_analysis::SpecialKind::NeimarkSacker => SpecialKindOut::NeimarkSacker,
-        },
+        kind: kind_out(sp.kind),
         index,
         p: sp.p,
         x: sp.x,
@@ -562,7 +611,25 @@ fn validate_continuation(f: &dyn VectorField, req: &ContinuationRequest) -> Resu
     if !(lo.is_finite() && hi.is_finite() && lo < hi) {
         return Err("The parameter range must be finite, with its start below its end.".into());
     }
-    let ContinuationStart::Point { x0, period } = &req.start;
+    let (x0, period) = match &req.start {
+        ContinuationStart::Point { x0, period } => (x0, period),
+        ContinuationStart::Switch { at } => {
+            let tangent = &at.tangent;
+            if tangent.len() != f.dim() + 1
+                || !tangent.iter().all(|v| v.is_finite())
+                || tangent.iter().all(|v| *v == 0.0)
+            {
+                return Err(format!(
+                    "The switch point's tangent needs {} finite components, not all zero.",
+                    f.dim() + 1
+                ));
+            }
+            if !at.p.is_finite() {
+                return Err("The switch point's parameter must be finite.".into());
+            }
+            (&at.x, &at.period)
+        }
+    };
     if x0.len() != f.dim() {
         return Err(format!(
             "The starting point has {} coordinate(s) but the system has {}.",
@@ -2922,6 +2989,88 @@ mod tests {
             "Continuation follows fixed points, which a system that depends on t or n doesn't \
              have."
         );
+    }
+
+    #[test]
+    fn switch_start_follows_the_second_branch_from_a_saved_seed() {
+        let store = SystemStore::new();
+        let pitchfork = compile_src(&store, "\\dot{x}=rx-x^3");
+        let flow = store.get(pitchfork).unwrap();
+        let parent = continuation_request(pitchfork, vec![-1.0], vec![0.0]);
+        let bp = compute_continuation(&flow, &parent).unwrap().branch.special[0].clone();
+        assert_eq!(bp.kind, SpecialKindOut::BranchPoint);
+        let switch = ContinuationRequest {
+            start: ContinuationStart::Switch { at: bp.clone() },
+            direction: ContinuationDirection::Both,
+            ..parent.clone()
+        };
+        let saved = serde_json::to_string(&switch).unwrap();
+        assert!(saved.contains(r#""start":{"kind":"switch","at":{"kind":"branchPoint""#));
+        let replayed: ContinuationRequest = serde_json::from_str(&saved).unwrap();
+        assert_eq!(replayed, switch);
+        let b = compute_continuation(&flow, &replayed).unwrap().branch;
+        assert_eq!(b, compute_continuation(&flow, &switch).unwrap().branch);
+
+        let middle = b.p.iter().position(|r| *r == bp.p).expect("the BP once");
+        assert_eq!(b.x[middle], bp.x[0]);
+        assert!(b.x[..middle].iter().all(|x| *x < 0.0));
+        assert!(b.x[middle + 1..].iter().all(|x| *x > 0.0));
+        for (x, r) in b.x.iter().zip(&b.p) {
+            assert!((r - x * x).abs() <= 1e-10, "r − x² at x = {x}");
+        }
+        assert_eq!((b.p[0], *b.p.last().unwrap()), (1.0, 1.0));
+        assert_eq!(
+            b.end,
+            BranchEndOut {
+                first: Some(BranchStop::Range),
+                last: BranchStop::Range,
+            }
+        );
+
+        let switch_at = |kind, tangent: Vec<f64>, p: f64| ContinuationRequest {
+            start: ContinuationStart::Switch {
+                at: SpecialPointOut {
+                    kind,
+                    tangent,
+                    p,
+                    ..bp.clone()
+                },
+            },
+            ..parent.clone()
+        };
+        let refused = [
+            (
+                switch_at(SpecialKindOut::Hopf, bp.tangent.clone(), 0.0),
+                "Branches can be switched only at a branch point (BP), or at a flip (PD) of a map.",
+            ),
+            (
+                switch_at(SpecialKindOut::Flip, bp.tangent.clone(), 0.0),
+                "Branches can be switched only at a branch point (BP), or at a flip (PD) of a map.",
+            ),
+            (
+                switch_at(SpecialKindOut::BranchPoint, vec![1.0], 0.0),
+                "The switch point's tangent needs 2 finite components, not all zero.",
+            ),
+            (
+                switch_at(SpecialKindOut::BranchPoint, vec![0.0, 0.0], 0.0),
+                "The switch point's tangent needs 2 finite components, not all zero.",
+            ),
+            (
+                switch_at(SpecialKindOut::BranchPoint, vec![0.0, f64::NAN], 0.0),
+                "The switch point's tangent needs 2 finite components, not all zero.",
+            ),
+            (
+                switch_at(SpecialKindOut::BranchPoint, bp.tangent.clone(), f64::NAN),
+                "The switch point's parameter must be finite.",
+            ),
+        ];
+        for (req, message) in &refused {
+            assert_eq!(
+                compute_continuation(&flow, req).unwrap_err(),
+                *message,
+                "{req:?}"
+            );
+        }
     }
 
     #[test]

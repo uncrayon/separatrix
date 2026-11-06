@@ -55,11 +55,13 @@ const MAX_BISECTION: usize = 200;
 pub struct ContinuationOptions {
     /// Index of the continuation parameter.
     pub param: usize,
-    /// `k` for fixed points of `f^k` of a map; ignored (taken as 1) for flows.
+    /// `k` for fixed points of `f^k` of a map; ignored (taken as 1) for
+    /// flows, and by [`switch_branch`], which takes the switch point's.
     pub period: usize,
     /// The parameter interval the branch stays in.
     pub range: (f64, f64),
-    /// Signed first step in arclength: its sign is the direction in `p`.
+    /// Signed first step in arclength: its sign is the direction in `p`,
+    /// or for [`switch_branch`] the half of the new branch.
     pub ds: f64,
     /// Smallest step; a step halved below it ends the branch.
     pub ds_min: f64,
@@ -200,6 +202,12 @@ pub enum ContinuationError {
     Singular,
     /// The field depends explicitly on `t` (or `n`).
     NotAutonomous,
+    /// [`switch_branch`] at a kind of point with no second branch to switch
+    /// onto (anything but a branch point, or a flip of a map).
+    CannotSwitch,
+    /// [`switch_branch`] found no point of a second branch near the switch
+    /// point, or its kernel there is not two-dimensional.
+    NoSecondBranch,
 }
 
 /// Follow the branch through `x0` at `params` as `params[opts.param]`
@@ -217,147 +225,119 @@ pub fn continue_branch(
     if !f.is_autonomous() {
         return Err(ContinuationError::NotAutonomous);
     }
-    let map = f.kind() == SystemKind::Map;
-    let period = if map { opts.period.max(1) } else { 1 };
-    let g = Residual {
-        power: Power { f, k: period },
-        map,
-        params: params.to_vec(),
-        param: opts.param,
-    };
+    let g = Residual::new(f, params, opts.param, opts.period);
     let n = f.dim();
-    let (lo, hi) = (
-        opts.range.0.min(opts.range.1),
-        opts.range.0.max(opts.range.1),
-    );
-
     let p0 = params[opts.param];
-    let (mut z, _) = g.correct_at_fixed_p(x0, p0).map_err(|e| match e {
+    let (z, _) = g.correct_at_fixed_p(x0, p0).map_err(|e| match e {
         Fail::Singular => ContinuationError::Singular,
         Fail::NoConvergence => ContinuationError::NotAFixedPoint,
     })?;
     let mut seed = vec![0.0; n + 1];
     seed[n] = if opts.ds < 0.0 { -1.0 } else { 1.0 };
     let tau = g.tangent(&z, &seed).ok_or(ContinuationError::Singular)?;
-    let mut points = vec![g.point(0.0, &z, tau)];
-    let mut special = Vec::new();
-    if !(lo..=hi).contains(&p0) {
-        return Ok(Branch {
-            period,
-            points,
-            special,
-            end: BranchEnd::Range,
-        });
+    let start = g.point(0.0, &z, tau.clone());
+    if !in_range(opts, p0) {
+        return Ok(g.branch(vec![start], Vec::new(), BranchEnd::Range));
     }
+    let h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
+    Ok(g.follow(vec![start], tau, h, opts))
+}
 
-    let detectors: Vec<&Detector> = DETECTORS
+/// Halvings of the offset allowed when no second branch is found at it.
+const SWITCH_HALVINGS: usize = 8;
+
+/// Follow the other branch through the branch point or flip `at`, found on
+/// a branch of `f` with the same `params` and `opts.param`.
+///
+/// At a branch point the kernel of `[g_x | g_p]` is two-dimensional; its
+/// unit vector `d` orthogonal to `at.tangent` is the new direction. At a
+/// flip of `f^k` the same holds for `g = f^{2k} − x`, whose kernel there is
+/// spanned by the old tangent and `(v, 0)`, `v` the eigenvector of the
+/// multiplier `−1`, so the new branch is the `2k`-cycle born there. The
+/// first new point is corrected on the hyperplane through `z* + h d`
+/// orthogonal to `d`, which is parallel to the old tangent and so misses
+/// the old branch to first order; `h = |ds|` is halved up to
+/// [`SWITCH_HALVINGS`] times when Newton's method fails there or the point
+/// lies outside `opts.range`. `d` is oriented so that its largest
+/// component is positive for `ds > 0` and negative for `ds < 0`, which
+/// picks one half of the new branch.
+///
+/// The branch starts at `at` itself, neutral, so the halves for `±ds`
+/// share their first point. A start outside `opts.range`, or a first new
+/// point outside it at every offset, gives the start alone, ending with
+/// [`BranchEnd::Range`]. Only [`SpecialKind::BranchPoint`] and, on a map,
+/// [`SpecialKind::Flip`] can be switched at.
+pub fn switch_branch(
+    f: &dyn VectorField,
+    params: &[f64],
+    at: &SpecialPoint,
+    opts: &ContinuationOptions,
+) -> Result<Branch, ContinuationError> {
+    if !f.is_autonomous() {
+        return Err(ContinuationError::NotAutonomous);
+    }
+    let period = match (at.kind, f.kind()) {
+        (SpecialKind::BranchPoint, _) => at.period,
+        (SpecialKind::Flip, SystemKind::Map) => 2 * at.period.max(1),
+        _ => return Err(ContinuationError::CannotSwitch),
+    };
+    let g = Residual::new(f, params, opts.param, period);
+    let z_star: Vec<f64> = at.x.iter().copied().chain([at.p]).collect();
+    let len = norm2(&at.tangent);
+    let tau: Vec<f64> = at.tangent.iter().map(|t| t / len).collect();
+    let mut d = g
+        .second_direction(&z_star, &tau)
+        .ok_or(ContinuationError::NoSecondBranch)?;
+    let largest = d
         .iter()
-        .filter(|d| d.applies_to.contains(&f.kind()))
-        .collect();
-    let test_all = |pt: &BranchPoint| -> Vec<Option<f64>> {
-        detectors.iter().map(|d| (d.test)(&g, pt)).collect()
+        .copied()
+        .reduce(|a, b| if b.abs() > a.abs() { b } else { a })
+        .unwrap_or(1.0);
+    let sign = if (largest < 0.0) == (opts.ds < 0.0) {
+        1.0
+    } else {
+        -1.0
     };
-    let mut tests = test_all(&points[0]);
-    let cos_max = cos(opts.max_angle);
+    d.iter_mut().for_each(|c| *c *= sign);
+    let mut start = g.point(0.0, &z_star, d.clone());
+    start.stable = false;
+    if !in_range(opts, at.p) {
+        return Ok(g.branch(vec![start], Vec::new(), BranchEnd::Range));
+    }
+    if opts.max_points < 2 {
+        return Ok(g.branch(vec![start], Vec::new(), BranchEnd::MaxPoints));
+    }
     let mut h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
-    let mut dir = points[0].tangent.clone();
-    let end = loop {
-        if points.len() >= opts.max_points {
-            break BranchEnd::MaxPoints;
-        }
-        if h < opts.ds_min {
-            break BranchEnd::StepTooSmall;
-        }
-        let last = points.last().expect("the start");
-        let pred: Vec<f64> = z.iter().zip(&dir).map(|(a, d)| a + h * d).collect();
-        let edge = if pred[n] > hi {
-            Some(hi)
-        } else if pred[n] < lo {
-            Some(lo)
-        } else {
-            None
-        };
-        let corrected = match edge {
-            Some(e) if z[n] == e => break BranchEnd::Range,
-            Some(e) => {
-                let along = (e - z[n]) / dir[n];
-                let guess: Vec<f64> = (0..n).map(|i| z[i] + along * dir[i]).collect();
-                g.correct_at_fixed_p(&guess, e)
-            }
-            None => g.correct_along(&pred, &dir),
-        };
-        let accepted = corrected.ok().and_then(|(z_new, iters)| {
-            let t = g.tangent(&z_new, &last.tangent)?;
-            (dot(&t, &last.tangent) >= cos_max).then_some((z_new, iters, t))
+    let mut outside = false;
+    for _ in 0..=SWITCH_HALVINGS {
+        let pred: Vec<f64> = z_star.iter().zip(&d).map(|(z, c)| z + h * c).collect();
+        let found = g.correct_along(&pred, &d).ok().and_then(|(z1, _)| {
+            let w = diff(&z1, &z_star);
+            let len = norm2(&w);
+            let dir: Vec<f64> = w.iter().map(|c| c / len).collect();
+            let t1 = g.tangent(&z1, &dir)?;
+            Some((z1, len, dir, t1))
         });
-        let Some((z_new, iters, t_new)) = accepted else {
+        outside = found
+            .as_ref()
+            .is_some_and(|(z1, ..)| !in_range(opts, z1[z1.len() - 1]));
+        let Some((z1, len, dir, t1)) = found.filter(|_| !outside) else {
             h /= 2.0;
             continue;
         };
-        let mut next = g.point(0.0, &z_new, t_new);
-        let next_tests = test_all(&next);
-        let fired: Vec<(&Detector, f64)> = (0..detectors.len())
-            .filter_map(|i| match (tests[i], next_tests[i]) {
-                (Some(a), Some(b)) if a * b < 0.0 => Some((detectors[i], a)),
-                _ => None,
-            })
-            .collect();
-        let jump = next.unstable.abs_diff(last.unstable);
-        let explained = match fired[..] {
-            [] => jump == 0,
-            [(d, _)] => jump == d.jump,
-            _ => false,
-        };
-        if !explained {
-            h /= 2.0;
-            continue;
-        }
-        if points.len() + 1 + fired.len() > opts.max_points {
-            break BranchEnd::MaxPoints;
-        }
-        let len = dist(&z, &z_new);
-        let limit = proximity_limit(map, last, &next, len);
-        if let [(d, test_last)] = fired[..] {
-            let mut at = g.locate(last, &next, &dir, d, test_last);
-            at.s = last.s + dist(&z_of(last), &z_of(&at));
-            at.unstable = last.unstable.min(next.unstable);
-            at.stable = false;
-            let (omega, lyapunov) = (d.extras)(&g, &at);
-            special.push(SpecialPoint {
-                kind: d.kind,
-                index: points.len(),
-                p: at.p,
-                x: at.x.clone(),
-                period,
-                tangent: at.tangent.clone(),
-                eigenvalues: at.eigenvalues.clone(),
-                omega,
-                lyapunov,
-            });
-            points.push(at);
-        }
-        let prev = points.last().expect("the start");
-        next.s = prev.s + dist(&z_of(prev), &z_new);
-        points.push(next);
-        tests = next_tests;
-        if edge.is_some() {
-            break BranchEnd::Range;
-        }
-        dir = diff(&z_new, &z).iter().map(|c| c / len).collect();
-        z = z_new;
-        if iters <= FAST {
-            h = (h * GROW).min(opts.ds_max);
-        } else if iters > SLOW {
-            h = (h / 2.0).max(opts.ds_min);
-        }
-        h = h.min(limit.max(opts.ds_min));
-    };
-    Ok(Branch {
-        period,
-        points,
-        special,
-        end,
-    })
+        let first = g.point(len, &z1, t1);
+        start.unstable = start.unstable.min(first.unstable);
+        return Ok(g.follow(vec![start, first], dir, h.max(opts.ds_min), opts));
+    }
+    if outside {
+        return Ok(g.branch(vec![start], Vec::new(), BranchEnd::Range));
+    }
+    Err(ContinuationError::NoSecondBranch)
+}
+
+fn in_range(opts: &ContinuationOptions, p: f64) -> bool {
+    let (a, b) = opts.range;
+    (a.min(b)..=a.max(b)).contains(&p)
 }
 
 /// A test function that changes sign at one kind of special point.
@@ -761,7 +741,159 @@ enum Fail {
     NoConvergence,
 }
 
-impl Residual<'_> {
+impl<'a> Residual<'a> {
+    /// The residual of `f` (a flow; `period` is then taken as 1) or of
+    /// `f^period − x` (a map).
+    fn new(f: &'a dyn VectorField, params: &[f64], param: usize, period: usize) -> Self {
+        let map = f.kind() == SystemKind::Map;
+        Residual {
+            power: Power {
+                f,
+                k: if map { period.max(1) } else { 1 },
+            },
+            map,
+            params: params.to_vec(),
+            param,
+        }
+    }
+
+    fn branch(
+        &self,
+        points: Vec<BranchPoint>,
+        special: Vec<SpecialPoint>,
+        end: BranchEnd,
+    ) -> Branch {
+        Branch {
+            period: self.power.k,
+            points,
+            special,
+            end,
+        }
+    }
+
+    /// Continue from the last of `points` along `dir` with first step `h`
+    /// until the range, `max_points` or `ds_min` ends the branch, locating
+    /// the special points on the way.
+    fn follow(
+        &self,
+        mut points: Vec<BranchPoint>,
+        mut dir: Vec<f64>,
+        mut h: f64,
+        opts: &ContinuationOptions,
+    ) -> Branch {
+        let g = self;
+        let kind = g.power.f.kind();
+        let (map, period) = (g.map, g.power.k);
+        let n = g.power.f.dim();
+        let (lo, hi) = (
+            opts.range.0.min(opts.range.1),
+            opts.range.0.max(opts.range.1),
+        );
+        let detectors: Vec<&Detector> = DETECTORS
+            .iter()
+            .filter(|d| d.applies_to.contains(&kind))
+            .collect();
+        let test_all = |pt: &BranchPoint| -> Vec<Option<f64>> {
+            detectors.iter().map(|d| (d.test)(g, pt)).collect()
+        };
+        let mut special = Vec::new();
+        let mut z = z_of(points.last().expect("a start"));
+        let mut tests = test_all(points.last().expect("a start"));
+        let cos_max = cos(opts.max_angle);
+        let end = loop {
+            if points.len() >= opts.max_points {
+                break BranchEnd::MaxPoints;
+            }
+            if h < opts.ds_min {
+                break BranchEnd::StepTooSmall;
+            }
+            let last = points.last().expect("the start");
+            let pred: Vec<f64> = z.iter().zip(&dir).map(|(a, d)| a + h * d).collect();
+            let edge = if pred[n] > hi {
+                Some(hi)
+            } else if pred[n] < lo {
+                Some(lo)
+            } else {
+                None
+            };
+            let corrected = match edge {
+                Some(e) if z[n] == e => break BranchEnd::Range,
+                Some(e) => {
+                    let along = (e - z[n]) / dir[n];
+                    let guess: Vec<f64> = (0..n).map(|i| z[i] + along * dir[i]).collect();
+                    g.correct_at_fixed_p(&guess, e)
+                }
+                None => g.correct_along(&pred, &dir),
+            };
+            let accepted = corrected.ok().and_then(|(z_new, iters)| {
+                let t = g.tangent(&z_new, &last.tangent)?;
+                (dot(&t, &last.tangent) >= cos_max).then_some((z_new, iters, t))
+            });
+            let Some((z_new, iters, t_new)) = accepted else {
+                h /= 2.0;
+                continue;
+            };
+            let mut next = g.point(0.0, &z_new, t_new);
+            let next_tests = test_all(&next);
+            let fired: Vec<(&Detector, f64)> = (0..detectors.len())
+                .filter_map(|i| match (tests[i], next_tests[i]) {
+                    (Some(a), Some(b)) if a * b < 0.0 => Some((detectors[i], a)),
+                    _ => None,
+                })
+                .collect();
+            let jump = next.unstable.abs_diff(last.unstable);
+            let explained = match fired[..] {
+                [] => jump == 0,
+                [(d, _)] => jump == d.jump,
+                _ => false,
+            };
+            if !explained {
+                h /= 2.0;
+                continue;
+            }
+            if points.len() + 1 + fired.len() > opts.max_points {
+                break BranchEnd::MaxPoints;
+            }
+            let len = dist(&z, &z_new);
+            let limit = proximity_limit(map, last, &next, len);
+            if let [(d, test_last)] = fired[..] {
+                let mut at = g.locate(last, &next, &dir, d, test_last);
+                at.s = last.s + dist(&z_of(last), &z_of(&at));
+                at.unstable = last.unstable.min(next.unstable);
+                at.stable = false;
+                let (omega, lyapunov) = (d.extras)(g, &at);
+                special.push(SpecialPoint {
+                    kind: d.kind,
+                    index: points.len(),
+                    p: at.p,
+                    x: at.x.clone(),
+                    period,
+                    tangent: at.tangent.clone(),
+                    eigenvalues: at.eigenvalues.clone(),
+                    omega,
+                    lyapunov,
+                });
+                points.push(at);
+            }
+            let prev = points.last().expect("the start");
+            next.s = prev.s + dist(&z_of(prev), &z_new);
+            points.push(next);
+            tests = next_tests;
+            if edge.is_some() {
+                break BranchEnd::Range;
+            }
+            dir = diff(&z_new, &z).iter().map(|c| c / len).collect();
+            z = z_new;
+            if iters <= FAST {
+                h = (h * GROW).min(opts.ds_max);
+            } else if iters > SLOW {
+                h = (h / 2.0).max(opts.ds_min);
+            }
+            h = h.min(limit.max(opts.ds_min));
+        };
+        g.branch(points, special, end)
+    }
+
     fn params_at(&self, p: f64) -> Vec<f64> {
         let mut params = self.params.clone();
         params[self.param] = p;
@@ -826,6 +958,39 @@ impl Residual<'_> {
         let t = lu_solve(&bordered(a, border), &rhs)?;
         let len = norm2(&t);
         len.is_finite().then(|| t.iter().map(|v| v / len).collect())
+    }
+
+    /// The unit vector `d ⊥ τ` in the kernel of `[g_x | g_p]` at `z`: the
+    /// null vector of the bordered Jacobian `[g_x g_p; τᵀ]`, singular at a
+    /// branch point. Inverse iteration on its normal matrix shifted by
+    /// `σ = 1e−12 (1 + trace)`: the longest column of the inverse lies along
+    /// the null vector, and one more solve refines it.
+    fn second_direction(&self, z: &[f64], tau: &[f64]) -> Option<Vec<f64>> {
+        let m = bordered(self.linear(z).1, tau);
+        let n1 = z.len();
+        let mut normal: Vec<f64> = (0..n1 * n1)
+            .map(|k| {
+                (0..n1)
+                    .map(|r| m[r * n1 + k / n1] * m[r * n1 + k % n1])
+                    .sum()
+            })
+            .collect();
+        let trace: f64 = (0..n1).map(|i| normal[i * n1 + i]).sum();
+        for i in 0..n1 {
+            normal[i * n1 + i] += 1e-12 * (1.0 + trace);
+        }
+        let column = (0..n1)
+            .filter_map(|j| {
+                let mut e = vec![0.0; n1];
+                e[j] = 1.0;
+                lu_solve(&normal, &e)
+            })
+            .reduce(|a, b| if norm2(&b) > norm2(&a) { b } else { a })?;
+        let u = lu_solve(&normal, &column)?;
+        let along = dot(&u, tau);
+        let d: Vec<f64> = u.iter().zip(tau).map(|(c, t)| c - along * t).collect();
+        let len = norm2(&d);
+        (len.is_finite() && len > 0.0).then(|| d.iter().map(|c| c / len).collect())
     }
 
     /// The point between `a` and `b` where `detector`'s test (`test_a` at
