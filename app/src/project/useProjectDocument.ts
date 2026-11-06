@@ -77,8 +77,6 @@ const REPLACE = (fileName: string): Omit<ConfirmRequest, "id" | "resolve"> => ({
   cancel: "cancel",
 });
 
-const APP_VERSION = "0.2.0";
-
 /** The document's name for the title: the file's, else the system's. */
 function nameOf(state: StudioState, fileName: string | null): string {
   const template = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
@@ -184,7 +182,7 @@ export function useProjectDocument(studio: Studio, opts: ProjectDocumentOptions 
       loaded: cur.loaded,
       pending: cur.state.pendingProject,
       exportSettings: cur.exportSettings,
-      appVersion: APP_VERSION,
+      appVersion: __APP_VERSION__,
     });
     const savedKey = dirtyKey(cur.state, { loaded: project, pending: cur.state.pendingProject });
     try {

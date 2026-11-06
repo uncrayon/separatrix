@@ -1904,7 +1904,7 @@ export async function mockProjectWrite(req: ProjectWriteRequest): Promise<SavedP
   if (!req.path.toLowerCase().endsWith(".sepx")) throw `Projects are saved as .sepx files, not ${q(name)}.`;
   const p = req.project as Record<string, unknown> | null;
   if (!p || typeof p !== "object") throw "The project can't be saved: it isn't an object.";
-  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: "0.2.0" };
+  const stamped = { ...p, format: "separatrix", format_version: Math.max(1, Number(p.format_version) || 1), min_reader_version: 1, app_version: __APP_VERSION__ };
   sepxMock().files.set(req.path, JSON.stringify(stamped, null, 2) + "\n");
   return { path: req.path, name };
 }
@@ -2104,7 +2104,7 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
     const meta = {
       format: "separatrix-trajectory",
       format_version: 1,
-      app_version: "0.2.0",
+      app_version: __APP_VERSION__,
       title: req.title,
       csv: `${stem}.csv`,
       ic_id: id,

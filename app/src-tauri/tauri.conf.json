@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Separatrix",
-  "version": "0.2.0",
   "identifier": "io.github.uncrayon.separatrix",
   "build": {
     "beforeDevCommand": "npm run dev",
