@@ -145,17 +145,18 @@ row_install_guides() {
 row_changelog() {
   local v
   v=$(json_get app/package.json version)
-  if grep -qE "^## \[${v//./\\.}\]" CHANGELOG.md; then
+  if grep -qE "^## \[${v//./\\.}\] - (Unreleased|[0-9]{4}-[0-9]{2}-[0-9]{2})$" CHANGELOG.md; then
     pass changelog "CHANGELOG.md has a [$v] section"
   else
-    fail changelog "CHANGELOG.md has no '## [$v]' section"
+    fail changelog "CHANGELOG.md has no '## [$v] - Unreleased' (or '- YYYY-MM-DD') heading"
   fi
 }
 
 row_release_workflow() {
   require_strings release-workflow .github/workflows/release.yml \
-    "sha256sum" "SHA256SUMS" "offlineInstaller" "ubuntu-22.04" "universal-apple-darwin" || return
-  pass release-workflow "release.yml attaches SHA256SUMS and builds the WebView2 offline installer"
+    "sha256sum" "SHA256SUMS" "offlineInstaller" "ubuntu-22.04" "universal-apple-darwin" \
+    "--bundles deb,rpm,appimage" "--bundles nsis,msi" "--bundles app,dmg" || return
+  pass release-workflow "release.yml builds deb, rpm, AppImage, NSIS, MSI, the WebView2 offline installer and a universal dmg, and attaches SHA256SUMS"
 }
 
 row_updater_off_without_key() {
@@ -165,6 +166,15 @@ row_updater_off_without_key() {
   fi
   pubkey=$(json_get "$conf" plugins updater pubkey)
   artifacts=$(json_get "$conf" bundle createUpdaterArtifacts)
+  local secret='dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWdu|rsign encrypted secret key' keys
+  keys=$(git grep -lIE "$secret" -- ':!scripts/release-check.sh')
+  if [ -n "$keys" ]; then
+    fail updater-off-without-key "a private signing key is committed in $(joined $keys); remove it and make a new key"; return
+  fi
+  keys=$(git grep -lIE 'untrusted comment: |dW50cnVzdGVkIGNvbW1lbnQ6I|^RW[A-Za-z0-9+/]{50,}' -- ":!$conf" ':!scripts/release-check.sh')
+  if [ -n "$keys" ]; then
+    fail updater-off-without-key "key text outside $conf in $(joined $keys)"; return
+  fi
   if [ -z "$pubkey" ]; then
     if [ -n "$artifacts" ] && [ "$artifacts" != "false" ]; then
       fail updater-off-without-key "$conf sets bundle.createUpdaterArtifacts=$artifacts without a pubkey"; return
@@ -173,10 +183,12 @@ row_updater_off_without_key() {
     return
   fi
   decoded=$(printf '%s' "$pubkey" | base64 -d 2>/dev/null | head -1)
-  if [[ "$decoded" == "untrusted comment: minisign public key"* ]]; then
-    pass updater-off-without-key "a minisign pubkey is configured, so the updater is on"
-  else
+  if [[ "$decoded" != "untrusted comment: minisign public key"* ]]; then
     fail updater-off-without-key "$conf plugins.updater.pubkey is not a minisign public key (placeholder?)"
+  elif [ "$artifacts" != "true" ]; then
+    fail updater-off-without-key "$conf has a pubkey, but bundle.createUpdaterArtifacts is ${artifacts:-unset}, not true, so no update would be signed"
+  else
+    pass updater-off-without-key "a minisign pubkey is configured, so the updater is on"
   fi
 }
 
