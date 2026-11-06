@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AxisRef, CompileResponse, Diagnostic, InputFormat, SectionSpec } from "../api/types";
-import { compileSystem, convertSource, PortraitScheduler } from "../api/client";
+import {
+  compileSystem,
+  computeLyapunov,
+  computeOrbitDiagram,
+  computePortrait,
+  convertSource,
+  LatestRequestScheduler,
+} from "../api/client";
 import { sameAxis } from "../math/format";
+import { DEFAULT_METHOD, METHODS, methodFits } from "./methods";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
 import {
@@ -11,12 +19,17 @@ import {
   applyProjectLoad,
   adaptInitialConditions,
   adaptView,
+  buildLyapunovJob,
+  buildOrbitJob,
   buildPortraitJob,
   clampCamera,
   clampTransient,
   cobwebAvailability,
   defaultView,
+  followOrbitParam,
   isCobweb,
+  isLyapunov,
+  isOrbit,
   isSection,
   isSpace,
   knownStateRange,
@@ -39,7 +52,13 @@ import {
   type EquationLine,
   type InitialCondition,
   type Layers,
+  type LyapunovMeta,
+  type LyapunovSettings,
+  type LyapunovState,
   type ModeSnapshot,
+  type OrbitMeta,
+  type OrbitSettings,
+  type OrbitState,
   type ParamState,
   type PortraitMeta,
   type PortraitState,
@@ -86,6 +105,9 @@ export interface StudioState extends StudioSnapshot {
   homeView: View;
   selection: Selection;
   portrait: PortraitState | null;
+  lyapunov: LyapunovState | null;
+  orbit: OrbitState | null;
+  orbitColumns: number;
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -108,6 +130,12 @@ export interface StudioState extends StudioSnapshot {
   autoAdjustCount: number;
   /** Notices from the last project load, for the open banner. */
   loadWarnings: string[];
+  /**
+   * The last compile replaced a method the new system cannot use (a
+   * symplectic method without a separable H(q, p)); says which, until the
+   * method is chosen again.
+   */
+  methodNote: string | null;
 }
 
 export type Studio = ReturnType<typeof useStudio>;
@@ -140,6 +168,9 @@ export function useStudio() {
   const [solver, setSolverState] = useState<SolverSettings>(DEFAULT_SOLVER);
   const [selection, setSelection] = useState<Selection>(null);
   const [portrait, setPortrait] = useState<PortraitState | null>(null);
+  const [lyapunov, setLyapunovState] = useState<LyapunovState | null>(null);
+  const [orbit, setOrbitState] = useState<OrbitState | null>(null);
+  const [orbitColumns, setOrbitColumnsState] = useState(0);
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -148,6 +179,7 @@ export function useStudio() {
   const [docEpoch, setDocEpoch] = useState(0);
   const [autoAdjustCount, setAutoAdjustCount] = useState(0);
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
+  const [methodNote, setMethodNote] = useState<string | null>(null);
 
   const state: StudioState = {
     format,
@@ -167,6 +199,9 @@ export function useStudio() {
     solver,
     selection,
     portrait,
+    lyapunov,
+    orbit,
+    orbitColumns,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -175,6 +210,7 @@ export function useStudio() {
     docEpoch,
     autoAdjustCount,
     loadWarnings,
+    methodNote,
   };
   const latest = useRef(state);
   latest.current = state;
@@ -203,9 +239,10 @@ export function useStudio() {
 
   const scheduler = useMemo(
     () =>
-      new PortraitScheduler<PortraitMeta>(
+      new LatestRequestScheduler(
+        computePortrait,
         () => buildPortraitJob(latest.current),
-        (res, meta, roundTripMs) => {
+        (res, meta: PortraitMeta, roundTripMs) => {
           const last = latest.current.portrait;
           const prev = last?.meta.fixedPoints ? last.res.fixedPoints : [];
           setPortrait({ res, meta, roundTripMs });
@@ -219,10 +256,56 @@ export function useStudio() {
   );
   useEffect(() => () => scheduler.dispose(), [scheduler]);
 
+  /** A project file just opened in the Lyapunov view; its next run keeps the saved framing. */
+  const framedByFile = useRef(false);
+  const lyapunovScheduler = useMemo(
+    () =>
+      new LatestRequestScheduler(
+        computeLyapunov,
+        () => buildLyapunovJob(latest.current),
+        (res, meta: LyapunovMeta, roundTripMs) => {
+          setLyapunovState({ res, meta, roundTripMs, framedByFile: framedByFile.current });
+          framedByFile.current = false;
+          setComputeError(null);
+        },
+        (err) => {
+          framedByFile.current = false;
+          setComputeError(err instanceof Error ? err.message : String(err));
+        },
+      ),
+    [],
+  );
+  useEffect(() => () => lyapunovScheduler.dispose(), [lyapunovScheduler]);
+
+  const orbitScheduler = useMemo(
+    () =>
+      new LatestRequestScheduler(
+        computeOrbitDiagram,
+        () => buildOrbitJob(latest.current),
+        (res, meta: OrbitMeta, roundTripMs) => {
+          setOrbitState({ res, meta, roundTripMs });
+          setComputeError(null);
+        },
+        (err) => setComputeError(err instanceof Error ? err.message : String(err)),
+      ),
+    [],
+  );
+  useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
+
   const viewKey = viewRequestKey(view);
   useEffect(() => {
     scheduler.request();
   }, [scheduler, compiled, params, viewKey, baseState, fieldTime, ics, layers, solver, plotAspect]);
+
+  const lyapunovKey = buildLyapunovJob(state)?.meta.key ?? null;
+  useEffect(() => {
+    if (lyapunovKey !== null) lyapunovScheduler.request();
+  }, [lyapunovScheduler, lyapunovKey]);
+
+  const orbitKey = buildOrbitJob(state)?.meta.key ?? null;
+  useEffect(() => {
+    if (orbitKey !== null) orbitScheduler.request();
+  }, [orbitScheduler, orbitKey]);
 
   const runCompile = useCallback(
     async (lines: string[], format: InputFormat, template?: Template) => {
@@ -260,6 +343,7 @@ export function useStudio() {
       const sourceTemplate = cur.sourceTemplateId ? templateById(cur.sourceTemplateId) : undefined;
 
       const load = template ? null : pendingLoad.current;
+      let method = cur.solver.method;
       if (!load) {
         setParams(
           res.params.map((p) =>
@@ -288,9 +372,12 @@ export function useStudio() {
         setIcs(applied.ics);
         setLayersState(applied.layers);
         setSolverState(applied.solver);
+        method = applied.solver.method;
+        framedByFile.current = isLyapunov(applied.view);
         setSelection(null);
         if (applied.warnings.length) setLoadWarnings((w) => [...w, ...applied.warnings]);
       } else if (template) {
+        framedByFile.current = false;
         setShapeId((n) => n + 1);
         const v = templateView(template, res);
         setViewState(v);
@@ -321,19 +408,30 @@ export function useStudio() {
         if (!sameShape) {
           setShapeId((n) => n + 1);
           const oldStates = old?.states ?? [];
-          const kept = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
+          const adapted = old?.kind === res.kind ? adaptView(cur.view, oldStates, res.states, res) : null;
+          const kept = adapted && isOrbit(adapted) ? followOrbitParam(adapted, old?.params ?? [], res.params) : adapted;
           const v = kept ?? defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
           setBaseState((b) => adaptBaseState(b, oldStates, res.states));
           setIcs((list) => adaptInitialConditions(list, oldStates, res.states));
           if (old?.kind !== res.kind) setSolverState((s) => ({ ...s, tEnd: res.kind === "map" ? 50 : 20 }));
+        } else if (isOrbit(cur.view) && followOrbitParam(cur.view, old.params, res.params) !== cur.view) {
+          const v = followOrbitParam(cur.view, old.params, res.params) ?? defaultView(res, cur.solver);
+          setViewState(v);
+          setHomeView(v);
         } else if (isCobweb(cur.view) && !cobwebAvailability(res).ok) {
           // The same map, now changing with n: f has no single graph, so the default view (a time series).
           const v = defaultView(res, cur.solver);
           setViewState(v);
           setHomeView(v);
         }
+      }
+      if (methodFits(method, res)) {
+        setMethodNote(null);
+      } else {
+        setSolverState((s) => ({ ...s, method: DEFAULT_METHOD, h: 0 }));
+        setMethodNote(`Switched from ${METHODS[method].label} to ${METHODS[DEFAULT_METHOD].label}.`);
       }
       setCompiled(res);
       settle();
@@ -627,6 +725,35 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
+  const setLyapunov = useCallback((patch: Partial<LyapunovSettings>) => {
+    setViewState((v) => (isLyapunov(v) ? { ...v, lyapunov: { ...v.lyapunov, ...patch } } : v));
+    setHomeView((v) => (isLyapunov(v) ? { ...v, lyapunov: { ...v.lyapunov, ...patch } } : v));
+  }, []);
+
+  const setOrbit = useCallback((patch: Partial<OrbitSettings>) => {
+    setViewState((v) => (isOrbit(v) ? { ...v, orbit: { ...v.orbit, ...patch } } : v));
+    setHomeView((v) => (isOrbit(v) ? { ...v, orbit: { ...v.orbit, ...patch } } : v));
+  }, []);
+
+  const setOrbitRange = useCallback((lo: number, hi: number) => {
+    if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi)) return;
+    setViewState((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
+    setHomeView((v) => (isOrbit(v) ? { ...v, xRange: [lo, hi] } : v));
+  }, []);
+
+  const setOrbitParam = useCallback((index: number) => {
+    const cur = latest.current;
+    const p = cur.params[index];
+    if (!isOrbit(cur.view) || !p || index === cur.view.param) return;
+    const next = { ...cur.view, param: index, xRange: [p.min, p.max] as [number, number] };
+    setViewState(next);
+    setHomeView(next);
+  }, []);
+
+  const setOrbitColumns = useCallback((columns: number) => {
+    setOrbitColumnsState((old) => (old === columns ? old : columns));
+  }, []);
+
   const setSlice = useCallback((index: number, value: number) => {
     setBaseState((b) => {
       const copy = b.slice();
@@ -689,6 +816,7 @@ export function useStudio() {
     const next = { ...merged, transient: clampTransient(merged.transient, merged.tEnd) };
     latest.current = { ...cur, solver: next };
     setSolverState(next);
+    if (patch.method) setMethodNote(null);
     // A map's orbits start at n = T: a time series follows the transient.
     if (cur.compiled?.kind === "map") {
       const dt = next.transient - clampTransient(cur.solver.transient, cur.solver.tEnd);
@@ -719,6 +847,11 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setLyapunov,
+      setOrbit,
+      setOrbitParam,
+      setOrbitRange,
+      setOrbitColumns,
       setCamera,
       setSpaceAxis,
       setSlice,
@@ -750,6 +883,11 @@ export function useStudio() {
       setAxis,
       setViewKind,
       setSection,
+      setLyapunov,
+      setOrbit,
+      setOrbitParam,
+      setOrbitRange,
+      setOrbitColumns,
       setCamera,
       setSpaceAxis,
       setSlice,

@@ -1,0 +1,105 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=\\sigma\\left(y-x\\right)",
+      "\\dot{y}=rx-y-xz",
+      "\\dot{z}=xy-bz"
+    ],
+    "states": [
+      "x",
+      "y",
+      "z"
+    ],
+    "params": [
+      {
+        "id": "sigma",
+        "value": 10.0,
+        "min": 0.0,
+        "max": 20.0
+      },
+      {
+        "id": "r",
+        "value": 28.0,
+        "min": 0.0,
+        "max": 50.0
+      },
+      {
+        "id": "b",
+        "value": 2.6666666666666665,
+        "min": 0.0,
+        "max": 5.0
+      }
+    ],
+    "template": "lorenz"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "kind": "lyapunov",
+      "x_axis": {
+        "kind": "time"
+      },
+      "y_axis": {
+        "kind": "exponent"
+      },
+      "x_range": [
+        100.0,
+        10300.0
+      ],
+      "y_range": [
+        -16.0,
+        2.0
+      ],
+      "lyapunov": {
+        "transient": 100.0,
+        "total": 10000.0,
+        "interval": 0.1,
+        "blocks": 10
+      },
+      "slice": {
+        "states": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "t": 0.0
+      },
+      "layers": {
+        "field": true,
+        "field_grid": 21,
+        "nullclines": true,
+        "fixed_points": true,
+        "backward": false
+      }
+    }
+  ],
+  "analyses": [],
+  "solver": {
+    "method": "rk4",
+    "rtol": 1e-6,
+    "atol": 1e-9,
+    "h": 0.01,
+    "max_steps": 200000,
+    "t_end": 50.0,
+    "samples": 0
+  }
+}

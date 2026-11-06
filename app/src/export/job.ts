@@ -13,6 +13,8 @@ import type {
   CsvRequest,
   ExportPortraitRequest,
   InputFormat,
+  LyapunovExportRequest,
+  OrbitExportRequest,
   PortraitRequest,
   PortraitResponse,
   TrajectoryTag,
@@ -24,8 +26,12 @@ import { viewAxisLabels } from "../math/format";
 import {
   COBWEB_GRAPH_SAMPLES,
   MAX_GRAPH_SAMPLES,
+  buildLyapunovJob,
+  buildOrbitJob,
   buildPortraitJob,
   isCobweb,
+  isLyapunov,
+  isOrbit,
   isReturnMap,
   isSection,
   isSpace,
@@ -119,7 +125,7 @@ export function exportPortraitRequest(job: FigureJob): ExportPortraitRequest {
 }
 
 /**
- * The scene of an exported figure: the screen's layers and colours, with no
+ * The scene of an exported figure: the screen's layers and colors, with no
  * selection, hover, eigenvectors, start-point handles or stale fade.
  */
 export function exportScene(job: FigureJob, res: PortraitResponse, ics: InitialCondition[]): Scene {
@@ -174,7 +180,42 @@ export function exportSpaceFigure(
 export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   const sys = s.compiled;
   if (!sys || !sys.ok) return null;
-  return viewAxisLabels(s.view, sys.states, sys.kind);
+  const v = s.view;
+  if (isLyapunov(v)) return { x: sys.kind === "map" ? "n" : "t", y: "\\lambda" };
+  if (isOrbit(v)) return { x: sys.params[v.param]?.latex ?? "r", y: sys.states[v.yAxis.index]?.latex ?? "x" };
+  return viewAxisLabels(v, sys.states, sys.kind);
+}
+
+export function analysisKind(s: Pick<StudioSnapshot, "view">): "lyapunov" | "orbit" | null {
+  return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : null;
+}
+
+export interface ExportSource {
+  title: string;
+  sourceRef?: string;
+  lines: string[];
+  format: InputFormat;
+}
+
+export function buildLyapunovExport(
+  s: Parameters<typeof buildLyapunovJob>[0],
+  source: ExportSource,
+): LyapunovExportRequest | null {
+  const job = buildLyapunovJob(s);
+  return job && { run: { ...job.body, requestId: 0 }, ...source };
+}
+
+export function orbitFigureRatio(format: "latex" | "svg" | "png" | "csv", pngScale: number): number {
+  return format === "png" ? pngScale : format === "svg" ? 2 : 300 / 96;
+}
+
+export function buildOrbitExport(
+  s: Omit<Parameters<typeof buildOrbitJob>[0], "orbitColumns">,
+  source: ExportSource,
+  columns: number,
+): OrbitExportRequest | null {
+  const job = buildOrbitJob({ ...s, orbitColumns: columns });
+  return job && { diagram: { ...job.body, requestId: 0 }, ...source };
 }
 
 /** The screen's own request, with fixed points on (the fixed-point table). */

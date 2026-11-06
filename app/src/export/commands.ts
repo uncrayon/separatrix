@@ -11,19 +11,29 @@ import {
   mockExportCsv,
   mockExportFigureLatex,
   mockExportFixedPointsLatex,
+  mockExportLyapunovCsv,
+  mockExportLyapunovLatex,
+  mockExportOrbitCsv,
+  mockExportOrbitLatex,
   mockExportSystemLatex,
   mockSaveCsv,
+  mockSaveCsvFile,
+  mockSaveOrbitLatex,
   mockSaveFigureLatex,
   mockSavePngFile,
   mockSaveTextFile,
 } from "../api/mock";
 import type {
+  CsvFileOut,
   CsvRequest,
   CsvResponse,
   ExportPortraitRequest,
   FigureLatexRequest,
   FigureLatexResponse,
   FixedPointsLatexRequest,
+  LyapunovExportRequest,
+  OrbitExportRequest,
+  OrbitFigureRequest,
   PortraitResponse,
   SavedFiles,
   SystemLatexRequest,
@@ -59,6 +69,32 @@ export function exportCsv(req: CsvRequest): Promise<CsvResponse> {
 export function saveCsv(csv: CsvRequest, suggestedName: string): Promise<SavedFiles | null> {
   const req = { csv, suggestedName };
   return isTauri() ? invoke<SavedFiles | null>("save_csv", { req }) : mockSaveCsv(req);
+}
+
+export function exportLyapunovLatex(req: LyapunovExportRequest): Promise<string> {
+  return isTauri() ? invoke<string>("export_lyapunov_latex", { req }) : mockExportLyapunovLatex(req);
+}
+
+export function exportLyapunovCsv(req: LyapunovExportRequest): Promise<CsvFileOut> {
+  return isTauri() ? invoke<CsvFileOut>("export_lyapunov_csv", { req }) : mockExportLyapunovCsv(req);
+}
+
+export function exportOrbitLatex(req: OrbitFigureRequest): Promise<FigureLatexResponse> {
+  return isTauri() ? invoke<FigureLatexResponse>("export_orbit_latex", { req }) : mockExportOrbitLatex(req);
+}
+
+export function saveOrbitLatex(figure: OrbitFigureRequest, suggestedName: string): Promise<SavedFiles | null> {
+  const req = { figure, suggestedName };
+  return isTauri() ? invoke<SavedFiles | null>("save_orbit_latex", { req }) : mockSaveOrbitLatex(req);
+}
+
+export function exportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
+  return isTauri() ? invoke<CsvFileOut>("export_orbit_csv", { req }) : mockExportOrbitCsv(req);
+}
+
+export function saveCsvFile(file: CsvFileOut, title: string, suggestedName: string): Promise<SavedFiles | null> {
+  const req = { file, title, suggestedName };
+  return isTauri() ? invoke<SavedFiles | null>("save_csv_file", { req }) : mockSaveCsvFile(req);
 }
 
 export function saveTextFile(suggestedName: string, extension: TextExtension, contents: string): Promise<SavedFiles | null> {

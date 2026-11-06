@@ -13,6 +13,10 @@ text and files.
 | LaTeX fixed points | `latex_fixed_points::table` | booktabs `table` float |
 | LaTeX figure | `latex_figure::figure` | pgfplots; inline data (Copy) or `.dat` files (Save) |
 | CSV + `.meta.json` | `csv::files` | one pair per initial condition |
+| LaTeX Lyapunov spectrum | `latex_lyapunov::lyapunov_latex` | booktabs `table`, siunitx `\num{0.906 +- 0.004}` |
+| Lyapunov CSV + `.meta.json` | `csv::lyapunov` | `t,lambda_1,…,lambda_n`, the running estimates |
+| LaTeX orbit diagram | `latex_figure::orbit_figure` | pgfplots; dots up to 5,000, then a density PNG (Save) or thinned (Copy) |
+| Orbit CSV + `.meta.json` | `csv::orbit` | `r,n,x`, one row per finite kept iterate |
 | Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed); a section's crossings and a 3D view's trajectories are only cut |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
@@ -45,6 +49,141 @@ LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch 
 
 The LaTeX equations and fixed points, and the CSV (every state of each
 trajectory), are the same as in any other view of the flow.
+
+## Lyapunov spectrum
+
+The Lyapunov view (Strogatz §9.3, §10.5) exports its own run. The UI sends
+the view's `LyapunovRequest` (`export_lyapunov_latex`,
+`export_lyapunov_csv`); the core measures it again, so the export is the
+core's numbers, and keeps the last run so the table, the CSV and their Save
+share one measurement. Its formats:
+
+| Format | What |
+| --- | --- |
+| LaTeX | Spectrum: the table below. Figure is disabled with the reason (the running estimates export as PNG or SVG); Fixed points is disabled (the view shows none); Equations is as in any view. |
+| CSV | the running estimates, one row per sampled renormalization |
+| PNG, SVG | the view as drawn (`drawLyapunov`): grid, axes, one curve per exponent in `traj-i`, the final values dashed, λ₁ … λₙ, the names `t` (or `n`) and `λ` |
+
+The table is a `table` float with `\sisetup{uncertainty-mode = separate}`
+inside it (siunitx 3 prints `0.906 ± 0.004`, never `0.906(4)`), one row per
+exponent, `$\lambda_{1}$ & \num{0.906 +- 0.004} \\`, then `Σλ`, `⟨tr J⟩`
+(a map: `⟨ln |det J|⟩`) and their difference, the integrator's error on the
+tangent vectors:
+
+```latex
+\begin{table}
+\centering
+\sisetup{uncertainty-mode = separate}
+\caption{Lyapunov spectrum of the Lorenz equations with $\sigma = 10$, $r = 28$ and $b = 2.66667$, from $(x, y, z) = (1, 1, 1)$: Runge--Kutta 4 with step $h = 0.01$, total time $T = 1000$ after a transient of $100$, \num{10000} renormalizations every $\tau = 0.1$. Uncertainties are standard errors over 10 blocks.}
+\label{tab:lorenz-equations-lyapunov}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Exponent & Value \\
+\midrule
+$\lambda_{1}$ & \num{0.906 +- 0.004} \\
+…
+$\sum_i \lambda_i$ & \num{-13.6666} \\
+$\langle \operatorname{tr} J \rangle$ & \num{-13.6667} \\
+Difference & \num{6.7e-5} \\
+\bottomrule
+\end{tabular}
+\end{table}
+```
+
+Rounding. The error is rounded half up to one significant digit, or two
+when that digit is 1, and the value to the same decimal place:
+0.90561 ± 0.00437 is `\num{0.906 +- 0.004}`, 0.4192 ± 0.0012 is
+`\num{0.4192 +- 0.0012}`, and 0.0096 rounds to one digit one place up,
+`0.01`. Both are rounded from the exact decimal value of the double
+(`num::with_uncertainty`), never through `log10`, so the text is the same on
+every platform. A run with fewer than two blocks has no errors: the
+exponents get six significant digits and the caption says so.
+
+The caption names the system and its parameters, the start point, the
+integrator with its step (`step $h = 0.01$`) or its tolerances (an adaptive
+method), the total time `T` and the transient, and how many renormalizations,
+how far apart (`every $\tau = 0.1$`). A map's caption says it was iterated
+`N` times after the transient, with renormalizations every iterate (or every
+k). A run that stopped early says why.
+
+The CSV is `t,lambda_1,…,lambda_n` (`n,…` for a map), the history the view
+plots (at most 2,000 rows, the last the final estimate), cut at the first row
+that is not finite. `<title>-lyapunov.meta.json`:
+
+```json
+{
+  "format": "separatrix-lyapunov",
+  "format_version": 1,
+  "app_version": "0.2.0",
+  "title": "Lorenz equations",
+  "csv": "lorenz-equations-lyapunov.csv",
+  "system": { "kind": "ode", "input_format": "latex", "lines": ["…"] },
+  "params": [{ "name": "sigma", "value": 10.0 }, …],
+  "columns": ["t", "lambda_1", "lambda_2", "lambda_3"],
+  "x0": [1.0, 1.0, 1.0],
+  "t0": 0.0,
+  "transient": 100.0,
+  "total": 1000.0,
+  "interval": 0.1,
+  "blocks": 10,
+  "integrator": { "method": "rk4", "h": 0.01 },
+  "renormalizations": 10000,
+  "exponents": [0.90561, -0.00025, -14.57196],
+  "uncertainty": [0.00437, 0.00026, 0.001],
+  "sum": -13.6666,
+  "trace_average": -13.666666666666666,
+  "status": "completed",
+  "notes": ["…"]
+}
+```
+
+`integrator` is `{ "method", "h" }` for a fixed step, `{ "method", "rtol",
+"atol" }` for an adaptive method, and absent for a map. Save writes the CSV
+and its metadata through `save_csv_file`, which takes the file the export
+command returned.
+
+## Orbit diagram
+
+The orbit diagram (Strogatz §10.2) exports the view's iterates. A figure asks
+for its own diagram over the view's range, one column per pixel of its image
+(the column at each pixel's center, as on screen): the PNG's pixels at its
+scale, 2× for the image an SVG embeds, and 300 dpi for a LaTeX figure's
+layer. The CSV is the screen's own diagram.
+
+| Format | What |
+| --- | --- |
+| LaTeX | Figure: the pgfplots figure below. Fixed points is disabled (the view shows none); Equations is as in any view. |
+| CSV | `r,n,x`, every finite kept iterate |
+| PNG | the view as drawn (`drawOrbit`, without the screen's parameter marker): the density binned per device pixel, log-scaled opacity in `plot-fp`, over the grid and axes |
+| SVG | vector grid, axes, ticks and names, with the density as one embedded `data:image/png` `<image>` (`image-rendering: pixelated`), which the CSP's `img-src data:` allows |
+
+The LaTeX figure has the screen's frame (grid, axes, tick labels and the
+names, the parameter's LaTeX across and the state's up) and one dot per
+finite kept iterate in `plot-fp`, sized as map iterates are. Its header names
+the sweep (`% Orbit diagram: r from 2.8 to 3.7 in 10 values; x after the
+first 100 iterates, 4 kept for each.`) and leaves the swept parameter out of
+the `Parameters:` line. Up to 5,000 dots are data (inline for Copy, a
+`<base>-orbit.dat` for Save). Above that:
+
+- Save writes `<base>-points.png` (`raster::density_png`): one pixel column
+  per parameter value, as many rows as keep the plot box's aspect, transparent
+  where no iterate falls and `plot-fp` from 30 % opaque for one iterate to
+  fully opaque for the most visited, log-scaled, with `pHYs` set to the box's
+  width. The figure draws it with `\addplot graphics[xmin=…, xmax=…, ymin=…,
+  ymax=…] {\sepxdir <base>-points.png};` under vector axes, and no dots.
+- Copy keeps one iterate in `k`, `k = ⌈points / 5,000⌉` (at least 2), with
+  `thinned: true`, a note and a `% Thinned:` comment.
+
+`save_orbit_latex` writes the `.tex` and its one data file.
+
+The CSV is one row per finite kept iterate, parameter value by parameter
+value: the swept parameter's name, `n` and the state's name (`r,n,x` for the
+logistic map). `n` counts from the start point, so a column's first row is
+`n = T`, the transient, as in a map's trajectory CSV. Iterates of an orbit
+that escaped are left out, and so is the rest of that orbit.
+`<title>-orbit-diagram.meta.json` has `format: "separatrix-orbit-diagram"`,
+the system, the parameters, `columns`, `swept`, `range` (the first and last
+`r`), `parameter_values`, `state`, `x0`, `transient`, `kept`, `rows` and notes.
 
 ## The system
 
@@ -113,8 +252,8 @@ column) prints as 0. Types are the UI's `classificationTitle`.
 ## The figure
 
 The figure mirrors `draw.ts` in the projector (light) palette by default, the
-colours read from `app/src/styles/ds/tokens.json` (`Palette::from_tokens`; the
-app embeds the file with `include_str!`). The theme changes colours only; line
+colors read from `app/src/styles/ds/tokens.json` (`Palette::from_tokens`; the
+app embeds the file with `include_str!`). The theme changes colors only; line
 and glyph scale are 1, as on screen.
 
 - Lengths are big points: 1 CSS px = 0.75 bp, and the plot box is

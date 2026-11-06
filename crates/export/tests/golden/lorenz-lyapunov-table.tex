@@ -1,0 +1,25 @@
+% Separatrix Lyapunov spectrum: Lorenz equations (Strogatz §9.3)
+%   x' = sigma*(y - x)
+%   y' = r*x - y - x*z
+%   z' = x*y - b*z
+% Parameters: sigma = 10, r = 28, b = 2.6666666666666665
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\sisetup{uncertainty-mode = separate}
+\caption{Lyapunov spectrum of the Lorenz equations with $\sigma = 10$, $r = 28$ and $b = 2.66667$, from $(x, y, z) = (1, 1, 1)$: Runge--Kutta 4 with step $h = 0.01$, total time $T = 1000$ after a transient of $100$, \num{10000} renormalizations every $\tau = 0.1$. Uncertainties are standard errors over 10 blocks.}
+\label{tab:lorenz-equations-lyapunov}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Exponent & Value \\
+\midrule
+$\lambda_{1}$ & \num{0.906 +- 0.004} \\
+$\lambda_{2}$ & \num{-0.0003 +- 0.0003} \\
+$\lambda_{3}$ & \num{-14.5720 +- 0.0010} \\
+\midrule
+$\sum_i \lambda_i$ & \num{-13.6666} \\
+$\langle \operatorname{tr} J \rangle$ & \num{-13.6667} \\
+Difference & \num{6.7e-5} \\
+\bottomrule
+\end{tabular}
+\end{table}

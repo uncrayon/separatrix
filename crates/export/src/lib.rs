@@ -10,7 +10,9 @@
 //! | LaTeX system (`align`) | [`latex_system::system`] |
 //! | LaTeX fixed points (booktabs) | [`latex_fixed_points::table`] |
 //! | LaTeX figure (pgfplots) | [`latex_figure::figure`] |
-//! | CSV and `.meta.json` | [`csv::files`] |
+//! | LaTeX Lyapunov spectrum (booktabs, siunitx) | [`latex_lyapunov::lyapunov_latex`] |
+//! | LaTeX orbit diagram (pgfplots) | [`latex_figure::orbit_figure`] |
+//! | CSV and `.meta.json` | [`csv::files`], [`csv::lyapunov`], [`csv::orbit`] |
 //! | Curve simplification for exports | [`simplify::simplify_portrait`] |
 //! | Clipboard PNG decoding | [`raster::decode_rgba`] |
 //! | Cobweb geometry (staircase, diagonal) | [`cobweb`] |
@@ -28,6 +30,7 @@ mod geom;
 pub mod heads;
 pub mod latex_figure;
 pub mod latex_fixed_points;
+pub mod latex_lyapunov;
 pub mod latex_system;
 pub mod latex_util;
 pub mod model;
@@ -37,7 +40,10 @@ pub mod simplify;
 pub mod ticks;
 pub mod words;
 
-pub use latex_figure::{figure, FigureFile, FigureInput, FigureOutput, Placement};
+pub use latex_figure::{
+    figure, orbit_figure, FigureFile, FigureInput, FigureOutput, OrbitFigureInput, Placement,
+};
 pub use latex_fixed_points::FixedPointsInput;
+pub use latex_lyapunov::lyapunov_latex;
 pub use latex_system::{system, Notation, SystemInput, SystemLatex};
 pub use model::*;

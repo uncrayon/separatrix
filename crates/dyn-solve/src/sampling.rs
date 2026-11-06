@@ -108,6 +108,7 @@ impl Recorder {
             x: self.x,
             status,
             stats: s.stats(),
+            stiff: s.looks_stiff(),
         }
     }
 }

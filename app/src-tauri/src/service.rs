@@ -6,11 +6,14 @@ use dyn_analysis::{Axis, Plane};
 use dyn_core::{SystemKind, VectorField};
 use dyn_expr::CompiledSystem;
 use dyn_solve::Sampling;
+use separatrix_project::ORBIT_TRANSIENT_MAX;
 
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
-    ConvertedLineOut, Diagnostic, FixedPointOut, NullclineOut, ParamInfo, PortraitRequest,
-    PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
+    ConvertedLineOut, Diagnostic, DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest,
+    LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo,
+    PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut,
+    TrajectoryRequest, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -21,6 +24,13 @@ pub const MAX_FIELD_GRID: usize = 200;
 pub const MAX_SAMPLES: usize = 200_000;
 pub const MAX_ITERATES: usize = 1_000_000;
 pub const MAX_SECTION_POINTS: usize = 100_000;
+/// Most QR steps one `compute_lyapunov` request may ask for (`total / interval`).
+pub const MAX_RENORMALIZATIONS: usize = 10_000_000;
+/// Most iterates (`transient + total`) one `compute_lyapunov` request on a
+/// map may ask for; a flow is bounded by `solver.max_steps` instead.
+pub const MAX_LYAPUNOV_ITERATES: usize = 100_000_000;
+/// Running-estimate samples returned by `compute_lyapunov`.
+pub const LYAPUNOV_HISTORY: usize = 2000;
 
 #[derive(Default)]
 pub struct SystemStore {
@@ -79,12 +89,14 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
     match out.system {
         Some(system) => {
             let info = system.info.clone();
+            let separable = system.is_separable();
             let id = store.insert_evicting_oldest(system);
             CompileResponse {
                 ok: true,
                 system_id: Some(id),
                 kind: Some(info.kind),
                 hamiltonian: info.hamiltonian,
+                separable,
                 autonomous: info.autonomous,
                 states: info
                     .states
@@ -113,6 +125,7 @@ pub fn compile_system(store: &SystemStore, req: &CompileRequest) -> CompileRespo
             system_id: None,
             kind: None,
             hamiltonian: false,
+            separable: false,
             autonomous: true,
             states: Vec::new(),
             params: Vec::new(),
@@ -144,6 +157,7 @@ pub fn compute_portrait(
 ) -> Result<PortraitResponse, String> {
     let started = Instant::now();
     validate(system, req)?;
+    method_fits(system, req.solver.method)?;
     let f: &dyn VectorField = system;
     let p = req.params.as_slice();
     let dim = f.dim();
@@ -213,7 +227,7 @@ pub fn compute_portrait(
     let trajectories = req
         .trajectories
         .iter()
-        .map(|tr| trajectory(f, p, tr, req))
+        .map(|tr| trajectory(system, p, tr, req))
         .collect();
 
     let graph = req
@@ -229,6 +243,230 @@ pub fn compute_portrait(
         graph,
         elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
     })
+}
+
+/// The Lyapunov spectrum of one orbit (see [`dyn_analysis::lyapunov_spectrum`]).
+pub fn compute_lyapunov(
+    system: &CompiledSystem,
+    req: &LyapunovRequest,
+) -> Result<LyapunovResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_lyapunov(f, req)?;
+    if f.kind() == SystemKind::Ode && req.solver.method.is_symplectic() {
+        return Err(format!(
+            "A Lyapunov run integrates the variational equations, which {} cannot step; \
+             choose Runge–Kutta 4 or Dormand–Prince 5(4).",
+            method_name(req.solver.method)
+        ));
+    }
+    if f.kind() == SystemKind::Ode && req.solver.method == Method::Rosenbrock23 {
+        return Err(
+            "A Lyapunov run integrates the variational equations, which have no exact \
+             Jacobian for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+                .into(),
+        );
+    }
+    let opts = dyn_analysis::LyapunovOptions {
+        transient: req.transient,
+        total: req.total,
+        interval: req.interval,
+        blocks: req.blocks,
+        history: LYAPUNOV_HISTORY,
+    };
+    let s = dyn_analysis::lyapunov_spectrum(
+        f,
+        &req.params,
+        req.t0,
+        &req.x0,
+        &to_solver(&req.solver),
+        &opts,
+    );
+    Ok(LyapunovResponse {
+        request_id: req.request_id,
+        exponents: s.exponents,
+        uncertainty: s.uncertainty,
+        sum: s.sum,
+        trace_average: s.trace_average,
+        history_t: s.history_t,
+        history: s.history,
+        renormalizations: s.renormalizations,
+        status: s.status,
+        stats: s.stats,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+/// The orbit diagram of a map over one parameter's range (see
+/// [`dyn_analysis::orbit_diagram`]), with its period-doubling points when
+/// asked (see [`dyn_analysis::period_doublings`]).
+pub fn compute_orbit_diagram(
+    system: &CompiledSystem,
+    req: &OrbitDiagramRequest,
+) -> Result<OrbitDiagramResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_orbit_diagram(f, req)?;
+    let opts = dyn_analysis::OrbitDiagramOptions {
+        param: req.param,
+        range: req.range,
+        columns: req.columns,
+        state: req.state,
+        transient: req.transient,
+        kept: req.kept,
+    };
+    let diagram = dyn_analysis::orbit_diagram(f, &req.params, &req.x0, &opts);
+    let doublings = req.doublings.then(|| {
+        dyn_analysis::period_doublings(f, &req.params, req.param, &diagram, usize::MAX)
+            .into_iter()
+            .map(|d| DoublingOut {
+                r: d.r,
+                period: d.period,
+            })
+            .collect()
+    });
+    Ok(OrbitDiagramResponse {
+        request_id: req.request_id,
+        r: diagram.r,
+        x: diagram.x,
+        doublings,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+fn validate_orbit_diagram(f: &dyn VectorField, req: &OrbitDiagramRequest) -> Result<(), String> {
+    if f.kind() != SystemKind::Map {
+        return Err("Orbit diagrams are for maps; this system is a flow.".into());
+    }
+    if req.params.len() != f.n_params() {
+        return Err(format!(
+            "Expected {} parameter value(s) but got {}.",
+            f.n_params(),
+            req.params.len()
+        ));
+    }
+    if req.param >= f.n_params() {
+        return Err(if f.n_params() == 0 {
+            "This map has no parameter to sweep.".into()
+        } else {
+            format!(
+                "Parameter {} doesn't exist; the map has {}.",
+                req.param,
+                f.n_params()
+            )
+        });
+    }
+    let (lo, hi) = req.range;
+    if !(lo.is_finite() && hi.is_finite() && lo < hi) {
+        return Err("The parameter range must be finite, with its start below its end.".into());
+    }
+    if req.state >= f.dim() {
+        return Err(format!(
+            "State {} doesn't exist; the map has {}.",
+            req.state,
+            f.dim()
+        ));
+    }
+    if req.x0.len() != f.dim() {
+        return Err(format!(
+            "The starting point has {} coordinate(s) but the map has {}.",
+            req.x0.len(),
+            f.dim()
+        ));
+    }
+    if !req.x0.iter().all(|v| v.is_finite()) {
+        return Err("The starting point must be finite.".into());
+    }
+    if !(2..=MAX_ORBIT_COLUMNS).contains(&req.columns) {
+        return Err(format!(
+            "The diagram needs 2 to {MAX_ORBIT_COLUMNS} parameter values."
+        ));
+    }
+    if req.transient > ORBIT_TRANSIENT_MAX as usize {
+        return Err(format!(
+            "The transient can be at most {ORBIT_TRANSIENT_MAX} iterates."
+        ));
+    }
+    if req.kept == 0 {
+        return Err("Keep at least one iterate per parameter value.".into());
+    }
+    if req.columns.saturating_mul(req.kept) > MAX_ORBIT_POINTS {
+        return Err(format!(
+            "That is {} points; at most {MAX_ORBIT_POINTS} fit in one diagram. \
+             Keep fewer iterates or use fewer parameter values.",
+            req.columns.saturating_mul(req.kept)
+        ));
+    }
+    if req.doublings && f.dim() != 1 {
+        return Err("Period doublings are located for one-dimensional maps only.".into());
+    }
+    if req.doublings && !f.is_autonomous() {
+        return Err("Period doublings need a map that doesn't depend on n.".into());
+    }
+    Ok(())
+}
+
+fn validate_lyapunov(f: &dyn VectorField, req: &LyapunovRequest) -> Result<(), String> {
+    let dim = f.dim();
+    if req.params.len() != f.n_params() {
+        return Err(format!(
+            "Expected {} parameter value(s) but got {}.",
+            f.n_params(),
+            req.params.len()
+        ));
+    }
+    if req.x0.len() != dim {
+        return Err(format!(
+            "The starting point has {} coordinate(s) but the system has {dim}.",
+            req.x0.len()
+        ));
+    }
+    if !req.x0.iter().chain([&req.t0]).all(|v| v.is_finite()) {
+        return Err("The starting point must be finite.".into());
+    }
+    let is_map = f.kind() == SystemKind::Map;
+    let (span, interval) = if is_map {
+        ("number of iterates", "iterates per renormalization")
+    } else {
+        ("total time", "renormalization interval τ")
+    };
+    if !(req.transient >= 0.0 && req.transient.is_finite()) {
+        return Err("The transient must be zero or a positive number.".into());
+    }
+    if !(req.total > 0.0 && req.total.is_finite()) {
+        return Err(format!("The {span} must be a positive number."));
+    }
+    if is_map && req.transient.round() + req.total.round() > MAX_LYAPUNOV_ITERATES as f64 {
+        return Err(format!(
+            "That is {:.0} iterates; at most {MAX_LYAPUNOV_ITERATES} fit in one run. \
+             Shorten the transient or the number of iterates.",
+            req.transient.round() + req.total.round()
+        ));
+    }
+    if !(req.interval > 0.0 && req.interval.is_finite()) || (is_map && req.interval < 0.5) {
+        return Err(format!("The {interval} must be a positive number."));
+    }
+    let steps = if is_map {
+        (req.total.round() / req.interval.round()).ceil()
+    } else {
+        (req.total / req.interval).ceil()
+    };
+    if steps > MAX_RENORMALIZATIONS as f64 {
+        return Err(format!(
+            "That is {steps:.0} renormalizations; at most {MAX_RENORMALIZATIONS} fit in one run. \
+             Lengthen the {interval} or shorten the {span}."
+        ));
+    }
+    if req.blocks < 2 {
+        return Err("The uncertainty needs at least 2 blocks.".into());
+    }
+    if req.blocks as f64 > steps {
+        return Err(format!(
+            "{} blocks need at least as many renormalizations, but this run has {steps:.0}.",
+            req.blocks
+        ));
+    }
+    Ok(())
 }
 
 fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
@@ -445,6 +683,59 @@ fn seeds_per_axis(dim: usize) -> usize {
     }
 }
 
+fn method_name(m: Method) -> &'static str {
+    match m {
+        Method::Euler => "Euler",
+        Method::Heun => "Heun",
+        Method::Rk4 => "Runge–Kutta 4",
+        Method::Dopri5 => "Dormand–Prince 5(4)",
+        Method::Verlet => "Störmer–Verlet",
+        Method::Yoshida4 => "Yoshida 4",
+        Method::Rosenbrock23 => "Rosenbrock 2(3)",
+    }
+}
+
+fn method_fits(system: &CompiledSystem, method: Method) -> Result<(), String> {
+    if !method.is_symplectic() || system.kind() == SystemKind::Map {
+        return Ok(());
+    }
+    if !system.info.hamiltonian {
+        return Err(format!(
+            "{} needs a Hamiltonian H(q, p); this system is given by its equations of motion.",
+            method_name(method)
+        ));
+    }
+    if !system.is_separable() {
+        return Err("H(q, p) must split as T(p) + V(q) for a symplectic method.".into());
+    }
+    Ok(())
+}
+
+/// `H` at the start and its largest drift over the samples, for a
+/// Hamiltonian flow. Absent when `H` is not finite somewhere, which JSON
+/// could not carry.
+fn energy(
+    system: &CompiledSystem,
+    p: &[f64],
+    tr: &TrajectoryRequest,
+    sol: &dyn_solve::Solution,
+) -> Option<EnergyOut> {
+    let h0 = system
+        .hamiltonian_value(tr.t0, &tr.x0, p)
+        .filter(|h| h.is_finite())?;
+    let dim = tr.x0.len();
+    let mut max_abs_drift: f64 = 0.0;
+    for (i, &t) in sol.t.iter().enumerate() {
+        let h = system.hamiltonian_value(t, &sol.x[i * dim..(i + 1) * dim], p)?;
+        let drift = (h - h0).abs();
+        if !drift.is_finite() {
+            return None;
+        }
+        max_abs_drift = max_abs_drift.max(drift);
+    }
+    Some(EnergyOut { h0, max_abs_drift })
+}
+
 fn to_solver(s: &SolverOptions) -> dyn_solve::SolverOptions {
     dyn_solve::SolverOptions {
         method: s.method,
@@ -457,11 +748,12 @@ fn to_solver(s: &SolverOptions) -> dyn_solve::SolverOptions {
 }
 
 fn trajectory(
-    f: &dyn VectorField,
+    system: &CompiledSystem,
     p: &[f64],
     tr: &TrajectoryRequest,
     req: &PortraitRequest,
 ) -> TrajectoryOut {
+    let f: &dyn VectorField = system;
     let sol = if f.kind() == SystemKind::Map {
         let n = if tr.t1.is_finite() {
             tr.t1.round().clamp(0.0, MAX_ITERATES as f64) as usize
@@ -490,11 +782,14 @@ fn trajectory(
         };
         dyn_solve::integrate(f, p, tr.t0, &tr.x0, tr.t1, &opts, sampling)
     };
+    let energy = energy(system, p, tr, &sol);
     TrajectoryOut {
+        stiff: sol.stiff.then_some(true),
         t: sol.t,
         x: sol.x,
         status: sol.status,
         stats: sol.stats,
+        energy,
     }
 }
 
@@ -1345,7 +1640,7 @@ mod tests {
     /// fixed point and the number of points found is the number of starts.
     /// In 1-D a zero field is one interval of fixed points, reported by its
     /// two ends, so there `x1'` vanishes at each of the 40 seeds (the cell
-    /// centres of the search box [−1, 1]) and nowhere between.
+    /// centers of the search box [−1, 1]) and nowhere between.
     fn zero_system_fixed_point_count(dim: usize) -> usize {
         let store = SystemStore::new();
         let src: Vec<String> = if dim == 1 {
@@ -1776,5 +2071,450 @@ mod tests {
         );
         assert_eq!(json["lines"][1]["converted"], false);
         assert_eq!(json["lines"][1]["error"], true);
+    }
+
+    #[test]
+    fn orbit_diagrams_refuse_what_they_cannot_draw() {
+        let store = SystemStore::new();
+        let logistic = compile_src(&store, "x_{n+1}=rx_n\\left(1-x_n\\right)");
+        let system = store.get(logistic).unwrap();
+        let ok = OrbitDiagramRequest {
+            request_id: 9,
+            system_id: logistic,
+            params: vec![3.2],
+            param: 0,
+            range: (2.5, 3.2),
+            columns: 2,
+            state: 0,
+            x0: vec![0.1],
+            transient: 1000,
+            kept: 4,
+            doublings: true,
+        };
+        let out = compute_orbit_diagram(&system, &ok).unwrap();
+        assert_eq!(out.request_id, 9);
+        assert_eq!(out.r, [2.5, 3.2]);
+        assert_eq!(out.x.len(), 8);
+        assert!(
+            out.x[..4].iter().all(|x| (x - 0.6).abs() < 1e-12),
+            "{:?}",
+            out.x
+        );
+        let doublings = out.doublings.as_deref().unwrap();
+        assert_eq!(doublings.len(), 1, "{doublings:?}");
+        assert_eq!(doublings[0].period, 1);
+        assert!((doublings[0].r - 3.0).abs() < 1e-9, "{doublings:?}");
+        let json = serde_json::to_value(
+            compute_orbit_diagram(
+                &system,
+                &OrbitDiagramRequest {
+                    range: (4.5, 5.0),
+                    transient: 100,
+                    doublings: false,
+                    ..ok.clone()
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            json["x"].as_array().unwrap().iter().all(|x| x.is_null()),
+            "{json}"
+        );
+        assert!(json.get("doublings").is_none(), "{json}");
+
+        let at_the_limit = OrbitDiagramRequest {
+            columns: MAX_ORBIT_COLUMNS,
+            kept: MAX_ORBIT_POINTS / MAX_ORBIT_COLUMNS,
+            transient: 0,
+            doublings: false,
+            ..ok.clone()
+        };
+        assert!(compute_orbit_diagram(&system, &at_the_limit).is_ok());
+        let refused = [
+            OrbitDiagramRequest {
+                param: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                range: (3.2, 2.5),
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                range: (2.5, f64::INFINITY),
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                state: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                columns: 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                columns: MAX_ORBIT_COLUMNS + 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                kept: 0,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                transient: ORBIT_TRANSIENT_MAX as usize + 1,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                transient: usize::MAX,
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                kept: MAX_ORBIT_POINTS / MAX_ORBIT_COLUMNS + 1,
+                ..at_the_limit.clone()
+            },
+            OrbitDiagramRequest {
+                x0: vec![f64::NAN],
+                ..ok.clone()
+            },
+            OrbitDiagramRequest {
+                params: vec![],
+                ..ok.clone()
+            },
+        ];
+        for req in &refused {
+            assert!(
+                compute_orbit_diagram(&system, req).is_err(),
+                "{req:?} was accepted"
+            );
+        }
+
+        let henon = compile_src(&store, "x_{n+1}=1-ax_n^2+y_n\ny_{n+1}=bx_n");
+        let henon_req = OrbitDiagramRequest {
+            system_id: henon,
+            params: vec![1.4, 0.3],
+            x0: vec![0.0, 0.0],
+            state: 1,
+            range: (1.0, 1.4),
+            ..ok.clone()
+        };
+        let system = store.get(henon).unwrap();
+        assert!(compute_orbit_diagram(&system, &henon_req).is_err());
+        assert!(compute_orbit_diagram(
+            &system,
+            &OrbitDiagramRequest {
+                doublings: false,
+                ..henon_req
+            }
+        )
+        .is_ok());
+
+        let driven = compile_src(&store, "x_{n+1}=\\frac{x_n}{2}+an");
+        let driven_req = OrbitDiagramRequest {
+            system_id: driven,
+            params: vec![0.5],
+            ..ok.clone()
+        };
+        let system = store.get(driven).unwrap();
+        assert!(compute_orbit_diagram(&system, &driven_req).is_err());
+        assert!(compute_orbit_diagram(
+            &system,
+            &OrbitDiagramRequest {
+                doublings: false,
+                ..driven_req
+            }
+        )
+        .is_ok());
+
+        let flow = compile_src(&store, "\\dot{x}=ax");
+        let flow_req = OrbitDiagramRequest {
+            system_id: flow,
+            params: vec![0.5],
+            doublings: false,
+            ..ok.clone()
+        };
+        assert!(compute_orbit_diagram(&store.get(flow).unwrap(), &flow_req).is_err());
+    }
+
+    fn symplectic(method: Method, id: u32) -> PortraitRequest {
+        let mut req = simple_request(id, 2);
+        req.solver.method = method;
+        req.solver.h = 0.05;
+        req.solver.max_steps = 100_000;
+        req.trajectories = vec![TrajectoryRequest {
+            x0: vec![1.0, 0.0],
+            t0: 0.0,
+            t1: 100.0,
+        }];
+        req
+    }
+
+    #[test]
+    fn symplectic_methods_need_a_separable_hamiltonian() {
+        let store = SystemStore::new();
+        let compiled = |src: &str| {
+            let res = compile_system(
+                &store,
+                &CompileRequest {
+                    source: src.into(),
+                    format: InputFormat::Text,
+                },
+            );
+            assert!(res.ok, "{:?}", res.diagnostics);
+            (res.separable, res.system_id.unwrap())
+        };
+        let (separable, pendulum) = compiled("H(q, p) = p^2/2 - cos(q)");
+        assert!(separable);
+        let (separable, coupled) = compiled("H(q, p) = p^2/2 + q^2/2 + q*p");
+        assert!(!separable);
+        let (separable, flow) = compiled("x' = y; y' = -sin(x)");
+        assert!(!separable);
+        let (_, map) = compiled("x_{n+1} = r*x_n*(1 - x_n)");
+
+        let err = |method, id| {
+            compute_portrait(&store.get(id).unwrap(), &symplectic(method, id)).unwrap_err()
+        };
+        assert_eq!(
+            err(Method::Verlet, flow),
+            "Störmer–Verlet needs a Hamiltonian H(q, p); this system is given by its equations of motion."
+        );
+        assert_eq!(
+            err(Method::Yoshida4, flow),
+            "Yoshida 4 needs a Hamiltonian H(q, p); this system is given by its equations of motion."
+        );
+        assert_eq!(
+            err(Method::Verlet, coupled),
+            "H(q, p) must split as T(p) + V(q) for a symplectic method."
+        );
+
+        let mut on_map = symplectic(Method::Verlet, map);
+        on_map.params = vec![3.5];
+        on_map.y_axis = AxisRef::Time;
+        on_map.base_state = vec![0.0];
+        on_map.trajectories[0].x0 = vec![0.2];
+        assert!(compute_portrait(&store.get(map).unwrap(), &on_map).is_ok());
+
+        for method in [Method::Verlet, Method::Yoshida4] {
+            let out =
+                compute_portrait(&store.get(pendulum).unwrap(), &symplectic(method, pendulum))
+                    .unwrap();
+            let tr = &out.trajectories[0];
+            assert_eq!(tr.status, Status::Completed);
+            let energy = tr
+                .energy
+                .expect("a Hamiltonian trajectory reports its energy");
+            assert!((energy.h0 - (-(1f64.cos()))).abs() < 1e-15, "{energy:?}");
+            assert!(
+                energy.max_abs_drift > 0.0 && energy.max_abs_drift < 1e-3,
+                "{method:?}: {energy:?}"
+            );
+            let worst = (0..tr.t.len())
+                .map(|i| (tr.x[2 * i + 1].powi(2) / 2.0 - tr.x[2 * i].cos() - energy.h0).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                (worst - energy.max_abs_drift).abs() < 1e-15,
+                "{worst} vs {energy:?}"
+            );
+        }
+        let rk4 = compute_portrait(
+            &store.get(pendulum).unwrap(),
+            &symplectic(Method::Rk4, pendulum),
+        )
+        .unwrap();
+        assert!(rk4.trajectories[0].energy.is_some());
+        let flow_out =
+            compute_portrait(&store.get(flow).unwrap(), &symplectic(Method::Rk4, flow)).unwrap();
+        assert_eq!(flow_out.trajectories[0].energy, None);
+    }
+
+    #[test]
+    fn dormand_prince_flags_stiff_steps_and_rosenbrock_takes_few() {
+        let store = SystemStore::new();
+        let res = compile_system(
+            &store,
+            &CompileRequest {
+                source: "x' = mu*(y - x^3/3 + x); y' = -x/mu".into(),
+                format: InputFormat::Text,
+            },
+        );
+        assert!(res.ok, "{:?}", res.diagnostics);
+        let id = res.system_id.unwrap();
+        let run = |method: Method, mu: f64| {
+            let mut req = simple_request(id, 2);
+            req.params = vec![mu];
+            req.solver = SolverOptions {
+                method,
+                h: 0.0,
+                max_steps: 1_000_000,
+                ..req.solver
+            };
+            req.trajectories = vec![TrajectoryRequest {
+                x0: vec![2.0, 0.0],
+                t0: 0.0,
+                t1: 200.0,
+            }];
+            let out = compute_portrait(&store.get(id).unwrap(), &req).unwrap();
+            out.trajectories.into_iter().next().unwrap()
+        };
+        let explicit = run(Method::Dopri5, 1000.0);
+        assert_eq!(explicit.status, Status::Completed);
+        assert_eq!(explicit.stiff, Some(true));
+        let json = serde_json::to_value(&explicit).unwrap();
+        assert_eq!(json["stiff"], serde_json::json!(true));
+
+        let implicit = run(Method::Rosenbrock23, 1000.0);
+        assert_eq!(implicit.status, Status::Completed);
+        assert_eq!(implicit.stiff, None);
+        assert!(
+            implicit.stats.accepted * 10 <= explicit.stats.accepted,
+            "{} vs {}",
+            implicit.stats.accepted,
+            explicit.stats.accepted
+        );
+        let (a, b) = (explicit.x.len() - 2, implicit.x.len() - 2);
+        assert!(
+            (explicit.x[a] - implicit.x[b]).abs() < 1e-3,
+            "both end at the same point: {:?} vs {:?}",
+            &explicit.x[a..],
+            &implicit.x[b..]
+        );
+
+        let mild = run(Method::Dopri5, 1.0);
+        assert_eq!(mild.stiff, None);
+        assert!(serde_json::to_value(&mild).unwrap().get("stiff").is_none());
+    }
+
+    #[test]
+    fn lyapunov_refuses_runs_it_cannot_measure() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=ax");
+        let system = store.get(id).unwrap();
+        let ok = LyapunovRequest {
+            request_id: 7,
+            system_id: id,
+            params: vec![0.5],
+            x0: vec![0.0],
+            t0: 0.0,
+            transient: 0.0,
+            total: 10.0,
+            interval: 0.1,
+            blocks: 4,
+            solver: SolverOptions {
+                method: Method::Rk4,
+                rtol: 1e-6,
+                atol: 1e-9,
+                h: 0.01,
+                h_max: None,
+                max_steps: 100_000,
+            },
+        };
+        let out = compute_lyapunov(&system, &ok).unwrap();
+        assert_eq!(out.request_id, 7);
+        assert_eq!(out.status, Status::Completed);
+        assert_eq!(out.renormalizations, 100);
+        assert!((out.exponents[0] - 0.5).abs() < 1e-9, "{:?}", out.exponents);
+        let refused = [
+            LyapunovRequest {
+                interval: 0.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                interval: -0.1,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                total: 0.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                blocks: 1,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                blocks: 101,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                total: 1e7,
+                interval: 1e-3,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                transient: -1.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                x0: vec![0.0, 1.0],
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                params: vec![],
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                x0: vec![f64::NAN],
+                ..ok.clone()
+            },
+        ];
+        for req in &refused {
+            assert!(
+                compute_lyapunov(&system, req).is_err(),
+                "{req:?} was accepted"
+            );
+        }
+        let leapfrog = LyapunovRequest {
+            solver: SolverOptions {
+                method: Method::Verlet,
+                ..ok.solver
+            },
+            ..ok.clone()
+        };
+        let henon = compile_src(&store, "x_{n+1}=1-ax_n^2+y_n\ny_{n+1}=bx_n");
+        let henon = store.get(henon).unwrap();
+        let map = LyapunovRequest {
+            params: vec![1.4, 0.3],
+            x0: vec![0.1, 0.1],
+            transient: 1e3,
+            total: 1e3,
+            interval: 1.0,
+            ..ok.clone()
+        };
+        assert!(compute_lyapunov(&henon, &map).is_ok());
+        assert_eq!(
+            compute_lyapunov(
+                &henon,
+                &LyapunovRequest {
+                    transient: 1e12,
+                    ..map.clone()
+                }
+            )
+            .unwrap_err(),
+            format!(
+                "That is 1000000001000 iterates; at most {MAX_LYAPUNOV_ITERATES} fit in one run. \
+                 Shorten the transient or the number of iterates."
+            )
+        );
+        assert_eq!(
+            compute_lyapunov(&system, &leapfrog).unwrap_err(),
+            "A Lyapunov run integrates the variational equations, which Störmer–Verlet cannot \
+             step; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+        );
+        let implicit = LyapunovRequest {
+            solver: SolverOptions {
+                method: Method::Rosenbrock23,
+                ..ok.solver
+            },
+            ..ok.clone()
+        };
+        assert_eq!(
+            compute_lyapunov(&system, &implicit).unwrap_err(),
+            "A Lyapunov run integrates the variational equations, which have no exact Jacobian \
+             for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4)."
+        );
+        let at_the_limit = LyapunovRequest {
+            total: 1e4,
+            interval: 1e-3,
+            ..ok.clone()
+        };
+        assert!(validate_lyapunov(&*system, &at_the_limit).is_ok());
     }
 }

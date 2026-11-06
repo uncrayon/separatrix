@@ -16,7 +16,11 @@ use separatrix_export::csv::{self, CsvInput};
 use separatrix_export::latex_figure::{figure, FigureInput, FigureOutput, Placement};
 use separatrix_export::latex_fixed_points::{self, FixedPointsInput};
 use separatrix_export::latex_system::{system, Notation, SystemInput};
-use separatrix_export::{Labels, ParamValue, StateName, Theme};
+use separatrix_export::{
+    lyapunov_latex, orbit_figure, Labels, LyapunovRun, LyapunovSpectrum, Method, OrbitDiagram,
+    OrbitFigureInput, OrbitRun, ParamValue, SolverOptions, StateName, Status, SystemKind,
+    SystemMeta, Theme,
+};
 
 const UPDATE: &str = "UPDATE_GOLDEN";
 
@@ -990,4 +994,141 @@ fn every_label_has_a_halo() {
     for l in before.lines() {
         assert!(l.starts_with('%') || l.ends_with('%'), "{l:?}");
     }
+}
+
+fn template_labels(id: &str, set: &[(&str, f64)]) -> (Template, Labels) {
+    let t = template(id);
+    let out = compile(&t.equations.join("\n"), t.format);
+    let info = out.system.expect("compiles").info;
+    let values: Vec<f64> = info
+        .params
+        .iter()
+        .map(|p| {
+            set.iter()
+                .find(|(n, _)| *n == p.name)
+                .map(|&(_, v)| v)
+                .or_else(|| t.params.get(&p.name).copied())
+                .unwrap_or(p.default)
+        })
+        .collect();
+    let labels = Labels::from_info(&info, &values);
+    (t, labels)
+}
+
+fn lorenz_lyapunov_run() -> LyapunovRun {
+    let exponents = vec![0.90561, -0.00025, -14.57196];
+    LyapunovRun {
+        spectrum: LyapunovSpectrum {
+            sum: exponents.iter().sum(),
+            exponents,
+            uncertainty: vec![0.00437, 0.00026, 0.0010],
+            trace_average: -41.0 / 3.0,
+            history_t: vec![300.0, 500.0, 700.0, 900.0, 1100.0],
+            history: vec![
+                0.9312, 0.0123, -14.6011, //
+                0.9105, -0.0031, -14.5802, //
+                0.9071, 0.0008, -14.5755, //
+                0.9049, -0.0004, -14.5738, //
+                0.90561, -0.00025, -14.57196,
+            ],
+            renormalizations: 10000,
+            status: Status::Completed,
+            stats: Default::default(),
+        },
+        x0: vec![1.0, 1.0, 1.0],
+        t0: 0.0,
+        transient: 100.0,
+        total: 1000.0,
+        interval: 0.1,
+        blocks: 10,
+        solver: SolverOptions {
+            method: Method::Rk4,
+            h: 0.01,
+            ..SolverOptions::default()
+        },
+    }
+}
+
+#[test]
+fn lorenz_lyapunov_table_and_csv() {
+    let (t, labels) = template_labels("lorenz", &[]);
+    let sys = SystemMeta {
+        kind: SystemKind::Ode,
+        labels: &labels,
+        title: &t.title,
+        source_ref: Some("Strogatz §9.3"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = lorenz_lyapunov_run();
+    let tex = lyapunov_latex(&sys, &run);
+    check("lorenz-lyapunov-table.tex", &tex);
+    assert_portable("lorenz-lyapunov-table", &tex);
+    assert!(
+        tex.contains("$\\lambda_{1}$ & \\num{0.906 +- 0.004} \\\\"),
+        "{tex}"
+    );
+    assert!(tex.contains("\\sisetup{uncertainty-mode = separate}"));
+    let file = csv::lyapunov(&sys, &run, "0.2.0");
+    assert_eq!(file.stem, "lorenz-equations-lyapunov");
+    check("lorenz-lyapunov.csv", &file.csv);
+    check("lorenz-lyapunov.meta.json", &file.meta);
+}
+
+fn logistic_orbit_run() -> OrbitRun {
+    let (lo, hi, columns, transient, kept) = (2.8, 3.7, 10, 100, 4);
+    let step = (hi - lo) / (columns - 1) as f64;
+    let r: Vec<f64> = (0..columns).map(|j| lo + j as f64 * step).collect();
+    let mut x = Vec::new();
+    for &rj in &r {
+        let mut v: f64 = 0.2;
+        for n in 0..transient + kept {
+            if n >= transient {
+                x.push(v);
+            }
+            v = rj * v * (1.0 - v);
+        }
+    }
+    OrbitRun {
+        param: 0,
+        state: 0,
+        x0: vec![0.2],
+        transient,
+        diagram: OrbitDiagram { r, x, kept },
+    }
+}
+
+#[test]
+fn logistic_orbit_csv_and_figure() {
+    let (t, labels) = template_labels("logistic-map", &[("r", 3.2)]);
+    let sys = SystemMeta {
+        kind: SystemKind::Map,
+        labels: &labels,
+        title: &t.title,
+        source_ref: Some("Strogatz §10.2"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = logistic_orbit_run();
+    let file = csv::orbit(&sys, &run, "0.2.0");
+    assert_eq!(file.stem, "logistic-map-orbit-diagram");
+    assert_eq!(file.csv.lines().next(), Some("r,n,x"));
+    assert_eq!(file.csv.lines().count(), 1 + 40);
+    check("logistic-orbit.csv", &file.csv);
+    let pal = palette(Theme::Light);
+    let fig = orbit_figure(&OrbitFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (2.75, 3.75),
+        y_range: (0.0, 1.0),
+        width_cm: 8.0,
+        height_cm: 6.0,
+        theme: Theme::Light,
+        palette: &pal,
+        placement: Placement::Inline,
+        standalone: false,
+    });
+    assert_eq!((fig.points, fig.thinned), (40, false));
+    assert!(fig.files.is_empty());
+    check_figure("logistic-orbit-figure", &fig);
 }

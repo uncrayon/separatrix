@@ -35,10 +35,23 @@ const { makeViewport } = await import("../canvas/viewport.ts");
 const { plotThemeFromTokens } = await import("../export/theme.ts");
 const { readExportOptions, DEFAULT_EXPORT_OPTIONS, sizeError, fileStem, figurePx } = await import("../export/options.ts");
 const { pngRaster, withPhys, pngChunks, physDpi, crc32, pixelsPerMetre, PNG_MAX_PIXELS } = await import("../export/png.ts");
-const { buildFigureJob, buildCsvRequest, exportSamples, exportScene, exportSpaceFigure, icProjectId } =
-  await import("../export/job.ts");
+const {
+  buildFigureJob,
+  buildCsvRequest,
+  exportSamples,
+  exportScene,
+  exportSpaceFigure,
+  icProjectId,
+  axisNames,
+  analysisKind,
+  buildLyapunovExport,
+  buildOrbitExport,
+  orbitFigureRatio,
+} = await import("../export/job.ts");
 const { figureSvg } = await import("../export/svg.ts");
-const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA } = await import("../state/model.ts");
+const { DEFAULT_LAYERS, DEFAULT_SOLVER, DEFAULT_CAMERA, lyapunovView, orbitView, buildLyapunovJob } = await import(
+  "../state/model.ts"
+);
 
 const light = plotThemeFromTokens(tokens, "light");
 const dark = plotThemeFromTokens(tokens, "dark");
@@ -255,7 +268,7 @@ test("SVG: the recorder writes exactly the primitives the canvas receives", () =
   assert.equal(c.rects, rec.log.filter((x) => x[0] === "fillRect").length, "rects");
   assert.equal(c.texts, rec.log.filter((x) => x[0] === "fillText" || x[0] === "strokeText").length, "texts");
   assert.ok(c.strokes > 5 && c.fills > 5 && c.texts > 4, "a real drawing");
-  // The same colours, in the same order.
+  // The same colors, in the same order.
   const svgColors = [...svg.matchAll(/<path [^>]*?(?:fill="none"[^>]*stroke="([^"]+)"|fill="([^"]+)")/g)].map((m) => m[1] ?? m[2]);
   const canvasColors = rec.log.filter((x) => (x[0] === "stroke" || x[0] === "fill") && x[1] && x[3] > 0).map((x) => x[2]);
   assert.deepEqual(svgColors, canvasColors);
@@ -331,7 +344,7 @@ test("SVG: arcs become SVG arcs: full circles in two halves, half discs closed",
   assert.match(svg, /d="M20 10A5 5 0 0 1 10 10A5 5 0 0 1 20 10"/, "no extra segment when the arc starts at the pen");
 });
 
-test("SVG: dashes, caps, joins, alpha and colours map to SVG attributes", () => {
+test("SVG: dashes, caps, joins, alpha and colors map to SVG attributes", () => {
   const ctx = new SvgContext(measure);
   ctx.strokeStyle = "rgba(10, 20, 30, 0.5)";
   ctx.globalAlpha = 0.5;
@@ -874,4 +887,113 @@ test("heads.json: drawHeads through a recording context matches the parity vecto
   }
   const saved = JSON.parse(readFileSync(headsPath, "utf8"));
   assert.deepEqual(saved.cases, JSON.parse(JSON.stringify(cases)), "heads.json is out of date: run with UPDATE_VECTORS=1");
+});
+
+const lorenz = {
+  ...compiled,
+  systemId: 4,
+  states: ["x", "y", "z"].map((n) => ({ name: n, latex: n, derived: false })),
+  params: [{ name: "sigma", latex: "\\sigma", default: 10 }],
+};
+const logisticMap = {
+  ...compiled,
+  systemId: 5,
+  kind: "map",
+  states: [{ name: "x", latex: "x", derived: false }],
+  params: [{ name: "r", latex: "r", default: 3.2 }],
+};
+const source = { title: "T", lines: ["l"], format: "text" };
+
+test("analysis views export their own run: the Lyapunov view's request, an orbit diagram one column per image pixel", () => {
+  const ly = snapshot({
+    compiled: lorenz,
+    params: [{ value: 10, min: 0, max: 20 }],
+    view: lyapunovView("ode"),
+    ics: [{ id: 1, x0: [1, 1, 1], t0: 0, color: 0 }],
+    selection: null,
+  });
+  assert.equal(analysisKind(ly), "lyapunov");
+  assert.equal(analysisKind(snapshot()), null);
+  assert.deepEqual(axisNames(ly), { x: "t", y: "\\lambda" });
+  const req = buildLyapunovExport(ly, source);
+  assert.deepEqual(req.run, { ...buildLyapunovJob(ly).body, requestId: 0 }, "the view's own run");
+  assert.equal(req.title, "T");
+  assert.equal(buildLyapunovExport(snapshot({ selection: null }), source), null, "a phase plane has no run");
+
+  const orbit = snapshot({
+    compiled: logisticMap,
+    params: [{ value: 3.2, min: 2.8, max: 4 }],
+    view: orbitView([{ min: 2.8, max: 4 }], [0, 1]),
+    ics: [{ id: 1, x0: [0.5], t0: 0, color: 0 }],
+    selection: null,
+  });
+  assert.equal(analysisKind(orbit), "orbit");
+  assert.deepEqual(axisNames(orbit), { x: "r", y: "x" });
+  assert.equal(orbitFigureRatio("png", 3), 3);
+  assert.equal(orbitFigureRatio("svg", 3), 2);
+  assert.equal(orbitFigureRatio("latex", 3), 300 / 96);
+  const fig = buildOrbitExport(orbit, source, 945);
+  assert.equal(fig.diagram.columns, 945);
+  const w = (4 - 2.8) / 945;
+  assert.ok(Math.abs(fig.diagram.range[0] - (2.8 + w / 2)) < 1e-12 && Math.abs(fig.diagram.range[1] - (4 - w / 2)) < 1e-12);
+  assert.equal(buildOrbitExport(orbit, source, 1), null, "fewer than 2 columns: nothing to draw");
+  assert.equal(readExportOptions({ latexContent: "spectrum" }).latexContent, "spectrum");
+});
+
+test("SVG: a Lyapunov figure is vector paths in the trajectory colors, the names λ and t as text", () => {
+  const res = {
+    exponents: [0.9, -0.1, -14.5],
+    uncertainty: [],
+    sum: -13.7,
+    traceAverage: -13.7,
+    historyT: [10, 20, 30, 40],
+    history: [1.2, 0.2, -14, 1.0, 0.1, -14.3, 0.95, -0.05, -14.4, 0.9, -0.1, -14.5],
+    renormalizations: 400,
+    status: "completed",
+    stats: { accepted: 0, rejected: 0, evals: 0 },
+    requestId: 0,
+    elapsedMs: 0,
+  };
+  const svg = figureSvg(
+    {
+      widthPx: W,
+      heightPx: H,
+      xRange: [10, 40],
+      yRange: [-16, 2],
+      scene: null,
+      theme: dark,
+      names: { x: "t", y: "\\lambda" },
+      transparent: false,
+      analysis: { kind: "lyapunov", res },
+    },
+    measure,
+  );
+  assertWellFormedXml(svg);
+  for (const c of dark.traj.slice(0, 3)) assert.ok(svg.includes(`stroke="${c}"`), `a curve in ${c}`);
+  assert.doesNotMatch(svg, /<image/);
+  assert.match(svg, />λ</, "the λ axis name");
+});
+
+test("SVG: an image drawn into the recorder is an embedded PNG, pixel for pixel", () => {
+  globalThis.HTMLCanvasElement ??= class {};
+  const image = Object.assign(new globalThis.HTMLCanvasElement(), { toDataURL: () => "data:image/png;base64,AAAA" });
+  const ctx = new SvgContext(measure);
+  ctx.globalAlpha = 0.5;
+  ctx.drawImage(image, 0, 0, 2, 2);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, 10, 20, 300, 200);
+  ctx.drawImage({}, 0, 0, 1, 1);
+  const svg = ctx.toSvg({ width: 400, height: 300 });
+  assertWellFormedXml(svg);
+  const images = svg.match(/<image [^>]*\/>/g) ?? [];
+  assert.equal(images.length, 2, "only a canvas becomes an image");
+  assert.equal(
+    images[0],
+    '<image x="0" y="0" width="2" height="2" preserveAspectRatio="none" opacity="0.5" href="data:image/png;base64,AAAA"/>',
+    "smoothed, as a canvas draws by default",
+  );
+  assert.equal(
+    images[1],
+    '<image x="10" y="20" width="300" height="200" preserveAspectRatio="none" style="image-rendering:pixelated" opacity="0.5" href="data:image/png;base64,AAAA"/>',
+  );
 });

@@ -120,6 +120,61 @@ pub fn points_png(w: f64, h: f64, dpi: f64, layers: &[Dots]) -> Vec<u8> {
     encode_png(&rgba, iw, ih, dpi)
 }
 
+const DENSITY_MIN_ALPHA: f64 = 0.3;
+
+/// An orbit diagram's iterates as a density PNG of a `w` × `h` CSS-px plot
+/// box over `x_range` × `y_range` (the screen's `orbitHistogram` and
+/// `densityPixels`): one pixel column per parameter value and as many rows
+/// as keep the box's aspect, its `pHYs` set so the image is `w` px wide. A
+/// pixel is transparent where no iterate falls and `color` where some do,
+/// from 30 % opaque for one to fully opaque for the most visited,
+/// log-scaled.
+pub fn density_png(
+    d: &dyn_analysis::OrbitDiagram,
+    x_range: (f64, f64),
+    y_range: (f64, f64),
+    (w, h): (f64, f64),
+    color: &str,
+) -> Vec<u8> {
+    let iw = d.r.len().clamp(1, 20000);
+    let ih = ((iw as f64) * h / w).round().clamp(1.0, 20000.0) as usize;
+    let kx = iw as f64 / (x_range.1 - x_range.0);
+    let ky = ih as f64 / (y_range.1 - y_range.0);
+    let mut counts = vec![0u32; iw * ih];
+    let mut max = 0;
+    for (j, &r) in d.r.iter().enumerate() {
+        let bx = ((r - x_range.0) * kx).floor();
+        if !(bx >= 0.0 && bx < iw as f64) {
+            continue;
+        }
+        for &v in d.x.get(j * d.kept..(j + 1) * d.kept).unwrap_or(&[]) {
+            let by = ((y_range.1 - v) * ky).floor();
+            if !(by >= 0.0 && by < ih as f64) {
+                continue;
+            }
+            let c = &mut counts[by as usize * iw + bx as usize];
+            *c += 1;
+            max = max.max(*c);
+        }
+    }
+    let rgb = parse_hex(color);
+    let mut img = vec![0u8; iw * ih * 4];
+    for (i, &c) in counts.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let alpha = if max <= 1 {
+            1.0
+        } else {
+            DENSITY_MIN_ALPHA
+                + (1.0 - DENSITY_MIN_ALPHA) * (f64::from(c).ln() / f64::from(max).ln())
+        };
+        img[4 * i..4 * i + 3].copy_from_slice(&rgb);
+        img[4 * i + 3] = (255.0 * alpha).round() as u8;
+    }
+    encode_png(&img, iw as u32, ih as u32, iw as f64 * 96.0 / w)
+}
+
 /// Decodes a PNG (as the UI sends for the clipboard) to 8-bit RGBA.
 pub fn decode_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), String> {
     let mut dec = png::Decoder::new(Cursor::new(bytes));

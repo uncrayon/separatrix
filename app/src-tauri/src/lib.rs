@@ -16,6 +16,8 @@
 //! | `compile_system` | [`ipc::CompileRequest`] | [`ipc::CompileResponse`] |
 //! | `convert_source` | [`ipc::ConvertRequest`] | [`ipc::ConvertResponse`] |
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
+//! | `compute_lyapunov` | [`ipc::LyapunovRequest`] | [`ipc::LyapunovResponse`] |
+//! | `compute_orbit_diagram` | [`ipc::OrbitDiagramRequest`] | [`ipc::OrbitDiagramResponse`] |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -100,6 +102,24 @@ async fn compute_portrait(
 ) -> Result<ipc::PortraitResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_portrait(&system, &req)).await
+}
+
+#[tauri::command]
+async fn compute_lyapunov(
+    req: ipc::LyapunovRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::LyapunovResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_lyapunov(&system, &req)).await
+}
+
+#[tauri::command]
+async fn compute_orbit_diagram(
+    req: ipc::OrbitDiagramRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::OrbitDiagramResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_orbit_diagram(&system, &req)).await
 }
 
 // ---------------------------------------------------------------------
@@ -479,6 +499,115 @@ async fn save_csv<R: Runtime>(
     .await
 }
 
+#[tauri::command]
+async fn export_lyapunov_latex(
+    req: ipc::LyapunovExportRequest,
+    store: State<'_, SystemStore>,
+    cache: State<'_, Arc<ExportCache>>,
+) -> Result<String, String> {
+    let system = system_or_err(&store, req.run.system_id)?;
+    let cache = Arc::clone(&cache);
+    blocking(move || export_service::lyapunov_latex(&cache, &system, &req)).await
+}
+
+#[tauri::command]
+async fn export_lyapunov_csv(
+    req: ipc::LyapunovExportRequest,
+    store: State<'_, SystemStore>,
+    cache: State<'_, Arc<ExportCache>>,
+) -> Result<ipc::CsvFileOut, String> {
+    let system = system_or_err(&store, req.run.system_id)?;
+    let cache = Arc::clone(&cache);
+    blocking(move || export_service::lyapunov_csv(&cache, &system, &req)).await
+}
+
+#[tauri::command]
+async fn export_orbit_latex(
+    req: ipc::OrbitFigureRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::FigureLatexResponse, String> {
+    let system = system_or_err(&store, req.orbit.diagram.system_id)?;
+    blocking(move || {
+        let out = export_service::orbit_latex(&system, &req, Placement::Inline)?;
+        Ok(ipc::FigureLatexResponse {
+            tex: out.tex,
+            points: out.points,
+            thinned: out.thinned,
+            notes: out.notes,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_orbit_latex<R: Runtime>(
+    app: AppHandle<R>,
+    req: ipc::SaveOrbitFigureRequest,
+    store: State<'_, SystemStore>,
+) -> Result<Option<ipc::SavedFiles>, String> {
+    let system = system_or_err(&store, req.figure.orbit.diagram.system_id)?;
+    let name = export_service::suggested_file_name(&req.suggested_name, "tex");
+    let Some(chosen) = file_dialog(
+        &app,
+        DialogKind::Save,
+        ("LaTeX", &["tex"]),
+        Some(name),
+        None,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let (path, _) = export_service::with_extension(&chosen, "tex");
+    blocking(move || {
+        let base = separatrix_export::latex_figure::file_base(&export_service::display_name(&path));
+        let out = export_service::orbit_latex(&system, &req.figure, Placement::External { base })?;
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let mut names = vec![export_service::display_name(&path)];
+        for f in &out.files {
+            write_file(&dir.join(&f.name), &f.bytes)?;
+            names.push(f.name.clone());
+        }
+        write_file(&path, out.tex.as_bytes())?;
+        Ok(Some(ipc::SavedFiles { names }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_orbit_csv(
+    req: ipc::OrbitExportRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::CsvFileOut, String> {
+    let system = system_or_err(&store, req.diagram.system_id)?;
+    blocking(move || export_service::orbit_csv(&system, &req)).await
+}
+
+#[tauri::command]
+async fn save_csv_file<R: Runtime>(
+    app: AppHandle<R>,
+    req: ipc::SaveCsvFileRequest,
+) -> Result<Option<ipc::SavedFiles>, String> {
+    let name = export_service::suggested_file_name(&req.suggested_name, "csv");
+    let Some(chosen) =
+        file_dialog(&app, DialogKind::Save, ("CSV", &["csv"]), Some(name), None).await?
+    else {
+        return Ok(None);
+    };
+    let (path, _) = export_service::with_extension(&chosen, "csv");
+    blocking(move || {
+        let mut names = Vec::new();
+        for (p, contents) in
+            export_service::csv_save_plan(&path, &req.title, std::slice::from_ref(&req.file))
+        {
+            write_file(&p, contents.as_bytes())?;
+            names.push(export_service::display_name(&p));
+        }
+        Ok(Some(ipc::SavedFiles { names }))
+    })
+    .await
+}
+
 /// Saves a text file built by the UI (`.tex`, `.svg`, `.csv`).
 #[tauri::command]
 async fn save_text_file<R: Runtime>(
@@ -755,6 +884,8 @@ pub fn run() {
             compile_system,
             convert_source,
             compute_portrait,
+            compute_lyapunov,
+            compute_orbit_diagram,
             project_choose_open_path,
             project_read,
             project_choose_save_path,
@@ -769,6 +900,12 @@ pub fn run() {
             export_fixed_points_latex,
             export_csv,
             save_csv,
+            export_lyapunov_latex,
+            export_lyapunov_csv,
+            export_orbit_latex,
+            save_orbit_latex,
+            export_orbit_csv,
+            save_csv_file,
             save_text_file,
             save_png_file,
             clipboard_write_text,

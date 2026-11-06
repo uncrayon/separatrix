@@ -233,19 +233,24 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     ({ req } = await last(page));
     // The cobweb's ranges as they were (the narrower one exactly; the other is widened to the plot's shape).
     assert.deepEqual(req.yRange, first.yRange);
-    assert.ok(Math.abs(req.xRange[0] + req.xRange[1] - first.xRange[0] - first.xRange[1]) < 1e-9, "the same centre");
+    assert.ok(Math.abs(req.xRange[0] + req.xRange[1] - first.xRange[0] - first.xRange[1]) < 1e-9, "the same center");
 
     // The radiogroup's arrow keys skip the impossible Phase plane.
     await viewRadio(page, "Cobweb").focus();
     await page.keyboard.press("ArrowLeft");
     assert.equal(await viewRadio(page, "Time series").getAttribute("aria-checked"), "true");
     assert.equal(await page.evaluate(() => document.activeElement.getAttribute("aria-label")), "Time series");
+    const checked = (name) => viewRadio(page, name).and(page.locator('[aria-checked="true"]')).waitFor({ timeout: 5000 });
     await page.keyboard.press("ArrowLeft");
-    assert.equal(await viewRadio(page, "Cobweb").getAttribute("aria-checked"), "true", "Phase plane is skipped");
+    await checked("Orbit diagram");
     await page.keyboard.press("Home");
-    assert.equal(await viewRadio(page, "Time series").getAttribute("aria-checked"), "true");
+    await checked("Time series");
     await page.keyboard.press("End");
-    assert.equal(await viewRadio(page, "Cobweb").getAttribute("aria-checked"), "true");
+    await checked("Orbit diagram");
+    await page.keyboard.press("ArrowLeft");
+    await checked("Lyapunov spectrum");
+    await page.keyboard.press("ArrowLeft");
+    await checked("Cobweb");
     const phase = viewRadio(page, "Phase plane");
     assert.equal(await phase.getAttribute("aria-disabled"), "true");
     const why = await phase.getAttribute("aria-describedby");
@@ -253,7 +258,7 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     // The group names the reason too (arrow keys skip the option), and the labels are short, with the full name kept.
     const group = page.locator(".panel-right [role=radiogroup][aria-label=View]");
     assert.equal(await group.getAttribute("aria-describedby"), why);
-    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb"]);
+    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb", "λ", "Orbit"]);
     assert.equal(await phase.getAttribute("title") ?? (await phase.getAttribute("data-tooltip")), "Phase plane");
     // Every label fits inside its segment, in projector mode at 1,024 px too.
     await page.setViewportSize({ width: 1024, height: 768 });
@@ -268,7 +273,7 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
         return range.getBoundingClientRect().width + pad <= el.getBoundingClientRect().width + 0.5;
       }),
     );
-    assert.deepEqual(fits, [true, true, true]);
+    assert.deepEqual(fits, [true, true, true, true, true]);
     await page.evaluate(() => (document.documentElement.dataset.theme = "dark"));
     await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -276,7 +281,7 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     await page.getByRole("button", { name: /^Cobweb:/ }).click();
     const menu = page.getByRole("menu");
     const items = menu.getByRole("menuitemradio");
-    assert.deepEqual(await items.locator(".axes-menu-label").allInnerTexts(), ["Phase plane", "Time series", "Cobweb"]);
+    assert.deepEqual(await items.locator(".axes-menu-label").allInnerTexts(), ["Phase plane", "Time series", "Cobweb", "Lyapunov spectrum", "Orbit diagram"]);
     // The disabled one says why, visibly, under it.
     const disabled = menu.getByRole("menuitemradio", { name: /^Phase plane/ });
     assert.equal(await disabled.getAttribute("aria-disabled"), "true");
@@ -358,7 +363,7 @@ test("export: the SVG has the diagonal at 45° in plot-axis and a staircase in t
     const axis = "#7d888b";
     const traj1 = "#0072b2";
     const diag = paths.paths.filter((p) => p.stroke.toLowerCase() === axis && pts(p.d).length === 2);
-    assert.equal(diag.length, 1, "one 2-point path in the axis colour");
+    assert.equal(diag.length, 1, "one 2-point path in the axis color");
     const [[ax, ay], [bx, by]] = pts(diag[0].d);
     assert.ok(Math.abs(Math.abs(bx - ax) - Math.abs(by - ay)) < 0.05, `at 45° (${ax},${ay} → ${bx},${by})`);
     const stair = paths.paths.filter((p) => p.stroke.toLowerCase() === traj1);

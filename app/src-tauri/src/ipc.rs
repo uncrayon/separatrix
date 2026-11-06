@@ -143,6 +143,9 @@ pub struct CompileResponse {
     pub kind: Option<SystemKind>,
     /// Entered as `H(q, p) = ...`.
     pub hamiltonian: bool,
+    /// A Hamiltonian that splits as `T(p) + V(q)` and does not read `t`,
+    /// so the symplectic methods (`verlet`, `yoshida4`) can integrate it.
+    pub separable: bool,
     /// `t` (or `n`) does not appear on a right-hand side.
     pub autonomous: bool,
     /// State variables in order (empty when not `ok`).
@@ -178,13 +181,14 @@ pub enum AxisRef {
 pub struct SolverOptions {
     /// Integration method.
     pub method: Method,
-    /// Relative tolerance (dopri5 only).
+    /// Relative tolerance (dopri5 and rosenbrock23 only).
     pub rtol: f64,
-    /// Absolute tolerance (dopri5 only).
+    /// Absolute tolerance (dopri5 and rosenbrock23 only).
     pub atol: f64,
-    /// Fixed step for euler/heun/rk4; initial step for dopri5 (0 = automatic).
+    /// Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
+    /// dopri5 and rosenbrock23 (0 = automatic).
     pub h: f64,
-    /// Largest allowed step for dopri5; absent = no limit.
+    /// Largest allowed step for dopri5 and rosenbrock23; absent = no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub h_max: Option<f64>,
@@ -335,7 +339,7 @@ pub struct FixedPointOut {
     /// Eigenvalues as `[re, im]` pairs.
     pub eigenvalues: Vec<(f64, f64)>,
     /// One entry per eigenvalue (same order): the unit eigenvector of a real
-    /// eigenvalue, sign-normalised so its largest-magnitude component is
+    /// eigenvalue, sign-normalized so its largest-magnitude component is
     /// positive, or the real part of the eigenvector of a complex one.
     /// `null` for the missing direction of a defective eigenvalue (a
     /// degenerate node has one vector and one `null`); stars get an
@@ -365,6 +369,27 @@ pub struct TrajectoryOut {
     pub status: Status,
     /// Work counters.
     pub stats: Stats,
+    /// How well a Hamiltonian flow kept its energy; absent for other systems.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub energy: Option<EnergyOut>,
+    /// `true` when Dormand–Prince's steps looked stiff (Hairer's test): its
+    /// step was held back by stability, not accuracy, and `rosenbrock23`
+    /// would take far fewer. Absent otherwise, and for every other method.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub stiff: Option<bool>,
+}
+
+/// The energy `H` along one trajectory of a Hamiltonian flow.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct EnergyOut {
+    /// `H` at the start point.
+    pub h0: f64,
+    /// The largest `|H − h0|` over the returned samples.
+    pub max_abs_drift: f64,
 }
 
 /// Response of the `compute_portrait` command.
@@ -394,6 +419,142 @@ pub struct PortraitResponse {
     pub elapsed_ms: f64,
 }
 
+/// Request of the `compute_lyapunov` command: the Lyapunov spectrum of the
+/// orbit from `x0` by Benettin's QR method (`dyn_analysis::lyapunov_spectrum`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order.
+    pub params: Vec<f64>,
+    /// Full initial state vector.
+    pub x0: Vec<f64>,
+    /// Start time (flow); ignored for maps, which start at `n = 0`.
+    pub t0: f64,
+    /// Time (flow) or iterates (map) run before measuring, `>= 0`.
+    pub transient: f64,
+    /// Time (flow) or iterates (map) measured after the transient, `> 0`.
+    /// For a map, `transient + total` is at most `MAX_LYAPUNOV_ITERATES`.
+    pub total: f64,
+    /// Flow: time `τ` between QR steps. Map: iterates per QR step. `> 0`,
+    /// and `total / interval` at most `MAX_RENORMALIZATIONS`.
+    pub interval: f64,
+    /// Blocks for the uncertainty, `2..=` the number of QR steps.
+    pub blocks: usize,
+    /// Integrator for a flow (ignored for maps). `maxSteps` bounds the
+    /// accepted steps of the whole run, transient included.
+    pub solver: SolverOptions,
+}
+
+/// Response of the `compute_lyapunov` command.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// `λ1 … λn`, largest first (per unit time, or per iterate for a map).
+    /// Empty when no QR step was completed.
+    pub exponents: Vec<f64>,
+    /// Standard error of each exponent over the blocks reached (sample
+    /// standard deviation of the per-block exponents over `√B`). Empty when
+    /// fewer than two blocks were reached.
+    pub uncertainty: Vec<f64>,
+    /// `Σ λ_i`.
+    pub sum: f64,
+    /// What `sum` must equal: the time average of `tr J` (flow) or the mean
+    /// of `ln |det J|` (map) along the orbit. The gap measures the
+    /// integrator's error on the tangent vectors.
+    pub trace_average: f64,
+    /// Time (flow) or iterate index (map) of each running-estimate sample.
+    pub history_t: Vec<f64>,
+    /// Running estimates, row-major: sample `k` is `history[k·n .. (k+1)·n]`.
+    pub history: Vec<f64>,
+    /// QR steps completed.
+    pub renormalizations: usize,
+    /// Why the run stopped; the estimates cover what was completed.
+    pub status: Status,
+    /// Work counters, transient included.
+    pub stats: Stats,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
+/// Most parameter values (columns) one `compute_orbit_diagram` request may ask for.
+pub const MAX_ORBIT_COLUMNS: usize = 4096;
+/// Most kept iterates (`columns · kept`) one `compute_orbit_diagram` request may ask for.
+pub const MAX_ORBIT_POINTS: usize = 4_000_000;
+
+/// Request of the `compute_orbit_diagram` command: the orbit diagram of a
+/// map over a range of one parameter (`dyn_analysis::orbit_diagram`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitDiagramRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order; the swept one
+    /// is replaced column by column.
+    pub params: Vec<f64>,
+    /// Index of the swept parameter.
+    pub param: usize,
+    /// First and last parameter value, both included, `lo < hi`.
+    pub range: (f64, f64),
+    /// Parameter values across `range`, `2..=MAX_ORBIT_COLUMNS`.
+    pub columns: usize,
+    /// Index of the state recorded.
+    pub state: usize,
+    /// Full initial state vector, the same for every column.
+    pub x0: Vec<f64>,
+    /// Iterates discarded in each column.
+    pub transient: usize,
+    /// Iterates kept in each column, `>= 1`, with `columns · kept` at most
+    /// `MAX_ORBIT_POINTS`.
+    pub kept: usize,
+    /// Also locate the period-doubling points (1-D maps only).
+    pub doublings: bool,
+}
+
+/// A period-doubling point: the `period`-cycle loses stability at `r`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct DoublingOut {
+    /// Value of the swept parameter.
+    pub r: f64,
+    /// Period of the cycle that loses stability.
+    pub period: usize,
+}
+
+/// Response of the `compute_orbit_diagram` command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitDiagramResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// The parameter values, `r_j = lo + j·(hi − lo)/(columns − 1)`.
+    pub r: Vec<f64>,
+    /// `columns · kept` iterates, column by column: column `j` is
+    /// `x[j·kept .. (j + 1)·kept]`. `null` from the iterate where the orbit
+    /// left `BLOW_UP_THRESHOLD` (or stopped being finite) on.
+    #[cfg_attr(test, ts(type = "Array<number | null>"))]
+    pub x: Vec<f64>,
+    /// The period-doubling points in increasing `r`: present exactly when
+    /// `doublings` was requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub doublings: Option<Vec<DoublingOut>>,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
 // ---------------------------------------------------------------------
 // Project files (`.sepx`). The project itself is `ProjectFile` from
 // `separatrix-project`, whose keys are snake_case on the wire (the one
@@ -401,8 +562,9 @@ pub struct PortraitResponse {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
-    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
+    ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -549,7 +711,7 @@ pub struct TrajectoryTag {
     pub color: u8,
 }
 
-/// Colour theme of an exported figure.
+/// Color theme of an exported figure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -750,6 +912,95 @@ pub struct SaveCsvRequest {
     pub suggested_name: String,
 }
 
+/// Request of `export_lyapunov_latex` and `export_lyapunov_csv`: the
+/// Lyapunov view's run (the core measures it again, or reuses the last
+/// export's run of the same request) and the names to label it with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovExportRequest {
+    /// The view's own request.
+    pub run: LyapunovRequest,
+    /// The system's title (caption, label, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Request of `export_orbit_csv`: an orbit diagram (the core computes it
+/// again) and the names to label it with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitExportRequest {
+    /// The diagram's request: the screen's for the CSV, one column per
+    /// pixel of the PNG layer for a figure.
+    pub diagram: OrbitDiagramRequest,
+    /// The system's title (comments, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Request of `export_orbit_latex` (and the `figure` of
+/// `save_orbit_latex`): the diagram drawn in the view's ranges.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct OrbitFigureRequest {
+    /// The diagram and its names.
+    pub orbit: OrbitExportRequest,
+    /// The view's parameter range (across).
+    pub x_range: (f64, f64),
+    /// The view's state range (up).
+    pub y_range: (f64, f64),
+    /// Plot width in cm.
+    pub width_cm: f64,
+    /// Plot height in cm.
+    pub height_cm: f64,
+    /// Palette.
+    pub theme: ExportTheme,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// Request of `save_orbit_latex`: the `.tex` and its `.dat` or `.png` file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveOrbitFigureRequest {
+    /// The figure.
+    pub figure: OrbitFigureRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// Request of `save_csv_file`: one CSV with its `.meta.json`, as an export
+/// command returned it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCsvFileRequest {
+    /// The file and its metadata.
+    pub file: CsvFileOut,
+    /// The system's title (as the export command was given it).
+    pub title: String,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
 /// The kinds of text file `save_text_file` writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -825,7 +1076,13 @@ mod bindings {
             NullclineOut::decl(&cfg),
             FixedPointOut::decl(&cfg),
             TrajectoryOut::decl(&cfg),
+            EnergyOut::decl(&cfg),
             PortraitResponse::decl(&cfg),
+            LyapunovRequest::decl(&cfg),
+            LyapunovResponse::decl(&cfg),
+            OrbitDiagramRequest::decl(&cfg),
+            DoublingOut::decl(&cfg),
+            OrbitDiagramResponse::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),
@@ -833,6 +1090,8 @@ mod bindings {
             ProjectView::decl(&cfg),
             ProjectSection::decl(&cfg),
             ProjectCamera::decl(&cfg),
+            ProjectLyapunov::decl(&cfg),
+            ProjectOrbit::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -862,6 +1121,11 @@ mod bindings {
             CsvResponse::decl(&cfg),
             SaveCsvRequest::decl(&cfg),
             TextExtension::decl(&cfg),
+            LyapunovExportRequest::decl(&cfg),
+            OrbitExportRequest::decl(&cfg),
+            OrbitFigureRequest::decl(&cfg),
+            SaveOrbitFigureRequest::decl(&cfg),
+            SaveCsvFileRequest::decl(&cfg),
             SaveTextRequest::decl(&cfg),
             ClipboardTextRequest::decl(&cfg),
         ];
@@ -878,8 +1142,36 @@ mod bindings {
                 "MAX_SECTION_POINTS",
                 crate::service::MAX_SECTION_POINTS.to_string(),
             ),
+            (
+                "MAX_RENORMALIZATIONS",
+                crate::service::MAX_RENORMALIZATIONS.to_string(),
+            ),
+            (
+                "MAX_LYAPUNOV_ITERATES",
+                crate::service::MAX_LYAPUNOV_ITERATES.to_string(),
+            ),
+            ("MAX_ORBIT_COLUMNS", MAX_ORBIT_COLUMNS.to_string()),
+            (
+                "BLOW_UP_THRESHOLD",
+                format!("{:e}", dyn_solve::BLOW_UP_THRESHOLD),
+            ),
+            (
+                "LYAPUNOV_HISTORY",
+                crate::service::LYAPUNOV_HISTORY.to_string(),
+            ),
+            ("MAX_ORBIT_POINTS", MAX_ORBIT_POINTS.to_string()),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
+            ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),
+            ("ORBIT_MISFIT", text(separatrix_project::ORBIT_MISFIT)),
+            (
+                "ORBIT_MAX_TRANSIENT",
+                separatrix_project::ORBIT_TRANSIENT_MAX.to_string(),
+            ),
+            (
+                "ORBIT_MAX_KEPT",
+                separatrix_project::ORBIT_KEPT_MAX.to_string(),
+            ),
             (
                 "SPACE_LATEX_REFUSAL",
                 text(crate::export_service::SPACE_LATEX_REFUSAL),
@@ -915,6 +1207,13 @@ mod bindings {
              typescript_bindings"
         );
         ui_types_are_the_generated_ones(&want);
+    }
+
+    #[test]
+    fn a_saved_orbit_diagram_fits_the_widest_plot() {
+        let kept = separatrix_project::ORBIT_KEPT_MAX as usize;
+        assert!(kept * MAX_ORBIT_COLUMNS <= MAX_ORBIT_POINTS);
+        assert!((kept + 1) * MAX_ORBIT_COLUMNS > MAX_ORBIT_POINTS);
     }
 
     /// The UI imports its IPC types from `types.ts`; it must re-export every

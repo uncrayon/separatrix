@@ -192,7 +192,7 @@ function openFixture(doc, params = []) {
 test("unknown fields at every level survive the UI round trip", () => {
   const doc = fixture("unknown-fields.sepx");
   const { state, load } = openFixture(doc, ["k"]);
-  assert.match(load.warnings.join(" "), /rosenbrock23/);
+  assert.match(load.warnings.join(" "), /radau5/);
   const out = projectFromState(state, { loaded: doc });
   // What the UI changes: the unknown method falls back to dopri5 (with the
   // warning above), and the slice lists every state's value.
@@ -284,7 +284,7 @@ test("x0 follows the file's states by name", () => {
   let id = 1;
   const a = applyProjectLoad(stateFromProject(doc), sys, () => id++);
   assert.deepEqual(a.ics[0].x0, [1, 2]);
-  assert.equal(a.ics[0].color, 2, "colours are taken mod 7");
+  assert.equal(a.ics[0].color, 2, "colors are taken mod 7");
   assert.deepEqual(a.baseState, [0.5, 0.25]);
   assert.equal(a.fieldTime, 3);
 });
@@ -341,7 +341,7 @@ test("the solver: an unknown method falls back to dopri5 with a notice; missing 
   assert.match(load.warnings[0], /“rk45”/);
   const { applied } = openFixture(doc);
   assert.deepEqual(applied.solver, { ...DEFAULT_SOLVER, tEnd: 12 });
-  assert.deepEqual([...KNOWN_METHODS], ["euler", "heun", "rk4", "dopri5"]);
+  assert.deepEqual([...KNOWN_METHODS].sort(), ["dopri5", "euler", "heun", "rk4", "rosenbrock23", "verlet", "yoshida4"]);
 });
 
 test("dirty tracking ignores the export options and the app version", () => {

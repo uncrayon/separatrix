@@ -46,6 +46,7 @@ import {
   type Scene,
 } from "./draw";
 import { readPlotTheme, type PlotTheme } from "./theme";
+import { sameBox } from "./usePlotChrome";
 import { plotViewport, sx, sy, toPlot, unitsPerPx, zoomRange } from "./viewport";
 
 interface Props {
@@ -77,8 +78,6 @@ export function dotted(latex: string): string {
   return m ? `\\ddot{${m[1]}}` : `\\dot{${latex}}`;
 }
 
-const sameBox = (a: Box | null, b: Box | null) =>
-  a === b || (!!a && !!b && a.every((v, i) => Math.abs(v - b[i]) < 0.5));
 
 export function PortraitCanvas({ state, actions, theme, toolbar }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);

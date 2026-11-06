@@ -283,3 +283,135 @@ test("a map: no direction field or nullclines, with the reason on the checkbox",
     await browser.close();
   }
 });
+
+async function openStudioView(title, view) {
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(BASE);
+    await page.waitForSelector(".gallery");
+    await page.locator(".gallery .card", { hasText: title }).first().click();
+    await page.waitForSelector(".gallery", { state: "detached" });
+    await page.waitForTimeout(600);
+    await page
+      .locator(".panel-right [role=radiogroup][aria-label=View]")
+      .getByRole("radio", { name: view, exact: true })
+      .click();
+    return { browser, page };
+  } catch (err) {
+    await browser.close();
+    throw err;
+  }
+}
+
+async function openStudioExport(page) {
+  await page.getByRole("button", { name: /^Export…/ }).click();
+  await page.waitForSelector(".export-dialog[role=dialog]");
+}
+
+const savedSvg = (page, k) =>
+  page.evaluate((i) => {
+    const f = window.__sepxMock.saved[i];
+    const doc = new DOMParser().parseFromString(f.contents, "image/svg+xml");
+    return {
+      name: f.name,
+      error: doc.querySelector("parsererror")?.textContent ?? null,
+      desc: doc.querySelector("svg > desc")?.textContent ?? null,
+      images: [...doc.querySelectorAll("image")].map((e) => e.getAttribute("href")?.slice(0, 22)),
+      paths: doc.querySelectorAll("path").length,
+    };
+  }, k);
+
+test("Lyapunov view: the spectrum table with siunitx errors, the running estimates as CSV, SVG and PNG", async () => {
+  const { browser, page } = await openStudioView("Lorenz", "Lyapunov spectrum");
+  try {
+    await page.waitForFunction(() => window.__sepxMock?.lastLyapunov?.req.total === 1000, null, { timeout: 30000 });
+    await page.waitForTimeout(300);
+    await openStudioExport(page);
+    const d = dialog(page);
+    const content = d.locator("[role=radiogroup][aria-label=Content]");
+    assert.equal(await content.getByRole("radio", { name: "Spectrum" }).getAttribute("aria-checked"), "true");
+    const figure = content.getByRole("radio", { name: "Figure" });
+    assert.equal(await figure.getAttribute("aria-disabled"), "true", "no pgfplots figure of the running estimates");
+    assert.match(await figure.getAttribute("data-tooltip"), /spectrum as a table; export the running estimates as PNG or SVG/);
+    assert.match(await content.getByRole("radio", { name: "Fixed points" }).getAttribute("data-tooltip"), /shows no fixed points/);
+    assert.match(
+      await d.locator("#" + (await figure.getAttribute("aria-describedby"))).innerText(),
+      /^Figure: LaTeX gives the spectrum as a table; .*\. Fixed points: the Lyapunov view shows no fixed points\.$/,
+    );
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("\\sisetup{uncertainty-mode = separate}"));
+    const tex = await snippet(page);
+    assert.match(tex, /\$\\lambda_\{1\}\$ & \\num\{0\.9\d* \+- \d\.\d+\}/);
+    assert.match(tex, /\\caption\{Lyapunov spectrum of the Lorenz equations: .*renormalizations every \$\\tau = 0\.1\$/);
+    assert.equal((await d.locator(".export-fp-table tbody tr").count()), 6, "λ₁ … λ₃, Σλ, ⟨tr J⟩ and the difference");
+    assert.match(await page.locator(".ds-export-foot-note").innerText(), /Save… writes lorenz-equations-lyapunov\.tex/);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.clipboardText?.includes("+-"));
+    await d.getByRole("button", { name: "Save…" }).click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 1);
+    assert.equal(await mock(page, "m.saved[0].name"), "lorenz-equations-lyapunov.tex");
+
+    await format(page, "CSV");
+    await page.waitForFunction(() => /^t,lambda_1,lambda_2,lambda_3\n/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 3);
+    assert.deepEqual(await mock(page, "m.saved.slice(1).map((s) => s.name)"), ["lorenz-equations-lyapunov.csv", "lorenz-equations-lyapunov.meta.json"]);
+
+    await format(page, "SVG");
+    await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled);
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 4);
+    const svg = await savedSvg(page, 3);
+    assert.equal(svg.name, "lorenz-equations.svg");
+    assert.equal(svg.error, null);
+    assert.equal(svg.desc, "Lorenz equations with 3 running estimates");
+    assert.deepEqual(svg.images, [], "the running estimates are vector paths");
+    assert.ok(svg.paths > 6, `${svg.paths} paths`);
+
+    await format(page, "PNG");
+    await page.waitForTimeout(400);
+    assert.ok((await inked(page)).n > 200, "the preview draws the running estimates");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("orbit diagram: Copy thins the LaTeX dots, Save… writes the density PNG; CSV rows r,n,x; SVG embeds the density", async () => {
+  const { browser, page } = await openStudioView("Logistic map", "Orbit diagram");
+  try {
+    await page.waitForFunction(() => !!window.__sepxMock?.lastOrbit, null, { timeout: 30000 });
+    await openStudioExport(page);
+    const d = dialog(page);
+    assert.match(await page.locator(".ds-export-sub").innerText(), /^Logistic map, orbit diagram of x against r, as you see it now$/);
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("% Separatrix orbit diagram"));
+    const tex = await snippet(page);
+    assert.match(tex, /One iterate in \d+ is kept so the copied figure stays under 5,000 points/);
+    const req = await mock(page, "m.lastOrbit.req");
+    assert.equal(req.columns, Math.round((8 * 96) / 2.54 * (300 / 96)), "one column per pixel of the 300-dpi layer");
+    await d.getByRole("button", { name: "Save…" }).click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 2);
+    assert.deepEqual(await mock(page, "m.saved.map((s) => s.name)"), ["logistic-map.tex", "logistic-map-points.png"]);
+    assert.match(await mock(page, "m.saved[0].contents"), /\\addplot graphics\[xmin=0, xmax=4, ymin=/);
+
+    await format(page, "CSV");
+    await page.waitForFunction(() => /^r,n,x\n[\d.e-]+,1000,/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 4);
+    assert.deepEqual(await mock(page, "m.saved.slice(2).map((s) => s.name)"), ["logistic-map-orbit-diagram.csv", "logistic-map-orbit-diagram.meta.json"]);
+
+    await format(page, "SVG");
+    await page.waitForFunction(() => !document.querySelector(".ds-export-actions .ds-button--primary")?.disabled, null, { timeout: 15000 });
+    await d.locator(".ds-export-actions .ds-button--primary").click();
+    await page.waitForFunction(() => window.__sepxMock.saved.length === 5);
+    const svg = await savedSvg(page, 4);
+    assert.equal(svg.error, null);
+    assert.deepEqual(svg.images, ["data:image/png;base64,"], "the density as one embedded PNG");
+    assert.match(svg.desc, /^Logistic map with \d+ parameter values$/);
+
+    await format(page, "PNG");
+    await page.waitForTimeout(600);
+    assert.ok((await inked(page)).n > 200, "the preview draws the density");
+  } finally {
+    await browser.close();
+  }
+});

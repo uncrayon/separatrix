@@ -7,8 +7,14 @@ import { axisLatex, latexToPlain, sameAxis, viewAxisLabels } from "../math/forma
 import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   VIEW_CHOICE_LABELS,
+  fitLyapunovRanges,
+  fitOrbitRange,
   hasNullclineLayer,
   isCobweb,
+  isLyapunov,
+  isOrbit,
+  lyapunovFits,
+  orbitFits,
   isReturnMap,
   isSection,
   isSpace,
@@ -19,6 +25,7 @@ import {
   viewChoice,
   viewChoiceAvailability,
   viewChoicesFor,
+  type ViewChoice,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
 import { Select } from "./controls";
@@ -79,6 +86,23 @@ const TOOLS: { key: CanvasTool; label: string; tip: string; icon: ReactNode }[] 
   },
 ];
 
+/** How the axes picker names each view: in its accessible name, in the list of views, and what its axes offer. */
+const PICKER: Record<ViewChoice, { noun: string; name: string; axes: string }> = {
+  phase: { noun: "Axes", name: "phase plane", axes: "; each state, or time, on either axis." },
+  series: { noun: "Axes", name: "time series", axes: "; each state, or time, on either axis." },
+  cobweb: { noun: "Cobweb", name: "cobweb", axes: "." },
+  section: { noun: "Section", name: "section", axes: "; a state on each axis, or one state on both for the return map." },
+  space: { noun: "3D", name: "3D", axes: "; the three states are picked beside it." },
+  lyapunov: { noun: "Lyapunov spectrum", name: "Lyapunov spectrum", axes: "." },
+  orbit: { noun: "Orbit diagram", name: "orbit diagram", axes: "." },
+};
+
+/** "Phase plane, time series or cobweb". */
+function orList(names: string[]): string {
+  const text = names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}` : names.join("");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 export function CanvasToolbar({ state, actions }: Props) {
   const tool = useCanvasTool();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -89,10 +113,19 @@ export function CanvasToolbar({ state, actions }: Props) {
   if (!sys) return null;
   const isMap = sys.kind === "map";
   const space = isSpace(state.view) ? state.view : null;
+  const lyapunov = isLyapunov(state.view);
+  const orbit = isOrbit(state.view);
+  const analysis = lyapunov || orbit;
 
   const zoomToFit = () => {
     const v = state.view;
-    const fit = isSpace(v) ? fitSpace(state, v) : fitView(state);
+    const fit = isSpace(v)
+      ? fitSpace(state, v)
+      : isLyapunov(v)
+        ? fitLyapunov(state)
+        : isOrbit(v)
+          ? fitOrbit(state)
+          : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
@@ -101,19 +134,28 @@ export function CanvasToolbar({ state, actions }: Props) {
     {
       key: "fit",
       label: "Zoom to fit",
-      tip: "Zoom to fit the trajectories",
+      tip: orbit
+        ? "Zoom to fit the diagram over the slider's range"
+        : lyapunov
+          ? "Zoom to fit the run (or double-click the plot)"
+          : "Zoom to fit the trajectories",
       icon: <IconZoomFit />,
       onClick: zoomToFit,
     },
-    {
-      key: "reset",
-      label: "Reset view",
-      tip: "Reset view (or double-click the plot)",
-      icon: <IconResetView />,
-      onClick: actions.resetView,
-    },
+    // The Lyapunov view has no home framing to go back to: fitting the run is its reset.
+    ...(lyapunov
+      ? []
+      : [
+          {
+            key: "reset",
+            label: "Reset view",
+            tip: "Reset view (or double-click the plot)",
+            icon: <IconResetView />,
+            onClick: actions.resetView,
+          },
+        ]),
   ];
-  const layers: IconButtonSpec[] = isSection(state.view) ? [] : [
+  const layers: IconButtonSpec[] = isSection(state.view) || analysis ? [] : [
     ...(!isMap && !space
       ? [
           {
@@ -149,14 +191,14 @@ export function CanvasToolbar({ state, actions }: Props) {
     },
   ];
 
-  const tools = space ? [] : TOOLS;
+  const tools = space || analysis ? [] : TOOLS;
   const keys = [
     ...tools.map((t) => t.key as string),
     ...view.map((b) => b.key),
     ...layers.map((b) => b.key),
     "axes",
   ];
-  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space ? "axes" : tool;
+  const tabStop = keys.includes(stop) && !view.some((b) => b.key === stop) ? stop : space || analysis ? "axes" : tool;
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -303,6 +345,18 @@ function fitSpace(state: StudioState, view: SpaceView): Pick<SpaceView, "xRange"
   return { xRange, yRange, zRange };
 }
 
+function fitLyapunov(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
+  return lyapunovFits(state.compiled, state.shapeId, state.lyapunov) ? fitLyapunovRanges(state.lyapunov.res) : null;
+}
+
+function fitOrbit(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
+  const v = state.view;
+  if (!isOrbit(v)) return null;
+  const p = state.params[v.param];
+  const y = orbitFits(state.compiled, state.shapeId, v, state.orbit) ? fitOrbitRange(state.orbit.res) : null;
+  return p && y ? { xRange: [p.min, p.max], yRange: y } : null;
+}
+
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
   if (!sys) return null;
@@ -409,12 +463,18 @@ function AxisPicker({
         ]),
   ];
   const cobweb = isCobweb(state.view);
-  const viewOnly = cobweb || space;
-  const { x: xLatex, y: yLatex } = viewAxisLabels(state.view, sys.states, sys.kind);
+  const lyapunov = isLyapunov(state.view);
+  const orbit = isOrbit(state.view) ? state.view : null;
+  const viewOnly = cobweb || space || lyapunov || !!orbit;
+  const { x: xLatex, y: yLatex } = lyapunov
+    ? { x: isMap ? "n" : "t", y: "\\lambda" }
+    : orbit
+      ? { x: sys.params[orbit.param]?.latex ?? "", y: sys.states[orbit.yAxis.index]?.latex ?? "" }
+      : viewAxisLabels(state.view, sys.states, sys.kind);
   const plain = (a: AxisRef) => latexToPlain(axisLatex(a, sys.states, sys.kind));
   const step = cobweb ? "n" : isReturnMap(state.view) ? "k" : null;
-  const xPlain = step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
-  const yPlain = step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
+  const xPlain = lyapunov ? xLatex : orbit ? latexToPlain(xLatex) : step ? `${plain(state.view.xAxis)} ${step}` : plain(state.view.xAxis);
+  const yPlain = lyapunov ? "λ" : orbit ? latexToPlain(yLatex) : step ? `${plain(state.view.yAxis)} ${step}+1` : plain(state.view.yAxis);
   const avail = viewChoiceAvailability(sys, systemNameOf(state));
   const current = viewChoice(state.view);
   const items = () => menuItems(menuRef.current);
@@ -568,19 +628,9 @@ function AxisPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={space ? "View: 3D" : `${cobweb ? "Cobweb" : section ? "Section" : "Axes"}: ${xPlain} horizontal, ${yPlain} vertical`}
+        aria-label={space ? "View: 3D" : `${PICKER[current].noun}: ${xPlain} horizontal, ${yPlain} vertical`}
         data-tooltip={viewOnly ? "Choose the view" : "Choose the view and axes"}
-        data-tooltip-desc={
-          cobweb
-            ? "Phase plane, time series or cobweb."
-            : space
-              ? "Phase plane, time series, section or 3D; the three states are picked beside it."
-              : section
-                ? "Phase plane, time series or section; a state on each axis, or one state on both for the return map."
-                : isMap
-                  ? "Phase plane, time series or cobweb; each state, or time, on either axis."
-                  : "Phase plane, time series, section or 3D; each state, or time, on either axis."
-        }
+        data-tooltip-desc={`${orList(viewChoicesFor(sys).map((c) => PICKER[c].name))}${PICKER[current].axes}`}
         tabIndex={tabIndex}
         onFocus={onFocus}
         onClick={() => (open ? setOpen(false) : openWith("current"))}

@@ -2,7 +2,7 @@
 // same scene as the screen and the PNG, with text kept as text.
 
 import type { Scene } from "../canvas/draw";
-import { drawFigure, type FigureFonts } from "../canvas/figure";
+import { drawAnalysisFigure, drawFigure, type AnalysisFigure, type FigureFonts } from "../canvas/figure";
 import { drawSpaceFigure, type SpaceFigure } from "../canvas/space";
 import { createSvgContext, type TextMeasure } from "../canvas/svgContext";
 import type { PlotTheme } from "../canvas/theme";
@@ -25,20 +25,19 @@ export interface SvgFigure {
   title?: string;
   desc?: string;
   space?: SpaceFigure | null;
+  analysis?: AnalysisFigure | null;
 }
 
 const cm = (v: number) => `${Math.round(v * 1000) / 1000}cm`;
 
 export function figureSvg(fig: SvgFigure, measure: TextMeasure): string {
   const ctx = createSvgContext(measure);
+  const opts = { background: !fig.transparent, names: fig.names, fonts: fig.fonts };
   if (fig.space) drawSpaceFigure(ctx, fig.widthPx, fig.heightPx, fig.space, fig.theme, !fig.transparent);
   else {
     const vp = makeViewport(fig.widthPx, fig.heightPx, fig.xRange, fig.yRange);
-    drawFigure(ctx, fig.widthPx, fig.heightPx, vp, fig.scene, fig.theme, {
-      background: !fig.transparent,
-      names: fig.names,
-      fonts: fig.fonts,
-    });
+    if (fig.analysis) drawAnalysisFigure(ctx, fig.widthPx, fig.heightPx, vp, fig.analysis, fig.theme, opts);
+    else drawFigure(ctx, fig.widthPx, fig.heightPx, vp, fig.scene, fig.theme, opts);
   }
   return ctx.toSvg({
     width: fig.widthPx,

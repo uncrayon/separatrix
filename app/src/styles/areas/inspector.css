@@ -34,6 +34,11 @@
   margin-bottom: var(--space-2);
 }
 
+.inspector .inspector-view-control .ds-segmented--fill .ds-segmented-item {
+  flex: 1 1 auto;
+  padding: 0 var(--space-1);
+}
+
 .inspector .nowrap {
   white-space: nowrap;
 }

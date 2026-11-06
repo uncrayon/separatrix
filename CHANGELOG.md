@@ -4,10 +4,99 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Exports of the Lyapunov and orbit-diagram views (docs/exports.md). The export dialog lists each
+  view's formats and says why the others are disabled. The Lyapunov view's LaTeX is its spectrum
+  as a booktabs table under `\sisetup{uncertainty-mode = separate}`, one row per exponent,
+  `$\lambda_{1}$ & \num{0.906 +- 0.004}`, then Σλ against ⟨tr J⟩ and their difference. The error
+  is rounded to one significant digit (two when it starts with 1) and the value to the same place,
+  from the exact decimal value, so the text is the same on every platform. The caption names the
+  system and parameters, the integrator with its step or tolerances, the total time and the
+  transient, and the count and interval of the renormalizations. Its CSV is `t,lambda_1,…` with a
+  `.meta.json`, and its PNG and SVG are the view's plot. An orbit diagram's LaTeX figure has the
+  screen's frame and a dot per iterate up to 5,000; above that Save writes `<base>-points.png`, a
+  density image with one pixel column per parameter value under vector axes, and Copy keeps one
+  iterate in k. Its CSV is `r,n,x` for every finite iterate. Its SVG has vector axes with the
+  density as an embedded PNG. Figures ask the core for one column per pixel of their image (300
+  dpi for LaTeX). New commands: `export_lyapunov_latex`, `export_lyapunov_csv` (the core measures
+  the view's request again and keeps the last run), `export_orbit_latex`, `save_orbit_latex`,
+  `export_orbit_csv` and `save_csv_file`.
+- The orbit diagram (Strogatz §10.2, Figure 10.2.7): a new choice of the View control, Orbit, for
+  maps with a parameter (disabled with the reason for a map without one). It sweeps a parameter,
+  the first by default, over its slider's range, or over From and To in the inspector's Orbit
+  diagram panel, with one column per device pixel, each at its pixel's center. Every column is
+  iterated from the selected start point, else the first: `N₀ = 1,000` iterates are dropped and
+  `N = 200` drawn as a density, binned per pixel with log-scaled opacity in `plot-fp`, on a 2D
+  canvas. A vertical line in `accent` marks the parameter's value, and clicking a column sets the
+  parameter to that column's `r`. Zooming or panning across asks the core for the new range;
+  moving the slider asks for nothing. For a one-dimensional map the inspector lists the period
+  doublings Strogatz's way (`r₁ = 3.000000`, `r₂ = 3.449490`, `r₃ = 3.544090`, `r₄ = 3.564407`
+  for the logistic map), from the same `period_doublings` the chaos gate checks. The status bar
+  reads `Orbit 19 ms` and `774 columns · 200 iterates each`, and its tooltip gives the round trip
+  and the drawing time. In the release app the default request takes 19 ms in Rust and 53 ms
+  round trip, and draws in 4 ms (medians of seven runs), so the plain JSON response is kept.
+  Projects save the view as kind `"orbit"` with the axis `{ "kind": "param", "name": "r" }` and an
+  `orbit` object of `transient` and `kept` (format version 1, additive). The browser preview
+  iterates the map and finds the doublings in JavaScript. The View control's segments have the
+  narrow padding, so five labels fit in projector mode at 1,024 px.
+- The Lyapunov view (Strogatz §9.3, §10.5): a new choice of the View control, λ, for flows and
+  maps. It runs `compute_lyapunov` on the selected start point (else the first) with the studio's
+  solver and plots the running estimate of each exponent against `t` (or `n`) in its trajectory
+  color, its final value dashed and λ₁ … λₙ beside it, fitted to each run and zoomed and panned
+  like the phase plane. The inspector's Lyapunov panel sets the transient, the time (or iterates)
+  measured, the renormalization interval τ and the blocks, and reads out `λ₁ = 0.906 ± 0.004`,
+  `Σλ`, `⟨tr J⟩` (a map's `⟨ln |det J|⟩`) and their difference. The status bar reads
+  `10⁵ renormalizations · RK4 · h 0.01`. The method picker disables the methods the core can't
+  use for the variational equations, and the step limit is raised to cover the whole run.
+  Projects save the view as kind `"lyapunov"` with a `lyapunov` object and the axis kind
+  `exponent` (format version 1, additive). The browser preview computes the spectrum in
+  JavaScript (RK4 and Gram–Schmidt). The View control's segments now take their labels' widths,
+  so five fit at 1,024 px.
+- Rosenbrock 2(3) for stiff systems: the L-stable implicit method of MATLAB's `ode23s`, adaptive,
+  with the exact Jacobian and its own dense output, so sampling and Poincaré sections work.
+  Dormand–Prince now runs Hairer's stiffness test. When its steps are held back by stability
+  rather than accuracy, the trajectory says so, and the Solver panel offers "Use Rosenbrock 2(3)"
+  while the status bar warns "Steps look stiff". On the relaxation oscillator at μ = 1000,
+  Rosenbrock 2(3) takes 4,366 steps where Dormand–Prince takes 1,585,080. Projects save the
+  method as `"rosenbrock23"`; Lyapunov runs refuse it. The chaos gate solves Robertson's reaction
+  to t = 40 within 1.6·10⁻⁷ of the published values.
+- Symplectic methods for Hamiltonian systems (Strogatz §6.5): Störmer–Verlet (leapfrog, order 2)
+  and Yoshida 4 (order 4) integrate an `H(q, p)` that splits as `T(p) + V(q)`, and keep its energy
+  error bounded over long runs where Runge–Kutta drifts. The method picker offers them only for
+  such a system and says why otherwise; the core refuses them for any other flow and for Lyapunov
+  runs. Every trajectory of a Hamiltonian flow reports `H` at its start and its largest drift, and
+  the Solver panel reads it out as `|ΔH| max = 3.1 × 10⁻⁷`. Projects save the methods as
+  `"verlet"` and `"yoshida4"`. The chaos gate steps the pendulum over 10⁵ periods: Verlet at
+  h = 0.05 stays within 2.7·10⁻⁴ and Yoshida 4 at h = 0.1 within 3.9·10⁻⁶, with no growth from the
+  first 10³ periods to the last, while RK4 at h = 0.1 grows 98-fold.
+- Lyapunov spectrum (Strogatz §9.3, §10.5): `dyn_analysis::lyapunov_spectrum` measures every
+  exponent of a flow or a map by Benettin's QR method. A flow integrates its variational
+  equations with the exact Jacobian. Each exponent gets a block standard error, and the sum is
+  checked against the mean trace of `J` (flows) or the mean `ln |det J|` (maps). The result
+  carries the running estimates against `t`. The `compute_lyapunov` command exposes it to the UI
+  and refuses `τ ≤ 0`, `total ≤ 0`, `blocks < 2` and runs of more than 10⁷ QR steps with a
+  message.
+- Orbit diagrams of maps (Strogatz §10.2): `dyn_analysis::orbit_diagram` iterates a map across
+  a range of one parameter and keeps the iterates after a transient, with NaN once an orbit
+  escapes. `dyn_analysis::period_doublings` locates the period-doubling points of a
+  one-dimensional map from the diagram: it follows each `P`-cycle by Newton's method and bisects
+  for the multiplier `∏ f′(x_i) = −1`. The `compute_orbit_diagram` command exposes both, up to
+  4096 parameter values and 4·10⁶ points, and refuses flows, indices outside the system, an
+  invalid range, and doublings of a map with more than one state.
+- Chaos gate (`scripts/chaos-gate.sh`): the Lorenz, Hénon and logistic templates reproduce
+  published exponents (Lorenz 0.9056, 0, −14.5723 and Σλ = −41/3; Hénon 0.41922, −1.62319 and
+  Σλ = ln 0.3; logistic `r = 4` ln 2) and the logistic period doublings (`r1 = 3`,
+  `r2 = 1 + √6`, `r3 = 3.5440903`, `r4 = 3.5644073`, each within 1e−6) within stated tolerances.
+  It prints `(r3 − r2)/(r4 − r3)` beside Feigenbaum's δ for information, and four wrong claims
+  fail.
+- Evaluation benchmark (`cargo run --release -p dyn-analysis --example chaos_bench`): the
+  compiled Lorenz spectrum at the Lyapunov view's T = 10³ takes 98 ms (median of 7 runs, budget
+  500 ms), 3.2× the hand-written Rust field. Every chaos workload is inside its budget, so the
+  interpreter stays and no Cranelift JIT is built. `docs/performance.md` has the rule, the
+  numbers and the limiter.
 - 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
   least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
   the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).
-  Trajectories keep their colours and get thicker in projector mode; fixed points are drawn in
+  Trajectories keep their colors and get thicker in projector mode; fixed points are drawn in
   Strogatz's glyphs and are searched over the third axis's range too, so the Lorenz points `C±`
   appear whatever the slice. The toolbar and the View panel pick the three states (a state
   already on another axis swaps with it). Lines are drawn with WebGL through three.js, loaded
@@ -101,6 +190,19 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- A fixed-step run that needs exactly the step limit (h = 0.05 to T = 10⁴ with 200,000 steps)
+  finishes at T instead of stopping a sliver short with "Step limit": fixed steps sit at
+  t₀ + k·h rather than accumulating rounding by repeated addition.
+- Opening a system that has no separable H(q, p) while Störmer–Verlet or Yoshida 4 is chosen
+  switches to Dormand–Prince 5(4), with a note in the Solver section, instead of failing every
+  computation.
+- A click on the orbit diagram sets the parameter of the column drawn under the pointer (it
+  could land one column to the left), and the marker sits on that column.
+- Opening a project in the Lyapunov view keeps the file's framing instead of refitting it to the
+  first run.
+- The core refuses an orbit-diagram transient above 100,000 iterates and a map Lyapunov run of
+  more than 10⁸ iterates (`MAX_LYAPUNOV_ITERATES`), which used to keep the command busy with no
+  way to cancel.
 - A one-dimensional fixed point on a kink of `f` (the tent map's peak at `r = 1`, `|x|` at 0)
   has no multiplier and is non-hyperbolic, instead of λ = 0 "superstable"; an interval of fixed
   points (`f(x) = x` on `[a, b]`) is reported by its two ends as non-isolated instead of once per

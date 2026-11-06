@@ -10,7 +10,9 @@ use dyn_expr::InputFormat;
 use serde::Serialize;
 
 use crate::latex_util::slug;
-use crate::model::{Labels, SectionSpec, SystemKind, Trajectory};
+use crate::model::{
+    Labels, LyapunovRun, Method, OrbitRun, SectionSpec, SystemKind, SystemMeta, Trajectory,
+};
 use crate::num::shortest;
 use crate::words::{status_id, time_name};
 
@@ -306,6 +308,213 @@ pub fn files(input: &CsvInput) -> Vec<CsvFile> {
             })
         })
         .collect()
+}
+
+fn meta_params(labels: &Labels) -> Vec<MetaParam<'_>> {
+    labels
+        .params
+        .iter()
+        .map(|p| MetaParam {
+            name: &p.name,
+            value: p.value,
+        })
+        .collect()
+}
+
+fn meta_system<'a>(sys: &SystemMeta<'a>) -> MetaSystem<'a> {
+    MetaSystem {
+        kind: sys.kind,
+        input_format: sys.format,
+        lines: sys.lines,
+    }
+}
+
+fn pretty<T: Serialize>(doc: &T) -> String {
+    let mut s = serde_json::to_string_pretty(doc).unwrap_or_default();
+    s.push('\n');
+    s
+}
+
+#[derive(Serialize)]
+struct MetaIntegrator {
+    method: Method,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    h: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtol: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    atol: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct LyapunovMeta<'a> {
+    format: &'static str,
+    format_version: u32,
+    app_version: &'a str,
+    title: &'a str,
+    csv: String,
+    system: MetaSystem<'a>,
+    params: Vec<MetaParam<'a>>,
+    columns: Vec<String>,
+    x0: &'a [f64],
+    t0: f64,
+    transient: f64,
+    total: f64,
+    interval: f64,
+    blocks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    integrator: Option<MetaIntegrator>,
+    renormalizations: usize,
+    exponents: &'a [f64],
+    uncertainty: &'a [f64],
+    sum: f64,
+    trace_average: f64,
+    status: &'static str,
+    notes: Vec<&'static str>,
+}
+
+/// The running estimates of a Lyapunov run: `t` (or `n`), then
+/// `lambda_1 … lambda_n`, one row per sampled renormalization (the last row
+/// is the final estimate), cut at the first row with a value that is not
+/// finite; and its `.meta.json` with the settings and the result.
+pub fn lyapunov(sys: &SystemMeta, run: &LyapunovRun, app_version: &str) -> CsvFile {
+    let s = &run.spectrum;
+    let n = s.exponents.len();
+    let mut columns = vec![time_name(sys.kind).to_string()];
+    columns.extend((1..=n).map(|i| format!("lambda_{i}")));
+    let mut csv = record(&columns);
+    let rows = s
+        .history_t
+        .len()
+        .min(s.history.len().checked_div(n).unwrap_or(0));
+    for k in 0..rows {
+        let row = &s.history[k * n..(k + 1) * n];
+        if !s.history_t[k].is_finite() || row.iter().any(|v| !v.is_finite()) {
+            break;
+        }
+        let mut cells = vec![shortest(s.history_t[k])];
+        cells.extend(row.iter().map(|&v| shortest(v)));
+        csv.push_str(&cells.join(","));
+        csv.push('\n');
+    }
+    let stem = format!("{}-lyapunov", slug(sys.title, "system"));
+    let o = &run.solver;
+    let integrator = (sys.kind == SystemKind::Ode).then(|| {
+        let adaptive = o.method.is_adaptive();
+        MetaIntegrator {
+            method: o.method,
+            h: (!adaptive).then_some(o.h),
+            rtol: adaptive.then_some(o.rtol),
+            atol: adaptive.then_some(o.atol),
+        }
+    });
+    let meta = pretty(&LyapunovMeta {
+        format: "separatrix-lyapunov",
+        format_version: 1,
+        app_version,
+        title: sys.title,
+        csv: format!("{stem}.csv"),
+        system: meta_system(sys),
+        params: meta_params(sys.labels),
+        columns,
+        x0: &run.x0,
+        t0: run.t0,
+        transient: run.transient,
+        total: run.total,
+        interval: run.interval,
+        blocks: run.blocks,
+        integrator,
+        renormalizations: s.renormalizations,
+        exponents: &s.exponents,
+        uncertainty: &s.uncertainty,
+        sum: s.sum,
+        trace_average: s.trace_average,
+        status: status_id(s.status),
+        notes: vec![
+            "Rows are the running estimates after sampled renormalizations, in increasing time; the last row is the final estimate.",
+            "uncertainty is the standard error over the blocks; trace_average is what sum must equal (flow: the time average of tr J; map: the mean of ln |det J|).",
+        ],
+    });
+    CsvFile { stem, csv, meta }
+}
+
+#[derive(Serialize)]
+struct OrbitMeta<'a> {
+    format: &'static str,
+    format_version: u32,
+    app_version: &'a str,
+    title: &'a str,
+    csv: String,
+    system: MetaSystem<'a>,
+    params: Vec<MetaParam<'a>>,
+    columns: Vec<String>,
+    swept: &'a str,
+    range: Option<(f64, f64)>,
+    parameter_values: usize,
+    state: &'a str,
+    x0: &'a [f64],
+    transient: usize,
+    kept: usize,
+    rows: usize,
+    notes: Vec<&'static str>,
+}
+
+/// An orbit diagram as rows `r,n,x` (the swept parameter's and the state's
+/// names), column by column, one per finite kept iterate, `n` its index
+/// (`T … T + kept − 1`); and its `.meta.json`.
+pub fn orbit(sys: &SystemMeta, run: &OrbitRun, app_version: &str) -> CsvFile {
+    let d = &run.diagram;
+    let param = sys
+        .labels
+        .params
+        .get(run.param)
+        .map_or("r", |p| p.name.as_str());
+    let state = sys
+        .labels
+        .states
+        .get(run.state)
+        .map_or("x", |s| s.name.as_str());
+    let columns = vec![param.to_string(), "n".to_string(), state.to_string()];
+    let mut csv = record(&columns);
+    let mut rows = 0;
+    for (j, &r) in d.r.iter().enumerate() {
+        let col = d.x.get(j * d.kept..(j + 1) * d.kept).unwrap_or(&[]);
+        for (k, &x) in col.iter().enumerate() {
+            if x.is_finite() {
+                csv.push_str(&format!(
+                    "{},{},{}\n",
+                    shortest(r),
+                    run.transient + k,
+                    shortest(x)
+                ));
+                rows += 1;
+            }
+        }
+    }
+    let stem = format!("{}-orbit-diagram", slug(sys.title, "system"));
+    let meta = pretty(&OrbitMeta {
+        format: "separatrix-orbit-diagram",
+        format_version: 1,
+        app_version,
+        title: sys.title,
+        csv: format!("{stem}.csv"),
+        system: meta_system(sys),
+        params: meta_params(sys.labels),
+        columns,
+        swept: param,
+        range: d.r.first().zip(d.r.last()).map(|(&a, &b)| (a, b)),
+        parameter_values: d.r.len(),
+        state,
+        x0: &run.x0,
+        transient: run.transient,
+        kept: d.kept,
+        rows,
+        notes: vec![
+            "One row per kept iterate, parameter value by parameter value; n counts from the start point, so the first kept iterate is n = transient.",
+            "Iterates of an orbit that escaped are left out, and so is the rest of that orbit.",
+        ],
+    });
+    CsvFile { stem, csv, meta }
 }
 
 #[cfg(test)]

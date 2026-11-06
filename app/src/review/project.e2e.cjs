@@ -88,7 +88,7 @@ test("unknown fields at every level survive opening and saving in the UI", async
   try {
     await h(page, "openPath", "/mock/unknown-fields.sepx");
     const banner = await h(page, "banner");
-    assert.ok(banner.some((d) => d.severity === "warning" && d.message.includes("rosenbrock23")), JSON.stringify(banner));
+    assert.ok(banner.some((d) => d.severity === "warning" && d.message.includes("radau5")), JSON.stringify(banner));
     await setNextSave(page, "/mock/out.sepx");
     assert.equal(await h(page, "saveAs"), true);
     const doc = JSON.parse(fixtureText("unknown-fields.sepx"));

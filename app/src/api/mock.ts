@@ -1,4 +1,5 @@
 import type {
+  Method,
   Arrow,
   AxisRef,
   ChosenSavePath,
@@ -17,8 +18,15 @@ import type {
   FigureLatexResponse,
   FixedPointOut,
   FixedPointsLatexRequest,
+  LyapunovExportRequest,
+  LyapunovRequest,
+  LyapunovResponse,
   NullclineOut,
   OpenedProject,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
+  OrbitExportRequest,
+  OrbitFigureRequest,
   ParamInfo,
   PortraitRequest,
   PortraitResponse,
@@ -27,10 +35,12 @@ import type {
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
+  SaveCsvFileRequest,
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
   SaveFigureRequest,
+  SaveOrbitFigureRequest,
   SaveTextRequest,
   StateInfo,
   SystemKind,
@@ -41,13 +51,17 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
-import { MAX_SECTION_POINTS } from "./ipc.generated";
+import { BLOW_UP_THRESHOLD, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
+import { METHODS } from "../state/methods";
+import { roundWithUncertainty } from "../state/model";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
 interface MockSystem {
   kind: SystemKind;
   hamiltonian?: boolean;
+  energy?: (x: number[], p: number[]) => number;
+  stiffAt?: (p: number[]) => boolean;
   autonomous?: boolean;
   states: StateInfo[];
   params: ParamInfo[];
@@ -161,6 +175,7 @@ const SYSTEMS: Record<string, MockSystem> = {
       "\\dot{p} = -\\frac{\\partial H}{\\partial q}",
     ],
     f: (_t, [q, p]) => [p, -Math.sin(q)],
+    energy: ([q, p]) => (p * p) / 2 - Math.cos(q),
   },
   "sin-x": {
     kind: "ode",
@@ -241,6 +256,7 @@ const SYSTEMS: Record<string, MockSystem> = {
       "\\dot{y} = -\\frac{x}{\\mu}",
     ],
     f: (_t, [x, y], [mu]) => [mu * (y - (x * x * x) / 3 + x), -x / mu],
+    stiffAt: ([mu]) => mu >= 30,
   },
   "saddle-node-2d": {
     kind: "ode",
@@ -341,6 +357,7 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
   const empty: CompileResponse = {
     ok: false,
     hamiltonian: false,
+    separable: false,
     autonomous: true,
     states: [],
     params: [],
@@ -377,6 +394,7 @@ export async function mockCompile(req: CompileRequest): Promise<CompileResponse>
     systemId: id,
     kind: sys.kind,
     hamiltonian: sys.hamiltonian ?? false,
+    separable: sys.energy !== undefined,
     autonomous: sys.autonomous ?? true,
     states: sys.states,
     params: sys.params,
@@ -390,6 +408,301 @@ export async function mockPortrait(req: PortraitRequest): Promise<PortraitRespon
   const res = await portrait(req);
   sepxMock().lastPortrait = { req, res };
   return res;
+}
+
+export async function mockLyapunov(req: LyapunovRequest): Promise<LyapunovResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  const method = req.solver.method;
+  if (sys.kind !== "map" && METHODS[method].needs !== "any")
+    throw new Error(
+      `A Lyapunov run integrates the variational equations, which ${METHODS[method].label} cannot step; choose Runge–Kutta 4 or Dormand–Prince 5(4).`,
+    );
+  if (sys.kind !== "map" && method === "rosenbrock23")
+    throw new Error(
+      "A Lyapunov run integrates the variational equations, which have no exact Jacobian for Rosenbrock 2(3) to use; choose Runge–Kutta 4 or Dormand–Prince 5(4).",
+    );
+  const res = { ...lyapunovSpectrum(sys, req), elapsedMs: performance.now() - started };
+  sepxMock().lastLyapunov = { req, res };
+  return res;
+}
+
+export async function mockOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiagramResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  if (sys.kind !== "map") throw new Error("Orbit diagrams are for maps; this system is a flow.");
+  const [lo, hi] = req.range;
+  const step = (hi - lo) / (req.columns - 1);
+  const r = Array.from({ length: req.columns }, (_, j) => lo + j * step);
+  const x: (number | null)[] = new Array(req.columns * req.kept).fill(null);
+  const p = req.params.slice();
+  const end = req.transient + req.kept;
+  r.forEach((rj, j) => {
+    p[req.param] = rj;
+    let state = req.x0.slice();
+    for (let k = 0; k < end; k++) {
+      if (k >= req.transient) x[j * req.kept + k - req.transient] = state[req.state];
+      if (k + 1 === end) break;
+      const next = sys.f(k, state, p);
+      if (!next.every((v) => Math.abs(v) <= BLOW_UP_THRESHOLD)) break;
+      state = next;
+    }
+  });
+  const doublings = req.doublings ? mockDoublings(sys, req.params, req.param, r, x, req.kept) : undefined;
+  const res: OrbitDiagramResponse = {
+    requestId: req.requestId,
+    r,
+    x,
+    ...(doublings ? { doublings } : {}),
+    elapsedMs: performance.now() - started,
+  };
+  sepxMock().lastOrbit = { req, res };
+  return res;
+}
+
+function mockDoublings(
+  sys: MockSystem,
+  params: number[],
+  param: number,
+  r: number[],
+  x: (number | null)[],
+  kept: number,
+): { r: number; period: number }[] {
+  const p = params.slice();
+  const f = (v: number) => sys.f(0, [v], p)[0];
+  const orbitOf = (v: number, period: number): [number, number] => {
+    let mu = 1;
+    for (let i = 0; i < period; i++) {
+      const h = 1e-6 * (1 + Math.abs(v));
+      mu *= (f(v + h) - f(v - h)) / (2 * h);
+      v = f(v);
+    }
+    return [v, mu];
+  };
+  const cycle = (rr: number, seed: number, period: number): [number, number] | null => {
+    p[param] = rr;
+    let v = seed;
+    for (let i = 0; i < 50; i++) {
+      const [image, mu] = orbitOf(v, period);
+      const dx = (image - v) / (mu - 1);
+      v -= dx;
+      if (!Number.isFinite(v)) return null;
+      if (Math.abs(dx) <= 1e-14 * (1 + Math.abs(v))) return [v, orbitOf(v, period)[1]];
+    }
+    return null;
+  };
+  const column = (j: number) => x.slice(j * kept, (j + 1) * kept);
+  const periodOf = (c: (number | null)[]): number | null => {
+    for (let period = 1; 2 * period <= c.length; period *= 2) {
+      const repeats = c.every(
+        (a, n) => n + period >= c.length || (a !== null && c[n + period] !== null && Math.abs(c[n + period]! - a) <= 1e-7 * (1 + Math.abs(a))),
+      );
+      if (repeats) return period;
+    }
+    return null;
+  };
+  const found: { r: number; period: number }[] = [];
+  let previous: [number, number] | null = null;
+  for (let j = 0; j < r.length; j++) {
+    const period = periodOf(column(j));
+    if (period === null) continue;
+    if (previous && period === 2 * previous[1]) {
+      const [a, before] = previous;
+      let seed = column(a)[kept - 1]!;
+      let stable: [number, number] | null = null;
+      let bracket: [number, number, number] | null = null;
+      for (const rr of r.slice(Math.max(0, a - 1))) {
+        const c = cycle(rr, seed, before);
+        if (!c) break;
+        seed = c[0];
+        if (c[1] + 1 > 0) stable = [rr, c[0]];
+        else {
+          bracket = stable ? [stable[0], rr, stable[1]] : null;
+          break;
+        }
+      }
+      if (bracket) {
+        let [blo, bhi, bx] = bracket;
+        let ok = true;
+        while (ok && bhi - blo > 1e-12) {
+          const mid = 0.5 * (blo + bhi);
+          const c = cycle(mid, bx, before);
+          if (!c) ok = false;
+          else if (c[1] + 1 > 0) [blo, bx] = [mid, c[0]];
+          else [bhi, bx] = [mid, c[0]];
+        }
+        if (ok) found.push({ r: 0.5 * (blo + bhi), period: before });
+      }
+    }
+    previous = [j, period];
+  }
+  return found;
+}
+
+function lyapunovSpectrum(sys: MockSystem, req: LyapunovRequest): Omit<LyapunovResponse, "elapsedMs"> {
+  const n = sys.states.length;
+  const p = req.params;
+  const map = sys.kind === "map";
+  const jac = (t: number, x: number[]) => jacobian((v) => sys.f(t, v, p), x, n);
+  const h = map ? 1 : !METHODS[req.solver.method].adaptive && req.solver.h > 0 ? req.solver.h : 0.01;
+  const per = map ? Math.max(1, Math.round(req.interval)) : req.interval;
+  const total = map ? Math.round(req.total) : req.total;
+  const ratio = total / per;
+  const steps = Math.abs(ratio - Math.round(ratio)) <= 1e-9 * Math.max(1, ratio) ? Math.round(ratio) : Math.ceil(ratio);
+  const blocks = Math.max(2, Math.min(req.blocks, steps));
+  const every = Math.max(1, Math.ceil(steps / LYAPUNOV_HISTORY));
+  const sums = new Array<number>(n).fill(0);
+  const blockSums = Array.from({ length: blocks }, () => new Array<number>(n).fill(0));
+  const blockSpan = new Array<number>(blocks).fill(0);
+  const historyT: number[] = [];
+  const history: number[] = [];
+  let q: number[] = Array.from({ length: n * n }, (_, k) => (k % (n + 1) === 0 ? 1 : 0));
+  let x = req.x0.slice(0, n);
+  let t = map ? 0 : req.t0;
+  let trace = 0;
+  let measured = 0;
+  let evals = 0;
+  let accepted = 0;
+  const bad = (v: number[]) => v.some((c) => !Number.isFinite(c) || Math.abs(c) > 1e12);
+  const tangent = (tt: number, y: number[]): number[] => {
+    const xs = y.slice(0, n);
+    const j = jac(tt, xs);
+    evals += 1 + 2 * n;
+    const out = sys.f(tt, xs, p).slice();
+    for (let c = 0; c < n; c++)
+      for (let r = 0; r < n; r++) {
+        let acc = 0;
+        for (let k = 0; k < n; k++) acc += j[r * n + k] * y[n + c * n + k];
+        out.push(acc);
+      }
+    let tr = 0;
+    for (let i = 0; i < n; i++) tr += j[i * n + i];
+    out.push(tr);
+    return out;
+  };
+  const flowFor = (span: number, withQ: boolean): boolean => {
+    let y = [...x, ...(withQ ? q : []), 0];
+    const f = withQ ? tangent : (tt: number, v: number[]) => [...sys.f(tt, v.slice(0, n), p), 0];
+    let left = span;
+    while (left > 1e-12 * Math.max(1, span)) {
+      const dt = Math.min(h, left);
+      const k1 = f(t, y);
+      const k2 = f(t + dt / 2, y.map((v, i) => v + (dt / 2) * k1[i]));
+      const k3 = f(t + dt / 2, y.map((v, i) => v + (dt / 2) * k2[i]));
+      const k4 = f(t + dt, y.map((v, i) => v + dt * k3[i]));
+      if (!withQ) evals += 4;
+      y = y.map((v, i) => v + (dt / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+      t += dt;
+      left -= dt;
+      accepted++;
+      if (bad(y.slice(0, n))) return false;
+    }
+    x = y.slice(0, n);
+    if (withQ) {
+      q = y.slice(n, n + n * n);
+      trace += y[n + n * n];
+    }
+    return true;
+  };
+  const iterate = (count: number, withQ: boolean): boolean => {
+    for (let k = 0; k < count; k++) {
+      if (withQ) {
+        const j = jac(t, x);
+        const next = new Array<number>(n * n).fill(0);
+        for (let c = 0; c < n; c++)
+          for (let r = 0; r < n; r++) {
+            let acc = 0;
+            for (let m = 0; m < n; m++) acc += j[r * n + m] * q[c * n + m];
+            next[c * n + r] = acc;
+          }
+        q = next;
+        trace += Math.log(Math.abs(determinant(j, n)));
+      }
+      x = sys.f(t, x, p);
+      t += 1;
+      evals++;
+      accepted++;
+      if (bad(x)) return false;
+    }
+    return true;
+  };
+  const done = (status: LyapunovResponse["status"], k: number): Omit<LyapunovResponse, "elapsedMs"> => {
+    const exponents = measured > 0 ? sums.map((v) => v / measured) : [];
+    const reached = blockSpan.filter((v) => v > 0).length;
+    const uncertainty =
+      reached >= 2
+        ? exponents.map((_, i) => {
+            const per = blockSums.slice(0, reached).map((b, m) => b[i] / blockSpan[m]);
+            const mean = per.reduce((a, v) => a + v, 0) / reached;
+            const sd = Math.sqrt(per.reduce((a, v) => a + (v - mean) ** 2, 0) / (reached - 1));
+            return sd / Math.sqrt(reached);
+          })
+        : [];
+    return {
+      requestId: req.requestId,
+      exponents,
+      uncertainty,
+      sum: exponents.reduce((a, v) => a + v, 0),
+      traceAverage: measured > 0 ? trace / measured : 0,
+      historyT,
+      history,
+      renormalizations: k,
+      status,
+      stats: { accepted, rejected: 0, evals },
+    };
+  };
+  const transient = map ? Math.round(req.transient) : req.transient;
+  if (transient > 0 && !(map ? iterate(transient, false) : flowFor(transient, false))) return done("blewUp", 0);
+  for (let k = 0; k < steps; k++) {
+    const span = Math.min(per, total - k * per);
+    if (!(map ? iterate(span, true) : flowFor(span, true))) return done("blewUp", k);
+    const block = Math.min(blocks - 1, Math.floor((k * blocks) / steps));
+    for (let c = 0; c < n; c++) {
+      for (let pass = 0; pass < 2; pass++) {
+        for (let b = 0; b < c; b++) {
+          let dot = 0;
+          for (let r = 0; r < n; r++) dot += q[b * n + r] * q[c * n + r];
+          for (let r = 0; r < n; r++) q[c * n + r] -= dot * q[b * n + r];
+        }
+      }
+      let norm = 0;
+      for (let r = 0; r < n; r++) norm += q[c * n + r] ** 2;
+      norm = Math.sqrt(norm);
+      for (let r = 0; r < n; r++) q[c * n + r] /= norm;
+      const ln = Math.log(norm);
+      sums[c] += ln;
+      blockSums[block][c] += ln;
+    }
+    measured += span;
+    blockSpan[block] += span;
+    if ((k + 1) % every === 0 || k === steps - 1) {
+      historyT.push(t);
+      for (let c = 0; c < n; c++) history.push(sums[c] / measured);
+    }
+  }
+  return done("completed", steps);
+}
+
+function determinant(a: number[], n: number): number {
+  const m = a.slice();
+  let det = 1;
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r * n + c]) > Math.abs(m[piv * n + c])) piv = r;
+    if (m[piv * n + c] === 0) return 0;
+    if (piv !== c) {
+      for (let k = 0; k < n; k++) [m[c * n + k], m[piv * n + k]] = [m[piv * n + k], m[c * n + k]];
+      det = -det;
+    }
+    det *= m[c * n + c];
+    for (let r = c + 1; r < n; r++) {
+      const f = m[r * n + c] / m[c * n + c];
+      for (let k = c; k < n; k++) m[r * n + k] -= f * m[c * n + k];
+    }
+  }
+  return det;
 }
 
 /** The checks `cobweb_fits` makes in service.rs, with the same messages. */
@@ -525,6 +838,8 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   }
   const zErr = thirdAxisError(dim, req);
   if (zErr) throw zErr;
+  const methodErr = methodError(sys, req.solver.method);
+  if (methodErr) throw methodErr;
 
   const lift = (px: number, py: number): [number, number[]] => {
     const x = req.baseState.slice(0, dim);
@@ -578,11 +893,18 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
   const fixedPoints = req.fixedPoints && (sys.autonomous ?? true) ? findFixedPoints(sys, req, lift) : [];
   const transient = req.transient ?? 0;
   const section = sys.kind === "ode" ? req.section : undefined;
-  const trajectories = req.trajectories.map((tr) =>
-    section
-      ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
-      : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
-  );
+  const stiff = sys.kind === "ode" && req.solver.method === "dopri5" && (sys.stiffAt?.(p) ?? false);
+  const trajectories = req.trajectories.map((tr) => {
+    const out = withEnergy(
+      sys,
+      p,
+      tr,
+      section
+        ? crossings(sys, p, tr, req.solver.maxSteps, section, transient)
+        : solve(sys, p, tr, req.samples, req.solver.maxSteps, transient),
+    );
+    return stiff ? { ...out, stiff: true } : out;
+  });
   const graph =
     req.graphSamples === undefined
       ? undefined
@@ -597,6 +919,26 @@ async function portrait(req: PortraitRequest): Promise<PortraitResponse> {
     ...(graph ? { graph } : {}),
     elapsedMs: performance.now() - start,
   };
+}
+
+function methodError(sys: MockSystem, method: Method): string | null {
+  if (METHODS[method].needs === "any" || sys.kind === "map") return null;
+  if (!sys.hamiltonian) {
+    return `${METHODS[method].label} needs a Hamiltonian H(q, p); this system is given by its equations of motion.`;
+  }
+  if (!sys.energy) return "H(q, p) must split as T(p) + V(q) for a symplectic method.";
+  return null;
+}
+
+function withEnergy(sys: MockSystem, p: number[], tr: TrajectoryRequest, out: TrajectoryOut): TrajectoryOut {
+  if (!sys.energy) return out;
+  const dim = sys.states.length;
+  const h0 = sys.energy(tr.x0, p);
+  let maxAbsDrift = 0;
+  for (let i = 0; i < out.t.length; i++) {
+    maxAbsDrift = Math.max(maxAbsDrift, Math.abs(sys.energy(out.x.slice(i * dim, (i + 1) * dim), p) - h0));
+  }
+  return Number.isFinite(h0) && Number.isFinite(maxAbsDrift) ? { ...out, energy: { h0, maxAbsDrift } } : out;
 }
 
 /** MAX_ITERATES in app/src-tauri/src/service.rs. */
@@ -1164,6 +1506,8 @@ export interface SepxMock {
   document: DocumentStateRequest;
   /** The last `compute_portrait` (the canvas's or a gallery thumbnail's; never the export dialog's). */
   lastPortrait?: { req: PortraitRequest; res: PortraitResponse };
+  lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
+  lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
 }
 
 function sepxMock(): SepxMock {
@@ -1453,6 +1797,149 @@ export async function mockExportCsv(req: CsvRequest): Promise<CsvResponse> {
     files.push({ stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" });
   }
   return { files };
+}
+
+const mockSlug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "system";
+
+export async function mockExportLyapunovLatex(req: LyapunovExportRequest): Promise<string> {
+  const sys = mockSystemOf(req.run.systemId);
+  const res = await mockLyapunov(req.run);
+  const cell = (v: number, u: number | undefined) => {
+    const r = roundWithUncertainty(v, u);
+    return r.error === null ? `\\num{${r.value}}` : `\\num{${r.value} +- ${r.error}}`;
+  };
+  const o = req.run.solver;
+  const how =
+    sys.kind === "map"
+      ? `the map iterated $${req.run.total}$ times after a transient of $${req.run.transient}$ iterates`
+      : `${METHODS[o.method].label.replace("–", "--")} with ${
+          METHODS[o.method].adaptive
+            ? `relative tolerance $${o.rtol}$ and absolute tolerance $${o.atol}$`
+            : `step $h = ${o.h}$`
+        }, total time $T = ${req.run.total}$ after a transient of $${req.run.transient}$`;
+  return [
+    `% Separatrix Lyapunov spectrum: ${req.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+    "\\begin{table}",
+    "\\centering",
+    "\\sisetup{uncertainty-mode = separate}",
+    `\\caption{Lyapunov spectrum of ${/^the /i.test(req.title) ? "" : "the "}${req.title}: ${how}, \\num{${res.renormalizations}} renormalizations every $\\tau = ${req.run.interval}$.}`,
+    "\\begin{tabular}{@{}ll@{}}",
+    "\\toprule",
+    "Exponent & Value \\\\",
+    "\\midrule",
+    ...res.exponents.map((v, i) => `$\\lambda_{${i + 1}}$ & ${cell(v, res.uncertainty[i])} \\\\`),
+    "\\midrule",
+    `$\\sum_i \\lambda_i$ & \\num{${Number(res.sum.toPrecision(6))}} \\\\`,
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\end{table}",
+    "",
+  ].join("\n");
+}
+
+export async function mockExportLyapunovCsv(req: LyapunovExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.run.systemId);
+  const res = await mockLyapunov(req.run);
+  const n = res.exponents.length;
+  const header = [sys.kind === "map" ? "n" : "t", ...res.exponents.map((_, i) => `lambda_${i + 1}`)];
+  const rows = res.historyT.map((t, k) => [t, ...res.history.slice(k * n, (k + 1) * n)].map(String).join(","));
+  const stem = `${mockSlug(req.title)}-lyapunov`;
+  const meta = { format: "separatrix-lyapunov", format_version: 1, title: req.title, csv: `${stem}.csv`, columns: header, note: "Browser preview." };
+  return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
+}
+
+function mockOrbitRows(req: OrbitExportRequest, res: OrbitDiagramResponse): [number, number, number][] {
+  const out: [number, number, number][] = [];
+  const kept = req.diagram.kept;
+  res.r.forEach((r, j) => {
+    for (let k = 0; k < kept; k++) {
+      const x = res.x[j * kept + k];
+      if (x !== null && Number.isFinite(x)) out.push([r, req.diagram.transient + k, x]);
+    }
+  });
+  return out;
+}
+
+export async function mockExportOrbitCsv(req: OrbitExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.diagram.systemId);
+  const res = await mockOrbitDiagram(req.diagram);
+  const header = [sys.params[req.diagram.param]?.name ?? "r", "n", sys.states[req.diagram.state]?.name ?? "x"];
+  const stem = `${mockSlug(req.title)}-orbit-diagram`;
+  const rows = mockOrbitRows(req, res).map((row) => row.map(String).join(","));
+  const meta = { format: "separatrix-orbit-diagram", format_version: 1, title: req.title, csv: `${stem}.csv`, columns: header, note: "Browser preview." };
+  return { stem, csv: [header.join(","), ...rows].join("\n") + "\n", meta: JSON.stringify(meta, null, 2) + "\n" };
+}
+
+async function mockOrbitFigure(
+  req: OrbitFigureRequest,
+  base: string | null,
+): Promise<FigureLatexResponse & { files: string[] }> {
+  const res = await mockOrbitDiagram(req.orbit.diagram);
+  const [x0, x1] = req.xRange;
+  const [y0, y1] = req.yRange;
+  let pts = mockOrbitRows(req.orbit, res).filter(([r, , x]) => r >= x0 && r <= x1 && x >= y0 && x <= y1);
+  const notes: string[] = [];
+  const files: string[] = [];
+  let thinned = false;
+  let graphics = "";
+  const total = pts.length;
+  if (total > 5000) {
+    if (base !== null) {
+      files.push(`${base}-points.png`);
+      graphics = `\\addplot graphics[xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}] {\\sepxdir ${base}-points.png};`;
+      notes.push(`The iterates (${total} points) are drawn as a density PNG under vector axes.`);
+      pts = [];
+    } else {
+      const stride = Math.max(2, Math.ceil(total / 5000));
+      pts = pts.filter((_, i) => i % stride === 0);
+      thinned = true;
+      notes.push(`One iterate in ${stride} is kept so the copied figure stays under 5,000 points; Save… draws them all as an image.`);
+    }
+  }
+  const tex = [
+    `% Separatrix orbit diagram: ${req.orbit.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{pgfplots} \\pgfplotsset{compat=1.18} \\usetikzlibrary{calc}",
+    ...notes.map((n) => `% ${n}`),
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[xmin=${x0}, xmax=${x1}, ymin=${y0}, ymax=${y1}]`,
+    ...(graphics ? [graphics] : []),
+    ...(pts.length ? [`\\addplot[only marks] coordinates {${pts.map(([r, , x]) => `(${r},${x})`).join(" ")}};`] : []),
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+    "",
+  ].join("\n");
+  return { tex, points: pts.length, thinned, notes, files };
+}
+
+export async function mockExportOrbitLatex(req: OrbitFigureRequest): Promise<FigureLatexResponse> {
+  const { tex, points, thinned, notes } = await mockOrbitFigure(req, null);
+  return { tex, points, thinned, notes };
+}
+
+export async function mockSaveOrbitLatex(req: SaveOrbitFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  const fig = await mockOrbitFigure(req.figure, mockSlug(name.replace(/\.tex$/i, "")));
+  mockSaved(name, fig.tex);
+  for (const f of fig.files) mockSaved(f, new Uint8Array([137, 80, 78, 71]));
+  return { names: [name, ...fig.files] };
+}
+
+export async function mockSaveCsvFile(req: SaveCsvFileRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "data", "csv").path);
+  if (chosen === null) return null;
+  const stem = withExt(fileName(chosen), "csv").path.replace(/\.csv$/i, "");
+  mockSaved(`${stem}.csv`, req.file.csv);
+  mockSaved(`${stem}.meta.json`, req.file.meta);
+  return { names: [`${stem}.csv`, `${stem}.meta.json`] };
 }
 
 function mockSaved(name: string, contents: string | Uint8Array): void {

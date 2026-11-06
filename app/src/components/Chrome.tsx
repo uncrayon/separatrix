@@ -2,9 +2,25 @@ import { useEffect, useRef, useState, type KeyboardEvent, type SyntheticEvent } 
 import { isTauri } from "../api/client";
 import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
+import { useOrbitDrawMs } from "../canvas/OrbitCanvas";
 import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
 import { Tex } from "../math/Tex";
-import { isReturnMap, searchedFixedPoints, systemTitle, type SolverSettings } from "../state/model";
+import { METHODS, STIFF_HINT } from "../state/methods";
+import {
+  countText,
+  isLyapunov,
+  isOrbit,
+  isReturnMap,
+  lyapunovCurrent,
+  orbitCurrent,
+  lyapunovSolver,
+  renormalizations,
+  searchedFixedPoints,
+  systemTitle,
+  type LyapunovSettings,
+  type OrbitSettings,
+  type SolverSettings,
+} from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { strogatzRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
@@ -23,7 +39,7 @@ import {
   IconWarning,
 } from "./icons";
 import { diagnosticLine } from "./diagnostics";
-import { sectionCounts } from "./runStatus";
+import { looksStiff, sectionCounts } from "./runStatus";
 
 type Theme = "dark" | "light";
 
@@ -194,25 +210,36 @@ function timing(ms: number): { num: string; unit: string } {
   return { num: ms.toFixed(1), unit: "ms" };
 }
 
-const METHOD: Record<SolverSettings["method"], { short: string; long: string }> = {
-  dopri5: { short: "DOPRI5", long: "Dormand–Prince 5(4)" },
-  rk4: { short: "RK4", long: "Runge–Kutta 4" },
-  heun: { short: "Heun", long: "Heun" },
-  euler: { short: "Euler", long: "Euler" },
-};
-
 function solverSummary(s: SolverSettings, kind: SystemKind | undefined) {
   if (kind === "map") {
     const n = Math.max(1, Math.round(s.tEnd));
     return { lead: "", num: String(n), tail: n === 1 ? " iterate" : " iterates", tip: `Iterating the map ${plural(n, "time")}` };
   }
-  const m = METHOD[s.method];
-  if (s.method === "dopri5") {
+  const m = METHODS[s.method];
+  if (m.adaptive) {
     const v = minus(fmt(s.rtol, 2));
-    return { lead: `${m.short} · rtol `, num: v, tail: "", tip: `${m.long}, relative tolerance ${v}` };
+    return { lead: `${m.short} · rtol `, num: v, tail: "", tip: `${m.label}, relative tolerance ${v}` };
   }
   const v = minus(fmt(s.h, 3));
-  return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.long}, step ${v}` };
+  return { lead: `${m.short} · h `, num: v, tail: "", tip: `${m.label}, step ${v}` };
+}
+
+function lyapunovSummary(l: LyapunovSettings, s: SolverSettings, kind: SystemKind | undefined) {
+  const k = renormalizations(l, kind);
+  const count = `${countText(k)} ${k === 1 ? "renormalization" : "renormalizations"}`;
+  if (kind === "map") return { lead: "", num: count, tail: "", tip: `Lyapunov run of ${k.toLocaleString("en-US")} QR steps` };
+  const m = solverSummary({ ...s, h: lyapunovSolver(s, l, kind).h }, kind);
+  return { ...m, lead: `${count} · ${m.lead}`, tip: `Lyapunov run of ${k.toLocaleString("en-US")} QR steps, ${m.tip}` };
+}
+
+function orbitSummary(o: OrbitSettings, columns: number) {
+  const n = (v: number) => v.toLocaleString("en-US");
+  return {
+    lead: "",
+    num: n(columns),
+    tail: ` columns · ${n(o.kept)} ${o.kept === 1 ? "iterate" : "iterates"} each`,
+    tip: `Orbit diagram of ${n(columns)} parameter values, one per pixel: ${n(o.transient)} iterates dropped, then ${n(o.kept)} drawn in each`,
+  };
 }
 
 function focusEquationLine(index: number) {
@@ -223,8 +250,8 @@ function focusEquationLine(index: number) {
   target?.focus();
 }
 
-function focusSolverSettings() {
-  const section = document.querySelector<HTMLElement>(".panel-right #solver-settings");
+function focusSolverSettings(id = "solver-settings") {
+  const section = document.querySelector<HTMLElement>(`.panel-right #${id}`);
   if (!section) return;
   const toggle = section.querySelector<HTMLButtonElement>("button[aria-expanded]");
   if (toggle && toggle.getAttribute("aria-expanded") === "false") toggle.click();
@@ -325,14 +352,24 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ state, actions }: StatusBarProps) {
-  const p = state.portrait;
+  const lyapunov = isLyapunov(state.view) ? state.view : null;
+  const orbit = isOrbit(state.view) ? state.view : null;
+  const p = lyapunov || orbit ? null : state.portrait;
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
-  const current = !!p && !!sys && p.meta.systemId === sys.systemId;
-  const nFp = state.layers.fixedPoints ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+  const current = lyapunov
+    ? lyapunovCurrent(state)
+    : orbit
+      ? orbitCurrent(state)
+      : !!p && !!sys && p.meta.systemId === sys.systemId;
+  const run = lyapunov && current ? state.lyapunov : null;
+  const diagram = orbit && current ? state.orbit : null;
+  const drawMs = useOrbitDrawMs();
+  const nFp =
+    state.layers.fixedPoints && !lyapunov && !orbit ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
   const crossings =
-    current && p.meta.view.kind === "section" && state.view.kind === "section"
+    p && current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
       : null;
 
@@ -342,25 +379,46 @@ export function StatusBar({ state, actions }: StatusBarProps) {
       )
     : [];
   const solverGaveUpIcs = [...new Set(solverGaveUpIcIds)].filter((id) => state.ics.some((ic) => ic.id === id));
+  const stiff = !!p && current && looksStiff(p.res, state.solver.method);
 
   const errors = state.diagnostics.filter((d) => d.severity === "error");
   const lines = state.equations.map((l) => l.source);
   const firstBad = errors.length ? diagnosticLine(errors[0], lines) : -1;
 
-  const computing = useDelayed(!!sys?.ok && !current && !state.computeError, 150);
+  const waiting =
+    lyapunov || orbit ? !current && state.ics.some((ic) => ic.x0.length === states.length) : !current;
+  const computing = useDelayed(!!sys?.ok && waiting && !state.computeError, 150);
   const pointer = usePlotPointer(state);
 
   const cobwebNames =
     (state.view.kind === "cobweb" || isReturnMap(state.view)) && states[0] ? viewAxisLabels(state.view, states, kind) : null;
-  const xName = cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind);
-  const yName = cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind);
-  const solver = solverSummary(state.solver, kind);
-  const t = p ? timing(p.res.elapsedMs) : null;
-  const timingDesc = p
-    ? `${fmt(p.roundTripMs, 2)} ms including transfer. ` +
+  const xName = lyapunov
+    ? kind === "map"
+      ? "n"
+      : "t"
+    : orbit
+      ? (sys?.params[orbit.param]?.latex ?? "")
+      : (cobwebNames?.x ?? axisName(state.view.xAxis, state.view.yAxis, states, kind));
+  const yName = lyapunov
+    ? "\\lambda"
+    : orbit
+      ? (states[orbit.yAxis.index]?.latex ?? "")
+      : (cobwebNames?.y ?? axisName(state.view.yAxis, state.view.xAxis, states, kind));
+  const solver = lyapunov
+    ? lyapunovSummary(lyapunov.lyapunov, state.solver, kind)
+    : orbit
+      ? orbitSummary(orbit.orbit, state.orbitColumns)
+      : solverSummary(state.solver, kind);
+  const settingsId = orbit ? "orbit-settings" : "solver-settings";
+  const settingsTip = orbit ? "Open orbit diagram settings" : "Open solver settings";
+  const done = run ?? diagram ?? p;
+  const t = done ? timing(done.res.elapsedMs) : null;
+  const drawn = diagram && drawMs !== null ? ` Drawn in ${fmt(drawMs, 2)} ms.` : "";
+  const timingDesc = done
+    ? `${fmt(done.roundTripMs, 2)} ms including transfer.${drawn} ` +
       (isTauri() ? "Rust core." : "Browser preview: a small JavaScript stand-in computes the templates only.")
     : undefined;
-  const timingLabel = p ? `Computed in ${fmt(p.res.elapsedMs, 2)} ms` : undefined;
+  const timingLabel = done ? `Computed in ${fmt(done.res.elapsedMs, 2)} ms` : undefined;
   const lineTip = firstBad >= 0 ? `Go to line ${firstBad + 1}` : "Go to the equations";
   const num = (v: number, digits: number) => <span className="ds-statusbar-num">{minus(v.toFixed(digits))}</span>;
 
@@ -428,6 +486,20 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             <span className="ds-sr">. Select the trajectory to see why it stopped</span>
           </button>
         )}
+        {stiff && (
+          <button
+            type="button"
+            className="ds-statusbar-item ds-statusbar-item--button ds-statusbar-item--warn"
+            data-tooltip="Open solver settings"
+            data-tooltip-desc={STIFF_HINT}
+            data-stiff-status=""
+            onClick={() => focusSolverSettings()}
+          >
+            <IconWarning />
+            <span className="ds-statusbar-text">Steps look stiff</span>
+            <span className="ds-sr">. {STIFF_HINT} Open solver settings</span>
+          </button>
+        )}
         {state.computeError && (
           <span
             className="ds-statusbar-item ds-statusbar-item--danger"
@@ -459,7 +531,7 @@ export function StatusBar({ state, actions }: StatusBarProps) {
           t && (
             <span className="ds-statusbar-item" data-tooltip={timingLabel} data-tooltip-desc={timingDesc}>
               <span className="ds-statusbar-text">
-                <span className="ds-statusbar-wide">Portrait </span>
+                <span className="ds-statusbar-wide">{run ? "Lyapunov " : diagram ? "Orbit " : "Portrait "}</span>
                 <span className="ds-statusbar-num">{t.num}</span> {t.unit}
               </span>
               <span className="ds-sr">
@@ -514,16 +586,16 @@ export function StatusBar({ state, actions }: StatusBarProps) {
             <button
               type="button"
               className="ds-statusbar-item ds-statusbar-item--button"
-              data-tooltip="Open solver settings"
+              data-tooltip={settingsTip}
               data-tooltip-desc={`${solver.tip}.`}
-              onClick={focusSolverSettings}
+              onClick={() => focusSolverSettings(settingsId)}
             >
               <span className="ds-statusbar-text">
                 {solver.lead}
                 <span className="ds-statusbar-num">{solver.num}</span>
                 {solver.tail}
               </span>
-              <span className="ds-sr">. {solver.tip}. Open solver settings</span>
+              <span className="ds-sr">. {solver.tip}. {settingsTip}</span>
             </button>
           </span>
         )}

@@ -125,7 +125,8 @@ template has its generated text and a browser-preview system, and opens in the v
 ### `dyn-solve` (integrate and iterate)
 
 ```rust
-pub enum Method { Euler, Heun, Rk4, Dopri5 }
+pub enum Method { Euler, Heun, Rk4, Dopri5, Verlet, Yoshida4 }   // serde: "verlet", "yoshida4"
+impl Method { pub fn is_adaptive(self) -> bool; pub fn is_symplectic(self) -> bool }
 pub struct SolverOptions { pub method: Method, pub rtol: f64, pub atol: f64,
                            pub h: f64 /* fixed step, or initial step for adaptive (0 = auto) */,
                            pub h_max: f64, pub max_steps: usize }
@@ -204,7 +205,7 @@ pub fn eigenvectors(kind: SystemKind, n: usize, a: &[f64], eigenvalues: &[(f64, 
 
 Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in the same order:
 
-- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalised so that its
+- **Real λ**: `eigenvectors[k]` is a unit vector with `J v = λ v`, sign-normalized so that its
   largest-magnitude component is positive (the first one on a tie); `eigenvectorsIm[k]` is `null`.
 - **Repeated λ** (same resolution as the classification, `|λ1 - λ2| ≲ 3e-5·max|λ|`; for 2D flows
   `τ² - 4Δ ≈ 0`): as many vectors as the eigenspace has dimensions, the rest `null`. A star
@@ -223,7 +224,7 @@ Eigenvectors (of `J` for flows, of `Df` for maps), one entry per eigenvalue in t
   and `eigenvectorsIm[k] = im`; the conjugate eigenvalue gets `(re, -im)`. The phase is fixed so
   that `|re|² + |im|² = 1`, `re ⊥ im` and `|re| ≥ |im|`: re and im are the major and minor
   semi-axes of the ellipses traced by the linearised orbits `Re(c·e^{λt}·v)` (spirals and
-  centres), and span the invariant plane. For a circle the largest component of `v` is made real
+  centers), and span the invariant plane. For a circle the largest component of `v` is made real
   and positive. Sign as for real vectors, by `re`.
 - No linearisation (non-finite Jacobian, or a one-dimensional `f` with a kink at the point, such
   as the tent map's peak or `|x|` at 0, found by one-sided difference quotients that disagree at
@@ -265,14 +266,211 @@ For a one-dimensional map the only multiplier is `λ = f′(x*)`, from the exact
 `fixedPoints[i].eigenvalues[0][0]`, classified by `|λ|` against 1 (Strogatz §10.1).
 
 Classification follows Strogatz for 2D flows (saddle, stable/unstable node, stable/unstable spiral,
-centre, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
+center, star, degenerate node, non-isolated) and uses sink/source/saddle (with unstable dimension)
 for higher dimensions; maps classify by |μ| relative to 1.
 
-Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it has at most
+Newton seeds: the grid of `seeds_per_axis^dim` cell centers of `search` when it has at most
 `max_seeds` points, otherwise the first `max_seeds` points of a Halton sequence in the box, so
 `max_seeds` (clamped to `MAX_SEEDS = 4096`; `fixed_points` uses `MAX_SEEDS`) is a hard cap in every
 dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
 (40, 14², 9³ grid points in 1D–3D; 2^10 = 1024 does not fit, so 10D and up use Halton points).
+
+### Symplectic methods
+
+```rust
+impl CompiledSystem { pub fn is_separable(&self) -> bool }   // dyn-expr
+```
+
+`Method::Verlet` (Störmer–Verlet, kick–drift–kick, order 2) and `Method::Yoshida4` (Yoshida's
+composition of three Verlet steps of sizes `w₁h, w₀h, w₁h`, order 4) integrate a Hamiltonian
+`H(q, p) = T(p) + V(q)` with the state laid out `[q; p]`, `dof = dim / 2`, as `dyn-expr` builds it.
+A kick `p += c·h·ṗ` reads the `ṗ` half of `f(q, ·)`; a drift `q += d·h·q̇` reads the `q̇` half of
+`f(·, p)`. `w₁ = 1/(2 − 2^{1/3})` and `w₀ = 1 − 2w₁` are decimal literals, never `cbrt` at run
+time, so every OS steps with the same bits. Both are fixed-step (`h = 0` means `|t1 − t0| / 1000`)
+and use the stepper's monotone cubic Hermite dense output, so events and Poincaré sections work.
+A step costs 3 evaluations (Verlet) or 7 (Yoshida 4), counting `f` at the new point. Both are
+time-symmetric: from the pendulum at `(1, 0)`, 100 time units forward and back return within
+1e−14. Halving `h` divides the error by 4.00 (Verlet) and 16.07 (Yoshida 4) on the harmonic
+oscillator.
+
+The `Stepper` trusts that `H` separates. `is_separable` is the check, and the service makes it.
+It is structural. Below the sums, differences and negations at the top of `H`, and its products
+with or quotients by factors that read no state, every term must read only coordinates or only
+momenta, and `H` must not read `t`. So `p²/2 − cos q`, `p²/(2m) + q⁴` and `(p² + q²)/2` are
+separable, and `q p`, `p² q`, `(p² + q²)²` and any `H` with `t` are not.
+
+The service refuses, with a message:
+
+- a symplectic method for a flow given by its equations of motion: "Störmer–Verlet needs a
+  Hamiltonian H(q, p); this system is given by its equations of motion." (and "Yoshida 4 …");
+- a symplectic method for a Hamiltonian that is not separable: "H(q, p) must split as T(p) + V(q)
+  for a symplectic method.";
+- a Lyapunov run of a flow with a symplectic method, since the variational equations are not
+  separable.
+
+A map ignores the method, so a map is never refused for it.
+
+`TrajectoryOut.energy?: { h0, maxAbsDrift }` (`EnergyOut`) comes with every trajectory of a
+Hamiltonian flow, whatever the method: `h0 = H(t0, x0)` and `maxAbsDrift` the largest `|H − h0|`
+over the returned samples (the crossings, in a section view). It is absent for other systems and
+when `H` is not finite at a sample. `CompileResponse.separable` tells the UI which systems the
+symplectic methods can run. The UI's method table (`app/src/state/methods.ts`) disables both
+methods otherwise and says why, and the Solver panel reads out `|ΔH| max = 3.1 × 10⁻⁷`.
+
+The chaos gate steps the pendulum `H = p²/2 − cos q` from `(1, 0)` (period
+`2π / AGM(1, cos ½) ≈ 6.70`) over 10⁵ periods and reads `H` after every step. Störmer–Verlet at
+h = 0.05 keeps `max |ΔH|` at 2.65e−4 (claim ≤ 1e−3), Yoshida 4 at h = 0.1 at 3.87e−6 (claim
+≤ 1e−4). For both, the largest `|ΔH|` over the last 10³ periods is 1.000 times the largest over the
+first 10³ (claim ≤ 2). RK4 at h = 0.1 gives 97.6 by the same rule, and the gate requires that
+claim to fail.
+
+### Stiff systems
+
+```rust
+impl Stepper<'_> { pub fn looks_stiff(&self) -> bool }   // dyn-solve
+pub struct Solution { /* … */ pub stiff: bool }
+```
+
+`Method::Rosenbrock23` (serde `"rosenbrock23"`) is the L-stable linearly implicit Rosenbrock 2(3)
+of MATLAB's `ode23s` (Shampine & Reichelt 1997), with `d = 1/(2 + √2)` and `e₃₂ = 6 + √2` written
+as decimal literals. Each step solves three systems with `W = I − h·d·J`, factored once per try by
+a dense LU with partial pivoting (`crates/dyn-solve/src/lu.rs`; dyn-solve has no linear-algebra
+dependency). `J` is `VectorField::jacobian`, exact forward-mode AD for a compiled system, taken
+once per accepted step; a rejected try only refactors `W`. `∂f/∂t` is a central difference with
+`δ = ε^{1/3}·max(1, |t|)`, taken only when the field reads `t` (2 more evaluations per step).
+A step costs 2 evaluations and one Jacobian. The new point is order 2 and the error estimate
+`h/6 (k1 − 2k2 + k3)` order 3, so the controller is an I-controller with exponent 1/3 and the
+starting step is Hairer's guess for order 3. It is adaptive like Dopri5 (`rtol`, `atol`, `h` as
+the first step, `h_max`). Its continuous extension `x + θ(x₁ − x) + θ(1 − θ)·h(k1 − k2)/(1 − 2d)`
+feeds `Stepper::interpolate`, so uniform sampling, events and Poincaré sections work. A singular
+`W` is rejected like a non-finite step: the step shrinks by 5, and a collapse reports
+`nonFinite`.
+
+`crates/dyn-solve/tests/stiff.rs` checks it. Halving a fixed `h` on `x' = −x` divides the error by
+4.02. On `y' = −1e6 (y − cos t)` at a fixed `h = 0.1`, an error of 1 off `cos t` is gone after one
+step (`R(∞) = 0`). What stays is the scheme's stiff-limit error `h²·(1/(8d) − 1/2)·y''`, at most
+7.35e−4 at h = 0.1 and 7.4e−6 at h = 0.01. Robertson's reaction reaches t = 40 at rtol 1e−8, atol
+1e−14 in 6,737 steps, within 1.6e−7 relative of the reference below. A plane section of the
+relaxation oscillator at μ = 1000 returns its crossings of `x = 0` half a period
+`(3 − 2 ln 2)μ/2` apart.
+
+`Stepper::looks_stiff` is Hairer's stiffness test from DOPRI5. After each accepted Dormand–Prince
+step, `h·‖k7 − k6‖ / ‖x7 − x6‖` estimates `h·|λ|` for the dominant eigenvalue from the last two
+stages. Above 3.25, at the edge of the method's stability region, the step counts as stiff. Six
+non-stiff steps in a row reset the count. After 15 stiff steps the flag is set and stays set for
+the run. The other methods never set it. Measured with Dopri5 at the default tolerances, the
+flag fires on the relaxation oscillator from μ = 30 (template start points, t ≤ 40), and not at
+μ = 20. A rejection-ratio rule was the alternative and would not work. On the stiff runs below,
+Dopri5 rejects 1 try in 10⁴, fewer than on the non-stiff Van der Pol at μ = 1 (1 in 9), because
+a step held back by stability is always accurate enough:
+
+| problem | method | accepted | rejected | looks stiff |
+| --- | --- | ---: | ---: | --- |
+| Van der Pol μ = 1000 (Liénard), t ≤ 3000, rtol 1e−6 | Dopri5 | 1,585,080 | 98 | yes |
+| | Rosenbrock23 | 4,366 | 54 | no |
+| Robertson, t ≤ 40, rtol 1e−8, atol 1e−14 | Dopri5 | 34,856 | 2 | yes |
+| | Rosenbrock23 | 6,737 | 2 | no |
+| Van der Pol μ = 1, t ≤ 40, rtol 1e−6 | Dopri5 | 267 | 30 | no |
+
+`TrajectoryOut.stiff?: boolean` is `true` when the flag fired, and absent otherwise. A section
+run reports it too. The UI shows "These steps look stiff: Dormand–Prince is limited by stability,
+not accuracy." in the Solver panel with a "Use Rosenbrock 2(3)" button, and a "Steps look stiff"
+warning in the status bar that opens the Solver panel. A Lyapunov run of a flow refuses
+Rosenbrock23 with a message, because the variational system it integrates has no exact Jacobian.
+
+The chaos gate solves Robertson (`x' = −0.04x + 1e4·yz`, `y' = 0.04x − 1e4·yz − 3e7·y²`,
+`z' = 3e7·y²` from `(1, 0, 0)`) through `compute_portrait`. The SUNDIALS `cvRoberts_dns` and
+Hairer–Wanner values at t = 40 are (7.158271e−1, 9.185535e−6, 2.841637e−1). Dopri5 at rtol 1e−11
+confirms them to 1.6e−7 relative, and Rosenbrock23 at rtol 1e−8 to the same (claim 1e−5 per
+component). Dopri5 at rtol 1e−8 flags that run as stiff and takes 34,856 steps, so the wrong
+claim "within 2,000 steps" fails. On the relaxation-oscillator template at μ = 1000, Rosenbrock23
+takes 0.0028 of Dopri5's steps at rtol 1e−6 (claim ≤ 0.1), and Dopri5 flags the run. At Robertson's
+rtol 1e−8 the ratio is only 0.19: an order-2 method pays for tight tolerances.
+
+### Lyapunov spectrum
+
+```rust
+pub struct LyapunovOptions { pub transient: f64 /* time, or iterates for a map */, pub total: f64,
+                             pub interval: f64 /* τ; iterates per QR step for a map */,
+                             pub blocks: usize /* ≥ 2 */, pub history: usize /* max samples */ }
+pub struct LyapunovSpectrum { pub exponents: Vec<f64>, pub uncertainty: Vec<f64>, pub sum: f64,
+                              pub trace_average: f64, pub history_t: Vec<f64>,
+                              pub history: Vec<f64> /* row-major, history_t.len() · n */,
+                              pub renormalizations: usize, pub status: Status, pub stats: Stats }
+pub fn lyapunov_spectrum(f: &dyn VectorField, p: &[f64], t0: f64, x0: &[f64],
+                         solver: &SolverOptions, opts: &LyapunovOptions) -> LyapunovSpectrum;
+```
+
+Benettin's method with QR by modified Gram–Schmidt, applied twice. A flow first runs `transient`
+with `solver`, then integrates the orbit with `n` tangent vectors and one more state, the state
+`(x, Φ, s)` of length `n + n² + 1` with `Φ' = J(x)Φ` (`J` from `VectorField::jacobian`: exact
+forward-mode AD for compiled systems) and `s' = tr J(x)`. The integrator lands exactly on every
+`t_start + k·τ`, where the columns of `Φ` are orthonormalized and `ln R_ii` added to exponent `i`.
+The last interval is shortened to end at `t_start + total`, and `total / τ` within 1e−9 of an
+integer counts as that integer. `solver.maxSteps` bounds the accepted steps of the whole run. A
+map runs `transient` iterates, then `Q ← J(x_n) Q` and `x_{n+1} = f(x_n)` for `total` iterates
+(rounded), with a QR step every `interval` iterates (rounded, at least 1) and after the last.
+
+- `exponents[i]` is `Σ ln R_ii` over the elapsed time (or iterates), in column order, so the first
+  is the largest. It is empty when no QR step was completed.
+- `uncertainty[i]` is the standard error over blocks. The QR steps are split into `blocks`
+  consecutive blocks (step `k` of `K` goes to block `⌊k·B/K⌋`), each block gives its own
+  exponent, and the uncertainty is their sample standard deviation over `√B`, counting the
+  blocks reached. It is empty when fewer than two blocks were reached.
+- `sum = Σ exponents`. `trace_average` is what it must equal. For a flow that is `s` summed over
+  the intervals over the elapsed time, the time average of `tr J`. For a map it is the mean of
+  `ln |det J|` by Gaussian elimination with partial pivoting. For a flow, `sum − trace_average` is
+  the integrator's error on `ln det Φ`. On Lorenz with RK4 it is 1.0e−4 at h = 0.01, 6.2e−6 at
+  h = 0.005 and 9.8e−9 at h = 0.001, so it shrinks like h⁴.
+- The running estimate (cumulative `ln R / elapsed`) is sampled every `⌈K / history⌉`-th QR step
+  and after the last, at most `history` samples. `history_t` is the time, or the iterate index of
+  a map.
+- `status` is `blewUp` when a state component, including a tangent vector of a flow, exceeds
+  `BLOW_UP_THRESHOLD` (keep `τ` short enough that `e^{λ1 τ}` stays far below it). It is
+  `nonFinite` when `f`, `J` or a tangent vector stops being finite, and otherwise the solver's
+  status. The estimates always cover the QR steps completed.
+
+`Tangent::eval` does not allocate. The Jacobian scratch is on the stack for `n ≤ 16` and a
+thread-local buffer above.
+
+### Orbit diagrams
+
+```rust
+pub struct OrbitDiagramOptions { pub param: usize, pub range: (f64, f64), pub columns: usize,
+                                 pub state: usize, pub transient: usize, pub kept: usize }
+pub struct OrbitDiagram { pub r: Vec<f64>, pub x: Vec<f64> /* columns × kept, by column */,
+                          pub kept: usize }
+pub fn orbit_diagram(f: &dyn VectorField, p: &[f64], x0: &[f64],
+                     opts: &OrbitDiagramOptions) -> OrbitDiagram;
+pub struct Doubling { pub r: f64, pub period: usize /* the cycle that loses stability */ }
+pub fn period_doublings(f: &dyn VectorField, p: &[f64], param: usize,
+                        diagram: &OrbitDiagram, max: usize) -> Vec<Doubling>;
+```
+
+`orbit_diagram` iterates the map `x_{n+1} = f(n, x_n)` from `x0` at each of `columns` parameter
+values, `r_j = lo + j·step` with `step = (hi − lo)/(columns − 1)` (one multiplication and one
+addition, so the same bits on every platform; one column is `[lo]`). `p[param]` is replaced by
+`r_j` and the other parameters are kept. Column `j` is `x[j·kept .. (j + 1)·kept]`, the values of
+state `state` at `x_T … x_{T+kept−1}` (`x_0 = x0`, `T = transient`). From the first iterate with a
+component beyond `BLOW_UP_THRESHOLD` or not finite, the rest of the column is NaN. The columns
+run one after another on one thread (rayon is not a dependency; the evaluation-speed measurement
+decides whether one core is enough).
+
+`period_doublings` works on one-dimensional autonomous maps and is empty for anything else. It
+labels each column with the smallest `P ∈ {1, 2, 4, …}` (`2P ≤ kept`) such that every kept
+iterate agrees with the one `P` later, `|x_{n+P} − x_n| ≤ 1e−7·(1 + |x_n|)`, and skips columns
+with no label. A column labelled `P` followed by one labelled `2P` marks a doubling of the
+`P`-cycle. The labels alone don't bracket it. Just below a doubling the orbit still alternates
+about the `P`-cycle, decaying so slowly that it repeats at lag `2P` within the tolerance. On the
+logistic map with 2000 columns over `[2.8, 3.57]` and a 2000-iterate transient, 8 columns below
+`r1 = 3` already read period 2. So the `P`-cycle is followed column by column, from the column
+before the last `P` column, by Newton's method on `f^P(x) = x`. The first seed is that column's
+last kept iterate, and each later one is the previous column's cycle point. The walk stops when
+the multiplier `μ_P(r) = ∏ f′(x_i)` (from `VectorField::jacobian`, exact for compiled systems)
+drops to −1 or below. The last two columns bracket the doubling, which is located by bisection on
+`μ_P(r) + 1` to a bracket of 1e−12. A doubling is skipped when the walk starts at or below −1,
+never gets there, or Newton fails. On the logistic map (above, `kept = 64`) it finds `r1 … r5`
+with `r1` and `r2 = 1 + √6` within 1e−13.
 
 ## IPC (Tauri commands)
 
@@ -282,7 +480,8 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 `app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale. The same file
-carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, the `SECTION_MISFIT` and
+carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`,
+`MAX_ORBIT_COLUMNS`, `MAX_ORBIT_POINTS`, `BLOW_UP_THRESHOLD`, `LYAPUNOV_HISTORY`, the `SECTION_MISFIT` and
 `SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
@@ -295,10 +494,65 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compile_system` | `{ source, format: "latex" \| "text" }` | `CompileResponse` |
 | `convert_source` | `{ lines: string[], from, to }` (`ConvertRequest`) | `{ lines: { source, converted, error, note? }[] }` (`ConvertResponse`) |
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
+| `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
+| `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,
 in order.
+
+`compute_lyapunov` takes `LyapunovRequest { requestId, systemId, params, x0, t0, transient, total,
+interval, blocks, solver }` and returns `LyapunovResponse { requestId, exponents, uncertainty,
+sum, traceAverage, historyT, history, renormalizations, status, stats, elapsedMs }`. That is
+`lyapunov_spectrum` (above) with `LYAPUNOV_HISTORY = 2000` running-estimate samples. For a map,
+`transient`, `total` and `interval` count iterates and `t0` and `solver` are ignored. Refusals
+are messages, not panics. The command refuses a parameter count or starting point that doesn't
+fit the system, a non-finite start, a negative transient, `total ≤ 0` or `interval ≤ 0` (below
+half an iterate for a map), more than `MAX_RENORMALIZATIONS = 10⁷` QR steps (`total / interval`),
+`blocks < 2`, and more blocks than QR steps. A long run takes seconds. The command runs on a
+blocking worker thread and the UI drops stale responses by `requestId`.
+
+The studio's Lyapunov view sends one request per run (`buildLyapunovJob` in state/model.ts): the
+selected start point, else the first; the view's `transient`, `total`, `interval` and `blocks`;
+and the studio's own solver, so the status bar and an export caption name the integrator that
+ran. Because `solver.maxSteps` counts the whole run, the view raises the studio's step limit to
+what the run needs when that is larger: `(transient + total) / h` plus one shortened step per QR
+step for a fixed step, 100 steps per renormalization interval for an adaptive method, at most
+10⁹. It asks for nothing while there is no start point, while a setting would be refused (the
+fields say why), or in any other view, and zooming or panning the plot asks for nothing. The
+Lyapunov view asks for no portrait.
+
+`compute_orbit_diagram` takes `OrbitDiagramRequest { requestId, systemId, params, param, range:
+[lo, hi], columns, state, x0, transient, kept, doublings }` and returns `OrbitDiagramResponse {
+requestId, r, x, doublings?: { r, period }[], elapsedMs }`. That is `orbit_diagram` (above), and
+`period_doublings` with no limit when `doublings` is true; `doublings` is absent otherwise. `x`
+is `columns · kept` values, column by column, with `null` (JSON has no NaN) from the iterate where
+the orbit escaped. The command refuses a flow, a parameter index or state index outside the
+system, a range that is not finite with `lo < hi`, a parameter count or starting point that
+doesn't fit, a non-finite start, `columns` outside `2..=MAX_ORBIT_COLUMNS = 4096`, `kept = 0`,
+more than `MAX_ORBIT_POINTS = 4·10⁶` points (`columns · kept`), and `doublings` on a map with more
+than one state or one that depends on `n`. It runs on a blocking worker thread.
+
+The studio's orbit diagram sends one request per view of it (`buildOrbitJob` in state/model.ts):
+`columns` is the plot's width in device pixels (at most 4,096), `range` the centers of the first
+and last pixel across the view's `xRange`, so column `j` is the `j`-th pixel's center and a click
+there sets the parameter to exactly that column's `r` (`orbitColumnAt`). The swept parameter's
+own value is sent as `range[0]` (each column replaces it), so moving its slider asks for nothing;
+zooming or panning across, a wider plot, another start point (the selected one, else the first),
+the transient or the iterates drawn ask again, and zooming up the side asks for nothing.
+`doublings` is asked for exactly when the map is one-dimensional and autonomous. The inspector
+names the doublings Strogatz's way: `r₁, r₂, …` for the run of periods 1, 2, 4, … the list starts
+with (a zoomed range that starts past `r₁` begins at `r₂`), and any other doubling by its periods
+(`3 → 6`). The orbit view asks for no portrait.
+
+The screen path stays JSON with `f64` values (`null` for an escaped iterate), measured in the
+release app on Linux under Xvfb at its default size: the logistic map's default request (774
+columns × 200 iterates kept, 1,000 dropped, `r ∈ [0, 4]`, doublings asked for), seven runs
+alternated with another view, took 19 ms in Rust (16–22 ms), 53 ms round trip including the
+transfer (52–60 ms) and 4 ms to draw (3–5 ms): about 57 ms in all, under the 100 ms at which a
+binary `f32` response would be worth its second encoding. The transfer grows with the points: the
+widest plot (4,096 columns, 5.3 times as many) would take about 0.2 s by that measure (an
+estimate, not measured).
 
 ### Cobweb plots and transients
 

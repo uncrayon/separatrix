@@ -2,8 +2,11 @@
 // which the screen typesets as HTML over the canvas. The same code draws the
 // export preview, the PNG and the SVG, through any DrawContext.
 
+import type { LyapunovResponse, OrbitDiagramResponse } from "../api/types";
 import { axisLines, drawScene, type Box, type DrawContext, type Scene } from "./draw";
+import { drawLyapunov } from "./lyapunov";
 import { drawMath, layoutMath, mathRuns, type MathLayout } from "./mathText";
+import { drawOrbit, type RasterContext } from "./orbit";
 import type { PlotTheme } from "./theme";
 import type { Viewport } from "./viewport";
 
@@ -74,7 +77,7 @@ export const DEFAULT_FIGURE_FONTS: FigureFonts = {
 };
 
 export interface FigureOptions {
-  /** Fill the background with the plot colour (off: transparent). */
+  /** Fill the background with the plot color (off: transparent). */
   background: boolean;
   /** The axis names in LaTeX (as `axisLabelLatex` gives them); null leaves them out. */
   names: { x: string; y: string } | null;
@@ -104,17 +107,7 @@ export function drawFigure(
   th: PlotTheme,
   opts: FigureOptions,
 ): void {
-  const fonts = opts.fonts ?? DEFAULT_FIGURE_FONTS;
-  let names: { layout: MathLayout; box: Box }[] = [];
-  if (opts.names) {
-    const xl = layoutMath(ctx, mathRuns(opts.names.x), fonts.mathFamily, fonts.mathSize);
-    const yl = layoutMath(ctx, mathRuns(opts.names.y), fonts.mathFamily, fonts.mathSize);
-    const boxes = axisNameBoxes(axisNamePlacement(vp, axisLines(vp)), nameBox(xl), nameBox(yl));
-    names = [
-      { layout: xl, box: boxes.x },
-      { layout: yl, box: boxes.y },
-    ];
-  }
+  const names = placeNames(ctx, vp, opts);
   const boxes = names.map((n) => n.box);
   const withAvoid: Scene | null = scene && {
     ...scene,
@@ -124,8 +117,54 @@ export function drawFigure(
     },
   };
   drawScene(ctx, w, h, vp, withAvoid, th, { background: opts.background });
+  drawNames(ctx, names, th);
+}
+
+interface PlacedName {
+  layout: MathLayout;
+  box: Box;
+}
+
+function placeNames(ctx: DrawContext, vp: Viewport, opts: FigureOptions): PlacedName[] {
+  if (!opts.names) return [];
+  const fonts = opts.fonts ?? DEFAULT_FIGURE_FONTS;
+  const xl = layoutMath(ctx, mathRuns(opts.names.x), fonts.mathFamily, fonts.mathSize);
+  const yl = layoutMath(ctx, mathRuns(opts.names.y), fonts.mathFamily, fonts.mathSize);
+  const boxes = axisNameBoxes(axisNamePlacement(vp, axisLines(vp)), nameBox(xl), nameBox(yl));
+  return [
+    { layout: xl, box: boxes.x },
+    { layout: yl, box: boxes.y },
+  ];
+}
+
+function drawNames(ctx: DrawContext, names: PlacedName[], th: PlotTheme): void {
   ctx.globalAlpha = 1;
   for (const n of names) {
     drawMath(ctx, n.layout, n.box[0], n.box[1] + n.layout.size * NAME_BASELINE_EM, th.tick, th.halo);
   }
+}
+
+export type AnalysisFigure =
+  | { kind: "lyapunov"; res: LyapunovResponse }
+  | { kind: "orbit"; res: Pick<OrbitDiagramResponse, "r" | "x">; pixelRatio: number };
+
+export function drawAnalysisFigure(
+  ctx: RasterContext,
+  w: number,
+  h: number,
+  vp: Viewport,
+  fig: AnalysisFigure,
+  th: PlotTheme,
+  opts: FigureOptions,
+): void {
+  ctx.globalAlpha = 1;
+  if (opts.background) {
+    ctx.fillStyle = th.bg;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const names = placeNames(ctx, vp, opts);
+  const avoid = names.map((n) => n.box);
+  if (fig.kind === "lyapunov") drawLyapunov(ctx, vp, fig.res, th, opts.fonts ?? DEFAULT_FIGURE_FONTS, avoid);
+  else drawOrbit(ctx, vp, fig.res, th, { pixelRatio: fig.pixelRatio, marker: null, avoid });
+  drawNames(ctx, names, th);
 }

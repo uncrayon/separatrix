@@ -32,14 +32,15 @@ pub use io::{
 };
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
-    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers, ProjectParam,
-    ProjectSection, ProjectSlice, ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH,
-    DEFAULT_YAW, DEFAULT_ZOOM,
+    ProjectAxis, ProjectCamera, ProjectFile, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSlice, ProjectSolver,
+    ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW, DEFAULT_ZOOM,
 };
 pub use validate::{
-    cobweb_axes_ok, default_param_range, primary_view_index, range_ok, section_misfit,
-    space_misfit, COBWEB, COBWEB_MISFIT, SECTION, SECTION_MISFIT, SPACE, SPACE_MISFIT,
-    TRANSIENT_MAX,
+    cobweb_axes_ok, default_param_range, lyapunov_misfit, orbit_misfit, primary_view_index,
+    range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, LYAPUNOV, LYAPUNOV_MISFIT,
+    ORBIT, ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION, SECTION_MISFIT, SPACE,
+    SPACE_MISFIT, TRANSIENT_MAX,
 };
 
 /// The value of the `format` key.
@@ -53,7 +54,15 @@ pub const MAX_FILE_BYTES: u64 = 4 << 20;
 /// The solver methods this build knows; any other value falls back to
 /// `dopri5` with a warning. Mirrors `dyn_solve::Method`'s lowercase serde
 /// names (the app crate tests the parity).
-pub const KNOWN_METHODS: [&str; 4] = ["euler", "heun", "rk4", "dopri5"];
+pub const KNOWN_METHODS: [&str; 7] = [
+    "euler",
+    "heun",
+    "rk4",
+    "dopri5",
+    "verlet",
+    "yoshida4",
+    "rosenbrock23",
+];
 /// The file extension, without the dot.
 pub const EXTENSION: &str = "sepx";
 
@@ -82,6 +91,8 @@ mod bindings {
             ProjectSolver::decl(&cfg),
             ProjectSection::decl(&cfg),
             ProjectCamera::decl(&cfg),
+            ProjectLyapunov::decl(&cfg),
+            ProjectOrbit::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -103,6 +114,14 @@ mod bindings {
             decls[4]
         );
         assert!(decls[10].contains("zoom: number"), "{}", decls[10]);
+        assert!(
+            decls[4].contains("lyapunov?: ProjectLyapunov"),
+            "{}",
+            decls[4]
+        );
+        assert!(decls[11].contains("blocks?: number"), "{}", decls[11]);
+        assert!(decls[4].contains("orbit?: ProjectOrbit"), "{}", decls[4]);
+        assert!(decls[12].contains("kept?: number"), "{}", decls[12]);
         assert!(
             decls[4].contains("x_range: [number, number]"),
             "{}",

@@ -5,8 +5,6 @@
 // analysis) are written back as they were read. Opening turns the file into a
 // `ProjectLoad` by name (states, parameters, axes), which the studio applies
 // once the lines have compiled (`applyProjectLoad` in state/model.ts).
-//
-// Node's unit tests import this module directly, so it has only type imports.
 
 import type {
   AxisRef,
@@ -16,27 +14,33 @@ import type {
   ProjectCamera,
   ProjectFile,
   ProjectInitialCondition,
+  ProjectLyapunov,
+  ProjectOrbit,
   ProjectParam,
   ProjectSection,
   ProjectView,
   SectionSpec,
   SystemKind,
 } from "../api/types";
-import type { Camera, EquationLine, InitialCondition, Layers, ParamState, SolverSettings, View } from "../state/model";
+import { DEFAULT_METHOD, METHODS } from "../state/methods.ts";
+import type {
+  Camera,
+  EquationLine,
+  InitialCondition,
+  Layers,
+  LyapunovSettings,
+  OrbitSettings,
+  ParamState,
+  SolverSettings,
+  View,
+} from "../state/model";
 
 
 /** Keys this version writes; anything else in a loaded object is kept as read. */
 type Obj = Record<string, unknown>;
 
 /** The method names `dyn_solve::Method` knows (mirrors `KNOWN_METHODS` in crates/project). */
-export const KNOWN_METHODS: readonly Method[] = ["euler", "heun", "rk4", "dopri5"];
-
-const METHOD_NAMES: Record<Method, string> = {
-  euler: "Euler",
-  heun: "Heun",
-  rk4: "Runge–Kutta 4",
-  dopri5: "Dormand–Prince 5(4)",
-};
+export const KNOWN_METHODS = Object.keys(METHODS) as readonly Method[];
 
 /**
  * A saved axis, by name. `next` is the state one iterate later (a cobweb's
@@ -46,6 +50,8 @@ export type LoadedAxis =
   | { kind: "time" }
   | { kind: "state"; name: string }
   | { kind: "next"; name: string }
+  | { kind: "exponent" }
+  | { kind: "param"; name: string }
   | { kind: "unknown"; kindName: string };
 
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
@@ -73,6 +79,8 @@ export interface LoadedView {
   yRange: [number, number] | null;
   zRange?: [number, number] | null;
   camera?: Partial<Camera>;
+  lyapunov?: Partial<LyapunovSettings>;
+  orbit?: Partial<OrbitSettings>;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -246,14 +254,45 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const cobweb = s.view.kind === "cobweb";
     const section = s.view.kind === "section" ? s.view.section : null;
     const space = s.view.kind === "space" ? s.view : null;
+    const lyapunov = s.view.kind === "lyapunov" ? s.view.lyapunov : null;
+    const orbit = s.view.kind === "orbit" ? s.view : null;
     const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
+    const exponent: ProjectAxis = { kind: "exponent" };
+    const paramAxis = (name: string | undefined): ProjectAxis => {
+      const fresh: ProjectAxis = name === undefined ? { kind: "param" } : { kind: "param", name };
+      return lv?.x_axis?.kind === "param" ? { ...lv.x_axis, ...fresh } : fresh;
+    };
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section || space ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space || lyapunov || orbit ? { kind: s.view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
-      x_axis: axisOut(lv?.x_axis, s.view.xAxis, states),
-      y_axis: axisOut(lv?.y_axis, s.view.yAxis, states, next),
+      ...(lyapunov
+        ? {
+            lyapunov: {
+              ...(isObj(lv?.lyapunov) ? lv.lyapunov : {}),
+              transient: lyapunov.transient,
+              total: lyapunov.total,
+              interval: lyapunov.interval,
+              blocks: lyapunov.blocks,
+            } as ProjectLyapunov,
+          }
+        : {}),
+      ...(orbit
+        ? {
+            orbit: {
+              ...(isObj(lv?.orbit) ? lv.orbit : {}),
+              transient: orbit.orbit.transient,
+              kept: orbit.orbit.kept,
+            } as ProjectOrbit,
+          }
+        : {}),
+      x_axis: orbit ? paramAxis(s.params[orbit.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
+      y_axis: lyapunov
+        ? lv?.y_axis?.kind === "exponent"
+          ? { ...lv.y_axis, ...exponent }
+          : exponent
+        : axisOut(lv?.y_axis, s.view.yAxis, states, next),
       ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
@@ -277,8 +316,10 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
         backward: s.layers.backward,
       },
     };
-    if (!cobweb && !section && !space) delete primary.kind;
+    if (!cobweb && !section && !space && !lyapunov && !orbit) delete primary.kind;
     if (!section) delete primary.section;
+    if (!lyapunov) delete primary.lyapunov;
+    if (!orbit) delete primary.orbit;
     if (!space) {
       delete primary.z_axis;
       delete primary.z_range;
@@ -353,6 +394,8 @@ function loadAxis(a: unknown): LoadedAxis {
   if (kind === "time") return { kind: "time" };
   if (kind === "state" && isObj(a) && typeof a.name === "string") return { kind: "state", name: a.name };
   if (kind === "next" && isObj(a) && typeof a.name === "string") return { kind: "next", name: a.name };
+  if (kind === "exponent") return { kind: "exponent" };
+  if (kind === "param" && isObj(a) && typeof a.name === "string") return { kind: "param", name: a.name };
   return { kind: "unknown", kindName: kind ?? "" };
 }
 
@@ -420,6 +463,8 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
     const kind = str(v.kind);
     const section = loadSection(v.section);
     const cam: Obj = isObj(v.camera) ? v.camera : {};
+    const lyap: Obj = isObj(v.lyapunov) ? v.lyapunov : {};
+    const orb: Obj = isObj(v.orbit) ? v.orbit : {};
     view = {
       id: str(v.id) || "main",
       ...(kind !== undefined ? { kind } : {}),
@@ -431,6 +476,17 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
       yRange: loadRange(v.y_range),
       ...(v.z_range !== undefined ? { zRange: loadRange(v.z_range) } : {}),
       ...(isObj(v.camera) ? { camera: definedOnly({ yaw: num(cam.yaw), pitch: num(cam.pitch), zoom: num(cam.zoom) }) } : {}),
+      ...(isObj(v.lyapunov)
+        ? {
+            lyapunov: definedOnly({
+              transient: num(lyap.transient),
+              total: num(lyap.total),
+              interval: num(lyap.interval),
+              blocks: num(lyap.blocks),
+            }),
+          }
+        : {}),
+      ...(isObj(v.orbit) ? { orbit: definedOnly({ transient: num(orb.transient), kept: num(orb.kept) }) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({
@@ -448,9 +504,9 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
   if (typeof sv.method === "string") {
     if ((KNOWN_METHODS as readonly string[]).includes(sv.method)) method = sv.method as Method;
     else {
-      method = "dopri5";
+      method = DEFAULT_METHOD;
       warnings.push(
-        `The solver method “${sv.method}” isn't available in this version, so ${METHOD_NAMES.dopri5} is used.`,
+        `The solver method “${sv.method}” isn't available in this version, so ${METHODS[DEFAULT_METHOD].label} is used.`,
       );
     }
   }

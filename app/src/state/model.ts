@@ -5,16 +5,34 @@ import type {
   Direction,
   FixedPointOut,
   InputFormat,
+  LyapunovRequest,
+  LyapunovResponse,
   Method,
+  OrbitDiagramRequest,
+  OrbitDiagramResponse,
+  ParamInfo,
   PortraitRequest,
   PortraitResponse,
   SectionSpec,
+  SolverOptions,
   StateInfo,
   SystemKind,
   TrajectoryRequest,
 } from "../api/types";
-import { DEFAULT_CAMERA, SECTION_MISFIT, SPACE_MISFIT } from "../api/ipc.generated.ts";
-import type { PortraitJob } from "../api/client";
+import {
+  DEFAULT_CAMERA,
+  LYAPUNOV_MISFIT,
+  MAX_ORBIT_COLUMNS,
+  MAX_LYAPUNOV_ITERATES,
+  MAX_RENORMALIZATIONS,
+  ORBIT_MAX_KEPT,
+  ORBIT_MAX_TRANSIENT,
+  ORBIT_MISFIT,
+  SECTION_MISFIT,
+  SPACE_MISFIT,
+} from "../api/ipc.generated.ts";
+import { DEFAULT_METHOD, METHODS } from "./methods.ts";
+import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedView, ProjectLoad } from "../project/serialize";
 
@@ -95,23 +113,60 @@ export type SpaceView = Omit<ViewBase, "xAxis" | "yAxis"> & {
   zRange: [number, number];
   camera: Camera;
 };
-export type View = (ViewBase & { kind?: "plane" }) | (ViewBase & { kind: "cobweb" }) | SectionView | SpaceView;
+export type TimeAxis = Extract<AxisRef, { kind: "time" }>;
+
+export interface LyapunovSettings {
+  transient: number;
+  total: number;
+  interval: number;
+  blocks: number;
+}
+
+export type LyapunovView = ViewBase & {
+  kind: "lyapunov";
+  xAxis: TimeAxis;
+  yAxis: TimeAxis;
+  lyapunov: LyapunovSettings;
+};
+
+export interface OrbitSettings {
+  transient: number;
+  kept: number;
+}
+
+export type OrbitView = ViewBase & {
+  kind: "orbit";
+  xAxis: TimeAxis;
+  yAxis: StateAxis;
+  param: number;
+  orbit: OrbitSettings;
+};
+export type View =
+  | (ViewBase & { kind?: "plane" })
+  | (ViewBase & { kind: "cobweb" })
+  | SectionView
+  | SpaceView
+  | LyapunovView
+  | OrbitView;
 export type ViewKind = NonNullable<View["kind"]>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
 export const isSection = (v: View): v is SectionView => v.kind === "section";
 export const isSpace = (v: View): v is SpaceView => v.kind === "space";
+export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
+export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
+export const isAnalysis = (v: View): v is LyapunovView | OrbitView => isLyapunov(v) || isOrbit(v);
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space";
-export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space"];
+export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov" | "orbit";
+export const VIEW_CHOICES: readonly ViewChoice[] = ["phase", "series", "cobweb", "section", "space", "lyapunov", "orbit"];
 
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
-  ode: ["phase", "series", "section", "space"],
-  map: ["phase", "series", "cobweb"],
+  ode: ["phase", "series", "section", "space", "lyapunov"],
+  map: ["phase", "series", "cobweb", "lyapunov", "orbit"],
 };
 
 export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
@@ -122,12 +177,14 @@ export function viewChoice(v: View): ViewChoice {
   if (isCobweb(v)) return "cobweb";
   if (isSection(v)) return "section";
   if (isSpace(v)) return "space";
+  if (isLyapunov(v)) return "lyapunov";
+  if (isOrbit(v)) return "orbit";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
 export type Availability = { ok: true } | { ok: false; reason: string };
 
-type SystemShape = Pick<CompileResponse, "kind" | "autonomous" | "states">;
+type SystemShape = Pick<CompileResponse, "kind" | "autonomous" | "states"> & Partial<Pick<CompileResponse, "params">>;
 
 /**
  * The cobweb view can show `sys`: a one-dimensional autonomous map. `name`
@@ -163,6 +220,12 @@ export function planeSectionAvailability(sys: SystemShape | null | undefined, na
     : { ok: false, reason: `A plane section needs at least 2 states. ${name} has ${dim}; take a stroboscopic section.` };
 }
 
+export function orbitAvailability(sys: SystemShape | null | undefined, name = "this system"): Availability {
+  const needs = "The orbit diagram needs a map with a parameter";
+  if (!sys || sys.kind !== "map") return { ok: false, reason: `${needs}; ${name} is a flow.` };
+  return sys.params?.length ? { ok: true } : { ok: false, reason: `${needs}; ${name} has none.` };
+}
+
 export function spaceAvailability(sys: SystemShape | null | undefined, name = "This system"): Availability {
   const needs = "The 3D view needs a flow with at least 3 states.";
   if (sys?.kind === "map") return { ok: false, reason: `${needs} ${name} is a map.` };
@@ -176,6 +239,8 @@ export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   cobweb: "Cobweb",
   section: "Poincaré section",
   space: "3D view",
+  lyapunov: "Lyapunov spectrum",
+  orbit: "Orbit diagram",
 };
 
 /**
@@ -189,6 +254,8 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   cobweb: "Cobweb",
   section: "Section",
   space: "3D",
+  lyapunov: "λ",
+  orbit: "Orbit",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -202,6 +269,8 @@ export function viewChoiceAvailability(
     cobweb: cobwebAvailability(sys, name),
     section: sectionAvailability(sys, name),
     space: spaceAvailability(sys, name),
+    lyapunov: { ok: true },
+    orbit: orbitAvailability(sys, name),
   };
 }
 
@@ -330,6 +399,374 @@ export function cobwebView(range: [number, number]): View {
     yRange: [range[0], range[1]],
   };
 }
+
+export const LYAPUNOV_DEFAULTS: Record<SystemKind, LyapunovSettings> = {
+  ode: { transient: 100, total: 1000, interval: 0.1, blocks: 10 },
+  map: { transient: 1000, total: 100_000, interval: 1, blocks: 10 },
+};
+
+export function lyapunovView(kind: SystemKind, settings: LyapunovSettings = LYAPUNOV_DEFAULTS[kind]): LyapunovView {
+  const { transient, total } = settings;
+  return {
+    kind: "lyapunov",
+    xAxis: TIME_AXIS,
+    yAxis: TIME_AXIS,
+    xRange: [transient, transient + total],
+    yRange: [-1, 1],
+    lyapunov: { ...settings },
+  };
+}
+
+export function renormalizations(s: Pick<LyapunovSettings, "total" | "interval">, kind: SystemKind | undefined): number {
+  if (kind === "map") return Math.ceil(Math.round(s.total) / Math.max(1, Math.round(s.interval)));
+  const r = s.total / s.interval;
+  const k = Math.round(r);
+  return Math.abs(r - k) <= 1e-9 * Math.max(1, r) ? k : Math.ceil(r);
+}
+
+export function lyapunovSettingsError(
+  s: LyapunovSettings,
+  kind: SystemKind | undefined,
+): { field: keyof LyapunovSettings; message: string } | null {
+  const map = kind === "map";
+  const whole = (v: number) => !map || Number.isInteger(v);
+  if (!(Number.isFinite(s.transient) && s.transient >= 0 && whole(s.transient)))
+    return { field: "transient", message: map ? "Must be a whole number, 0 or more" : "Must be 0 or more" };
+  if (!(Number.isFinite(s.total) && s.total > 0 && whole(s.total)))
+    return { field: "total", message: map ? "Must be a whole number above 0" : "Must be above 0" };
+  if (map && s.transient + s.total > MAX_LYAPUNOV_ITERATES)
+    return { field: "transient", message: `Transient and iterates together at most ${MAX_LYAPUNOV_ITERATES.toLocaleString("en-US")}` };
+  if (!(Number.isFinite(s.interval) && s.interval > 0 && whole(s.interval)))
+    return { field: "interval", message: map ? "Must be a whole number above 0" : "Must be above 0" };
+  const k = renormalizations(s, kind);
+  if (k > MAX_RENORMALIZATIONS)
+    return { field: "interval", message: `${k.toLocaleString("en-US")} QR steps; at most ${MAX_RENORMALIZATIONS.toLocaleString("en-US")} fit in one run` };
+  if (!(Number.isInteger(s.blocks) && s.blocks >= 2 && s.blocks <= k))
+    return { field: "blocks", message: `Must be a whole number from 2 to ${k.toLocaleString("en-US")}, the QR steps` };
+  return null;
+}
+
+export function lyapunovStart(
+  ics: readonly InitialCondition[],
+  selection: Selection,
+  dim: number,
+): InitialCondition | null {
+  const fits = (ic: InitialCondition) => ic.x0.length === dim;
+  const picked = selection?.kind === "ic" ? ics.find((ic) => ic.id === selection.id && fits(ic)) : undefined;
+  return picked ?? ics.find(fits) ?? null;
+}
+
+const LYAPUNOV_MAX_STEPS = 1e9;
+const ADAPTIVE_STEPS_PER_INTERVAL = 100;
+
+export function lyapunovSolver(solver: SolverSettings, settings: LyapunovSettings, kind: SystemKind | undefined): SolverOptions {
+  const fixed = !METHODS[solver.method].adaptive;
+  const h = fixed && solver.h <= 0 ? DEFAULT_FIXED_STEP : solver.h;
+  const k = renormalizations(settings, kind);
+  const need = fixed
+    ? Math.ceil((settings.transient + settings.total) / h) + k + 2
+    : ADAPTIVE_STEPS_PER_INTERVAL * (k + 1);
+  return {
+    method: solver.method,
+    rtol: solver.rtol,
+    atol: solver.atol,
+    h,
+    maxSteps: Math.min(LYAPUNOV_MAX_STEPS, Math.max(solver.maxSteps, need)),
+  };
+}
+
+export interface LyapunovMeta {
+  key: string;
+  systemId: number;
+  shapeId: number;
+  kind: SystemKind;
+  icId: number;
+  settings: LyapunovSettings;
+  solver: SolverOptions;
+}
+
+export interface LyapunovState {
+  res: LyapunovResponse;
+  meta: LyapunovMeta;
+  roundTripMs: number;
+  /** The first run after a project file opened: the plot keeps the file's framing instead of fitting this run. */
+  framedByFile?: boolean;
+}
+
+export type LyapunovJob = Job<Omit<LyapunovRequest, "requestId">, LyapunovMeta>;
+
+export function buildLyapunovJob(
+  s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "solver" | "shapeId"> & { selection: Selection },
+): LyapunovJob | null {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || !sys.kind || !isLyapunov(s.view)) return null;
+  const settings = s.view.lyapunov;
+  if (lyapunovSettingsError(settings, sys.kind)) return null;
+  const ic = lyapunovStart(s.ics, s.selection, sys.states.length);
+  if (!ic) return null;
+  const solver = lyapunovSolver(s.solver, settings, sys.kind);
+  const body: LyapunovJob["body"] = {
+    systemId: sys.systemId,
+    params: s.params.map((p) => p.value),
+    x0: ic.x0.slice(),
+    t0: sys.kind === "map" ? 0 : ic.t0,
+    transient: settings.transient,
+    total: settings.total,
+    interval: settings.interval,
+    blocks: settings.blocks,
+    solver,
+  };
+  return {
+    body,
+    meta: {
+      key: JSON.stringify(body),
+      systemId: sys.systemId,
+      shapeId: s.shapeId,
+      kind: sys.kind,
+      icId: ic.id,
+      settings: { ...settings },
+      solver,
+    },
+  };
+}
+
+export function lyapunovCurrent(
+  s: Parameters<typeof buildLyapunovJob>[0] & { lyapunov: LyapunovState | null },
+): boolean {
+  const job = buildLyapunovJob(s);
+  return !!job && s.lyapunov?.meta.key === job.meta.key;
+}
+
+export function lyapunovFits(
+  sys: CompileResponse | null,
+  shapeId: number,
+  l: LyapunovState | null,
+): l is LyapunovState {
+  return !!sys && !!l && l.meta.shapeId === shapeId && l.res.exponents.length === sys.states.length;
+}
+
+export function fitLyapunovRanges(res: Pick<LyapunovResponse, "historyT" | "history" | "exponents">): {
+  xRange: [number, number];
+  yRange: [number, number];
+} | null {
+  const n = res.exponents.length;
+  const m = res.historyT.length;
+  if (n === 0 || m === 0) return null;
+  const t0 = res.historyT[0];
+  const t1 = res.historyT[m - 1];
+  const settled = t0 + 0.1 * (t1 - t0);
+  let lo = 0;
+  let hi = 0;
+  const take = (v: number) => {
+    if (!Number.isFinite(v)) return;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  };
+  res.exponents.forEach(take);
+  for (let k = 0; k < m; k++) {
+    if (res.historyT[k] < settled) continue;
+    for (let i = 0; i < n; i++) take(res.history[k * n + i]);
+  }
+  const span = hi - lo || 1;
+  const xSpan = t1 - t0 || 1;
+  return {
+    xRange: [t0, t1 + 0.02 * xSpan],
+    yRange: [lo - 0.08 * span, hi + 0.14 * span],
+  };
+}
+
+const MINUS = "\u2212";
+const withRealMinus = (text: string) => (Number(text) === 0 ? text.replace(/^-/, "") : text).replace(/^-/, MINUS);
+
+export function roundWithUncertainty(v: number, u: number | undefined): { value: string; error: string | null } {
+  if (!Number.isFinite(v)) return { value: String(v), error: null };
+  if (u === undefined || !(u > 0) || !Number.isFinite(u)) {
+    const text = Number(v.toPrecision(4)).toString();
+    return { value: text, error: null };
+  }
+  let d = -Math.floor(Math.log10(u));
+  const carriesIntoNextDecade = Math.round(u * 10 ** d) >= 10;
+  if (carriesIntoNextDecade) d -= 1;
+  const leadsWithOne = Math.round(u * 10 ** d) === 1;
+  if (leadsWithOne) d += 1;
+  const places = Math.max(0, Math.min(20, d));
+  return { value: v.toFixed(places), error: u.toFixed(places) };
+}
+
+export function lyapunovValueText(v: number, u: number | undefined): string {
+  const r = roundWithUncertainty(v, u);
+  return r.error === null ? withRealMinus(r.value) : `${withRealMinus(r.value)} ± ${r.error}`;
+}
+
+const SUPERSCRIPTS: Record<string, string> = {
+  "-": "⁻",
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+};
+const superscript = (e: number) => String(e).replace(/./g, (c) => SUPERSCRIPTS[c] ?? c);
+
+export function countText(n: number): string {
+  const e = Math.round(Math.log10(n));
+  return n >= 1000 && 10 ** e === n ? `10${superscript(e)}` : n.toLocaleString("en-US");
+}
+
+export function scientificText(v: number): string {
+  if (v === 0) return "0";
+  if (!Number.isFinite(v)) return String(v);
+  const [m, e] = v.toExponential(1).split("e");
+  return `${withRealMinus(m)} × 10${superscript(Number(e))}`;
+}
+
+export const ORBIT_DEFAULTS: OrbitSettings = { transient: 1000, kept: 200 };
+export { ORBIT_MAX_KEPT, ORBIT_MAX_TRANSIENT };
+
+export function orbitView(
+  params: readonly Pick<ParamState, "min" | "max">[],
+  yRange: [number, number],
+  param = 0,
+  state = 0,
+  settings: OrbitSettings = ORBIT_DEFAULTS,
+): OrbitView {
+  const p = params[param];
+  return {
+    kind: "orbit",
+    xAxis: TIME_AXIS,
+    yAxis: stateAxis(state),
+    xRange: p && p.min < p.max ? [p.min, p.max] : [0, 1],
+    yRange: [yRange[0], yRange[1]],
+    param,
+    orbit: { ...settings },
+  };
+}
+
+export function orbitColumns(cssWidth: number, pixelRatio: number): number {
+  const n = Math.round(cssWidth * pixelRatio);
+  return Number.isFinite(n) ? Math.min(MAX_ORBIT_COLUMNS, Math.max(2, n)) : 2;
+}
+
+export function orbitRange(xRange: [number, number], columns: number): [number, number] {
+  const half = (xRange[1] - xRange[0]) / (2 * columns);
+  return [xRange[0] + half, xRange[1] - half];
+}
+
+/**
+ * The column at fraction `f` of the plot's width (0 at the left edge). A
+ * fraction rather than an r, so that a click on a pixel's left edge, where
+ * every integer clientX lands, does not round into the column before it.
+ */
+export function orbitColumnAt(xRange: [number, number], columns: number, f: number): { column: number; r: number } {
+  const [lo, hi] = orbitRange(xRange, columns);
+  const column = Math.min(columns - 1, Math.max(0, Math.floor(f * columns)));
+  return { column, r: lo + column * ((hi - lo) / (columns - 1)) };
+}
+
+export function orbitSettingsError(s: OrbitSettings): { field: keyof OrbitSettings; message: string } | null {
+  if (!(Number.isInteger(s.transient) && s.transient >= 0 && s.transient <= ORBIT_MAX_TRANSIENT))
+    return { field: "transient", message: `Must be a whole number from 0 to ${ORBIT_MAX_TRANSIENT.toLocaleString("en-US")}` };
+  if (!(Number.isInteger(s.kept) && s.kept >= 1 && s.kept <= ORBIT_MAX_KEPT))
+    return { field: "kept", message: `Must be a whole number from 1 to ${ORBIT_MAX_KEPT.toLocaleString("en-US")}` };
+  return null;
+}
+
+export const findsDoublings = (sys: Pick<CompileResponse, "states" | "autonomous">): boolean =>
+  sys.states.length === 1 && sys.autonomous;
+
+export interface OrbitMeta {
+  key: string;
+  systemId: number;
+  shapeId: number;
+  param: number;
+  state: number;
+}
+
+export interface OrbitState {
+  res: OrbitDiagramResponse;
+  meta: OrbitMeta;
+  roundTripMs: number;
+}
+
+export type OrbitJob = Job<Omit<OrbitDiagramRequest, "requestId">, OrbitMeta>;
+
+export function buildOrbitJob(
+  s: Pick<StudioSnapshot, "compiled" | "params" | "view" | "ics" | "shapeId"> & {
+    selection: Selection;
+    orbitColumns: number;
+  },
+): OrbitJob | null {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || sys.kind !== "map" || !isOrbit(s.view)) return null;
+  const v = s.view;
+  if (s.orbitColumns < 2 || v.param >= sys.params.length || v.yAxis.index >= sys.states.length) return null;
+  if (orbitSettingsError(v.orbit)) return null;
+  const ic = lyapunovStart(s.ics, s.selection, sys.states.length);
+  if (!ic) return null;
+  const range = orbitRange(v.xRange, s.orbitColumns);
+  const body: OrbitJob["body"] = {
+    systemId: sys.systemId,
+    params: s.params.map((p, i) => (i === v.param ? range[0] : p.value)),
+    param: v.param,
+    range,
+    columns: s.orbitColumns,
+    state: v.yAxis.index,
+    x0: ic.x0.slice(),
+    transient: v.orbit.transient,
+    kept: v.orbit.kept,
+    doublings: findsDoublings(sys),
+  };
+  return {
+    body,
+    meta: { key: JSON.stringify(body), systemId: sys.systemId, shapeId: s.shapeId, param: v.param, state: v.yAxis.index },
+  };
+}
+
+export function orbitFits(
+  sys: CompileResponse | null,
+  shapeId: number,
+  view: View,
+  o: OrbitState | null,
+): o is OrbitState {
+  return !!sys && !!o && isOrbit(view) && o.meta.shapeId === shapeId && o.meta.param === view.param && o.meta.state === view.yAxis.index;
+}
+
+export function orbitCurrent(s: Parameters<typeof buildOrbitJob>[0] & { orbit: OrbitState | null }): boolean {
+  const job = buildOrbitJob(s);
+  return !!job && s.orbit?.meta.key === job.meta.key;
+}
+
+export function fitOrbitRange(res: Pick<OrbitDiagramResponse, "x">): [number, number] | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of res.x) {
+    if (v === null || !Number.isFinite(v)) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!(lo <= hi)) return null;
+  const pad = 0.08 * (hi - lo || Math.max(1, Math.abs(lo)));
+  return [lo - pad, hi + pad];
+}
+
+export function doublingRows(
+  doublings: readonly { r: number; period: number }[],
+  name = "r",
+): { label: string; r: number; period: number }[] {
+  let chain = true;
+  return doublings.map((d, i) => {
+    const n = Math.log2(d.period);
+    chain = chain && Number.isInteger(n) && (i === 0 || d.period === 2 * doublings[i - 1].period);
+    return { label: chain ? `${name}${subscriptDigits(n + 1)}` : `${d.period} → ${2 * d.period}`, r: d.r, period: d.period };
+  });
+}
+
+const subscriptDigits = (n: number) => String(n).replace(/\d/g, (d) => "₀₁₂₃₄₅₆₇₈₉"[Number(d)]);
 
 export interface Layers {
   field: boolean;
@@ -652,7 +1089,7 @@ export const DEFAULT_LAYERS: Layers = {
 };
 
 export const DEFAULT_SOLVER: SolverSettings = {
-  method: "dopri5",
+  method: DEFAULT_METHOD,
   rtol: 1e-6,
   atol: 1e-9,
   h: 0,
@@ -664,7 +1101,7 @@ export const DEFAULT_SOLVER: SolverSettings = {
 
 export const DEFAULT_FIXED_STEP = 0.01;
 
-export const TIME_AXIS: AxisRef = { kind: "time" };
+export const TIME_AXIS: TimeAxis = { kind: "time" };
 export const stateAxis = (index: number): StateAxis => ({ kind: "state", index });
 
 /**
@@ -683,7 +1120,7 @@ export function seriesRange(
 
 /** `v` with the range of its time axes moved by `dt` (the transient changed by `dt`); `v` itself when it has none. */
 export function shiftTimeAxes(v: View, dt: number): View {
-  if (dt === 0 || isCobweb(v)) return v;
+  if (dt === 0 || isCobweb(v) || isAnalysis(v)) return v;
   const shift = (r: [number, number]): [number, number] => [r[0] + dt, r[1] + dt];
   const x = v.xAxis.kind === "time";
   const y = v.yAxis.kind === "time";
@@ -832,6 +1269,12 @@ export function adaptView(
   newStates: StateInfo[],
   next?: Pick<CompileResponse, "kind" | "autonomous">,
 ): View | null {
+  if (isLyapunov(view)) return view;
+  if (isOrbit(view)) {
+    const k = newStates.findIndex((s) => s.name === oldStates[view.yAxis.index]?.name);
+    const index = k >= 0 ? k : renamedSlot(view.yAxis.index, oldStates, newStates) ? view.yAxis.index : -1;
+    return index >= 0 && next?.kind !== "ode" ? { ...view, yAxis: stateAxis(index) } : null;
+  }
   if (isCobweb(view)) {
     // A cobweb stays while the system is still a one-dimensional autonomous map.
     const ok = newStates.length === 1 && (!next || cobwebAvailability({ ...next, states: newStates }).ok);
@@ -860,6 +1303,17 @@ export function adaptView(
   }
   if (xAxis.kind === "state" && yAxis.kind === "state" && xAxis.index === yAxis.index) return null;
   return { ...view, xAxis, yAxis };
+}
+
+export function followOrbitParam(
+  view: OrbitView,
+  oldParams: readonly Pick<ParamInfo, "name">[],
+  newParams: readonly Pick<ParamInfo, "name">[],
+): OrbitView | null {
+  const k = newParams.findIndex((p) => p.name === oldParams[view.param]?.name);
+  const index = k >= 0 ? k : oldParams.length === newParams.length && view.param < newParams.length ? view.param : -1;
+  if (index < 0) return null;
+  return index === view.param ? view : { ...view, param: index };
 }
 
 /** Slice values after a recompile that changed the states: by name, as {@link adaptView}; a new variable starts at 0. */
@@ -993,7 +1447,7 @@ export function hasNullclineLayer(kind: SystemKind | undefined): boolean {
 
 export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> | null {
   const sys = s.compiled;
-  if (!sys || !sys.ok || sys.systemId === undefined) return null;
+  if (!sys || !sys.ok || sys.systemId === undefined || isAnalysis(s.view)) return null;
   const dim = sys.states.length;
   const isOde = sys.kind !== "map";
   const trajectories: TrajectoryRequest[] = [];
@@ -1007,7 +1461,7 @@ export function buildPortraitJob(s: StudioSnapshot): PortraitJob<PortraitMeta> |
     }
   }
   const maxSpan = trajectories.reduce((m, r) => Math.max(m, Math.abs(r.t1 - r.t0)), 0);
-  const fixedStep = s.solver.method !== "dopri5";
+  const fixedStep = !METHODS[s.solver.method].adaptive;
   const shown = displayRanges(s.view, sys.kind, s.plotAspect);
   const cobweb = isCobweb(s.view);
   const section = isSection(s.view) ? s.view.section : null;
@@ -1100,7 +1554,7 @@ export function liftPlotPoint(
   return { x0, t0 };
 }
 
-export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view);
+export const canAddOnPlot = (view: View): boolean => !isReturnMap(view) && !isSpace(view) && !isAnalysis(view);
 
 /** The last view of each kind, for switching back (useStudio keeps it for the session). */
 export type ViewMemory = Partial<Record<ViewChoice, View>>;
@@ -1118,7 +1572,10 @@ export type ViewMemory = Partial<Record<ViewChoice, View>>;
  */
 export function switchView(
   choice: ViewChoice,
-  s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & { portrait?: PortraitState | null },
+  s: Pick<StudioSnapshot, "compiled" | "view" | "solver"> & {
+    portrait?: PortraitState | null;
+    params?: readonly Pick<ParamState, "min" | "max">[];
+  },
   memory: ViewMemory,
 ): View | null {
   const sys = s.compiled;
@@ -1150,6 +1607,8 @@ export function switchView(
     return sectionView(sys, defaultSection(sys, (r0[0] + r0[1]) / 2), rangeOf);
   }
   if (choice === "space") return spaceView([0, 1, 2], fromExtent);
+  if (choice === "lyapunov") return lyapunovView(sys.kind ?? "ode");
+  if (choice === "orbit") return orbitView(s.params ?? [], shownRange(0) ?? fromExtent(0));
   if (choice === "series") {
     const y = shownRange(0) ?? fromExtent(0);
     return { xAxis: TIME_AXIS, yAxis: stateAxis(0), xRange: seriesRange(s.solver, sys.kind), yRange: [y[0], y[1]] };
@@ -1224,7 +1683,7 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section" || v.kind === "space") return null;
+  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov" || v.kind === "orbit") return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
   if (v.kind !== "cobweb" || !v.xRange || !v.yRange) return false;
@@ -1289,9 +1748,43 @@ function loadSpaceView(v: LoadedView, sys: CompileResponse): SpaceView | string 
   return spaceView(idx as [number, number, number], (i) => ranges[idx.indexOf(i)]!, clampCamera(v.camera ?? {}));
 }
 
+function loadLyapunovView(v: LoadedView, sys: CompileResponse): LyapunovView | string {
+  const l = v.lyapunov;
+  const kind = sys.kind ?? "ode";
+  const settings: LyapunovSettings | null =
+    l && [l.transient, l.total, l.interval, l.blocks].every((x) => x !== undefined)
+      ? { transient: l.transient!, total: l.total!, interval: l.interval!, blocks: l.blocks! }
+      : null;
+  if (!settings || lyapunovSettingsError(settings, kind) || v.xAxis.kind !== "time" || v.yAxis.kind !== "exponent")
+    return LYAPUNOV_MISFIT;
+  if (!v.xRange || !v.yRange) return VIEW_WARNING;
+  return { ...lyapunovView(kind, settings), xRange: [v.xRange[0], v.xRange[1]], yRange: [v.yRange[0], v.yRange[1]] };
+}
+
+function loadOrbitView(v: LoadedView, sys: CompileResponse): OrbitView | string {
+  const o = v.orbit;
+  const settings: OrbitSettings | null =
+    o && o.transient !== undefined && o.kept !== undefined ? { transient: o.transient, kept: o.kept } : null;
+  const x = v.xAxis;
+  const y = v.yAxis;
+  const param = x.kind === "param" ? sys.params.findIndex((p) => p.name === x.name) : -1;
+  const state = y.kind === "state" ? sys.states.findIndex((st) => st.name === y.name) : -1;
+  if (!orbitAvailability(sys).ok || !settings || orbitSettingsError(settings) || param < 0 || state < 0) return ORBIT_MISFIT;
+  if (!v.xRange || !v.yRange) return VIEW_WARNING;
+  return { ...orbitView([], v.yRange, param, state, settings), xRange: [v.xRange[0], v.xRange[1]] };
+}
+
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
+  if (v?.kind === "lyapunov") {
+    const fit = loadLyapunovView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
+  if (v?.kind === "orbit") {
+    const fit = loadOrbitView(v, sys);
+    return typeof fit === "string" ? null : fit;
+  }
   if (v?.kind === "section") {
     const fit = loadSectionView(v, sys);
     return typeof fit === "string" ? null : fit;
@@ -1355,6 +1848,8 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
     view = defaultView(sys, solver);
     if (load.view?.kind === "section") warnings.push(loadSectionView(load.view, sys) as string);
     else if (load.view?.kind === "space") warnings.push(loadSpaceView(load.view, sys) as string);
+    else if (load.view?.kind === "lyapunov") warnings.push(loadLyapunovView(load.view, sys) as string);
+    else if (load.view?.kind === "orbit") warnings.push(loadOrbitView(load.view, sys) as string);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
   const slice = load.view?.slice ?? {};

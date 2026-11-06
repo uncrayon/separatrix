@@ -57,7 +57,7 @@ async function commit(locator, value) {
 
 async function lorenzZ27(page) {
   await pick(page, "Lorenz equations");
-  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D"]);
+  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ"]);
   await viewRadio(page, "Poincaré section").click();
   await waitPortrait(page, "!!req.section");
   await inspector(page).getByLabel("State", { exact: true }).selectOption("s2");
@@ -106,13 +106,13 @@ test("a map shows Phase, Series and Cobweb, and a one-state flow's plane section
   const { browser, page } = await open();
   try {
     await pick(page, "Hénon map");
-    assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb"]);
+    assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb", "λ", "Orbit"]);
     const cobweb = viewRadio(page, "Cobweb");
     assert.equal(await cobweb.getAttribute("aria-disabled"), "true");
     assert.match(await page.locator(`[id="${await cobweb.getAttribute("aria-describedby")}"]`).textContent(), /; Hénon map has 2 states\.$/);
     await page.getByRole("button", { name: /^Axes:/ }).click();
     const labels = await page.getByRole("menu").locator("[data-view-choice] .axes-menu-label").allInnerTexts();
-    assert.deepEqual(labels, ["Phase plane", "Time series", "Cobweb"]);
+    assert.deepEqual(labels, ["Phase plane", "Time series", "Cobweb", "Lyapunov spectrum", "Orbit diagram"]);
     await page.keyboard.press("Escape");
 
     await page.goto(BASE);

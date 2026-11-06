@@ -6,7 +6,7 @@ export type SystemKind = "ode" | "map";
 
 export type Severity = "error" | "warning" | "info";
 
-export type Method = "euler" | "heun" | "rk4" | "dopri5";
+export type Method = "euler" | "heun" | "rk4" | "dopri5" | "verlet" | "yoshida4" | "rosenbrock23";
 
 export type Status = "completed" | "blewUp" | "maxSteps" | "stepTooSmall" | "nonFinite";
 
@@ -100,6 +100,11 @@ kind?: SystemKind,
  */
 hamiltonian: boolean, 
 /**
+ * A Hamiltonian that splits as `T(p) + V(q)` and does not read `t`,
+ * so the symplectic methods (`verlet`, `yoshida4`) can integrate it.
+ */
+separable: boolean, 
+/**
  * `t` (or `n`) does not appear on a right-hand side.
  */
 autonomous: boolean, 
@@ -175,19 +180,20 @@ export type SolverOptions = {
  */
 method: Method, 
 /**
- * Relative tolerance (dopri5 only).
+ * Relative tolerance (dopri5 and rosenbrock23 only).
  */
 rtol: number, 
 /**
- * Absolute tolerance (dopri5 only).
+ * Absolute tolerance (dopri5 and rosenbrock23 only).
  */
 atol: number, 
 /**
- * Fixed step for euler/heun/rk4; initial step for dopri5 (0 = automatic).
+ * Fixed step for euler/heun/rk4/verlet/yoshida4; initial step for
+ * dopri5 and rosenbrock23 (0 = automatic).
  */
 h: number, 
 /**
- * Largest allowed step for dopri5; absent = no limit.
+ * Largest allowed step for dopri5 and rosenbrock23; absent = no limit.
  */
 hMax?: number, 
 /**
@@ -363,7 +369,7 @@ x: Array<number>,
 eigenvalues: Array<[number, number]>, 
 /**
  * One entry per eigenvalue (same order): the unit eigenvector of a real
- * eigenvalue, sign-normalised so its largest-magnitude component is
+ * eigenvalue, sign-normalized so its largest-magnitude component is
  * positive, or the real part of the eigenvector of a complex one.
  * `null` for the missing direction of a defective eigenvalue (a
  * degenerate node has one vector and one `null`); stars get an
@@ -402,7 +408,27 @@ status: Status,
 /**
  * Work counters.
  */
-stats: Stats, };
+stats: Stats, 
+/**
+ * How well a Hamiltonian flow kept its energy; absent for other systems.
+ */
+energy?: EnergyOut, 
+/**
+ * `true` when Dormand–Prince's steps looked stiff (Hairer's test): its
+ * step was held back by stability, not accuracy, and `rosenbrock23`
+ * would take far fewer. Absent otherwise, and for every other method.
+ */
+stiff?: boolean, };
+
+export type EnergyOut = { 
+/**
+ * `H` at the start point.
+ */
+h0: number, 
+/**
+ * The largest `|H − h0|` over the returned samples.
+ */
+maxAbsDrift: number, };
 
 export type PortraitResponse = { 
 /**
@@ -433,6 +459,185 @@ trajectories: Array<TrajectoryOut>,
  * Empty when `f` is undefined or outside that band everywhere in view.
  */
 graph?: Array<Array<[number, number]>>, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type LyapunovRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order.
+ */
+params: Array<number>, 
+/**
+ * Full initial state vector.
+ */
+x0: Array<number>, 
+/**
+ * Start time (flow); ignored for maps, which start at `n = 0`.
+ */
+t0: number, 
+/**
+ * Time (flow) or iterates (map) run before measuring, `>= 0`.
+ */
+transient: number, 
+/**
+ * Time (flow) or iterates (map) measured after the transient, `> 0`.
+ * For a map, `transient + total` is at most `MAX_LYAPUNOV_ITERATES`.
+ */
+total: number, 
+/**
+ * Flow: time `τ` between QR steps. Map: iterates per QR step. `> 0`,
+ * and `total / interval` at most `MAX_RENORMALIZATIONS`.
+ */
+interval: number, 
+/**
+ * Blocks for the uncertainty, `2..=` the number of QR steps.
+ */
+blocks: number, 
+/**
+ * Integrator for a flow (ignored for maps). `maxSteps` bounds the
+ * accepted steps of the whole run, transient included.
+ */
+solver: SolverOptions, };
+
+export type LyapunovResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * `λ1 … λn`, largest first (per unit time, or per iterate for a map).
+ * Empty when no QR step was completed.
+ */
+exponents: Array<number>, 
+/**
+ * Standard error of each exponent over the blocks reached (sample
+ * standard deviation of the per-block exponents over `√B`). Empty when
+ * fewer than two blocks were reached.
+ */
+uncertainty: Array<number>, 
+/**
+ * `Σ λ_i`.
+ */
+sum: number, 
+/**
+ * What `sum` must equal: the time average of `tr J` (flow) or the mean
+ * of `ln |det J|` (map) along the orbit. The gap measures the
+ * integrator's error on the tangent vectors.
+ */
+traceAverage: number, 
+/**
+ * Time (flow) or iterate index (map) of each running-estimate sample.
+ */
+historyT: Array<number>, 
+/**
+ * Running estimates, row-major: sample `k` is `history[k·n .. (k+1)·n]`.
+ */
+history: Array<number>, 
+/**
+ * QR steps completed.
+ */
+renormalizations: number, 
+/**
+ * Why the run stopped; the estimates cover what was completed.
+ */
+status: Status, 
+/**
+ * Work counters, transient included.
+ */
+stats: Stats, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type OrbitDiagramRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order; the swept one
+ * is replaced column by column.
+ */
+params: Array<number>, 
+/**
+ * Index of the swept parameter.
+ */
+param: number, 
+/**
+ * First and last parameter value, both included, `lo < hi`.
+ */
+range: [number, number], 
+/**
+ * Parameter values across `range`, `2..=MAX_ORBIT_COLUMNS`.
+ */
+columns: number, 
+/**
+ * Index of the state recorded.
+ */
+state: number, 
+/**
+ * Full initial state vector, the same for every column.
+ */
+x0: Array<number>, 
+/**
+ * Iterates discarded in each column.
+ */
+transient: number, 
+/**
+ * Iterates kept in each column, `>= 1`, with `columns · kept` at most
+ * `MAX_ORBIT_POINTS`.
+ */
+kept: number, 
+/**
+ * Also locate the period-doubling points (1-D maps only).
+ */
+doublings: boolean, };
+
+export type DoublingOut = { 
+/**
+ * Value of the swept parameter.
+ */
+r: number, 
+/**
+ * Period of the cycle that loses stability.
+ */
+period: number, };
+
+export type OrbitDiagramResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The parameter values, `r_j = lo + j·(hi − lo)/(columns − 1)`.
+ */
+r: Array<number>, 
+/**
+ * `columns · kept` iterates, column by column: column `j` is
+ * `x[j·kept .. (j + 1)·kept]`. `null` from the iterate where the orbit
+ * left `BLOW_UP_THRESHOLD` (or stopped being finite) on.
+ */
+x: Array<number | null>, 
+/**
+ * The period-doubling points in increasing `r`: present exactly when
+ * `doublings` was requested.
+ */
+doublings?: Array<DoublingOut>, 
 /**
  * Wall time spent in Rust, in milliseconds.
  */
@@ -516,8 +721,11 @@ id: string,
  * state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
  * for a Poincaré section of a flow (see `section`); `"space"` for a 3D
  * view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
- * `camera`); absent for the phase plane and the time series, which the
- * axes tell apart.
+ * `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
+ * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
+ * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
+ * absent for the phase plane and the time series, which the axes tell
+ * apart.
  */
 kind?: string, 
 /**
@@ -542,7 +750,18 @@ z_range?: [number, number],
 /**
  * Where a `"space"` view is seen from.
  */
-camera?: ProjectCamera, slice: ProjectSlice, layers: ProjectLayers, };
+camera?: ProjectCamera, 
+/**
+ * The run of a `"lyapunov"` view (the running estimates of the
+ * Lyapunov spectrum: `x_axis` is time, `y_axis` is
+ * `{ "kind": "exponent" }`).
+ */
+lyapunov?: ProjectLyapunov, 
+/**
+ * The columns of an `"orbit"` view (the orbit diagram of a map over
+ * the range of the parameter across).
+ */
+orbit?: ProjectOrbit, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -555,6 +774,10 @@ state?: string, value?: number,
 direction?: string, period?: number, phase?: number, };
 
 export type ProjectCamera = { yaw: number, pitch: number, zoom: number, };
+
+export type ProjectLyapunov = { transient?: number, total?: number, interval?: number, blocks?: number, };
+
+export type ProjectOrbit = { transient?: number, kept?: number, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -913,6 +1136,105 @@ suggestedName: string, };
 
 export type TextExtension = "tex" | "svg" | "csv";
 
+export type LyapunovExportRequest = { 
+/**
+ * The view's own request.
+ */
+run: LyapunovRequest, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type OrbitExportRequest = { 
+/**
+ * The diagram's request: the screen's for the CSV, one column per
+ * pixel of the PNG layer for a figure.
+ */
+diagram: OrbitDiagramRequest, 
+/**
+ * The system's title (comments, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type OrbitFigureRequest = { 
+/**
+ * The diagram and its names.
+ */
+orbit: OrbitExportRequest, 
+/**
+ * The view's parameter range (across).
+ */
+xRange: [number, number], 
+/**
+ * The view's state range (up).
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveOrbitFigureRequest = { 
+/**
+ * The figure.
+ */
+figure: OrbitFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
+export type SaveCsvFileRequest = { 
+/**
+ * The file and its metadata.
+ */
+file: CsvFileOut, 
+/**
+ * The system's title (as the export command was given it).
+ */
+title: string, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
 export type SaveTextRequest = { 
 /**
  * File name offered in the dialog.
@@ -935,9 +1257,29 @@ text: string, };
 
 export const MAX_SECTION_POINTS = 100000;
 
+export const MAX_RENORMALIZATIONS = 10000000;
+
+export const MAX_LYAPUNOV_ITERATES = 100000000;
+
+export const MAX_ORBIT_COLUMNS = 4096;
+
+export const BLOW_UP_THRESHOLD = 1e12;
+
+export const LYAPUNOV_HISTORY = 2000;
+
+export const MAX_ORBIT_POINTS = 4000000;
+
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 
 export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the default view is shown.";
+
+export const LYAPUNOV_MISFIT = "The saved Lyapunov view can't be run as saved, so the default view is shown.";
+
+export const ORBIT_MISFIT = "The saved orbit diagram doesn't fit this system, so the default view is shown.";
+
+export const ORBIT_MAX_TRANSIENT = 100000;
+
+export const ORBIT_MAX_KEPT = 976;
 
 export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
 

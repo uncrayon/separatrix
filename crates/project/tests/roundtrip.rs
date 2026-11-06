@@ -5,15 +5,18 @@ mod common;
 use common::{fixture, APP};
 use separatrix_project::{
     from_value_checked, parse, parse_named, to_json, Opened, ProjectAxis, ProjectError,
-    ProjectFile, CURRENT_VERSION, MAX_FILE_BYTES, SECTION_MISFIT, SPACE_MISFIT,
+    ProjectFile, CURRENT_VERSION, LYAPUNOV_MISFIT, MAX_FILE_BYTES, ORBIT_MISFIT, SECTION_MISFIT,
+    SPACE_MISFIT,
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 8] = [
+const GOOD: [&str; 10] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
     "section-view.sepx",
     "space-view.sepx",
+    "lyapunov-view.sepx",
+    "orbit-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -21,12 +24,14 @@ const GOOD: [&str; 8] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 5] = [
+const CANONICAL: [&str; 7] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
     "section-view.sepx",
     "space-view.sepx",
+    "lyapunov-view.sepx",
+    "orbit-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -293,7 +298,7 @@ fn second_view_with_unknown_axis_kind_and_unknown_method_open_with_a_warning() {
     assert_eq!(p.solver.method, "dopri5");
     assert_eq!(
         opened.warnings,
-        ["The solver method \u{201c}rosenbrock23\u{201d} isn't available in this version of Separatrix, so Dormand\u{2013}Prince 5(4) is used."]
+        ["The solver method \u{201c}radau5\u{201d} isn't available in this version of Separatrix, so Dormand\u{2013}Prince 5(4) is used."]
     );
 }
 
@@ -1251,4 +1256,199 @@ fn a_space_view_that_does_not_fit_falls_back_to_the_default_view() {
         .unwrap_err()
         .to_string()
         .contains("views[0].camera.zoom"));
+}
+
+#[test]
+fn symplectic_methods_are_known_and_written_back_byte_for_byte() {
+    for method in ["verlet", "yoshida4"] {
+        let text = fixture("rabbits-vs-sheep.sepx").replace(
+            "\"method\": \"dopri5\",\n    \"rtol\": 1e-6,\n    \"atol\": 1e-9,\n    \"h\": 0.0,",
+            &format!("\"method\": \"{method}\",\n    \"rtol\": 1e-6,\n    \"atol\": 1e-9,\n    \"h\": 0.05,"),
+        );
+        assert!(
+            text.contains(&format!("\"method\": \"{method}\"")),
+            "{method}"
+        );
+        let opened = parse_named(&text, "symplectic.sepx").unwrap();
+        assert!(
+            opened.warnings.is_empty(),
+            "{method}: {:?}",
+            opened.warnings
+        );
+        assert_eq!(opened.project.solver.method, method);
+        assert_eq!(to_json(&opened.project, APP).unwrap(), text, "{method}");
+    }
+}
+
+#[test]
+fn rosenbrock23_is_known_and_written_back_byte_for_byte() {
+    let text = fixture("rabbits-vs-sheep.sepx")
+        .replace("\"method\": \"dopri5\",", "\"method\": \"rosenbrock23\",");
+    assert!(text.contains("\"method\": \"rosenbrock23\""));
+    let opened = parse_named(&text, "stiff.sepx").unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(opened.project.solver.method, "rosenbrock23");
+    assert_eq!(to_json(&opened.project, APP).unwrap(), text);
+}
+
+#[test]
+fn a_lyapunov_view_is_read_and_written_back() {
+    let opened = open("lyapunov-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("lyapunov"));
+    assert_eq!(view.x_axis, ProjectAxis::time());
+    assert_eq!(view.y_axis, ProjectAxis::exponent());
+    let l = view.lyapunov.as_ref().unwrap();
+    assert_eq!(
+        (l.transient, l.total, l.interval, l.blocks),
+        (Some(100.0), Some(10000.0), Some(0.1), Some(10))
+    );
+    let text = to_json(&opened.project, APP).unwrap();
+    assert!(text.contains(
+        "\"y_range\": [\n        -16.0,\n        2.0\n      ],\n      \"lyapunov\": {\n        \"transient\": 100.0,\n        \"total\": 10000.0,\n        \"interval\": 0.1,\n        \"blocks\": 10\n      },\n      \"slice\": {"
+    ));
+    let mut v = value(&fixture("lyapunov-view.sepx"));
+    v["views"][0]["lyapunov"]["method"] = json!("qr-householder");
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["lyapunov"]["method"],
+        json!("qr-householder")
+    );
+}
+
+#[test]
+fn a_lyapunov_view_that_cannot_run_falls_back_to_the_default_view() {
+    let base = value(&fixture("lyapunov-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 8] = [
+        ("no run", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("lyapunov");
+        }),
+        ("no blocks", &|v| {
+            v["views"][0]["lyapunov"]
+                .as_object_mut()
+                .unwrap()
+                .remove("blocks");
+        }),
+        ("one block", &|v| {
+            v["views"][0]["lyapunov"]["blocks"] = json!(1)
+        }),
+        ("more blocks than QR steps", &|v| {
+            v["views"][0]["lyapunov"]["total"] = json!(0.5)
+        }),
+        ("a negative transient", &|v| {
+            v["views"][0]["lyapunov"]["transient"] = json!(-1.0)
+        }),
+        ("no interval", &|v| {
+            v["views"][0]["lyapunov"]["interval"] = json!(0.0)
+        }),
+        ("a state up the side", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "state", "name": "x" })
+        }),
+        ("half an iterate of a map", &|v| {
+            v["system"]["kind"] = json!("map");
+            v["views"][0]["lyapunov"]["interval"] = json!(0.5);
+        }),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [LYAPUNOV_MISFIT], "{name}");
+    }
+    assert!(warns(&|v| {
+        v["system"]["kind"] = json!("map");
+        v["views"][0]["lyapunov"]["interval"] = json!(1.0);
+    })
+    .is_empty());
+    assert_eq!(
+        warns(&|v| {
+            v["views"][0].as_object_mut().unwrap().remove("kind");
+        }),
+        ["The y axis of the view \u{201c}main\u{201d} uses an axis kind (\u{201c}exponent\u{201d}) this version doesn't know, so the default view is used."]
+    );
+    let mut v = base.clone();
+    v["views"][0]["lyapunov"]["blocks"] = json!("ten");
+    assert!(parse(&v.to_string())
+        .unwrap_err()
+        .to_string()
+        .contains("views[0].lyapunov.blocks"));
+    let mut p = open("lyapunov-view.sepx").project;
+    p.views[0].lyapunov.as_mut().unwrap().total = Some(f64::INFINITY);
+    assert!(to_json(&p, APP)
+        .unwrap_err()
+        .to_string()
+        .contains("views[0].lyapunov.total"));
+}
+
+#[test]
+fn an_orbit_diagram_is_read_and_written_back() {
+    let opened = open("orbit-view.sepx");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("orbit"));
+    assert_eq!(view.x_axis, ProjectAxis::param("r"));
+    assert_eq!(view.y_axis, ProjectAxis::state("x"));
+    let o = view.orbit.as_ref().unwrap();
+    assert_eq!((o.transient, o.kept), (Some(1000), Some(200)));
+    let text = to_json(&opened.project, APP).unwrap();
+    assert!(text.contains(
+        "\"y_range\": [\n        -0.05,\n        1.05\n      ],\n      \"orbit\": {\n        \"transient\": 1000,\n        \"kept\": 200\n      },\n      \"slice\": {"
+    ));
+    let mut v = value(&fixture("orbit-view.sepx"));
+    v["views"][0]["orbit"]["shading"] = json!("log");
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    assert_eq!(
+        value(&to_json(&opened.project, APP).unwrap())["views"][0]["orbit"]["shading"],
+        json!("log")
+    );
+}
+
+#[test]
+fn an_orbit_diagram_that_cannot_be_drawn_falls_back_to_the_default_view() {
+    let base = value(&fixture("orbit-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 7] = [
+        ("no columns", &|v| {
+            v["views"][0].as_object_mut().unwrap().remove("orbit");
+        }),
+        ("nothing drawn", &|v| {
+            v["views"][0]["orbit"]["kept"] = json!(0)
+        }),
+        ("more drawn than the widest plot fits", &|v| {
+            v["views"][0]["orbit"]["kept"] = json!(977)
+        }),
+        ("too long a transient", &|v| {
+            v["views"][0]["orbit"]["transient"] = json!(100_001)
+        }),
+        ("a parameter the system lacks", &|v| {
+            v["views"][0]["x_axis"] = json!({ "kind": "param", "name": "mu" })
+        }),
+        ("time up the side", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "time" })
+        }),
+        ("a flow", &|v| v["system"]["kind"] = json!("ode")),
+    ];
+    for (name, edit) in misfits {
+        assert_eq!(warns(edit), [ORBIT_MISFIT], "{name}");
+    }
+    assert!(warns(&|v| v["views"][0]["orbit"]["kept"] = json!(976)).is_empty());
+    let w = warns(&|v| {
+        v["views"][0].as_object_mut().unwrap().remove("kind");
+    });
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert!(w[0].contains("(\u{201c}param\u{201d})"), "{w:?}");
+    let mut v = base.clone();
+    v["views"][0]["orbit"]["kept"] = json!(0.5);
+    assert!(parse(&v.to_string()).is_err());
 }

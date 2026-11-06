@@ -127,8 +127,11 @@ pub struct ProjectView {
     /// state `s`, `y_axis` is `{ "kind": "next", "name": s }`); `"section"`
     /// for a Poincaré section of a flow (see `section`); `"space"` for a 3D
     /// view of a flow (three states: `x_axis`, `y_axis`, `z_axis`; see
-    /// `camera`); absent for the phase plane and the time series, which the
-    /// axes tell apart.
+    /// `camera`); `"lyapunov"` for the Lyapunov spectrum of a flow or a map
+    /// (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
+    /// is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
+    /// absent for the phase plane and the time series, which the axes tell
+    /// apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
@@ -156,6 +159,17 @@ pub struct ProjectView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub camera: Option<ProjectCamera>,
+    /// The run of a `"lyapunov"` view (the running estimates of the
+    /// Lyapunov spectrum: `x_axis` is time, `y_axis` is
+    /// `{ "kind": "exponent" }`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub lyapunov: Option<ProjectLyapunov>,
+    /// The columns of an `"orbit"` view (the orbit diagram of a map over
+    /// the range of the parameter across).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub orbit: Option<ProjectOrbit>,
     #[serde(default)]
     pub slice: ProjectSlice,
     #[serde(default)]
@@ -198,6 +212,52 @@ pub struct ProjectSection {
     pub extra: Map<String, Value>,
 }
 
+/// A Lyapunov run: `{ "transient": 100, "total": 1000, "interval": 0.1,
+/// "blocks": 10 }`. A flow's are times (`interval` is τ, the time between QR
+/// steps); a map's are iterates (whole numbers). `blocks` splits the run for
+/// the ± spread.
+///
+/// Lenient like [`ProjectSection`]: a missing value makes the view a
+/// warning (the default view is shown), not an unreadable file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectLyapunov {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub transient: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub total: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub interval: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub blocks: Option<u32>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// The columns of an orbit diagram: `{ "transient": 1000, "kept": 200 }`,
+/// iterates dropped and then drawn in every column, each a whole number.
+///
+/// Lenient like [`ProjectLyapunov`]: a missing value makes the view a
+/// warning (the default view is shown), not an unreadable file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectOrbit {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub transient: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub kept: Option<u32>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
 /// The camera of a 3D view: `{ "yaw": -0.785…, "pitch": 0.523…, "zoom": 1 }`.
 /// `yaw` turns the box about its third axis and `pitch` tilts it towards the
 /// viewer, both in radians; `zoom` scales it. The app clamps `pitch` to
@@ -216,9 +276,10 @@ pub struct ProjectCamera {
     pub extra: Map<String, Value>,
 }
 
-/// An axis: `{ "kind": "state", "name": "x" }`, `{ "kind": "time" }`, or in a
+/// An axis: `{ "kind": "state", "name": "x" }`, `{ "kind": "time" }`, in a
 /// cobweb view `{ "kind": "next", "name": "x" }` (the state one iterate
-/// later, `x_{n+1}`).
+/// later, `x_{n+1}`), in a Lyapunov view `{ "kind": "exponent" }` (λ), or in
+/// an orbit diagram `{ "kind": "param", "name": "r" }` (a parameter).
 ///
 /// A lenient struct rather than a tagged enum, so an axis kind from a newer
 /// version is kept instead of making the whole file unreadable.
@@ -247,6 +308,24 @@ impl ProjectAxis {
     pub fn next(name: &str) -> Self {
         ProjectAxis {
             kind: "next".into(),
+            name: Some(name.into()),
+            extra: Map::new(),
+        }
+    }
+
+    /// The Lyapunov exponents' axis (a Lyapunov view's vertical axis).
+    pub fn exponent() -> Self {
+        ProjectAxis {
+            kind: "exponent".into(),
+            name: None,
+            extra: Map::new(),
+        }
+    }
+
+    /// The parameter `name` (an orbit diagram's horizontal axis).
+    pub fn param(name: &str) -> Self {
+        ProjectAxis {
+            kind: "param".into(),
             name: Some(name.into()),
             extra: Map::new(),
         }

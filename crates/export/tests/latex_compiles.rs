@@ -194,3 +194,119 @@ fn a_standalone_figure_is_its_axis_plus_the_border() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+fn compile_snippet(name: &str, tex: &str, files: &[(String, Vec<u8>)]) -> String {
+    let dir = scratch(name);
+    for (f, bytes) in files {
+        std::fs::write(dir.join(f), bytes).unwrap();
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n{}\n\\begin{{document}}\n{tex}\\end{{document}}\n",
+        needs(tex)
+    );
+    std::fs::write(dir.join("main.tex"), doc).unwrap();
+    pdflatex(&dir, "main.tex");
+    let text = Command::new("pdftotext")
+        .args(["-layout", "main.pdf", "-"])
+        .current_dir(&dir)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    text
+}
+
+#[test]
+fn the_lyapunov_table_prints_each_exponent_with_its_error() {
+    if !have_pdflatex() {
+        return;
+    }
+    let name = "lorenz-lyapunov-table.tex";
+    let tex = std::fs::read_to_string(golden_dir().join(name)).unwrap();
+    let text = compile_snippet("lyapunov", &tex, &[]);
+    if text.is_empty() {
+        eprintln!("pdftotext not found: skipping the text check");
+        return;
+    }
+    // uncertainty-mode = separate: "0.906 ± 0.004", never "0.906(4)".
+    for want in ["0.906 ± 0.004", "−14.5720 ± 0.0010", "Runge–Kutta 4"] {
+        assert!(text.contains(want), "{want:?} is not in\n{text}");
+    }
+    assert!(!text.contains("0.906(4)"), "{text}");
+}
+
+#[test]
+fn a_large_orbit_diagram_compiles_with_its_density_layer() {
+    use separatrix_export::{
+        orbit_figure, Labels, OrbitDiagram, OrbitFigureInput, OrbitRun, ParamValue, Placement,
+        StateName, SystemKind, SystemMeta, Theme,
+    };
+    if !have_pdflatex() {
+        return;
+    }
+    let (columns, kept) = (945, 200);
+    let step = (4.0 - 2.8) / (columns - 1) as f64;
+    let r: Vec<f64> = (0..columns).map(|j| 2.8 + j as f64 * step).collect();
+    let mut x = Vec::with_capacity(columns * kept);
+    for &rj in &r {
+        let mut v: f64 = 0.5;
+        for n in 0..1000 + kept {
+            if n >= 1000 {
+                x.push(v);
+            }
+            v = rj * v * (1.0 - v);
+        }
+    }
+    let labels = Labels {
+        states: vec![StateName {
+            name: "x".into(),
+            latex: "x".into(),
+        }],
+        params: vec![ParamValue {
+            name: "r".into(),
+            latex: "r".into(),
+            value: 3.2,
+        }],
+    };
+    let lines = vec!["x_{n+1}=rx_n\\left(1-x_n\\right)".to_string()];
+    let sys = SystemMeta {
+        kind: SystemKind::Map,
+        labels: &labels,
+        title: "Logistic map",
+        source_ref: None,
+        lines: &lines,
+        format: dyn_expr::InputFormat::Latex,
+    };
+    let run = OrbitRun {
+        param: 0,
+        state: 0,
+        x0: vec![0.5],
+        transient: 1000,
+        diagram: OrbitDiagram { r, x, kept },
+    };
+    let tokens = include_str!("../../../app/src/styles/ds/tokens.json");
+    let pal = separatrix_export::Palette::from_tokens(tokens, Theme::Light).unwrap();
+    let out = orbit_figure(&OrbitFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (2.8, 4.0),
+        y_range: (0.0, 1.0),
+        width_cm: 8.0,
+        height_cm: 6.4,
+        theme: Theme::Light,
+        palette: &pal,
+        placement: Placement::External {
+            base: "logistic-orbit".into(),
+        },
+        standalone: false,
+    });
+    assert!(out.tex.contains("\\addplot graphics"), "{}", out.tex);
+    let files: Vec<(String, Vec<u8>)> = out
+        .files
+        .iter()
+        .map(|f| (f.name.clone(), f.bytes.clone()))
+        .collect();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].0, "logistic-orbit-points.png");
+    compile_snippet("orbit", &out.tex, &files);
+}

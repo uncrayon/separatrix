@@ -68,7 +68,7 @@ export function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/** A canvas colour as an SVG paint and its alpha (rgba() is not SVG 1.1). */
+/** A canvas color as an SVG paint and its alpha (rgba() is not SVG 1.1). */
 export function svgPaint(c: unknown): { color: string; alpha: number } {
   if (typeof c !== "string") return { color: "#000000", alpha: 1 };
   const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+%?))?\s*\)$/i.exec(c.trim());
@@ -379,6 +379,17 @@ export class SvgContext implements DrawContext, MathTextSink {
     });
     this.body.push(
       `<text x="${num(x)}" y="${num(baseline)}" font-family="${family}" font-size="${num(layout.size)}"${paint}>${spans.join("")}</text>`,
+    );
+  }
+
+  imageSmoothingEnabled = true;
+
+  drawImage(image: CanvasImageSource, dx: number, dy: number, dw: number, dh: number): void {
+    if (!(typeof HTMLCanvasElement !== "undefined" && image instanceof HTMLCanvasElement)) return;
+    const a = this.st.globalAlpha;
+    const rendering = this.imageSmoothingEnabled ? "" : ` style="image-rendering:pixelated"`;
+    this.body.push(
+      `<image x="${num(dx)}" y="${num(dy)}" width="${num(dw)}" height="${num(dh)}" preserveAspectRatio="none"${rendering}${this.opacity("opacity", a)} href="${image.toDataURL("image/png")}"/>`,
     );
   }
 

@@ -1,7 +1,7 @@
 use dyn_core::{SystemKind, VectorField};
 
 use crate::ad::Dual;
-use crate::program::{Program, Scratch};
+use crate::program::{Inst, Op, Program, Reads, Scratch};
 use crate::sema::{Analysis, Form};
 use crate::SystemInfo;
 
@@ -103,6 +103,40 @@ impl CompiledSystem {
                 regs[self.program.outputs[0] as usize]
             })),
             Layout::Direct => None,
+        }
+    }
+
+    /// `true` for a Hamiltonian that splits as `H = T(p) + V(q)` and does
+    /// not read `t`, so a symplectic split-step method can integrate it.
+    ///
+    /// The check is structural. Below the sums, differences and negations at
+    /// the top of `H`, and its products with or quotients by factors that
+    /// read no state, every term must read only coordinates or only momenta.
+    /// So `p²/2 − cos q` and `(p² + q²)/2` are separable, and `q p`, `p² q`
+    /// and `(p² + q²)²` are not.
+    pub fn is_separable(&self) -> bool {
+        let Layout::Hamiltonian { dof } = self.layout else {
+            return false;
+        };
+        let reads = self.program.reads(dof);
+        let root = self.program.outputs[0];
+        !reads[root as usize].time && self.splits(root, &reads)
+    }
+
+    fn splits(&self, r: u32, reads: &[Reads]) -> bool {
+        let here = reads[r as usize];
+        if !(here.low && here.high) {
+            return true;
+        }
+        let free = |a: u32| reads[a as usize].no_state();
+        match self.program.insts[r as usize] {
+            Inst::Op(Op::Add(a, b) | Op::Sub(a, b)) => {
+                self.splits(a, reads) && self.splits(b, reads)
+            }
+            Inst::Op(Op::Neg(a)) => self.splits(a, reads),
+            Inst::Op(Op::Mul(a, b)) if free(a) => self.splits(b, reads),
+            Inst::Op(Op::Mul(a, b) | Op::Div(a, b)) if free(b) => self.splits(a, reads),
+            _ => false,
         }
     }
 
