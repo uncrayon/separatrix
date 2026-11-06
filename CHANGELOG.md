@@ -190,6 +190,19 @@ All notable changes to this project are documented in this file.
 - Text mode has `root(x, n)` for the `n`-th root (`\sqrt[n]{x}`).
 
 ### Fixed
+- A fixed-step run that needs exactly the step limit (h = 0.05 to T = 10⁴ with 200,000 steps)
+  finishes at T instead of stopping a sliver short with "Step limit": fixed steps sit at
+  t₀ + k·h rather than accumulating rounding by repeated addition.
+- Opening a system that has no separable H(q, p) while Störmer–Verlet or Yoshida 4 is chosen
+  switches to Dormand–Prince 5(4), with a note in the Solver section, instead of failing every
+  computation.
+- A click on the orbit diagram sets the parameter of the column drawn under the pointer (it
+  could land one column to the left), and the marker sits on that column.
+- Opening a project in the Lyapunov view keeps the file's framing instead of refitting it to the
+  first run.
+- The core refuses an orbit-diagram transient above 100,000 iterates and a map Lyapunov run of
+  more than 10⁸ iterates (`MAX_LYAPUNOV_ITERATES`), which used to keep the command busy with no
+  way to cancel.
 - A one-dimensional fixed point on a kink of `f` (the tent map's peak at `r = 1`, `|x|` at 0)
   has no multiplier and is non-hyperbolic, instead of λ = 0 "superstable"; an interval of fixed
   points (`f(x) = x` on `[a, b]`) is reported by its two ends as non-isolated instead of once per
