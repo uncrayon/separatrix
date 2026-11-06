@@ -295,7 +295,11 @@ export function CanvasToolbar({ state, actions }: Props) {
           </div>
         </>
       )}
-      <span className="ds-canvas-toolbar-divider" role="separator" aria-orientation="vertical" />
+      <span
+        className={tools.length === 0 && layers.length === 0 ? "ds-canvas-toolbar-divider toolbar-view" : "ds-canvas-toolbar-divider"}
+        role="separator"
+        aria-orientation="vertical"
+      />
       <AxisPicker
         state={state}
         actions={actions}

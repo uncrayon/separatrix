@@ -608,11 +608,41 @@ pub enum ContinuationStart {
     /// Onto the other branch through a branch point, or onto the
     /// `2·period`-cycle born at a flip (`dyn_analysis::switch_branch`).
     /// The point is self-contained, so the branch it came from is not
-    /// needed; only its `kind`, `p`, `x`, `period` and `tangent` are read.
+    /// needed.
     Switch {
         /// A special point of kind `branchPoint` or `flip`.
-        at: SpecialPointOut,
+        at: SwitchPoint,
     },
+}
+
+/// What [`ContinuationStart::Switch`] needs of a special point: the fields
+/// of a [`SpecialPointOut`] that `dyn_analysis::switch_branch` reads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchPoint {
+    /// `branchPoint` or `flip`.
+    pub kind: SpecialKindOut,
+    /// The parameter.
+    pub p: f64,
+    /// The state (`dim` values).
+    pub x: Vec<f64>,
+    /// `k` of `f^k`, as `BranchOut::period`.
+    pub period: usize,
+    /// Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values.
+    pub tangent: Vec<f64>,
+}
+
+impl From<&SpecialPointOut> for SwitchPoint {
+    fn from(sp: &SpecialPointOut) -> Self {
+        SwitchPoint {
+            kind: sp.kind,
+            p: sp.p,
+            x: sp.x.clone(),
+            period: sp.period,
+            tangent: sp.tangent.clone(),
+        }
+    }
 }
 
 /// Which way a branch is followed from its start.
@@ -1385,6 +1415,7 @@ mod bindings {
             BranchEndOut::decl(&cfg),
             BranchStop::decl(&cfg),
             SpecialPointOut::decl(&cfg),
+            SwitchPoint::decl(&cfg),
             SpecialKindOut::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),

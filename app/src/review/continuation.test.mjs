@@ -79,16 +79,18 @@ test("one job per seed; the swept slider is not in any key, the other sliders ar
   assert.deepEqual(model.buildContinuationJobs({ ...snap([0.08, 0.6]), view: bad }), [], "Δs must be positive");
 });
 
-test("a switch seed is the special point itself, followed both ways, and is added once", () => {
+test("a switch seed keeps what the switch needs of the special point, followed both ways, and is added once", () => {
   const at = { kind: "flip", index: 12, p: 3, x: [2 / 3], period: 1, tangent: [0.1, 0.99], eigenvalues: [[-1, 0]], omega: null, lyapunov: null };
   const seeds = model.withSeed([], model.switchSeed(at));
   assert.deepEqual(model.withSeed(seeds, model.switchSeed(at)), seeds);
+  assert.equal(model.switchedBranch(seeds, at), 1);
+  assert.equal(model.switchedBranch(seeds, { ...at, p: 3.449 }), null);
   const [job] = model.buildContinuationJobs({
     compiled: logistic,
     params: sliders(logistic, [3.7]),
     view: model.continuationView([{ min: 0, max: 4 }], [0, 1], 0, seeds),
   });
-  assert.deepEqual(job.body.start, { kind: "switch", at });
+  assert.deepEqual(job.body.start, { kind: "switch", at: { kind: "flip", p: 3, x: [2 / 3], period: 1, tangent: [0.1, 0.99] } });
   assert.equal(job.body.direction, "both");
   assert.deepEqual(job.body.params, [3]);
 });
@@ -185,6 +187,9 @@ test("the seeds of continuation-view.sepx round-trip through the studio", () => 
   assert.deepEqual(view.continuation.range, [2.8, 3.57]);
   assert.deepEqual(view.continuation.seeds.map((s) => s.from), ["point", "switch", "switch", "switch"]);
   assert.deepEqual(view.continuation.seeds.slice(1).map((s) => s.at.period), [1, 2, 4]);
+  const loaded = view.continuation.seeds[1];
+  const special = { ...loaded.at, index: 7, eigenvalues: [[-1, 0]], omega: null, lyapunov: null };
+  assert.deepEqual(model.withSeed(view.continuation.seeds, model.switchSeed(special)), view.continuation.seeds, "a loaded switch is the switch at that point");
   const { slice: _slice, ...saved } = projectFromState(doc, { loaded: FIXTURE }).views[0];
   const { slice: _fileSlice, ...file } = FIXTURE.views[0];
   assert.deepEqual(saved, file, "every key but the slice, which the studio fills in for x");

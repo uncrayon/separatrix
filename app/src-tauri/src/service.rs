@@ -444,9 +444,9 @@ pub fn compute_continuation(
                     x: at.x.clone(),
                     period: at.period,
                     tangent: at.tangent.clone(),
-                    eigenvalues: at.eigenvalues.clone(),
-                    omega: at.omega,
-                    lyapunov: at.lyapunov,
+                    eigenvalues: Vec::new(),
+                    omega: None,
+                    lyapunov: None,
                 };
                 dyn_analysis::switch_branch(f, &req.params, &at, &opts(at.period))
             }
@@ -1046,7 +1046,9 @@ fn trajectory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{Classification, InputFormat, Method, Severity, SolverOptions, Status};
+    use crate::ipc::{
+        Classification, InputFormat, Method, Severity, SolverOptions, Status, SwitchPoint,
+    };
     use serde::Deserialize;
 
     const TEMPLATES_JSON: &str = include_str!("../../src/templates/templates.json");
@@ -2996,7 +2998,7 @@ mod tests {
         let bp = compute_continuation(&flow, &parent).unwrap().branch.special[0].clone();
         assert_eq!(bp.kind, SpecialKindOut::BranchPoint);
         let switch = ContinuationRequest {
-            start: ContinuationStart::Switch { at: bp.clone() },
+            start: ContinuationStart::Switch { at: (&bp).into() },
             direction: ContinuationDirection::Both,
             ..parent.clone()
         };
@@ -3025,11 +3027,11 @@ mod tests {
 
         let switch_at = |kind, tangent: Vec<f64>, p: f64| ContinuationRequest {
             start: ContinuationStart::Switch {
-                at: SpecialPointOut {
+                at: SwitchPoint {
                     kind,
                     tangent,
                     p,
-                    ..bp.clone()
+                    ..(&bp).into()
                 },
             },
             ..parent.clone()

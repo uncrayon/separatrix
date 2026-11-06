@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   AxisRef,
   BranchStop,
@@ -42,6 +42,7 @@ import {
   shownBranches,
   specialRows,
   switchSeed,
+  switchedBranch,
   type ContinuationSeed,
   MAX_ITERATES,
   PALETTE_SIZE,
@@ -916,13 +917,14 @@ function stateText(names: readonly string[], x: readonly number[]): string {
   return names.length === 1 ? `${names[0]} = ${dec(x[0], 4)}` : `(${names.join(", ")}) = (${x.map((v) => dec(v, 4)).join(", ")})`;
 }
 
-function specialText(at: SpecialPointOut, pName: string, names: readonly string[]): string {
+function specialParts(at: SpecialPointOut, pName: string, names: readonly string[]): string[] {
   const info = SPECIAL_KINDS[at.kind];
   const parts = [`${pName} = ${dec(at.p, 6)}`, stateText(names, at.x)];
   if (at.period > 1) parts.push(`period ${at.period}`);
   if (info.omega && at.omega !== null) parts.push(`${info.omega} = ${dec(at.omega, 6)}`);
-  if (at.lyapunov !== null) parts.push(at.lyapunov < 0 ? "ℓ₁ < 0, supercritical" : "ℓ₁ > 0, subcritical");
-  return parts.join("  ");
+  if (at.lyapunov !== null)
+    parts.push(`ℓ₁ = ${dec(at.lyapunov, 6)} (${at.lyapunov < 0 ? "supercritical" : "subcritical"})`);
+  return parts;
 }
 
 const seedText = (seed: ContinuationSeed, pName: string, names: readonly string[]) =>
@@ -1062,12 +1064,12 @@ function ContinuationSection({
           disabled={!fp || value === undefined}
           onClick={() => fp && value !== undefined && actions.addSeed(pointSeed(fp, value, direction))}
         >
-          Continue from the selected fixed point
+          Continue from selection
         </Button>
         <p className="ds-panel-section-hint caption" data-continue-from="">
           {fp && value !== undefined
             ? `From ${stateText(names, fp)} at ${pName} = ${dec(value, 4)}.`
-            : "Select a fixed point in the phase plane or the cobweb, or press Continue on a row of the Fixed points panel."}
+            : "Select a fixed point in the Phase or Cobweb view, or press Continue on its row in the Fixed points panel there."}
         </p>
       </div>
       <h3 className="ds-panel-section-subhead label">Branches</h3>
@@ -1120,7 +1122,10 @@ function ContinuationSection({
         <ul className="ds-fp-list" aria-label="Special points" data-special-points="">
           {rows.map(({ at }) => {
             const info = SPECIAL_KINDS[at.kind];
-            const text = specialText(at, pName, names);
+            const parts = specialParts(at, pName, names);
+            const text = parts.join("  ");
+            const switched = info.switches ? switchedBranch(c.seeds, at) : null;
+            const switchedShown = switched === null ? -1 : shown.findIndex((b) => b.job.meta.seed === switched - 1);
             return (
               <li key={`${at.kind}-${at.period}-${at.p}`} className="ds-fp-item" data-special-kind={at.kind}>
                 <button
@@ -1133,14 +1138,27 @@ function ContinuationSection({
                   <FixedPointIcon kind="half" />
                   <span className="ds-fp-row-text">
                     <span className="ds-fp-class body-strong">{info.label}</span>
-                    <span className="ds-fp-eig numeric-sm inspector-special-text">{text}</span>
+                    <span className="ds-fp-eig numeric-sm inspector-special-text">
+                      {parts.map((part, i) => (
+                        <Fragment key={i}>
+                          {i > 0 && "  "}
+                          <span className="nowrap">{part}</span>
+                        </Fragment>
+                      ))}
+                    </span>
                   </span>
                 </button>
                 {info.switches && (
                   <div className="ds-fp-detail">
-                    <Button size="sm" onClick={() => actions.addSeed(switchSeed(at))}>
-                      Switch branch
-                    </Button>
+                    {switched === null ? (
+                      <Button size="sm" onClick={() => actions.addSeed(switchSeed(at))}>
+                        Switch branch
+                      </Button>
+                    ) : (
+                      <span className="caption" data-switched-branch={switchedShown + 1}>
+                        Followed as Branch {switchedShown + 1}
+                      </span>
+                    )}
                   </div>
                 )}
               </li>

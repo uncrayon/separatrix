@@ -542,13 +542,13 @@ fn branch(run: &'static Run) -> Arc<BranchOut> {
             period: 1,
         },
         Start::Switch { parent, kind } => {
-            let at = branch(parent)
+            let parent_branch = branch(parent);
+            let at = parent_branch
                 .special
                 .iter()
                 .find(|sp| sp.kind == kind)
-                .unwrap_or_else(|| panic!("{}: no {kind:?} on {}", run.label, parent.label))
-                .clone();
-            ContinuationStart::Switch { at }
+                .unwrap_or_else(|| panic!("{}: no {kind:?} on {}", run.label, parent.label));
+            ContinuationStart::Switch { at: at.into() }
         }
     };
     let req = ContinuationRequest {

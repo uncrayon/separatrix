@@ -92,6 +92,7 @@ export type {
   SolverOptions,
   SpecialKindOut,
   SpecialPointOut,
+  SwitchPoint,
   StateInfo,
   Stats,
   Status,

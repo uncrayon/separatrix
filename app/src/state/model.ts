@@ -21,6 +21,7 @@ import type {
   SolverOptions,
   SpecialKindOut,
   SpecialPointOut,
+  SwitchPoint,
   StateInfo,
   SystemKind,
   TrajectoryRequest,
@@ -153,7 +154,7 @@ export type NormAxis = { kind: "norm" };
 
 export type ContinuationSeed =
   | { from: "point"; x: number[]; param: number; period: number; direction: ContinuationDirection }
-  | { from: "switch"; at: SpecialPointOut; direction: ContinuationDirection };
+  | { from: "switch"; at: SwitchPoint; direction: ContinuationDirection };
 
 export interface ContinuationSettings {
   range: [number, number];
@@ -885,7 +886,17 @@ export const pointSeed = (x: readonly number[], param: number, direction: Contin
   period: 1,
   direction,
 });
-export const switchSeed = (at: SpecialPointOut): ContinuationSeed => ({ from: "switch", at, direction: "both" });
+export const switchSeed = ({ kind, p, x, period, tangent }: SwitchPoint): ContinuationSeed => ({
+  from: "switch",
+  at: { kind, p, x: x.slice(), period, tangent: tangent.slice() },
+  direction: "both",
+});
+
+/** The number (from 1) of the branch already switched onto at `at`, if any. */
+export function switchedBranch(seeds: readonly ContinuationSeed[], at: SwitchPoint): number | null {
+  const i = seeds.findIndex((s) => s.from === "switch" && s.at.kind === at.kind && s.at.period === at.period && s.at.p === at.p);
+  return i < 0 ? null : i + 1;
+}
 
 export function withSeed(seeds: readonly ContinuationSeed[], seed: ContinuationSeed): ContinuationSeed[] {
   const key = JSON.stringify(seed);
@@ -2058,8 +2069,7 @@ function loadedSeed(seed: LoadedSeed, sys: CompileResponse): ContinuationSeed | 
   if (seed.from === "point") return { from: "point", x, param, period, direction: dir };
   const kind = seed.kind as SpecialKindOut | undefined;
   if (seed.from !== "switch" || !kind || !SPECIAL_KINDS[kind]?.switches || seed.tangent?.length !== dim + 1) return null;
-  const at: SpecialPointOut = { kind, index: 0, p: param, x, period, tangent: seed.tangent, eigenvalues: [], omega: null, lyapunov: null };
-  return { from: "switch", at, direction: dir };
+  return { from: "switch", at: { kind, p: param, x, period, tangent: seed.tangent }, direction: dir };
 }
 
 function loadContinuationView(v: LoadedView, sys: CompileResponse): { view: ContinuationView; warnings: string[] } | string {

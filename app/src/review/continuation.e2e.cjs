@@ -78,6 +78,11 @@ test("the logistic map: PD, then Switch branch three times, lists r1 … r4 in i
       await settled(page);
     }
     const rows = await specialRows(page);
+    assert.deepEqual(
+      await inspector(page).locator("[data-switched-branch]").allInnerTexts(),
+      ["Followed as Branch 3", "Followed as Branch 4", "Followed as Branch 5"],
+      "a flip already switched at offers no second switch",
+    );
     const flips = rows.filter(([kind]) => kind === "flip").map(([, text]) => pOf(text));
     assert.equal(flips.length, 4, JSON.stringify(rows));
     const known = [3, 1 + Math.sqrt(6), 3.54409036, 3.564407266];
@@ -128,11 +133,11 @@ test("Continue on a fixed point row opens the Branch view from it; the selection
     await settled(page);
     assert.equal(await inspector(page).locator("[data-branches] > li").count(), 1);
     assert.match(await inspector(page).locator("[data-branches]").innerText(), /From \(x, y\) = \(0\.6000, 1\.3636\) at a = 0\.0800/);
-    await inspector(page).getByRole("button", { name: "Continue from the selected fixed point" }).click();
+    await inspector(page).getByRole("button", { name: "Continue from selection" }).click();
     await page.waitForTimeout(200);
     assert.equal(await inspector(page).locator("[data-branches] > li").count(), 1, "the same seed is added once");
     await inspector(page).getByRole("radio", { name: "Forward" }).click();
-    await inspector(page).getByRole("button", { name: "Continue from the selected fixed point" }).click();
+    await inspector(page).getByRole("button", { name: "Continue from selection" }).click();
     await page.waitForFunction(() => document.querySelectorAll("[data-branches] > li").length === 2);
     await inspector(page).getByRole("button", { name: "Remove branch 2" }).click();
     assert.equal(await inspector(page).locator("[data-branches] > li").count(), 1);
@@ -167,6 +172,12 @@ test("at 1,024 × 768 in projector mode every View label fits its segment, three
         }),
       );
       assert.deepEqual(fits, [true, true, true, true, true, true], title);
+      await viewRadio(page, "Continuation").click();
+      const button = inspector(page).getByRole("button", { name: "Continue from selection" });
+      assert.ok(
+        await button.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5),
+        `${title}: the Continue label fits its button`,
+      );
       const rows = await radios.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
       assert.equal(new Set(rows).size, 2, `two rows: ${rows}`);
       const widths = await radios.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));

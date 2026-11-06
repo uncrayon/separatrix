@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Tex } from "../math/Tex";
+import { latexToPlain } from "../math/format";
 import { IconInfo } from "../components/icons";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { isContinuation, shownBranches } from "../state/model";
@@ -19,6 +20,8 @@ export function BranchCanvas({ state, actions, toolbar }: Props) {
   const { compiled, view } = state;
   const cont = isContinuation(view) ? view : null;
   const param = cont ? state.params[cont.param] : undefined;
+  const pLatex = cont ? compiled?.params[cont.param]?.latex : undefined;
+  const pName = pLatex ? latexToPlain(pLatex) : (param?.name ?? "the parameter");
   const dim = compiled?.states.length ?? 0;
   const vp = useMemo(() => makeViewport(size.w, size.h, view.xRange, view.yRange), [size.w, size.h, view.xRange, view.yRange]);
 
@@ -67,7 +70,7 @@ export function BranchCanvas({ state, actions, toolbar }: Props) {
   const yNameTop = toolbarBox && axes.X + 8 < toolbarBox[2] ? toolbarBox[3] + 6 : vp.top + 6;
   const yLatex = axis?.kind === "state" ? (compiled?.states[axis.index]?.latex ?? "x") : "\\lVert x \\rVert";
   const label = param
-    ? `Branch plot over ${param.name} from ${view.xRange[0].toPrecision(4)} to ${view.xRange[1].toPrecision(4)}; ${param.name} = ${param.value.toPrecision(4)}. Click a branch to set ${param.name}.`
+    ? `Branch plot over ${pName} from ${view.xRange[0].toPrecision(4)} to ${view.xRange[1].toPrecision(4)}; ${pName} = ${param.value.toPrecision(4)}. Click a branch to set ${pName}.`
     : "Branch plot";
 
   return (
@@ -117,8 +120,8 @@ export function BranchCanvas({ state, actions, toolbar }: Props) {
       </div>
       <div className="legend-bar">
         <p className="legend-help caption">
-          Each branch is a fixed point followed as {param?.name ?? "the parameter"} changes: solid where it is stable, dashed
-          where it is unstable. Click a branch to set {param?.name ?? "the parameter"}, drag to pan, scroll to zoom,
+          Each branch is a fixed point followed as {pName} changes: solid where it is stable, dashed where it is unstable.
+          Click a branch to set {pName}, drag to pan, scroll to zoom,
           double-click to reset.
         </p>
       </div>

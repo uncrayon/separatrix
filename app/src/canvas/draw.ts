@@ -279,7 +279,7 @@ const TICK_LEN = 4;
 /** Space between a tick and its label. */
 const TICK_LABEL_PAD = 3;
 /** Radius of the halo behind a fixed-point glyph at glyph scale 1. */
-const FP_HALO_R = 7.5;
+export const FP_HALO_R = 7.5;
 
 function drawAxes(
   ctx: DrawContext,
@@ -371,6 +371,20 @@ function layoutLabels(
     );
   }
   return out;
+}
+
+/** The boxes of the tick labels `drawScene` draws for a scene with these axis kinds. */
+export function tickLabelBoxes(
+  ctx: DrawContext,
+  vp: Viewport,
+  th: PlotTheme,
+  avoid: Box[],
+  axes: Pick<Scene, "xAxis" | "yAxis">,
+): Box[] {
+  return layoutLabels(ctx, vp, ticksFor(vp), axisLines(vp), th, avoid, {
+    yRight: axes.xAxis.kind === "time",
+    xAbove: axes.yAxis.kind === "time",
+  }).map((l) => l.box);
 }
 
 function makeLabel(

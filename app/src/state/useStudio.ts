@@ -32,6 +32,7 @@ import {
   continuationXRange,
   continuationStep,
   defaultView,
+  fitBranchRanges,
   followOrbitParam,
   isCobweb,
   isContinuation,
@@ -54,6 +55,7 @@ import {
   resolveParam,
   seriesRange,
   shiftTimeAxes,
+  shownBranches,
   stateExtent,
   templateLines,
   templateView,
@@ -309,7 +311,12 @@ export function useStudio() {
   );
   useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
 
+  const updateContinuation = useCallback((f: (v: ContinuationView) => ContinuationView) => {
+    setViewState((v) => (isContinuation(v) ? f(v) : v));
+    setHomeView((v) => (isContinuation(v) ? f(v) : v));
+  }, []);
   const continuing = useRef(false);
+  const refitBranches = useRef(false);
   const nextContinuationId = useRef(1);
   const pumpContinuation = useCallback(async () => {
     if (continuing.current) return;
@@ -318,7 +325,20 @@ export function useStudio() {
       for (;;) {
         const cache = latest.current.branches;
         const job = buildContinuationJobs(latest.current).find((j) => !(j.meta.key in cache));
-        if (!job) break;
+        if (!job) {
+          const v = latest.current.view;
+          const fit =
+            refitBranches.current && isContinuation(v) && latest.current.compiled?.ok
+              ? fitBranchRanges(
+                  shownBranches(latest.current).map((b) => b.run),
+                  latest.current.compiled.states.length,
+                  v.yAxis,
+                )
+              : null;
+          refitBranches.current = false;
+          if (fit) updateContinuation((w) => ({ ...w, yRange: fit.yRange }));
+          break;
+        }
         const started = performance.now();
         let run: BranchRun;
         try {
@@ -328,7 +348,7 @@ export function useStudio() {
           run = { ok: false, error: err instanceof Error ? err.message : String(err) };
         }
         const wanted = new Set(buildContinuationJobs(latest.current).map((j) => j.meta.key));
-        const next: Record<string, BranchRun> = { [job.meta.key]: run };
+        const next: Record<string, BranchRun> = wanted.has(job.meta.key) ? { [job.meta.key]: run } : {};
         for (const [k, v] of Object.entries(latest.current.branches)) if (wanted.has(k)) next[k] = v;
         latest.current = { ...latest.current, branches: next };
         setBranches(next);
@@ -336,7 +356,7 @@ export function useStudio() {
     } finally {
       continuing.current = false;
     }
-  }, []);
+  }, [updateContinuation]);
   const continuationKey = buildContinuationJobs(state)
     .map((j) => j.meta.key)
     .join("\n");
@@ -812,18 +832,16 @@ export function useStudio() {
     setHomeView(next);
   }, []);
 
-  const updateContinuation = useCallback((f: (v: ContinuationView) => ContinuationView) => {
-    setViewState((v) => (isContinuation(v) ? f(v) : v));
-    setHomeView((v) => (isContinuation(v) ? f(v) : v));
-  }, []);
 
   const setContinuation = useCallback(
-    (patch: Partial<Omit<ContinuationSettings, "seeds">>) =>
+    (patch: Partial<Omit<ContinuationSettings, "seeds">>) => {
+      if (patch.range) refitBranches.current = true;
       updateContinuation((v) => ({
         ...v,
         ...(patch.range ? { xRange: continuationXRange(patch.range) } : {}),
         continuation: { ...v.continuation, ...patch },
-      })),
+      }));
+    },
     [updateContinuation],
   );
 

@@ -699,7 +699,7 @@ period: number, } | { "kind": "switch",
 /**
  * A special point of kind `branchPoint` or `flip`.
  */
-at: SpecialPointOut, };
+at: SwitchPoint, };
 
 export type ContinuationDirection = "forward" | "backward" | "both";
 
@@ -804,6 +804,28 @@ omega: number | null,
  * `ℓ₁ = a/ω`. `null` otherwise, or where it could not be computed.
  */
 lyapunov: number | null, };
+
+export type SwitchPoint = { 
+/**
+ * `branchPoint` or `flip`.
+ */
+kind: SpecialKindOut, 
+/**
+ * The parameter.
+ */
+p: number, 
+/**
+ * The state (`dim` values).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k`, as `BranchOut::period`.
+ */
+period: number, 
+/**
+ * Unit tangent `(ẋ, ṗ)` of the branch there, `dim + 1` values.
+ */
+tangent: Array<number>, };
 
 export type SpecialKindOut = "fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker";
 
