@@ -402,6 +402,53 @@ fn hopf_inside_a_step_from_a_node() {
 }
 
 #[test]
+fn branch_started_on_a_special_point_reports_it_once() {
+    let hopf = system("x' = mu*x - y - x*(x^2 + y^2)\ny' = x + mu*y - y*(x^2 + y^2)");
+    let logistic = system("x_{n+1} = r*x_n*(1 - x_n)");
+    let cases = [
+        (&hopf, 0.0, vec![0.0, 0.0], SpecialKind::Hopf),
+        (&logistic, 3.0, vec![2.0 / 3.0], SpecialKind::Flip),
+    ];
+    for (sys, p0, x0, kind) in cases {
+        let (lo, hi) = (p0 - 0.5, p0 + 0.5);
+        let halves = [0.05, -0.05].map(|ds| run(sys, &[p0], &x0, &opts(0, (lo, hi), ds)));
+        let mut found = Vec::new();
+        for b in &halves {
+            assert_eq!(b.end, BranchEnd::Range, "{}: {:?}", kind.label(), kinds(b));
+            found.extend(b.special.iter().map(|sp| (sp.kind, sp.p)));
+        }
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, kind);
+        assert!((found[0].1 - p0).abs() <= 1e-10, "{found:?}");
+    }
+}
+
+#[test]
+fn hopf_of_one_mode_while_another_oscillates_faster_and_unstably() {
+    let sys = system("x' = mu*x - y\ny' = x + mu*y\nu' = 0.5*u - 2*v\nv' = 2*u + 0.5*v");
+    let b = run(&sys, &[0.5], &[0.0; 4], &opts(0, (-1.0, 1.0), -0.05));
+    assert_eq!(b.end, BranchEnd::Range);
+    let h = only(&b, SpecialKind::Hopf);
+    assert!(h.p.abs() <= 1e-10, "μ = {}", h.p);
+    assert!(
+        (h.omega.expect("ω") - 1.0).abs() <= 1e-9,
+        "ω = {:?}",
+        h.omega
+    );
+}
+
+#[test]
+fn neimark_sacker_of_one_pair_while_another_is_outside_the_circle() {
+    let sys = system(
+        "x_{n+1} = r*(0.6*x_n - 0.8*y_n)\ny_{n+1} = r*(0.8*x_n + 0.6*y_n)\nu_{n+1} = 1.5*(0.8*u_n - 0.6*v_n)\nv_{n+1} = 1.5*(0.6*u_n + 0.8*v_n)",
+    );
+    let b = run(&sys, &[0.5], &[0.0; 4], &opts(0, (0.0, 2.0), 0.05));
+    assert_eq!(b.end, BranchEnd::Range);
+    let ns = only(&b, SpecialKind::NeimarkSacker);
+    assert!((ns.p - 1.0).abs() <= 1e-10, "r = {}", ns.p);
+}
+
+#[test]
 fn neutral_saddle_is_not_hopf() {
     let b = neutral_saddle();
     assert_eq!(b.end, BranchEnd::Range);
@@ -729,6 +776,8 @@ fn logistic_cascade_reaches_r4() {
         "r2 = {}",
         found[1]
     );
+    assert!((found[2] - 3.544090360).abs() <= 1e-6, "r3 = {}", found[2]);
+    assert!((found[3] - 3.564407266).abs() <= 1e-6, "r4 = {}", found[3]);
 }
 
 #[test]

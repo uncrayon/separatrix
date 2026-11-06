@@ -678,16 +678,21 @@ fn print_line([claim, reference, measured, delta, tol, verdict]: [&str; 6]) {
     println!("{claim}{pad} {reference:>16} {measured:>16} {delta:>8} {tol:>8} {verdict}");
 }
 
+/// Twelve decimals, without the sign of a value that rounds to zero.
+fn fixed(v: f64) -> String {
+    let s = format!("{v:.12}");
+    match s.strip_prefix('-') {
+        Some(digits) if digits.bytes().all(|c| c == b'0' || c == b'.') => digits.to_string(),
+        _ => s,
+    }
+}
+
 fn print_table(rows: &[Row]) {
     println!();
     print_line(["claim", "reference", "measured", "Δ", "tol", "result"]);
     for r in rows {
         let (reference, measured, tol) = match *r.expect {
-            Expect::Near { value, tol } => (
-                format!("{value:.12}"),
-                format!("{:.12}", r.measured),
-                format!("{tol:.0e}"),
-            ),
+            Expect::Near { value, tol } => (fixed(value), fixed(r.measured), format!("{tol:.0e}")),
             Expect::AtMost { bound } => (
                 "0".to_string(),
                 format!("{:.3e}", r.measured),

@@ -317,12 +317,44 @@ fn in_range(opts: &ContinuationOptions, p: f64) -> bool {
     (a.min(b)..=a.max(b)).contains(&p)
 }
 
+/// A test function per bifurcation. `test` gives its values at a point in
+/// descending order: one value, or for Hopf and Neimark–Sacker one per
+/// complex pair, so a pair crossing while another pair sits further out is
+/// still seen. Between two points with `c_a` and `c_b` positive values the
+/// value ranked `min(c_a, c_b)` is the one that changes sign.
 struct Detector {
     kind: SpecialKind,
     applies_to: &'static [SystemKind],
     jump: usize,
-    test: fn(&Residual, &BranchPoint) -> Option<f64>,
+    test: fn(&Residual, &BranchPoint) -> Vec<f64>,
     extras: fn(&Residual, &BranchPoint) -> OmegaLyapunov,
+}
+
+impl Detector {
+    fn ranked(&self, g: &Residual, pt: &BranchPoint, rank: usize) -> Option<f64> {
+        (self.test)(g, pt).get(rank).copied()
+    }
+}
+
+/// A test value that changed sign between the last accepted point and the
+/// next, ranked as in [`Detector`]. `last == 0.0` puts the special point on
+/// the last point itself.
+struct Fired<'a> {
+    detector: &'a Detector,
+    rank: usize,
+    last: f64,
+}
+
+fn sign_change<'a>(detector: &'a Detector, a: &[f64], b: &[f64], jump: usize) -> Option<Fired<'a>> {
+    let positive = |v: &[f64]| v.iter().filter(|t| **t > 0.0).count();
+    let rank = positive(a).min(positive(b));
+    let (va, vb) = (*a.get(rank)?, *b.get(rank)?);
+    let crossed = va * vb < 0.0 || (va == 0.0 && vb != 0.0 && jump == detector.jump);
+    crossed.then_some(Fired {
+        detector,
+        rank,
+        last: va,
+    })
 }
 
 type OmegaLyapunov = (Option<f64>, Option<f64>);
@@ -332,7 +364,7 @@ const DETECTORS: &[Detector] = &[
         kind: SpecialKind::Fold,
         applies_to: &[SystemKind::Ode, SystemKind::Map],
         jump: 1,
-        test: |_, pt| pt.tangent.last().copied(),
+        test: |_, pt| pt.tangent.last().copied().into_iter().collect(),
         extras: |_, _| (None, None),
     },
     Detector {
@@ -341,7 +373,7 @@ const DETECTORS: &[Detector] = &[
         jump: 1,
         test: |g, pt| {
             let (_, a) = g.linear(&z_of(pt));
-            Some(lu_det(&bordered(a, &pt.tangent)))
+            vec![lu_det(&bordered(a, &pt.tangent))]
         },
         extras: |_, _| (None, None),
     },
@@ -349,7 +381,7 @@ const DETECTORS: &[Detector] = &[
         kind: SpecialKind::Hopf,
         applies_to: &[SystemKind::Ode],
         jump: 2,
-        test: |_, pt| upper_pairs(pt).map(|(re, _)| re).reduce(f64::max),
+        test: |_, pt| descending(upper_pairs(pt).map(|(re, _)| re)),
         extras: |g, pt| {
             let pair = critical_pair(pt, |re, _| re.abs());
             (
@@ -368,7 +400,7 @@ const DETECTORS: &[Detector] = &[
             for i in 0..n {
                 df_plus_identity[i * n + i] += 1.0;
             }
-            Some(lu_det(&df_plus_identity))
+            vec![lu_det(&df_plus_identity)]
         },
         extras: |_, _| (None, None),
     },
@@ -376,17 +408,19 @@ const DETECTORS: &[Detector] = &[
         kind: SpecialKind::NeimarkSacker,
         applies_to: &[SystemKind::Map],
         jump: 2,
-        test: |_, pt| {
-            upper_pairs(pt)
-                .map(|(re, im)| (re * re + im * im).sqrt() - 1.0)
-                .reduce(f64::max)
-        },
+        test: |_, pt| descending(upper_pairs(pt).map(|(re, im)| (re * re + im * im).sqrt() - 1.0)),
         extras: |_, pt| {
             let pair = critical_pair(pt, |re, im| ((re * re + im * im).sqrt() - 1.0).abs());
             (pair.map(|(re, im)| im.atan2(re)), None)
         },
     },
 ];
+
+fn descending(values: impl Iterator<Item = f64>) -> Vec<f64> {
+    let mut v: Vec<f64> = values.collect();
+    v.sort_by(|a, b| b.total_cmp(a));
+    v
+}
 
 fn upper_pairs(pt: &BranchPoint) -> impl Iterator<Item = (f64, f64)> + '_ {
     pt.eigenvalues.iter().copied().filter(|&(_, im)| im > 0.0)
@@ -726,7 +760,7 @@ impl<'a> Residual<'a> {
             .iter()
             .filter(|d| d.applies_to.contains(&kind))
             .collect();
-        let test_all = |pt: &BranchPoint| -> Vec<Option<f64>> {
+        let test_all = |pt: &BranchPoint| -> Vec<Vec<f64>> {
             detectors.iter().map(|d| (d.test)(g, pt)).collect()
         };
         let mut special = Vec::new();
@@ -768,16 +802,13 @@ impl<'a> Residual<'a> {
             };
             let mut next = g.point(0.0, &z_new, t_new);
             let next_tests = test_all(&next);
-            let fired: Vec<(&Detector, f64)> = (0..detectors.len())
-                .filter_map(|i| match (tests[i], next_tests[i]) {
-                    (Some(a), Some(b)) if a * b < 0.0 => Some((detectors[i], a)),
-                    _ => None,
-                })
-                .collect();
             let jump = next.unstable.abs_diff(last.unstable);
-            let explained = match fired[..] {
+            let fired: Vec<Fired> = (0..detectors.len())
+                .filter_map(|i| sign_change(detectors[i], &tests[i], &next_tests[i], jump))
+                .collect();
+            let explained = match &fired[..] {
                 [] => jump == 0,
-                [(d, _)] => jump == d.jump,
+                [f] => jump == f.detector.jump,
                 _ => false,
             };
             if !explained {
@@ -789,15 +820,24 @@ impl<'a> Residual<'a> {
             }
             let len = dist(&z, &z_new);
             let limit = proximity_limit(map, last, &next, len);
-            if let [(d, test_last)] = fired[..] {
-                let mut at = g.locate(last, &next, &dir, d, test_last);
-                at.s = last.s + dist(&z_of(last), &z_of(&at));
-                at.unstable = last.unstable.min(next.unstable);
+            if let [f] = &fired[..] {
+                let d = f.detector;
+                let unstable = last.unstable.min(next.unstable);
+                let index = if f.last == 0.0 {
+                    points.len() - 1
+                } else {
+                    let mut at = g.locate(last, &next, &dir, f);
+                    at.s = last.s + dist(&z_of(last), &z_of(&at));
+                    points.push(at);
+                    points.len() - 1
+                };
+                let at = &mut points[index];
+                at.unstable = unstable;
                 at.stable = false;
-                let (omega, lyapunov) = (d.extras)(g, &at);
+                let (omega, lyapunov) = (d.extras)(g, at);
                 special.push(SpecialPoint {
                     kind: d.kind,
-                    index: points.len(),
+                    index,
                     p: at.p,
                     x: at.x.clone(),
                     period,
@@ -806,7 +846,6 @@ impl<'a> Residual<'a> {
                     omega,
                     lyapunov,
                 });
-                points.push(at);
             }
             let prev = points.last().expect("the start");
             next.s = prev.s + dist(&z_of(prev), &z_new);
@@ -916,20 +955,15 @@ impl<'a> Residual<'a> {
         (len.is_finite() && len > 0.0).then(|| d.iter().map(|c| c / len).collect())
     }
 
-    fn locate(
-        &self,
-        a: &BranchPoint,
-        b: &BranchPoint,
-        dir: &[f64],
-        detector: &Detector,
-        test_a: f64,
-    ) -> BranchPoint {
+    fn locate(&self, a: &BranchPoint, b: &BranchPoint, dir: &[f64], fired: &Fired) -> BranchPoint {
+        let test = |pt: &BranchPoint| fired.detector.ranked(self, pt, fired.rank);
+        let test_a = fired.last;
         let za = z_of(a);
         let (mut lo, mut hi) = (
             (0.0, a.clone()),
             (dot(dir, &diff(&z_of(b), &za)), b.clone()),
         );
-        let mut best_test = (detector.test)(self, b).unwrap_or(f64::INFINITY).abs();
+        let mut best_test = test(b).unwrap_or(f64::INFINITY).abs();
         let mut best = b.clone();
         if test_a.abs() < best_test {
             (best, best_test) = (a.clone(), test_a.abs());
@@ -959,7 +993,7 @@ impl<'a> Residual<'a> {
                 break;
             }
             let mid = self.point(0.0, &zm, tm);
-            let Some(v) = (detector.test)(self, &mid) else {
+            let Some(v) = test(&mid) else {
                 break;
             };
             if v.abs() < best_test {

@@ -508,12 +508,16 @@ below `ds_min` ends the branch (`StepTooSmall`). A predictor that leaves `range`
 which points are kept, so a branch has the same points on every platform.
 
 The special points come from one table of signed test functions: `ṗ` of the tangent (LP), the
-determinant of the bordered Jacobian (BP), the largest `Re λ` over complex pairs (H, so a neutral
-saddle's real pair `λ, −λ` is never a Hopf point), `det(D f^k + I)` (PD) and the largest `|μ|`
-over complex pairs minus 1 (NS). LP and BP apply to flows and maps, H to flows, PD and NS to maps.
-A step is kept only when its change in the unstable count is the jump of the one test that changed
-sign, or zero when none did; otherwise it is halved, so a bifurcation between two points is never
-skipped. A sign change is located by bisection to `|Δp| ≤ 1e−13 (1 + |p|)`, each midpoint
+determinant of the bordered Jacobian (BP), `Re λ` of each complex pair (H, so a neutral saddle's
+real pair `λ, −λ` is never a Hopf point), `det(D f^k + I)` (PD) and `|μ| − 1` of each complex pair
+(NS). LP and BP apply to flows and maps, H to flows, PD and NS to maps. H and NS rank their values
+per pair in descending order, and between two points with `c_a` and `c_b` positive values the value
+ranked `min(c_a, c_b)` is the one tested for a sign change, so one pair crossing is seen while
+another pair sits further out. A step is kept only when its change in the unstable count is the
+jump of the one test that changed sign, or zero when none did; otherwise it is halved, so a
+bifurcation between two points is never skipped. A test that is exactly `0` at a point and nonzero
+at the next, with the matching jump, makes that point itself the special point, so a branch
+started on a Hopf point or a flip (a slider sitting on `μ = 0`) reports it there. A sign change is located by bisection to `|Δp| ≤ 1e−13 (1 + |p|)`, each midpoint
 predicted from the bracket's lower end along its own tangent and corrected there (not on the
 step's secant, whose corrector can land on the other branch next to a branch point), and the located point is inserted into `points` at `index`. At a
 special point the critical eigenvalues count as neutral: it is not `stable`, and its `unstable`
