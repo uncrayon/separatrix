@@ -286,7 +286,7 @@ const CHECKS: &[Check] = &[
     },
     Check {
         claim: Claim::Sum { run: &LORENZ_FINE },
-        text: "Lorenz Σλ = −(σ + 1 + b) = −41/3",
+        text: "Lorenz Σλ = −41/3 (RK4 h = 0.001, T = 1e3)",
         expect: Expect::Near {
             value: -41.0 / 3.0,
             tol: 1e-6,
@@ -979,6 +979,31 @@ fn chaos_claims_reproduce() {
     let started = Instant::now();
     let rows: Vec<Row> = CHECKS.iter().map(evaluate).collect();
     print_table(&rows);
+    let coarse = spectrum(&LORENZ).sum;
+    print_line([
+        "Lorenz Σλ at the app's RK4 h = 0.01",
+        &format!("{:.7}", -41.0 / 3.0),
+        &format!("{coarse:.9}"),
+        "—",
+        &format!("{:.1e}", (coarse + 41.0 / 3.0).abs()),
+        "—",
+        "info",
+        "not gated",
+    ]);
+    let (ros, dopri) = (stiff_run(&ROBERTSON), stiff_run(&ROBERTSON_DOPRI5));
+    print_line([
+        "Robertson steps Ros23/Dopri5, rtol 1e-8",
+        "—",
+        &format!(
+            "{:.3e}",
+            ros.stats.accepted as f64 / dopri.stats.accepted as f64
+        ),
+        "—",
+        "—",
+        "—",
+        "info",
+        "not gated",
+    ]);
     let ratio = (doubling(3) - doubling(2)) / (doubling(4) - doubling(3));
     print_line([
         "Feigenbaum δ ≈ (r3 − r2)/(r4 − r3)",
