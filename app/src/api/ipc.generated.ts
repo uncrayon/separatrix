@@ -438,6 +438,101 @@ graph?: Array<Array<[number, number]>>,
  */
 elapsedMs: number, };
 
+export type LyapunovRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order.
+ */
+params: Array<number>, 
+/**
+ * Full initial state vector.
+ */
+x0: Array<number>, 
+/**
+ * Start time (flow); ignored for maps, which start at `n = 0`.
+ */
+t0: number, 
+/**
+ * Time (flow) or iterates (map) run before measuring, `>= 0`.
+ */
+transient: number, 
+/**
+ * Time (flow) or iterates (map) measured after the transient, `> 0`.
+ */
+total: number, 
+/**
+ * Flow: time `τ` between QR steps. Map: iterates per QR step. `> 0`,
+ * and `total / interval` at most `MAX_RENORMALIZATIONS`.
+ */
+interval: number, 
+/**
+ * Blocks for the uncertainty, `2..=` the number of QR steps.
+ */
+blocks: number, 
+/**
+ * Integrator for a flow (ignored for maps). `maxSteps` bounds the
+ * accepted steps of the whole run, transient included.
+ */
+solver: SolverOptions, };
+
+export type LyapunovResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * `λ1 … λn`, largest first (per unit time, or per iterate for a map).
+ * Empty when no QR step was completed.
+ */
+exponents: Array<number>, 
+/**
+ * Standard error of each exponent over the blocks reached (sample
+ * standard deviation of the per-block exponents over `√B`). Empty when
+ * fewer than two blocks were reached.
+ */
+uncertainty: Array<number>, 
+/**
+ * `Σ λ_i`.
+ */
+sum: number, 
+/**
+ * What `sum` must equal: the time average of `tr J` (flow) or the mean
+ * of `ln |det J|` (map) along the orbit. The gap measures the
+ * integrator's error on the tangent vectors.
+ */
+traceAverage: number, 
+/**
+ * Time (flow) or iterate index (map) of each running-estimate sample.
+ */
+historyT: Array<number>, 
+/**
+ * Running estimates, row-major: sample `k` is `history[k·n .. (k+1)·n]`.
+ */
+history: Array<number>, 
+/**
+ * QR steps completed.
+ */
+renormalizations: number, 
+/**
+ * Why the run stopped; the estimates cover what was completed.
+ */
+status: Status, 
+/**
+ * Work counters, transient included.
+ */
+stats: Stats, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.
@@ -934,6 +1029,8 @@ export type ClipboardTextRequest = {
 text: string, };
 
 export const MAX_SECTION_POINTS = 100000;
+
+export const MAX_RENORMALIZATIONS = 10000000;
 
 export const SECTION_MISFIT = "The saved Poincaré section doesn't fit this system, so the default view is shown.";
 

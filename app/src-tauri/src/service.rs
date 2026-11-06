@@ -9,8 +9,9 @@ use dyn_solve::Sampling;
 
 use crate::ipc::{
     Arrow, AxisRef, CompileRequest, CompileResponse, ConvertRequest, ConvertResponse,
-    ConvertedLineOut, Diagnostic, FixedPointOut, NullclineOut, ParamInfo, PortraitRequest,
-    PortraitResponse, SectionSpec, SolverOptions, StateInfo, TrajectoryOut, TrajectoryRequest,
+    ConvertedLineOut, Diagnostic, FixedPointOut, LyapunovRequest, LyapunovResponse, NullclineOut,
+    ParamInfo, PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, StateInfo,
+    TrajectoryOut, TrajectoryRequest,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -21,6 +22,10 @@ pub const MAX_FIELD_GRID: usize = 200;
 pub const MAX_SAMPLES: usize = 200_000;
 pub const MAX_ITERATES: usize = 1_000_000;
 pub const MAX_SECTION_POINTS: usize = 100_000;
+/// Most QR steps one `compute_lyapunov` request may ask for (`total / interval`).
+pub const MAX_RENORMALIZATIONS: usize = 10_000_000;
+/// Running-estimate samples returned by `compute_lyapunov`.
+pub const LYAPUNOV_HISTORY: usize = 2000;
 
 #[derive(Default)]
 pub struct SystemStore {
@@ -229,6 +234,100 @@ pub fn compute_portrait(
         graph,
         elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
     })
+}
+
+/// The Lyapunov spectrum of one orbit (see [`dyn_analysis::lyapunov_spectrum`]).
+pub fn compute_lyapunov(
+    system: &CompiledSystem,
+    req: &LyapunovRequest,
+) -> Result<LyapunovResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_lyapunov(f, req)?;
+    let opts = dyn_analysis::LyapunovOptions {
+        transient: req.transient,
+        total: req.total,
+        interval: req.interval,
+        blocks: req.blocks,
+        history: LYAPUNOV_HISTORY,
+    };
+    let s = dyn_analysis::lyapunov_spectrum(
+        f,
+        &req.params,
+        req.t0,
+        &req.x0,
+        &to_solver(&req.solver),
+        &opts,
+    );
+    Ok(LyapunovResponse {
+        request_id: req.request_id,
+        exponents: s.exponents,
+        uncertainty: s.uncertainty,
+        sum: s.sum,
+        trace_average: s.trace_average,
+        history_t: s.history_t,
+        history: s.history,
+        renormalizations: s.renormalizations,
+        status: s.status,
+        stats: s.stats,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+fn validate_lyapunov(f: &dyn VectorField, req: &LyapunovRequest) -> Result<(), String> {
+    let dim = f.dim();
+    if req.params.len() != f.n_params() {
+        return Err(format!(
+            "Expected {} parameter value(s) but got {}.",
+            f.n_params(),
+            req.params.len()
+        ));
+    }
+    if req.x0.len() != dim {
+        return Err(format!(
+            "The starting point has {} coordinate(s) but the system has {dim}.",
+            req.x0.len()
+        ));
+    }
+    if !req.x0.iter().chain([&req.t0]).all(|v| v.is_finite()) {
+        return Err("The starting point must be finite.".into());
+    }
+    let is_map = f.kind() == SystemKind::Map;
+    let (span, interval) = if is_map {
+        ("number of iterates", "iterates per renormalization")
+    } else {
+        ("total time", "renormalization interval τ")
+    };
+    if !(req.transient >= 0.0 && req.transient.is_finite()) {
+        return Err("The transient must be zero or a positive number.".into());
+    }
+    if !(req.total > 0.0 && req.total.is_finite()) {
+        return Err(format!("The {span} must be a positive number."));
+    }
+    if !(req.interval > 0.0 && req.interval.is_finite()) || (is_map && req.interval < 0.5) {
+        return Err(format!("The {interval} must be a positive number."));
+    }
+    let steps = if is_map {
+        (req.total.round() / req.interval.round()).ceil()
+    } else {
+        (req.total / req.interval).ceil()
+    };
+    if steps > MAX_RENORMALIZATIONS as f64 {
+        return Err(format!(
+            "That is {steps:.0} renormalizations; at most {MAX_RENORMALIZATIONS} fit in one run. \
+             Lengthen the {interval} or shorten the {span}."
+        ));
+    }
+    if req.blocks < 2 {
+        return Err("The uncertainty needs at least 2 blocks.".into());
+    }
+    if req.blocks as f64 > steps {
+        return Err(format!(
+            "{} blocks need at least as many renormalizations, but this run has {steps:.0}.",
+            req.blocks
+        ));
+    }
+    Ok(())
 }
 
 fn validate(f: &dyn VectorField, req: &PortraitRequest) -> Result<(), String> {
@@ -1776,5 +1875,91 @@ mod tests {
         );
         assert_eq!(json["lines"][1]["converted"], false);
         assert_eq!(json["lines"][1]["error"], true);
+    }
+
+    #[test]
+    fn lyapunov_refuses_runs_it_cannot_measure() {
+        let store = SystemStore::new();
+        let id = compile_src(&store, "\\dot{x}=ax");
+        let system = store.get(id).unwrap();
+        let ok = LyapunovRequest {
+            request_id: 7,
+            system_id: id,
+            params: vec![0.5],
+            x0: vec![0.0],
+            t0: 0.0,
+            transient: 0.0,
+            total: 10.0,
+            interval: 0.1,
+            blocks: 4,
+            solver: SolverOptions {
+                method: Method::Rk4,
+                rtol: 1e-6,
+                atol: 1e-9,
+                h: 0.01,
+                h_max: None,
+                max_steps: 100_000,
+            },
+        };
+        let out = compute_lyapunov(&system, &ok).unwrap();
+        assert_eq!(out.request_id, 7);
+        assert_eq!(out.status, Status::Completed);
+        assert_eq!(out.renormalizations, 100);
+        assert!((out.exponents[0] - 0.5).abs() < 1e-9, "{:?}", out.exponents);
+        let refused = [
+            LyapunovRequest {
+                interval: 0.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                interval: -0.1,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                total: 0.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                blocks: 1,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                blocks: 101,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                total: 1e7,
+                interval: 1e-3,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                transient: -1.0,
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                x0: vec![0.0, 1.0],
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                params: vec![],
+                ..ok.clone()
+            },
+            LyapunovRequest {
+                x0: vec![f64::NAN],
+                ..ok.clone()
+            },
+        ];
+        for req in &refused {
+            assert!(
+                compute_lyapunov(&system, req).is_err(),
+                "{req:?} was accepted"
+            );
+        }
+        let at_the_limit = LyapunovRequest {
+            total: 1e4,
+            interval: 1e-3,
+            ..ok.clone()
+        };
+        assert!(validate_lyapunov(&*system, &at_the_limit).is_ok());
     }
 }

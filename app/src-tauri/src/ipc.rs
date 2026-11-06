@@ -394,6 +394,70 @@ pub struct PortraitResponse {
     pub elapsed_ms: f64,
 }
 
+/// Request of the `compute_lyapunov` command: the Lyapunov spectrum of the
+/// orbit from `x0` by Benettin's QR method (`dyn_analysis::lyapunov_spectrum`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order.
+    pub params: Vec<f64>,
+    /// Full initial state vector.
+    pub x0: Vec<f64>,
+    /// Start time (flow); ignored for maps, which start at `n = 0`.
+    pub t0: f64,
+    /// Time (flow) or iterates (map) run before measuring, `>= 0`.
+    pub transient: f64,
+    /// Time (flow) or iterates (map) measured after the transient, `> 0`.
+    pub total: f64,
+    /// Flow: time `τ` between QR steps. Map: iterates per QR step. `> 0`,
+    /// and `total / interval` at most `MAX_RENORMALIZATIONS`.
+    pub interval: f64,
+    /// Blocks for the uncertainty, `2..=` the number of QR steps.
+    pub blocks: usize,
+    /// Integrator for a flow (ignored for maps). `maxSteps` bounds the
+    /// accepted steps of the whole run, transient included.
+    pub solver: SolverOptions,
+}
+
+/// Response of the `compute_lyapunov` command.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LyapunovResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// `λ1 … λn`, largest first (per unit time, or per iterate for a map).
+    /// Empty when no QR step was completed.
+    pub exponents: Vec<f64>,
+    /// Standard error of each exponent over the blocks reached (sample
+    /// standard deviation of the per-block exponents over `√B`). Empty when
+    /// fewer than two blocks were reached.
+    pub uncertainty: Vec<f64>,
+    /// `Σ λ_i`.
+    pub sum: f64,
+    /// What `sum` must equal: the time average of `tr J` (flow) or the mean
+    /// of `ln |det J|` (map) along the orbit. The gap measures the
+    /// integrator's error on the tangent vectors.
+    pub trace_average: f64,
+    /// Time (flow) or iterate index (map) of each running-estimate sample.
+    pub history_t: Vec<f64>,
+    /// Running estimates, row-major: sample `k` is `history[k·n .. (k+1)·n]`.
+    pub history: Vec<f64>,
+    /// QR steps completed.
+    pub renormalizations: usize,
+    /// Why the run stopped; the estimates cover what was completed.
+    pub status: Status,
+    /// Work counters, transient included.
+    pub stats: Stats,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
 // ---------------------------------------------------------------------
 // Project files (`.sepx`). The project itself is `ProjectFile` from
 // `separatrix-project`, whose keys are snake_case on the wire (the one
@@ -826,6 +890,8 @@ mod bindings {
             FixedPointOut::decl(&cfg),
             TrajectoryOut::decl(&cfg),
             PortraitResponse::decl(&cfg),
+            LyapunovRequest::decl(&cfg),
+            LyapunovResponse::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),
@@ -877,6 +943,10 @@ mod bindings {
             (
                 "MAX_SECTION_POINTS",
                 crate::service::MAX_SECTION_POINTS.to_string(),
+            ),
+            (
+                "MAX_RENORMALIZATIONS",
+                crate::service::MAX_RENORMALIZATIONS.to_string(),
             ),
             ("SECTION_MISFIT", text(separatrix_project::SECTION_MISFIT)),
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),

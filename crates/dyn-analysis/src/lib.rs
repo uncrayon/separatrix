@@ -12,6 +12,8 @@
 //!   (see [`eigenvectors`]) and type;
 //! - [`map_graph`]: the graph `y = f(x)` of a one-dimensional map, split at
 //!   poles, jumps and the edges of its domain (the cobweb view);
+//! - [`lyapunov_spectrum`]: the Lyapunov exponents of a flow or a map by
+//!   Benettin's QR method, with a block standard error and the trace check;
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -37,6 +39,7 @@ mod eigvec;
 mod fixed;
 mod graph;
 mod linalg;
+mod lyapunov;
 mod nullcline;
 mod plane;
 mod slope;
@@ -46,6 +49,7 @@ pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
 pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
 pub use linalg::eigenvalues;
+pub use lyapunov::{lyapunov_spectrum, LyapunovOptions, LyapunovSpectrum};
 pub use nullcline::{nullclines, Nullcline, JUMP_FACTOR};
 pub use plane::{Axis, Plane};
 pub use slope::{slope_field, Arrow};

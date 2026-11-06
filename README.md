@@ -47,6 +47,14 @@ bash scripts/strogatz-gate.sh
 
 prints one row per claim the chapter 2–8 templates make (fixed points and their classification, bifurcation values, periods, a limit cycle's radius, a locked frequency, a Poincaré map's fixed point, energy drift), with the book's value, the measured one and the tolerance, and exits non-zero if any row fails. Expected values come from the book's formulas; the one exception is the relaxation oscillator's period at μ = 10, which the book gives only as the asymptote μ(3 − 2 ln 2) (printed as an info row), so the gate checks the known numerical value 19.0784 and that two solvers agree on it to 1e−5. The pendulum's energy drift over t = 100 is held to 1e−6 at rtol 1e−8 and to 5e−5 at the app's default tolerances (rtol 1e−6). A test also hands the gate four wrong claims (a pitchfork at r = 0.1, a transcritical point at r = 10⁻⁵, a Van der Pol period of 6.0, a drift of 1e−9) and requires each to fail. `app/src-tauri/tests/strogatz.rs` holds the claims; a template that cites a chapter 2–8 section can't be added without one.
 
+### The chaos gate
+
+```bash
+bash scripts/chaos-gate.sh
+```
+
+measures the Lyapunov spectra of three gallery templates through the same `compute_lyapunov` command the UI calls, and prints one row per published value with its measured value, its block uncertainty `±` and the tolerance. It exits non-zero if any row fails. The Lorenz system (σ = 10, r = 28, b = 8/3, RK4 at h = 0.01, T = 10⁴, τ = 0.1) reproduces Sprott's 0.9056, 0 and −14.5723 to 0.01, 0.01 and 0.02. A second run at h = 0.001 checks Σλ = −(σ + 1 + b) = −41/3 to 10⁻⁶. At h = 0.01 RK4 is 10⁻⁴ off that sum, an error that shrinks like h⁴. The Hénon map (a = 1.4, b = 0.3, 10⁶ iterates) reproduces 0.41922 and −1.62319 to 0.005, and Σλ = ln 0.3 to 10⁻⁹. The logistic map at r = 4 gives ln 2 to 0.005. An info column says whether each published value lies within 3·`±`. A test also hands the gate three wrong claims (Lorenz λ1 = 1.0, Lorenz Σλ = −13, Hénon λ1 = 0.5) and requires each to fail. `app/src-tauri/tests/chaos.rs` holds the claims.
+
 ## License
 
 MIT

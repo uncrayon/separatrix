@@ -16,6 +16,7 @@
 //! | `compile_system` | [`ipc::CompileRequest`] | [`ipc::CompileResponse`] |
 //! | `convert_source` | [`ipc::ConvertRequest`] | [`ipc::ConvertResponse`] |
 //! | `compute_portrait` | [`ipc::PortraitRequest`] | [`ipc::PortraitResponse`] |
+//! | `compute_lyapunov` | [`ipc::LyapunovRequest`] | [`ipc::LyapunovResponse`] |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -100,6 +101,17 @@ async fn compute_portrait(
 ) -> Result<ipc::PortraitResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_portrait(&system, &req)).await
+}
+
+/// Measures the Lyapunov spectrum of one orbit: seconds of work for long
+/// runs, so it runs on a blocking worker thread.
+#[tauri::command]
+async fn compute_lyapunov(
+    req: ipc::LyapunovRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::LyapunovResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_lyapunov(&system, &req)).await
 }
 
 // ---------------------------------------------------------------------
@@ -755,6 +767,7 @@ pub fn run() {
             compile_system,
             convert_source,
             compute_portrait,
+            compute_lyapunov,
             project_choose_open_path,
             project_read,
             project_choose_save_path,

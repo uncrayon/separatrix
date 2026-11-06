@@ -1,12 +1,13 @@
 [package]
 name = "dyn-analysis"
-description = "Phase-portrait analyses: direction fields, nullclines, fixed points and their classification"
+description = "Phase-portrait analyses: direction fields, nullclines, fixed points and their classification, Lyapunov spectra"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 dyn-core.workspace = true
+dyn-solve.workspace = true
 serde.workspace = true
 ts-rs = { workspace = true, optional = true }
 # Only used for eigenvalues of Jacobians of dimension >= 3 (real Schur form).

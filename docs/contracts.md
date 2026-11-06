@@ -274,6 +274,52 @@ Newton seeds: the grid of `seeds_per_axis^dim` cell centres of `search` when it 
 dimension; `seed_count` says how many are used. The app's budget is `MAX_TOTAL_SEEDS = 1000`
 (40, 14², 9³ grid points in 1D–3D; 2^10 = 1024 does not fit, so 10D and up use Halton points).
 
+### Lyapunov spectrum
+
+```rust
+pub struct LyapunovOptions { pub transient: f64 /* time, or iterates for a map */, pub total: f64,
+                             pub interval: f64 /* τ; iterates per QR step for a map */,
+                             pub blocks: usize /* ≥ 2 */, pub history: usize /* max samples */ }
+pub struct LyapunovSpectrum { pub exponents: Vec<f64>, pub uncertainty: Vec<f64>, pub sum: f64,
+                              pub trace_average: f64, pub history_t: Vec<f64>,
+                              pub history: Vec<f64> /* row-major, history_t.len() · n */,
+                              pub renormalizations: usize, pub status: Status, pub stats: Stats }
+pub fn lyapunov_spectrum(f: &dyn VectorField, p: &[f64], t0: f64, x0: &[f64],
+                         solver: &SolverOptions, opts: &LyapunovOptions) -> LyapunovSpectrum;
+```
+
+Benettin's method with QR by modified Gram–Schmidt, applied twice. A flow first runs `transient`
+with `solver`, then integrates the orbit with `n` tangent vectors and one more state, the state
+`(x, Φ, s)` of length `n + n² + 1` with `Φ' = J(x)Φ` (`J` from `VectorField::jacobian`: exact
+forward-mode AD for compiled systems) and `s' = tr J(x)`. The integrator lands exactly on every
+`t_start + k·τ`, where the columns of `Φ` are orthonormalised and `ln R_ii` added to exponent `i`.
+The last interval is shortened to end at `t_start + total`, and `total / τ` within 1e−9 of an
+integer counts as that integer. `solver.maxSteps` bounds the accepted steps of the whole run. A
+map runs `transient` iterates, then `Q ← J(x_n) Q` and `x_{n+1} = f(x_n)` for `total` iterates
+(rounded), with a QR step every `interval` iterates (rounded, at least 1) and after the last.
+
+- `exponents[i]` is `Σ ln R_ii` over the elapsed time (or iterates), in column order, so the first
+  is the largest. It is empty when no QR step was completed.
+- `uncertainty[i]` is the standard error over blocks. The QR steps are split into `blocks`
+  consecutive blocks (step `k` of `K` goes to block `⌊k·B/K⌋`), each block gives its own
+  exponent, and the uncertainty is their sample standard deviation over `√B`, counting the
+  blocks reached. It is empty when fewer than two blocks were reached.
+- `sum = Σ exponents`. `trace_average` is what it must equal. For a flow that is `s` summed over
+  the intervals over the elapsed time, the time average of `tr J`. For a map it is the mean of
+  `ln |det J|` by Gaussian elimination with partial pivoting. For a flow, `sum − trace_average` is
+  the integrator's error on `ln det Φ`. On Lorenz with RK4 it is 1.0e−4 at h = 0.01, 6.2e−6 at
+  h = 0.005 and 9.8e−9 at h = 0.001, so it shrinks like h⁴.
+- The running estimate (cumulative `ln R / elapsed`) is sampled every `⌈K / history⌉`-th QR step
+  and after the last, at most `history` samples. `history_t` is the time, or the iterate index of
+  a map.
+- `status` is `blewUp` when a state component, including a tangent vector of a flow, exceeds
+  `BLOW_UP_THRESHOLD` (keep `τ` short enough that `e^{λ1 τ}` stays far below it). It is
+  `nonFinite` when `f`, `J` or a tangent vector stops being finite, and otherwise the solver's
+  status. The estimates always cover the QR steps completed.
+
+`Tangent::eval` does not allocate. The Jacobian scratch is on the stack for `n ≤ 16` and a
+thread-local buffer above.
+
 ## IPC (Tauri commands)
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
@@ -282,7 +328,7 @@ every IPC type, and the maths crates' enums it reuses (`SystemKind`, `InputForma
 `app/src/api/ipc.generated.ts` (`UPDATE_IPC_BINDINGS=1 cargo test -p separatrix
 typescript_bindings`). `app/src/api/types.ts` only re-exports the generated types, so the UI
 compiles against what Rust sends, and CI fails while the generated file is stale. The same file
-carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, the `SECTION_MISFIT` and
+carries the constants the UI shares with the core: `MAX_SECTION_POINTS`, `MAX_RENORMALIZATIONS`, the `SECTION_MISFIT` and
 `SPACE_MISFIT` warnings, `SPACE_LATEX_REFUSAL` and the 3D view's `DEFAULT_CAMERA`.
 
 `CompileResponse.states[]` is `StateInfo { name, latex, derived }`; `derived` marks the states
@@ -295,10 +341,22 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compile_system` | `{ source, format: "latex" \| "text" }` | `CompileResponse` |
 | `convert_source` | `{ lines: string[], from, to }` (`ConvertRequest`) | `{ lines: { source, converted, error, note? }[] }` (`ConvertResponse`) |
 | `compute_portrait` | `PortraitRequest` | `PortraitResponse` |
+| `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
 
 `compile_system`'s `source` is the system's non-empty lines, as typed, joined with `"\n"`, in its
 one `format`. `convert_source` is `dyn_expr::convert` (above): one response line per request line,
 in order.
+
+`compute_lyapunov` takes `LyapunovRequest { requestId, systemId, params, x0, t0, transient, total,
+interval, blocks, solver }` and returns `LyapunovResponse { requestId, exponents, uncertainty,
+sum, traceAverage, historyT, history, renormalizations, status, stats, elapsedMs }`. That is
+`lyapunov_spectrum` (above) with `LYAPUNOV_HISTORY = 2000` running-estimate samples. For a map,
+`transient`, `total` and `interval` count iterates and `t0` and `solver` are ignored. Refusals
+are messages, not panics. The command refuses a parameter count or starting point that doesn't
+fit the system, a non-finite start, a negative transient, `total ≤ 0` or `interval ≤ 0` (below
+half an iterate for a map), more than `MAX_RENORMALIZATIONS = 10⁷` QR steps (`total / interval`),
+`blocks < 2`, and more blocks than QR steps. A long run takes seconds. The command runs on a
+blocking worker thread and the UI drops stale responses by `requestId`.
 
 ### Cobweb plots and transients
 

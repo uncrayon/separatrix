@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 ### Added
+- Lyapunov spectrum (Strogatz §9.3, §10.5): `dyn_analysis::lyapunov_spectrum` measures every
+  exponent of a flow or a map by Benettin's QR method. A flow integrates its variational
+  equations with the exact Jacobian. Each exponent gets a block standard error, and the sum is
+  checked against the mean trace of `J` (flows) or the mean `ln |det J|` (maps). The result
+  carries the running estimates against `t`. The `compute_lyapunov` command exposes it to the UI
+  and refuses `τ ≤ 0`, `total ≤ 0`, `blocks < 2` and runs of more than 10⁷ QR steps with a
+  message.
+- Chaos gate (`scripts/chaos-gate.sh`): the Lorenz, Hénon and logistic templates reproduce
+  published exponents (Lorenz 0.9056, 0, −14.5723 and Σλ = −41/3; Hénon 0.41922, −1.62319 and
+  Σλ = ln 0.3; logistic `r = 4` ln 2) within stated tolerances, and three wrong claims fail.
 - 3D view (Strogatz ch. 9): the View control's **3D** shows any three states of a flow with at
   least 3 states in a box with ticks and axis names, seen from a camera you turn by dragging (or
   the arrow keys), zoom with the wheel (or `+` and `−`) and reset with a double-click (or `0`).

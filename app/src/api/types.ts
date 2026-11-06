@@ -32,6 +32,8 @@ export type {
   FixedPointOut,
   FixedPointsLatexRequest,
   InputFormat,
+  LyapunovRequest,
+  LyapunovResponse,
   Method,
   Notation,
   NullclineOut,
