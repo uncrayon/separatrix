@@ -1,0 +1,16 @@
+{
+  "name": "separatrix-site",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Separatrix website, built from docs/ for GitHub Pages.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "markdown-it": "14.3.3"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "phase-plane": {"source": "docs/media/phase-plane.png", "sha256": "55f90e94fff65f762c008b0c9d0e24df5b060822647be20be4cb22747a70a668", "file": "views/phase-plane.webp", "width": 960, "height": 600},
+  "time-series": {"source": "docs/media/time-series.png", "sha256": "bf3776d29451264184c68efda7d5c3ad4cd2960e5608a5b0c93f53df7cac7777", "file": "views/time-series.webp", "width": 960, "height": 600},
+  "cobweb": {"source": "docs/media/cobweb.png", "sha256": "f8373361348137c485b469086975e6ee0f26848bdb9a4f960b05640f9b3f8337", "file": "views/cobweb.webp", "width": 960, "height": 600},
+  "3d-view": {"source": "docs/media/3d-view.png", "sha256": "eb483f869ccf49f7da3d5dfaeb4deee67c94c6f682dc53aec49ed16e80d5ae8c", "file": "views/3d-view.webp", "width": 960, "height": 600},
+  "poincare-section": {"source": "docs/media/poincare-section.png", "sha256": "b097c190a839a258d517e936b18ac31f826d0e84cd572a9ce00e3cf5dd30f31e", "file": "views/poincare-section.webp", "width": 960, "height": 600},
+  "lyapunov": {"source": "docs/media/lyapunov.png", "sha256": "11f19cdae3de11b3eec9a3f1c550fcdc9475ff34fbcd90ab7bf780836c4c2f5d", "file": "views/lyapunov.webp", "width": 960, "height": 600},
+  "orbit-diagram": {"source": "docs/media/orbit-diagram.png", "sha256": "bd8288c43fc33d6a2cc7484c3331001ca29d6b2c85af57f434193353e29691eb", "file": "views/orbit-diagram.webp", "width": 960, "height": 600},
+  "continuation": {"source": "docs/media/continuation.png", "sha256": "909de1794065109b40a203728652e06f8db1e3530ecc220fb5bbf77f57e42e8d", "file": "views/continuation.webp", "width": 960, "height": 600},
+  "video": {"source": "site/media/separatrix-intro.mp4", "sha256": "65a470a186af7f1d0cbca46ada1af6c7d5f80c8d8bc0d2dd960d487f23cdeaf4", "file": "separatrix-intro.mp4", "poster": "separatrix-intro-poster.webp", "width": 1920, "height": 1080}
+}

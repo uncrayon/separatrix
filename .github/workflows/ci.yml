@@ -57,3 +57,19 @@ jobs:
         run: cargo test -p separatrix --test version
       - name: Release readiness (without the numerical gates, which the core job runs)
         run: bash scripts/release-check.sh --skip-gates
+
+  site:
+    name: Website build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build the website (fails on a broken docs link, anchor or image)
+        working-directory: site
+        run: |
+          npm ci
+          node build.mjs

@@ -18,8 +18,8 @@ and look under **Assets**. Windows has three files. Most people want the first o
 Separatrix draws its window with Microsoft Edge WebView2. Windows 11 always has it, and Windows 10
 gets it through Windows Update. If the PC lacks it, the standard installer downloads it, and that
 needs the internet. The offline installer carries WebView2 inside it, so it works on a PC with
-neither WebView2 nor an internet connection. If you are not sure, use the offline installer. It
-works on every PC.
+neither WebView2 nor an internet connection. If the standard installer can't download WebView2,
+use the offline installer.
 
 Download `SHA256SUMS.txt` too. The names on this page are for version 1.0.0. A newer release has
 its own number in each name.
