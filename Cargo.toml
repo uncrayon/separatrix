@@ -6,7 +6,7 @@ members = ["crates/*", "app/src-tauri"]
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/uncrayon/slope-field-vizualiser"
+repository = "https://github.com/uncrayon/separatrix"
 rust-version = "1.90"
 
 [workspace.dependencies]

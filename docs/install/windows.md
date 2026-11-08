@@ -6,7 +6,7 @@ need an administrator password. Separatrix needs no internet connection after yo
 
 ## Choose an installer
 
-Go to the [Separatrix releases page](https://github.com/uncrayon/slope-field-vizualiser/releases/latest)
+Go to the [Separatrix releases page](https://github.com/uncrayon/separatrix/releases/latest)
 and look under **Assets**. Windows has three files. Most people want the first one.
 
 | File | Use it when |

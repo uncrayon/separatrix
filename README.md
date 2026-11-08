@@ -32,7 +32,7 @@ works offline.
 
 ## Install
 
-Download Separatrix from the [releases page](https://github.com/uncrayon/slope-field-vizualiser/releases/latest).
+Download Separatrix from the [releases page](https://github.com/uncrayon/separatrix/releases/latest).
 Each guide walks you through the download, the checksum and the first launch:
 
 - [Install on Windows](docs/install/windows.md)

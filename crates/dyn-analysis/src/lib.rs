@@ -1,4 +1,4 @@
-//! Phase-portrait analyses for the slope-field visualiser.
+//! Phase-portrait analyses for Separatrix.
 //!
 //! Everything works on a [`dyn_core::VectorField`] and a [`Plane`] (the 2D
 //! window the UI shows):
