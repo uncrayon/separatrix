@@ -16,7 +16,7 @@ or [Linux](../install/linux.md).
 
 The **View** control in the right-hand panel switches between views. A flow offers Phase, Series,
 Section, 3D, λ and Branch. A map offers Phase, Series, Cobweb, λ, Orbit and Branch. A view that
-doesn't fit the system is greyed out, and the panel says why.
+doesn't fit the system is grayed out, and the panel says why.
 
 | View | Control | Page | Example project |
 | --- | --- | --- | --- |

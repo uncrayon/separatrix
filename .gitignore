@@ -11,3 +11,6 @@ app/src-tauri/gen/
 .idea/
 .vscode/
 *.log
+
+# Website build output
+site/dist/

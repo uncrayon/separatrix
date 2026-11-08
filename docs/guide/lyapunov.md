@@ -41,7 +41,7 @@ along the orbit.
 
 The run follows the selected start point, or the first one. It uses the method in the **Solver**
 panel, which must be an explicit method: Dormand–Prince 5(4), Runge–Kutta 4, Heun or Euler. The
-symplectic and implicit methods are greyed out in this view. A run is limited to 10⁷
+symplectic and implicit methods are grayed out in this view. A run is limited to 10⁷
 renormalizations.
 
 ## Check other systems
