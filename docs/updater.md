@@ -72,7 +72,7 @@ fails because it cannot sign the update files.
      "updater": {
        "pubkey": "PASTE THE CONTENTS OF separatrix.key.pub HERE",
        "endpoints": [
-         "https://github.com/uncrayon/slope-field-vizualiser/releases/latest/download/latest.json"
+         "https://github.com/uncrayon/separatrix/releases/latest/download/latest.json"
        ],
        "windows": {
          "installMode": "passive"

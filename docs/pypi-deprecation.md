@@ -24,8 +24,8 @@ fields, time series, cobweb plots, 3D flows, Poincaré sections, Lyapunov expone
 diagrams and bifurcation branches. It runs on Windows, macOS and Linux with no Python install,
 and it works offline.
 
-- Download Separatrix: https://github.com/uncrayon/slope-field-vizualiser/releases/latest
-- Install guides for Windows, macOS and Linux: https://github.com/uncrayon/slope-field-vizualiser/tree/main/docs/install
+- Download Separatrix: https://github.com/uncrayon/separatrix/releases/latest
+- Install guides for Windows, macOS and Linux: https://github.com/uncrayon/separatrix/tree/main/docs/install
 
 Version 0.1.1 is the last release. It is the same as 0.1.0, except for this notice and a
 `DeprecationWarning` when you import the package. Version 0.1.0 stays available on PyPI, so
@@ -49,7 +49,7 @@ commit that still had the Python package, `28ff415^`, the parent of the commit t
 1. Clone the repository into a temporary folder and check out the last Python tree:
 
    ```sh
-   git clone https://github.com/uncrayon/slope-field-vizualiser.git /tmp/eqpp-0.1.1
+   git clone https://github.com/uncrayon/separatrix.git /tmp/eqpp-0.1.1
    cd /tmp/eqpp-0.1.1
    git checkout 28ff415^
    ```
@@ -72,8 +72,8 @@ commit that still had the Python package, `28ff415^`, the parent of the commit t
    python3 - <<'EOF'
    import pathlib
 
-   url = "https://github.com/uncrayon/slope-field-vizualiser/releases/latest"
-   guides = "https://github.com/uncrayon/slope-field-vizualiser/tree/main/docs/install"
+   url = "https://github.com/uncrayon/separatrix/releases/latest"
+   guides = "https://github.com/uncrayon/separatrix/tree/main/docs/install"
 
    def edit(path, old, new):
        p = pathlib.Path(path)

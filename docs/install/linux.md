@@ -6,7 +6,7 @@ internet connection after you install it.
 
 ## Choose a file
 
-Go to the [Separatrix releases page](https://github.com/uncrayon/slope-field-vizualiser/releases/latest)
+Go to the [Separatrix releases page](https://github.com/uncrayon/separatrix/releases/latest)
 and look under **Assets**. Linux has three files. Pick one.
 
 | File | Use it when |

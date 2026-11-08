@@ -50,7 +50,7 @@ ver=$(bash scripts/release/assets.sh --version)
 step "Name the assets and check the checksums"
 assets=$work/assets
 bash scripts/release/assets.sh "$assets" linux x86_64
-bash scripts/release/manifest.sh "$assets" "$ver" uncrayon/slope-field-vizualiser
+bash scripts/release/manifest.sh "$assets" "$ver" uncrayon/separatrix
 (cd "$assets" && sha256sum -c SHA256SUMS.txt) || die "SHA256SUMS.txt does not match the assets"
 deb=$assets/Separatrix_${ver}_linux_amd64.deb
 rpm=$assets/Separatrix_${ver}_linux_x86_64.rpm
