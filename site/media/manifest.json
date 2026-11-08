@@ -7,5 +7,5 @@
   "lyapunov": {"source": "docs/media/lyapunov.png", "sha256": "11f19cdae3de11b3eec9a3f1c550fcdc9475ff34fbcd90ab7bf780836c4c2f5d", "file": "views/lyapunov.webp", "width": 960, "height": 600},
   "orbit-diagram": {"source": "docs/media/orbit-diagram.png", "sha256": "bd8288c43fc33d6a2cc7484c3331001ca29d6b2c85af57f434193353e29691eb", "file": "views/orbit-diagram.webp", "width": 960, "height": 600},
   "continuation": {"source": "docs/media/continuation.png", "sha256": "909de1794065109b40a203728652e06f8db1e3530ecc220fb5bbf77f57e42e8d", "file": "views/continuation.webp", "width": 960, "height": 600},
-  "video": {"source": "site/media/separatrix-intro.mp4", "sha256": "65a470a186af7f1d0cbca46ada1af6c7d5f80c8d8bc0d2dd960d487f23cdeaf4", "file": "separatrix-intro.mp4", "poster": "separatrix-intro-poster.webp", "width": 1920, "height": 1080}
+  "video": {"source": "site/media/separatrix-intro.mp4", "sha256": "17703b95318d5be151bc7dc71f4aa9f083b3f322584d02db5c50fc254f7efe3c", "file": "separatrix-intro.mp4", "poster": "separatrix-intro-poster.webp", "width": 1920, "height": 1080}
 }

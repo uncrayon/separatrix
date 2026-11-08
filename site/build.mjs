@@ -642,10 +642,10 @@ function homePage(pages) {
     </div>
     <div class="site-hero-dl">${downloadBlock(root)}</div>
     <figure class="site-video">
-      <video controls muted playsinline preload="none" poster="media/${video.poster}" width="${video.width}" height="${video.height}" aria-describedby="video-caption">
+      <video controls playsinline preload="none" poster="media/${video.poster}" width="${video.width}" height="${video.height}" aria-describedby="video-caption">
         <source src="media/${video.file}" type="video/mp4">
       </video>
-      <figcaption class="caption" id="video-caption">A tour in 87 seconds, with no sound: the phase plane, a parameter drag across a saddle-node bifurcation, the Lorenz equations in 3D, Lyapunov exponents, the logistic map, LaTeX export and projector mode. <a href="media/${video.file}" download>Download the video</a> (MP4, ${(fs.statSync(path.join(ROOT, "site/media", video.file)).size / 1e6).toFixed(1)} MB).</figcaption>
+      <figcaption class="caption" id="video-caption">A tour in 87 seconds: the phase plane, a parameter drag across a saddle-node bifurcation, the Lorenz equations in 3D, Lyapunov exponents, the logistic map, LaTeX export and projector mode. Music: the Aria from Bach’s Goldberg Variations, played by Kimiko Ishizaka (<a href="https://archive.org/details/OpenGoldbergVariations">Open Goldberg Variations</a>, public domain). <a href="media/${video.file}" download>Download the video</a> (MP4, ${(fs.statSync(path.join(ROOT, "site/media", video.file)).size / 1e6).toFixed(1)} MB).</figcaption>
     </figure>
   </section>
 
