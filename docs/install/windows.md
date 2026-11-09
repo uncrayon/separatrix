@@ -11,9 +11,9 @@ and look under **Assets**. Windows has three files. Most people want the first o
 
 | File | Use it when |
 | --- | --- |
-| `Separatrix_1.0.0_windows_x64-setup.exe` | You have an internet connection while you install. This is the standard installer. |
-| `Separatrix_1.0.0_windows_x64_offline-setup.exe` | The PC has no internet connection, or it cannot download WebView2. This offline installer is much larger. |
-| `Separatrix_1.0.0_windows_x64.msi` | Your IT department installs software for everyone on a PC. The MSI needs an administrator. |
+| `Separatrix_1.0.1_windows_x64-setup.exe` | You have an internet connection while you install. This is the standard installer. |
+| `Separatrix_1.0.1_windows_x64_offline-setup.exe` | The PC has no internet connection, or it cannot download WebView2. This offline installer is much larger. |
+| `Separatrix_1.0.1_windows_x64.msi` | Your IT department installs software for everyone on a PC. The MSI needs an administrator. |
 
 Separatrix draws its window with Microsoft Edge WebView2. Windows 11 always has it, and Windows 10
 gets it through Windows Update. If the PC lacks it, the standard installer downloads it, and that
@@ -21,7 +21,7 @@ needs the internet. The offline installer carries WebView2 inside it, so it work
 neither WebView2 nor an internet connection. If the standard installer can't download WebView2,
 use the offline installer.
 
-Download `SHA256SUMS.txt` too. The names on this page are for version 1.0.0. A newer release has
+Download `SHA256SUMS.txt` too. The names on this page are for version 1.0.1. A newer release has
 its own number in each name.
 
 ### If Edge blocks the download
@@ -50,7 +50,7 @@ matches, the download is complete and is the file that was published.
 3. Run this command. If you chose another installer, put its name in place of the standard one:
 
    ```powershell
-   Get-FileHash .\Separatrix_1.0.0_windows_x64-setup.exe -Algorithm SHA256
+   Get-FileHash .\Separatrix_1.0.1_windows_x64-setup.exe -Algorithm SHA256
    ```
 
    PowerShell prints the checksum under **Hash**, a line of 64 letters and digits.
@@ -100,8 +100,11 @@ lists the projects you opened most recently under **Recent**. Click one to open 
 
 ## Update Separatrix
 
+Separatrix 1.0.0 cannot update itself. If you have 1.0.0, install the latest version once by
+following this guide from the top. From 1.0.1 on, updates install themselves.
+
 Separatrix checks for a new version after it starts. When one exists, the status bar at the bottom
-of the window shows **Update available** beside the version number, such as `v1.0.0`.
+of the window shows **Update available** beside the version number, such as `v1.0.1`.
 
 1. Click the version number. You can click it at any time to check by hand.
 2. Click **Install and restart**. If you have unsaved changes, Separatrix asks whether to save them

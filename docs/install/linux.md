@@ -11,12 +11,12 @@ and look under **Assets**. Linux has three files. Pick one.
 
 | File | Use it when |
 | --- | --- |
-| `Separatrix_1.0.0_linux_x86_64.AppImage` | You want one file that runs without installing anything. It works on most distributions and can update itself. |
-| `Separatrix_1.0.0_linux_amd64.deb` | You use Ubuntu, Debian, Linux Mint or Pop!_OS and want Separatrix in your app menu. |
-| `Separatrix_1.0.0_linux_x86_64.rpm` | You use Fedora, openSUSE or another RPM distribution and want Separatrix in your app menu. |
+| `Separatrix_1.0.1_linux_x86_64.AppImage` | You want one file that runs without installing anything. It works on most distributions and can update itself. |
+| `Separatrix_1.0.1_linux_amd64.deb` | You use Ubuntu, Debian, Linux Mint or Pop!_OS and want Separatrix in your app menu. |
+| `Separatrix_1.0.1_linux_x86_64.rpm` | You use Fedora, openSUSE or another RPM distribution and want Separatrix in your app menu. |
 
 Download `SHA256SUMS.txt` too, and save it in the same folder as your file. The names on this page
-are for version 1.0.0. A newer release has its own number in each name.
+are for version 1.0.1. A newer release has its own number in each name.
 
 ## Check the download
 
@@ -36,7 +36,7 @@ matches, the download is complete and is the file that was published.
    ```
 
 3. Check that the line for your file ends in `OK`, for example
-   `Separatrix_1.0.0_linux_x86_64.AppImage: OK`.
+   `Separatrix_1.0.1_linux_x86_64.AppImage: OK`.
 
 If the line ends in `FAILED`, delete the file and download it again. Do not open a file that fails
 the check.
@@ -50,7 +50,7 @@ Follow the section for the file you chose.
 1. Make the file executable:
 
    ```sh
-   chmod +x Separatrix_1.0.0_linux_x86_64.AppImage
+   chmod +x Separatrix_1.0.1_linux_x86_64.AppImage
    ```
 
    You can do the same in the Files app instead. Right-click the file, click **Properties**, and
@@ -60,7 +60,7 @@ Follow the section for the file you chose.
 2. Run it:
 
    ```sh
-   ./Separatrix_1.0.0_linux_x86_64.AppImage
+   ./Separatrix_1.0.1_linux_x86_64.AppImage
    ```
 
    You can also double-click it in the Files app.
@@ -76,7 +76,7 @@ If you cannot install packages, run the AppImage this way instead. It unpacks it
 temporary folder each time, so it starts more slowly.
 
 ```sh
-./Separatrix_1.0.0_linux_x86_64.AppImage --appimage-extract-and-run
+./Separatrix_1.0.1_linux_x86_64.AppImage --appimage-extract-and-run
 ```
 
 Keep the AppImage somewhere permanent, such as `~/Applications`, before you start using it. The
@@ -87,7 +87,7 @@ updater replaces the file in place.
 Run this command in the folder that holds the file, and type your password when asked:
 
 ```sh
-sudo apt install ./Separatrix_1.0.0_linux_amd64.deb
+sudo apt install ./Separatrix_1.0.1_linux_amd64.deb
 ```
 
 The `./` matters. Without it, `apt` looks for a package called that name online instead of using
@@ -98,10 +98,10 @@ your file. `apt` also installs the WebKitGTK libraries that Separatrix needs, if
 On Fedora, run this command in the folder that holds the file, and type your password when asked:
 
 ```sh
-sudo dnf install ./Separatrix_1.0.0_linux_x86_64.rpm
+sudo dnf install ./Separatrix_1.0.1_linux_x86_64.rpm
 ```
 
-On openSUSE, use `sudo zypper install ./Separatrix_1.0.0_linux_x86_64.rpm` instead.
+On openSUSE, use `sudo zypper install ./Separatrix_1.0.1_linux_x86_64.rpm` instead.
 
 ## Start Separatrix for the first time
 
@@ -133,6 +133,9 @@ The gallery also lists the projects you opened most recently under **Recent**. C
 it again.
 
 ## Update Separatrix
+
+Separatrix 1.0.0 cannot update itself. If you have 1.0.0, install the latest version once by
+following this guide from the top. From 1.0.1 on, updates install themselves.
 
 The version you have is at the bottom right of the window.
 

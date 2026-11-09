@@ -12,10 +12,10 @@ first-launch section says how.
 Go to the [Separatrix releases page](https://github.com/uncrayon/separatrix/releases/latest)
 and look under **Assets**. Download these two files:
 
-- `Separatrix_1.0.0_macos_universal.dmg`, the disk image that holds the app.
+- `Separatrix_1.0.1_macos_universal.dmg`, the disk image that holds the app.
 - `SHA256SUMS.txt`, the list of checksums you use to check the download.
 
-Both land in your **Downloads** folder. The names on this page are for version 1.0.0. A newer
+Both land in your **Downloads** folder. The names on this page are for version 1.0.1. A newer
 release has its own number in each name.
 
 ## Check the download
@@ -27,7 +27,7 @@ matches, the download is complete and is the file that was published.
 2. Run this command:
 
    ```sh
-   cd ~/Downloads && shasum -a 256 Separatrix_1.0.0_macos_universal.dmg
+   cd ~/Downloads && shasum -a 256 Separatrix_1.0.1_macos_universal.dmg
    ```
 
    Terminal prints a line of 64 letters and digits, then the file name.
@@ -44,7 +44,7 @@ If they differ, delete the file and download it again. Do not open a file that f
 
 ## Install it
 
-1. Double-click `Separatrix_1.0.0_macos_universal.dmg` in **Downloads**. A window opens with the
+1. Double-click `Separatrix_1.0.1_macos_universal.dmg` in **Downloads**. A window opens with the
    Separatrix icon and the **Applications** folder.
 2. Drag the Separatrix icon onto the **Applications** folder.
 3. Close the window. In the Finder sidebar, click the eject button beside **Separatrix** to eject
@@ -132,8 +132,11 @@ lists the projects you opened most recently under **Recent**. Click one to open 
 
 ## Update Separatrix
 
+Separatrix 1.0.0 cannot update itself. If you have 1.0.0, install the latest version once by
+following this guide from the top. From 1.0.1 on, updates install themselves.
+
 Separatrix checks for a new version after it starts. When one exists, the status bar at the bottom
-of the window shows **Update available** beside the version number, such as `v1.0.0`.
+of the window shows **Update available** beside the version number, such as `v1.0.1`.
 
 1. Click the version number. You can also choose **Separatrix** > **Check for Updates…** in the
    menu bar at any time.
