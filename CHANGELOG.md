@@ -2,7 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.0.0] - Unreleased
+## [1.0.1] - 2026-11-09
+
+Separatrix 1.0.1 changes how the app reaches you, not what it does.
+
+### Changed
+- The Mac app is signed with a Developer ID certificate and notarized by Apple, so macOS opens it
+  after one question instead of blocking it. The Release workflow signs and notarizes when the five
+  Apple secrets exist, stops if only some exist, and checks the signature, the hardened runtime
+  and the stapled ticket, inside the `.dmg` too. See `docs/macos-signing.md`.
+- Automatic updates are on. Separatrix checks GitHub Releases after it starts and can install a
+  newer version, which it accepts only if the project's key signed it. Version 1.0.0 has no
+  updater, so a 1.0.0 install has to be replaced by hand once.
+- The macOS install guide describes the shorter first launch, and keeps the steps for 1.0.0.
+- A manual run of the Release workflow can build and check the installers without creating a
+  draft release.
+
+## [1.0.0] - 2026-11-07
 
 The first release of Separatrix, the desktop rewrite of the old Python tool.
 

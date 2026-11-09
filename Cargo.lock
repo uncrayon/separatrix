@@ -930,7 +930,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dyn-analysis"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "approx",
  "dyn-core",
@@ -950,7 +950,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyn-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "ts-rs",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "dyn-expr"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "approx",
  "dyn-core",
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "dyn-solve"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "approx",
  "dyn-core",
@@ -3501,7 +3501,7 @@ dependencies = [
 
 [[package]]
 name = "separatrix"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "dyn-analysis",
  "dyn-core",
@@ -3522,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "separatrix-export"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "dyn-analysis",
  "dyn-core",
@@ -3535,7 +3535,7 @@ dependencies = [
 
 [[package]]
 name = "separatrix-project"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",

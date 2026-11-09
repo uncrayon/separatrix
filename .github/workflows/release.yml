@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Create or refresh the draft release. Clear it to only build and check the installers.
+        type: boolean
+        default: true
   push:
     tags: ['v*']
 
@@ -85,11 +90,84 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
+      # Signs with the Developer ID certificate and notarizes when the five Apple secrets exist
+      # (docs/macos-signing.md). Without any of them, the app keeps its ad-hoc signature.
+      - name: Apple signing and notarization
+        if: matrix.os == 'macos'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          names="APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8"
+          missing=""
+          for name in $names; do [ -n "${!name}" ] || missing="$missing $name"; done
+          if [ "$missing" = " $names" ]; then
+            echo "::warning::No Apple signing secrets: the macOS app gets an ad-hoc signature and is not notarized. See docs/macos-signing.md."
+            echo "MACOS_SIGNED=0" >>"$GITHUB_ENV"
+            exit 0
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Some Apple signing secrets are set but these are empty:$missing. Set all five or none. See docs/macos-signing.md."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+          printf '%s\n' "$APPLE_API_KEY_P8" >"$key"
+          chmod 600 "$key"
+          # codesign needs Apple's intermediate to build the chain to the root.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          sudo security add-certificates -k /Library/Keychains/System.keychain "$RUNNER_TEMP/DeveloperIDG2CA.cer" ||
+            echo "The Developer ID G2 intermediate is already installed."
+          {
+            echo "MACOS_SIGNED=1"
+            echo "APPLE_API_KEY_PATH=$key"
+            # Overrides the ad-hoc "-" in tauri.conf.json. Tauri checks that the certificate's
+            # name contains this text, then signs with the certificate.
+            echo "APPLE_SIGNING_IDENTITY=Developer ID Application"
+          } >>"$GITHUB_ENV"
       - name: Build the installers
         working-directory: app
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-        run: npx tauri build ${{ matrix.args }}
+          APPLE_CERTIFICATE: ${{ matrix.os == 'macos' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.os == 'macos' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_API_ISSUER: ${{ matrix.os == 'macos' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ matrix.os == 'macos' && secrets.APPLE_API_KEY || '' }}
+        run: |
+          # A missing secret arrives as an empty variable, and Tauri would try to import an empty
+          # certificate. Remove the empty ones so an unsigned build stays unsigned.
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_ISSUER APPLE_API_KEY; do
+            [ -n "${!name}" ] || unset "$name"
+          done
+          npx tauri build ${{ matrix.args }}
+      - name: Check the macOS signature and notarization
+        if: matrix.os == 'macos' && env.MACOS_SIGNED == '1'
+        run: |
+          set -euo pipefail
+          app=target/universal-apple-darwin/release/bundle/macos/Separatrix.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          info=$(codesign --display --verbose=4 "$app" 2>&1)
+          echo "$info" | grep -E '^(Authority|TeamIdentifier|Timestamp|CodeDirectory)'
+          echo "$info" | grep -q '^Authority=Developer ID Application:' ||
+            { echo "::error::The app is not signed with a Developer ID Application certificate."; exit 1; }
+          echo "$info" | grep -Eq 'flags=.*runtime' ||
+            { echo "::error::The app is signed without the hardened runtime, so notarization would reject it."; exit 1; }
+          xcrun stapler validate "$app"
+          if spctl --status 2>&1 | grep -q 'assessments enabled'; then
+            verdict=$(spctl --assess --type execute --verbose=4 "$app" 2>&1 || true)
+            echo "$verdict"
+            echo "$verdict" | grep -q 'source=Notarized Developer ID' ||
+              { echo "::error::Gatekeeper does not accept the app as notarized."; exit 1; }
+          else
+            echo "::warning::Gatekeeper is off on this runner, so spctl was skipped. The stapled ticket was still checked."
+          fi
+          for dmg in target/universal-apple-darwin/release/bundle/dmg/*.dmg; do
+            hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$dmg" >/dev/null
+            xcrun stapler validate "$RUNNER_TEMP/dmg/Separatrix.app"
+            hdiutil detach "$RUNNER_TEMP/dmg" >/dev/null
+          done
       - name: Name the installers
         run: bash scripts/release/assets.sh release-assets "${{ matrix.os }}" "${{ matrix.arch }}" "${{ matrix.variant }}"
       - uses: actions/upload-artifact@v4
@@ -102,6 +180,7 @@ jobs:
   publish:
     name: Draft release
     needs: bundle
+    if: github.event_name != 'workflow_dispatch' || inputs.publish
     runs-on: ubuntu-22.04
     permissions:
       contents: write

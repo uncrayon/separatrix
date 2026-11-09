@@ -6,6 +6,9 @@ its **Done when** line is true.
 
 Before you start, run `bash scripts/release-check.sh` on `main`. Every row must read `PASS`.
 
+To sign and notarize the Mac app, add the five Apple secrets in
+[Sign and notarize the Mac app](macos-signing.md) before the build that people will install.
+
 1. [ ] **Add the updater key.** Follow [Turn on automatic updates](updater.md): create the key, keep
    two offline backups, add the `TAURI_SIGNING_PRIVATE_KEY` and
    `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, then put the public key in
@@ -72,6 +75,7 @@ Before you start, run `bash scripts/release-check.sh` on `main`. Every row must 
    that file, written the same way as the images in the Linux guide. Tick each box
    here as you replace its line, so the list stays equal to the placeholders still in the guides.
    - [ ] [macos.md](install/macos.md): The disk image window, with the Separatrix icon and the Applications folder side by side.
+   - [ ] [macos.md](install/macos.md): The dialog that asks whether to open Separatrix, an app downloaded from the internet, with its Open button.
    - [ ] [macos.md](install/macos.md): The "Separatrix" Not Opened dialog, with the Done and Move to Trash buttons.
    - [ ] [macos.md](install/macos.md): System Settings, Privacy & Security, with the "Separatrix" was blocked message and the Open Anyway button.
    - [ ] [macos.md](install/macos.md): The last dialog that asks whether to open Separatrix, showing the exact name of the button that opens it.

@@ -1,7 +1,7 @@
 # Turn on automatic updates
 
 Separatrix can check GitHub Releases for a newer version, download it, check its signature and
-install it. The status bar's version button (`v1.0.0`) runs the check, and so does
+install it. The status bar's version button (`v1.0.1`) runs the check, and so does
 **Check for Updates…** in the macOS app menu. A quiet check also runs once after launch.
 
 The updater stays off until you, the owner, give the app a signing key. A build without a key
@@ -19,7 +19,8 @@ checks that signature with the public key built into it.
 - If you lose the private key or its password, the copies people have installed can never update
   themselves again. Each person would have to download and install a new build by hand.
 - A copy built without the public key can never update itself either. Add the key before you
-  build the release that people will install, so that v1.0.0 can update to v1.0.1.
+  build the release that people will install. Version 1.0.0 was built without it, so the
+  updater starts with 1.0.1: a 1.0.1 install can update to 1.0.2 and later.
 
 ## Create the key
 
