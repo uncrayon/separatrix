@@ -54,8 +54,29 @@ If they differ, delete the file and download it again. Do not open a file that f
 
 ## Start Separatrix for the first time
 
-Separatrix is not notarized by Apple, so macOS blocks it the first time you open it. You allow it
-once, and after that it opens like any other app.
+Separatrix 1.0.1 and later are signed by their developer and notarized by Apple, so macOS knows
+where the app comes from and that Apple checked it.
+
+1. Open **Applications** and double-click **Separatrix**.
+2. macOS asks whether you are sure you want to open an app downloaded from the internet. Click
+   **Open**.
+
+   > **Screenshot to add on a real Mac:** The dialog that asks whether to open Separatrix, an app downloaded from the internet, with its Open button.
+
+macOS asks only this first time.
+
+Separatrix 1.0.0 is not notarized, and macOS blocks it the first time you open it. If you have
+1.0.0, follow [the steps for 1.0.0](#if-you-have-separatrix-100), or download the latest version
+instead.
+
+Separatrix opens on a gallery of example systems from Strogatz's *Nonlinear Dynamics and Chaos*.
+Click any card to start from that system. The [Linux guide](linux.md#start-separatrix-for-the-first-time)
+has a picture of the gallery. It looks the same on a Mac.
+
+### If you have Separatrix 1.0.0
+
+Version 1.0.0 is not notarized by Apple, so macOS blocks it the first time you open it. You allow
+it once, and after that it opens like any other app.
 
 1. Open **Applications** and double-click **Separatrix**. macOS shows a dialog titled
    **"Separatrix" Not Opened**. Click **Done**.
@@ -80,14 +101,10 @@ Separatrix again and repeat the steps.
 On macOS 14 Sonoma or older, there is a shorter way. Control-click **Separatrix** in
 **Applications**, choose **Open**, then click **Open** in the dialog.
 
-Separatrix opens on a gallery of example systems from Strogatz's *Nonlinear Dynamics and Chaos*.
-Click any card to start from that system. The [Linux guide](linux.md#start-separatrix-for-the-first-time)
-has a picture of the gallery. It looks the same on a Mac.
-
 ### If macOS says Separatrix is damaged
 
-If macOS says **"Separatrix" is damaged and can't be opened**, or **Open Anyway** never appears,
-remove the quarantine flag that macOS put on the download:
+If macOS says **"Separatrix" is damaged and can't be opened**, or, with version 1.0.0,
+**Open Anyway** never appears, remove the quarantine flag that macOS put on the download:
 
 1. Open **Terminal**.
 2. Run this command:
