@@ -801,14 +801,25 @@ fn join_curve(
         x: sp.x,
         period,
         bracket: Some(sp.bracket),
+        normal_form: sp.normal_form.map(|form| match form {
+            dyn_analysis::NormalForm::BogdanovTakens { a, b } => {
+                crate::ipc::NormalFormOut::BogdanovTakens { a, b }
+            }
+            dyn_analysis::NormalForm::Cusp { c } => crate::ipc::NormalFormOut::Cusp { c },
+        }),
+        angle: sp.angle,
+        positive_toward: sp.positive_toward,
     };
+    let tick_out = |t: dyn_analysis::ResonanceTick| crate::ipc::ResonanceTickOut { q: t.q, p: t.p };
     let mut points = Vec::new();
     let mut special = Vec::new();
+    let mut ticks = Vec::new();
     if let Some(b) = backward.map(reversed) {
         points.extend(b.points);
         // The seed, which the forward half starts with.
         points.pop();
         special.extend(b.special.into_iter().map(|sp| special_out(sp, 0)));
+        ticks.extend(b.ticks.into_iter().map(tick_out));
     }
     let offset = points.len();
     points.extend(forward.points);
@@ -818,6 +829,7 @@ fn join_curve(
             .into_iter()
             .map(|sp| special_out(sp, offset)),
     );
+    ticks.extend(forward.ticks.into_iter().map(tick_out));
     CurveOut {
         kind,
         period,
@@ -829,16 +841,19 @@ fn join_curve(
             .map(|pt| matches!(pt.nature, dyn_analysis::Nature::Neutral))
             .collect(),
         special,
+        ticks,
         end,
     }
 }
 
 /// `c` run the other way, its seed last, with the special points' indices
-/// and order to match.
+/// and order and the ticks' order to match. A point's `positive_toward` is
+/// a direction in the plane, which stays as it is.
 fn reversed(mut c: dyn_analysis::Curve) -> dyn_analysis::Curve {
     let last = c.points.len() - 1;
     c.points.reverse();
     c.special.reverse();
+    c.ticks.reverse();
     for sp in &mut c.special {
         sp.index = last - sp.index;
     }

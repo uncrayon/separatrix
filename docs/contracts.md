@@ -620,13 +620,16 @@ pub struct CurveOptions { pub free: (usize, usize), pub ranges: ((f64, f64), (f6
 pub fn continue_curve(f: &dyn VectorField, params: &[f64], seed: &CurveSeed,
                       opts: &CurveOptions) -> Result<Curve, CurveError>;
 pub struct Curve { pub kind: CurveKind, pub period: usize, pub points: Vec<CurvePoint>,
-                   pub special: Vec<Codim2Point>,
+                   pub special: Vec<Codim2Point>, pub ticks: Vec<ResonanceTick>,
                    pub end: CurveEnd /* Range | MaxPoints | StepTooSmall | Closed | Unfolded */ }
 pub struct CurvePoint { pub s: f64, pub p: (f64, f64), pub x: Vec<f64>, pub tangent: Vec<f64>,
                         pub eigenvalues: Vec<(f64, f64)>, pub nature: Nature }
 pub enum Nature { Bifurcation { omega: Option<f64> }, Neutral }
 pub struct Codim2Point { pub kind: Codim2Kind, pub index: usize, pub p: (f64, f64),
-                         pub x: Vec<f64>, pub bracket: f64 }
+                         pub x: Vec<f64>, pub bracket: f64, pub normal_form: Option<NormalForm>,
+                         pub angle: Option<f64>, pub positive_toward: Option<(f64, f64)> }
+pub enum NormalForm { BogdanovTakens { a: f64, b: f64 }, Cusp { c: f64 } }
+pub struct ResonanceTick { pub q: usize, pub p: (f64, f64) }
 pub enum Codim2Kind { BogdanovTakens, Cusp, Bautin, ZeroHopf, HopfHopf, Resonance1, Resonance2,
                       Resonance3, Resonance4, Chenciner, FoldFlip, GeneralizedFlip }
 pub enum CurveError { NotAutonomous, Unsupported, NotABifurcation, Singular, NoEffect }
@@ -685,7 +688,13 @@ A sign change counts only between two true Hopf or Neimark–Sacker points, exce
 and R2, which begin a neutral stretch, and only if the test shrinks to `1e−4` of its value at
 the nearer end, so the poles of `ℓ₁` and of the Neimark–Sacker coefficient are dropped. The
 points do not change the steps, so two zeros of one test within one step cancel: `ds_max` below
-their distance finds both. `crates/dyn-analysis/tests/curves.rs` checks the CO oxidation fold
+their distance finds both. A point carries `normal_form` at BT (fold and Hopf curves of a flow:
+`(a, b)` of `ẇ₁ = β₁ + β₂w₀ + a w₀² + b w₀w₁`, `q₀` oriented so that `a ≥ 0`) and at CP (`c` of
+`ẇ = β₁ + β₂w + c w³`); `angle`, `θ = acos c ∈ [0, π]` of the critical multipliers, on a
+Neimark–Sacker curve; and `positive_toward` at GH, CH and GPD, the step `(Δp₁, Δp₂)` from the point
+to the end of its bracketing step where `ℓ₁`, `d` or the flip `c` is positive. On a
+Neimark–Sacker curve `ticks` lists the weak resonances 1:5 to 1:9, where `c = cos(2π/q)` between
+two true Neimark–Sacker points, bisected the same way but not inserted into `points`. `crates/dyn-analysis/tests/curves.rs` checks the CO oxidation fold
 and Hopf curves through docs/codim2-reference.md's points at `K = 0.4` to 1e−8, every
 codimension-2 point of its systems 1 to 3, the predator–prey map's Neimark–Sacker, flip and
 branch-point curves and Hénon's fold curve against closed forms, a neutral stretch past each
@@ -830,7 +839,11 @@ bracket }`. `kind` is `"bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopf
 "generalizedFlip"`, labelled BT, CP, GH, ZH, HH, R1 to R4, CH, LPPD and GPD. `index` is the
 point's own vertex, shifted with the halves as they are joined and reversed with a backward half
 that closes; `p` is `[across, up]`; and `bracket` is the width of the last bisection bracket in
-the scaled arclength, which the Special points list shows as "located to". `end.last` says why
+the scaled arclength, which the Special points list shows as "located to". `normalForm` is
+`{ kind: "bogdanovTakens", a, b } | { kind: "cusp", c } | null`, `angle` is `θ` or `null`, and
+`positiveToward` is `[Δacross, Δup]` in parameter units or `null`; joining and reversing leave it
+as it is, a direction in the plane. `ticks` lists `ResonanceTickOut { q, p }` in curve order. The
+preview's mock carries the same fields from the reference script. `end.last` says why
 the last point stopped (`"range"`, `"maxPoints"`,
 `"stepTooSmall"`, `"closed"` or `"unfolded"`), and `end.first` why the first did, with direction
 `both`, or `null` when the first point is the seed, as on a closed curve, whose last point
@@ -853,7 +866,8 @@ and to choose another. It runs on a blocking worker thread. `app/src-tauri/tests
 checks it on the CO oxidation model and the predator–prey map, seeded as the Parameter plane
 seeds it, and checks every curve of the browser preview's stand-in (`mockCurve` in api/mock.ts,
 which walks the precomputed curves of `mockCurves.generated.json`, written by
-`scripts/reference/codim2_reference.py`) against it, its codimension-2 points both ways. The
+`scripts/reference/codim2_reference.py`) against it, its codimension-2 points both ways with
+their normal forms, angles and sides of `positiveToward`, and its ticks. The
 stand-in has no bisection, so it sends `bracket: null` and indexes each point's nearest vertex.
 The codimension-2 gate (`scripts/codim2-gate.sh`, claims in `app/src-tauri/tests/codim2.rs`)
 follows the curves of docs/codim2-reference.md's systems 1 to 3 with the plane's own requests
