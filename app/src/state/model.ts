@@ -44,7 +44,7 @@ import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedSeed, LoadedView, ProjectLoad } from "../project/serialize";
-import { curvesAvailability, openPlane, planeSeed, type CurvesView, type PlaneSeed } from "./curves.ts";
+import { curvesAvailability, openPlane, planeSeed, withBranch, type CurvesView, type PlaneSeed } from "./curves.ts";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -1910,8 +1910,8 @@ export function switchView(
     const kept = memory.curves && isCurves(memory.curves) ? memory.curves : null;
     const branch = memory.continuation && isContinuation(memory.continuation) ? memory.continuation : null;
     const home = branch ?? defaultView(sys, s.solver);
-    if (kept?.curves.seeds.length) return { ...kept, branch, home };
     const params = s.params ?? [];
+    if (kept?.curves.seeds.length) return { ...(kept.branch === branch ? kept : withBranch(kept, branch, params)), home };
     return openPlane(kept, branch, home, params, branchSeeds(sys, params, branch, s.branches ?? {}));
   }
   const kept = memory[choice];

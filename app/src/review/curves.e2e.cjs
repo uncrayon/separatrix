@@ -94,7 +94,7 @@ test("CO oxidation: from an H row in the Branch view to a BT row of the Paramete
     await page.waitForTimeout(200);
     assert.match(await paramValue(page, "k_2"), /^1\.161/);
     assert.match(await paramValue(page, "K"), /^0\.7223/);
-    assert.match(await page.locator(".legend-bar").innerText(), /Branch view’s range, K = 0\.7223/, "the slice follows K");
+    assert.match(await page.locator(".legend-bar").innerText(), /Branch view’s range, K = 0\.4\n/, "the slice stays at the K the branches were computed at");
   } finally {
     await browser.close();
   }

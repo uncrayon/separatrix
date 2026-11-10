@@ -72,12 +72,13 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const points = useMemo(() => planePointRows(curves, ranges), [curves, ranges]);
   const branch = plane?.branch ?? null;
   const sliceOn = !!plane && !!branch && branch.param === plane.across;
-  const upValue = up?.value;
+  const sliceAt = plane?.branchParams?.[plane.up];
   const slice = useMemo(
-    () => (sliceOn && upValue !== undefined ? { range: branch!.continuation.range, at: upValue } : null),
-    [sliceOn, branch, upValue],
+    () => (sliceOn && sliceAt !== undefined ? { range: branch!.continuation.range, at: sliceAt } : null),
+    [sliceOn, branch, sliceAt],
   );
   const acrossValue = across?.value;
+  const upValue = up?.value;
   const crosshair = useMemo<[number, number] | null>(
     () => (acrossValue !== undefined && upValue !== undefined ? [acrossValue, upValue] : null),
     [acrossValue, upValue],
@@ -137,7 +138,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
 
   const kinds = CURVE_KIND_ORDER.filter((k) => curves.some((c) => c.kind === k));
   const neutralKind = CURVE_KIND_ORDER.find((k) => curves.some((c) => c.kind === k && segmentRuns(c.neutral).some((r) => r[2])));
-  const upText = up ? Number(up.value.toPrecision(4)).toString().replace(/^-/, "−") : "";
+  const sliceText = slice ? Number(slice.at.toPrecision(4)).toString().replace(/^-/, "−") : "";
 
   return (
     <>
@@ -207,7 +208,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
                 <span className="ds-phase-sample">
                   <SliceSample />
                 </span>
-                Branch view’s range, {uName} = {upText}
+                Branch view’s range, {uName} = {sliceText}
               </li>
             )}
           </ul>

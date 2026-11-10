@@ -107,6 +107,11 @@ export type CurvesView = {
   /** The Branch view as it was when the plane opened: its range is the slice. */
   branch: ContinuationView | null;
   /**
+   * Every parameter's value when the plane opened from the Branch view, which
+   * its branches were computed at: the slice is drawn at the up parameter's.
+   */
+  branchParams: number[] | null;
+  /**
    * What a project file saves while the plane is shown, as the file format
    * has no plane yet: the Branch view, else the default view.
    */
@@ -157,6 +162,7 @@ export function curvesView(
     up,
     curves: { ranges, ds: CURVES_DS, maxPoints: CURVES_MAX_POINTS, direction: "both", seeds: [] },
     branch,
+    branchParams: null,
     home,
   };
 }
@@ -194,14 +200,23 @@ export function openPlane(
   kept: CurvesView | null,
   branch: ContinuationView | null,
   home: CurvesView["home"],
-  params: readonly Pick<ParamState, "min" | "max">[],
+  params: readonly PlaneParam[],
   seeds: readonly PlaneSeed[],
   up?: number,
 ): CurvesView {
   const across = branch?.param ?? kept?.across ?? 0;
   const u = up ?? (kept && kept.across === across ? kept.up : nextParam(across, params.length));
   const base = kept && kept.across === across && kept.up === u ? kept : curvesView(params, across, u, branch, home);
-  return { ...base, branch, home, curves: { ...base.curves, seeds: withPlaneSeeds(base.curves.seeds, seeds) } };
+  return { ...withBranch(base, branch, params), home, curves: { ...base.curves, seeds: withPlaneSeeds(base.curves.seeds, seeds) } };
+}
+
+type PlaneParam = Pick<ParamState, "min" | "max"> & Partial<Pick<ParamState, "value">>;
+
+/** `view` tied to the Branch view `branch`, whose branches were computed at the values of `params`. */
+export function withBranch(view: CurvesView, branch: ContinuationView | null, params: readonly PlaneParam[]): CurvesView {
+  const values = params.map((p) => p.value);
+  const known = values.every((v): v is number => v !== undefined);
+  return { ...view, branch, branchParams: branch && known ? (values as number[]) : null };
 }
 
 export function curvesSettingsError(
@@ -477,5 +492,5 @@ export function followPlaneParams(
   const across = followParamIndex(oldParams, newParams, view.across);
   const up = followParamIndex(oldParams, newParams, view.up);
   if (across < 0 || up < 0 || across === up) return null;
-  return across === view.across && up === view.up ? view : { ...view, across, up };
+  return across === view.across && up === view.up ? view : { ...view, across, up, branchParams: null };
 }

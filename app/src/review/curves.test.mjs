@@ -117,7 +117,12 @@ test("opening the plane searches from the Branch view's special points, across i
     ["hopf", [1.051557, 0.4]],
   ]);
   assert.equal(plane.branch, branchView);
+  assert.deepEqual(plane.branchParams, [1.05, 0.4], "the slice is drawn at the K the branches were computed at");
   assert.equal(plane.home, branchView, "a project file saves the Branch view");
+  const movedK = CO_SLIDERS.map((p, i) => (i === 1 ? { ...p, value: 0.7 } : p));
+  const away = model.switchView("phase", { ...s, view: plane, params: movedK }, memory);
+  const back = model.switchView("curves", { ...s, view: away, params: movedK }, memory);
+  assert.deepEqual(back.branchParams, [1.05, 0.4], "moving K in the plane does not move the slice");
   const empty = model.switchView("curves", { ...s, branches: {} }, {});
   assert.deepEqual(empty.curves.seeds, [], "nothing to search from: the empty state");
   assert.equal(empty.branch, null);
