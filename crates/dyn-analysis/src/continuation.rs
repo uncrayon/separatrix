@@ -953,26 +953,7 @@ impl<'a> Residual<'a> {
 
     fn second_direction(&self, z: &[f64], tau: &[f64]) -> Option<Vec<f64>> {
         let m = bordered(self.linear(z).1, tau);
-        let n1 = z.len();
-        let mut normal: Vec<f64> = (0..n1 * n1)
-            .map(|k| {
-                (0..n1)
-                    .map(|r| m[r * n1 + k / n1] * m[r * n1 + k % n1])
-                    .sum()
-            })
-            .collect();
-        let trace: f64 = (0..n1).map(|i| normal[i * n1 + i]).sum();
-        for i in 0..n1 {
-            normal[i * n1 + i] += INVERSE_ITERATION_SHIFT * (1.0 + trace);
-        }
-        let column = (0..n1)
-            .filter_map(|j| {
-                let mut e = vec![0.0; n1];
-                e[j] = 1.0;
-                lu_solve(&normal, &e)
-            })
-            .reduce(|a, b| if norm2(&b) > norm2(&a) { b } else { a })?;
-        let u = lu_solve(&normal, &column)?;
+        let u = null_vector(&m, z.len())?;
         let along = dot(&u, tau);
         let d: Vec<f64> = u.iter().zip(tau).map(|(c, t)| c - along * t).collect();
         let len = norm2(&d);
@@ -1160,6 +1141,28 @@ fn newton(
         }
     }
     Err(Fail::NoConvergence)
+}
+
+/// A vector close to the kernel of the square `n × n` matrix `m`, not
+/// normalized, without an SVD: two steps of inverse iteration on `mᵀm`
+/// shifted by [`INVERSE_ITERATION_SHIFT`], started from the column of the
+/// inverse with the largest norm.
+pub(crate) fn null_vector(m: &[f64], n: usize) -> Option<Vec<f64>> {
+    let mut normal: Vec<f64> = (0..n * n)
+        .map(|k| (0..n).map(|r| m[r * n + k / n] * m[r * n + k % n]).sum())
+        .collect();
+    let trace: f64 = (0..n).map(|i| normal[i * n + i]).sum();
+    for i in 0..n {
+        normal[i * n + i] += INVERSE_ITERATION_SHIFT * (1.0 + trace);
+    }
+    let column = (0..n)
+        .filter_map(|j| {
+            let mut e = vec![0.0; n];
+            e[j] = 1.0;
+            lu_solve(&normal, &e)
+        })
+        .reduce(|a, b| if norm2(&b) > norm2(&a) { b } else { a })?;
+    lu_solve(&normal, &column)
 }
 
 fn bordered(mut a: Vec<f64>, border: &[f64]) -> Vec<f64> {
