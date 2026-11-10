@@ -144,7 +144,7 @@ Curves of `F3` in closed form (derived):
 | --- | --- |
 | Neimark–Sacker (det = 1) | (2ε − 7)/(2ε − 3) |
 | Flip | (4ε² − 56ε + 147)/(4ε² + 4ε − 7) |
-| Multiplier +1 (transcritical with F2) | (2ε − 7)/(2ε − 5) |
+| Branch points (F3 = F2, transcritical) | (2ε − 7)/(2ε − 5) |
 
 Codimension-2 points on the Neimark–Sacker curve (derived):
 
@@ -159,8 +159,16 @@ Codimension-2 points on the Neimark–Sacker curve (derived):
   Chenciner point, the same order as here. Past the 1:2 point the curve is a neutral saddle.
 - The Neimark–Sacker coefficient is `d = −11.2197` at `ε = 1`, `a = 5`, with MatContM's scaling.
   The same routine gives `−1.0` for the delayed logistic map below, the value MatContM prints.
-- The flip curve meets the multiplier-+1 curve at `(ε, a) = (2, 3)`, where `F3 = (2/3, 0)` lies on
-  `F2`. The tutorial reports a fold-flip on its flip curve; it gives no location to compare.
+- On the branch-point curve F3 lies on F2 at `(1/(3.5 − ε), 0)`. Its multipliers are `1` and
+  `(2ε − 3)/(2ε − 5)`. The line `y = 0` is invariant, so `[g_x | g_a]` and `[g_x | g_ε]` have rank 1
+  there: a fold system is singular on this curve, and a branch-point system is needed.
+
+The flip curve meets the branch-point curve at a fold-flip (derived). The tutorial reports a
+fold-flip on its flip curve, but gives no location to compare.
+
+| Point | ε | a | F3 | Multipliers |
+| --- | --- | --- | --- | --- |
+| Fold-flip (LPPD) | 2 | 3 | (2/3, 0) | 1, −1 |
 
 ### 3b. Delayed logistic map with migration
 

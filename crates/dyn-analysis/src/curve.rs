@@ -1,7 +1,8 @@
-//! Curves of folds, Hopf points, flips and Neimark–Sacker points in two
-//! parameters, by pseudo-arclength continuation of a minimally extended
-//! defining system (W. Govaerts, *Numerical Methods for Bifurcations of
-//! Dynamical Equilibria*, SIAM 2000, the systems MatCont follows).
+//! Curves of folds, Hopf points, branch points, flips and Neimark–Sacker
+//! points in two parameters, by pseudo-arclength continuation of a minimally
+//! extended defining system (W. Govaerts, *Numerical Methods for
+//! Bifurcations of Dynamical Equilibria*, SIAM 2000, the systems MatCont
+//! follows).
 
 use dyn_core::{SystemKind, VectorField};
 
@@ -18,6 +19,9 @@ pub enum CurveKind {
     Fold,
     /// Hopf points of a flow: two eigenvalues with sum `0`.
     Hopf,
+    /// Branch points: another branch of equilibria or fixed points crosses
+    /// (transcritical, pitchfork).
+    BranchPoint,
     /// Flips of a map: a multiplier `−1`.
     Flip,
     /// Neimark–Sacker points of a map: two multipliers with product `1`.
@@ -40,6 +44,8 @@ pub struct CurveSeed {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurveOptions {
     /// The two free parameters: `p₁`, drawn across, then `p₂`, drawn up.
+    /// On a branch-point curve `p₁` is the parameter the branch point was
+    /// found along, the one in which the other branch crosses.
     pub free: (usize, usize),
     /// The box the curve stays in: the range of `p₁`, then that of `p₂`,
     /// each with two different ends, in either order.
@@ -63,8 +69,8 @@ pub enum Nature {
     /// A bifurcation of the curve's kind.
     Bifurcation {
         /// Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ = arg μ`
-        /// of the critical multiplier with `Im μ ≥ 0`. `None` on a fold or
-        /// flip curve.
+        /// of the critical multiplier with `Im μ ≥ 0`. `None` on a fold,
+        /// branch-point or flip curve.
         omega: Option<f64>,
     },
     /// A neutral saddle, where the defining system holds without a
@@ -76,14 +82,16 @@ pub enum Nature {
 /// One point of a curve.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CurvePoint {
-    /// Arclength from the seed in scaled coordinates `(x, u₁, u₂)`.
+    /// Arclength from the seed in the scaled unknowns `z` (see
+    /// [`continue_curve`]).
     pub s: f64,
     /// The parameters `(p₁, p₂)`.
     pub p: (f64, f64),
     /// The state; for a map, the first point of the cycle.
     pub x: Vec<f64>,
-    /// Unit tangent `(ẋ, u̇₁, u̇₂)` in scaled coordinates, `dim + 2` values,
-    /// oriented in the direction of continuation.
+    /// Unit tangent `ż`, oriented in the direction of continuation:
+    /// `(ẋ, u̇₁, u̇₂)`, `dim + 2` values, or `(ẋ, u̇₁, u̇₂, β̇)`, `dim + 3`, on
+    /// a branch-point curve.
     pub tangent: Vec<f64>,
     /// Eigenvalues `(re, im)` of `J` (flow) or `D f^k` (map).
     pub eigenvalues: Vec<(f64, f64)>,
@@ -102,6 +110,11 @@ pub enum CurveEnd {
     StepTooSmall,
     /// It came back to the seed; the last point repeats the first.
     Closed,
+    /// A corrected point of a branch-point curve needed `β ≠ 0`, with
+    /// `|β| > 1e-10 · (1 + |z|∞)`, Newton's tolerance: the parameters no
+    /// longer keep the branch point. That point is dropped, so the curve
+    /// ends at its last branch point.
+    Unfolded,
 }
 
 /// A curve of bifurcations in two parameters.
@@ -127,13 +140,14 @@ pub enum CurveError {
     /// or the same parameter freed twice.
     Unsupported,
     /// Newton's method from the seed with `p₂` held did not converge to a
-    /// point of the curve.
+    /// point of the curve, or on a branch-point curve only to one with
+    /// `β ≠ 0` (see [`CurveEnd::Unfolded`]).
     NotABifurcation,
     /// The defining system is singular at the seed, so the curve has no
     /// unique direction.
     Singular,
-    /// `p₂` does not move the bifurcation: neither `g` nor `ψ` depends on
-    /// it at the seed.
+    /// `p₂` does not move the bifurcation: no equation depends on it at the
+    /// seed.
     NoEffect,
 }
 
@@ -148,6 +162,14 @@ pub enum CurveError {
 /// for a fold, `D f^k + I` for a flip, `2A ⊙ I` for Hopf and `A ⊙ A − I`
 /// for Neimark–Sacker, bialternate products of `A = J` or `D f^k`.
 ///
+/// A branch point is the rank defect of a wider `M = [g_x | g_{u₁}]`, of
+/// rank `dim − 1` where `g_{p₁}` lies in the range of a singular `g_x`.
+/// That is two conditions, `ψ = (ψ₁, ψ₂)`, the bottom row of
+/// `[M w₀; V₀ᵀ 0][Q; ψ] = [0; I₂]` with two columns in `V₀`. As `g = 0`
+/// alone has rank `dim − 1` there, `z` gains a last unknown `β` and the
+/// first equations become `g + β w₀ = 0`. On a curve of branch points
+/// `β = 0`; a point that needs `β ≠ 0` ends it with [`CurveEnd::Unfolded`].
+///
 /// The seed is first corrected with `p₂` held. `ds > 0` then follows the
 /// curve the way `p₁` increases at the seed, or the way `p₂` increases
 /// where the tangent has no `u₁` component; `ds < 0` goes the other way. A
@@ -155,9 +177,9 @@ pub enum CurveError {
 /// [`CurveEnd::Range`].
 ///
 /// [`CurveError::NoEffect`] needs `g_{p₂}` and `ψ_{p₂}` to vanish at the
-/// seed. They count as zero when the first-order move of `(x, u₁)` they
-/// cause over the whole height of the box, `R⁻¹(g_{u₂}; ψ_{u₂})` with `R`
-/// the Jacobian in `(x, u₁)`, is within Newton's tolerance
+/// seed. They count as zero when the first-order move of the other unknowns
+/// they cause over the whole height of the box, `R⁻¹(g_{u₂}; ψ_{u₂})` with
+/// `R` the Jacobian in those unknowns, is within Newton's tolerance
 /// `1e-10 · (1 + |z|∞)`: the corrector could not tell the curve from the
 /// vertical line through the seed. The move is exactly zero when `p₂` does
 /// not enter the field, and unlike the derivatives themselves it does not
@@ -174,7 +196,7 @@ pub fn continue_curve(
     let n = f.dim();
     let map = f.kind() == SystemKind::Map;
     let supported = match seed.kind {
-        CurveKind::Fold => true,
+        CurveKind::Fold | CurveKind::BranchPoint => true,
         CurveKind::Hopf => !map && n >= 2,
         CurveKind::Flip => map,
         CurveKind::NeimarkSacker => map && n >= 2,
@@ -189,11 +211,15 @@ pub fn continue_curve(
         Fail::Singular => CurveError::Singular,
         Fail::NoConvergence => CurveError::NotABifurcation,
     })?;
+    if sys.unfolded(&z) {
+        return Err(CurveError::NotABifurcation);
+    }
     sys.renew_borders(&z);
-    let mut up = vec![0.0; n + 2];
+    let mut up = vec![0.0; z.len()];
     up[n + 1] = 1.0;
     let tau = tangent(&sys, &z, &up).ok_or(CurveError::Singular)?;
-    if norm_inf(&tau[..=n]) <= TOL * (1.0 + norm_inf(&z)) * tau[n + 1].abs() {
+    let across = norm_inf(&tau[..=n]).max(norm_inf(&tau[n + 2..]));
+    if across <= TOL * (1.0 + norm_inf(&z)) * tau[n + 1].abs() {
         return Err(CurveError::NoEffect);
     }
     let lead = if tau[n] != 0.0 { tau[n] } else { tau[n + 1] };
@@ -204,15 +230,17 @@ pub fn continue_curve(
     };
     let tau: Vec<f64> = tau.iter().map(|t| sign * t).collect();
     let start = sys.point(0.0, &z, tau.clone());
-    if !z[n..].iter().all(|u| (0.0..=1.0).contains(u)) {
+    if !z[n..n + 2].iter().all(|u| (0.0..=1.0).contains(u)) {
         return Ok(sys.curve(vec![start], CurveEnd::Range));
     }
     let h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
     Ok(sys.follow(start, z, tau, h, opts))
 }
 
-/// `G(z) = (g(x, p); ψ(x, p))`, `dim + 1` equations in `z = (x, u₁, u₂)`.
-/// The borders `v₀`, `w₀` stay fixed while a point is corrected.
+/// `G(z) = (g(x, p) + β w₀; ψ(x, p))`, `dim + c` equations in
+/// `z = (x, u₁, u₂, β)`, where `c` is the dimension of the kernel of `M` on
+/// the curve and `β` has `c − 1` entries: none, or one on a branch-point
+/// curve. The borders `V₀`, `w₀` stay fixed while a point is corrected.
 struct Defining<'a> {
     power: Power<'a>,
     map: bool,
@@ -220,7 +248,8 @@ struct Defining<'a> {
     params: Vec<f64>,
     free: [usize; 2],
     edges: [(f64, f64); 2],
-    v0: Vec<f64>,
+    /// The `c` columns of `V₀`, each of the length of a row of `M`.
+    v0: Vec<Vec<f64>>,
     w0: Vec<f64>,
 }
 
@@ -247,21 +276,44 @@ impl<'a> Defining<'a> {
         self.power.f.dim()
     }
 
-    /// Rows and columns of `M`.
-    fn size(&self) -> usize {
-        let n = self.dim();
-        match self.kind {
-            CurveKind::Fold | CurveKind::Flip => n,
-            CurveKind::Hopf | CurveKind::NeimarkSacker => n * (n - 1) / 2,
+    /// A branch-point curve has the square part of a fold's `M` and one
+    /// more column, `g_{u₁}`.
+    fn branch(&self) -> bool {
+        self.kind == CurveKind::BranchPoint
+    }
+
+    /// The kind whose `M` is the square part of this one's.
+    fn base(&self) -> CurveKind {
+        if self.branch() {
+            CurveKind::Fold
+        } else {
+            self.kind
         }
     }
 
+    /// Rows of `M`, and its columns but for `g_{u₁}` on a branch-point curve.
+    fn size(&self) -> usize {
+        let n = self.dim();
+        match self.base() {
+            CurveKind::Hopf | CurveKind::NeimarkSacker => n * (n - 1) / 2,
+            _ => n,
+        }
+    }
+
+    /// `c`: `M` has `size + c − 1` columns and a kernel of dimension `c` on
+    /// the curve.
+    fn corank(&self) -> usize {
+        1 + usize::from(self.branch())
+    }
+
+    /// `z` at `x` and `params`, with `β = 0`.
     fn scaled(&self, x: &[f64]) -> Vec<f64> {
         let u = (0..2).map(|k| {
             let (lo, hi) = self.edges[k];
             (self.params[self.free[k]] - lo) / (hi - lo)
         });
-        x.iter().copied().chain(u).collect()
+        let beta = vec![0.0; self.corank() - 1];
+        x.iter().copied().chain(u).chain(beta).collect()
     }
 
     /// `p = (1 − u)·lo + u·hi`, which is `lo` and `hi` exactly on the edges.
@@ -282,12 +334,34 @@ impl<'a> Defining<'a> {
         a
     }
 
-    /// `M` from `A`.
-    fn singular(&self, a: &[f64]) -> Vec<f64> {
+    /// `g_p` along `params[free]`.
+    fn param_column(&self, x: &[f64], p: &[f64], free: usize) -> Vec<f64> {
+        let mut column = vec![0.0; x.len()];
+        self.power.param_jacobian(0.0, x, p, free, &mut column);
+        column
+    }
+
+    /// `wᵀ g_{p₁ p_k}` by a central difference of `wᵀ g_{p₁}` in `p_k`, with
+    /// a step of `2⁻¹⁷ · max(|p_k|, 1)`: arithmetic only, as no libm function
+    /// may decide which points are kept.
+    fn w_second_param_derivative(&self, x: &[f64], p: &[f64], w: &[f64], k: usize) -> f64 {
+        let free = self.free[k];
+        let h = p[free].abs().max(1.0) / 131_072.0;
+        let (up, down) = (p[free] + h, p[free] - h);
+        let mut moved = p.to_vec();
+        let mut at = |v: f64| {
+            moved[free] = v;
+            dot(w, &self.param_column(x, &moved, self.free[0]))
+        };
+        (at(up) - at(down)) / (up - down)
+    }
+
+    /// The first `size` columns of `M`, from `A`.
+    fn square(&self, a: &[f64]) -> Vec<f64> {
         let n = self.dim();
-        match self.kind {
+        match self.base() {
             CurveKind::Fold if self.map => shifted(a, n, -1.0),
-            CurveKind::Fold => a.to_vec(),
+            CurveKind::Fold | CurveKind::BranchPoint => a.to_vec(),
             CurveKind::Flip => shifted(a, n, 1.0),
             CurveKind::Hopf => {
                 let eye = identity(n);
@@ -297,11 +371,11 @@ impl<'a> Defining<'a> {
         }
     }
 
-    /// The derivative of `M` where `A` moves by `da`.
-    fn singular_derivative(&self, a: &[f64], da: &[f64]) -> Vec<f64> {
+    /// The derivative of those columns where `A` moves by `da`.
+    fn square_derivative(&self, a: &[f64], da: &[f64]) -> Vec<f64> {
         let n = self.dim();
-        match self.kind {
-            CurveKind::Fold | CurveKind::Flip => da.to_vec(),
+        match self.base() {
+            CurveKind::Fold | CurveKind::BranchPoint | CurveKind::Flip => da.to_vec(),
             CurveKind::Hopf => {
                 let eye = identity(n);
                 sum(&cross(da, &eye, n), &cross(&eye, da, n))
@@ -310,53 +384,84 @@ impl<'a> Defining<'a> {
         }
     }
 
-    /// `(q, s, w)` from `[M w₀; v₀ᵀ 0][q; s] = [0; 1]` and
-    /// `[Mᵀ v₀; w₀ᵀ 0][w; s] = [0; 1]`.
-    fn bordered_solve(&self, m: &[f64]) -> Option<(Vec<f64>, f64, Vec<f64>)> {
-        let size = self.v0.len();
-        let k = size + 1;
-        let mut b = vec![0.0; k * k];
-        let mut bt = vec![0.0; k * k];
-        for i in 0..size {
-            for j in 0..size {
-                b[i * k + j] = m[i * size + j];
-                bt[i * k + j] = m[j * size + i];
-            }
-            b[i * k + size] = self.w0[i];
-            b[size * k + i] = self.v0[i];
-            bt[i * k + size] = self.v0[i];
-            bt[size * k + i] = self.w0[i];
+    /// `M` from `A`: the square part, followed on a branch-point curve by the
+    /// column `g_{u₁}`, from `g_{p₁}` asked for only then.
+    fn singular(&self, a: &[f64], g_p1: impl FnOnce() -> Vec<f64>) -> Vec<f64> {
+        let square = self.square(a);
+        if !self.branch() {
+            return square;
         }
-        let mut rhs = vec![0.0; k];
-        rhs[size] = 1.0;
-        let qs = lu_solve(&b, &rhs)?;
-        let w = lu_solve(&bt, &rhs)?;
-        Some((qs[..size].to_vec(), qs[size], w[..size].to_vec()))
+        let (lo, hi) = self.edges[0];
+        square
+            .chunks(self.dim())
+            .zip(g_p1())
+            .flat_map(|(row, g)| row.iter().copied().chain([g * (hi - lo)]))
+            .collect()
     }
 
-    fn singular_at(&self, z: &[f64]) -> Vec<f64> {
-        let n = self.dim();
-        self.singular(&self.jacobian(&z[..n], &self.params_at(z)))
+    /// The solutions of the bordered systems of `M` and `Mᵀ`.
+    fn bordered_solve(&self, m: &[f64]) -> Option<Bordered> {
+        let (rows, c) = (self.w0.len(), self.v0.len());
+        let (cols, k) = (rows + c - 1, rows + c);
+        let mut b = vec![0.0; k * k];
+        for i in 0..rows {
+            b[i * k..i * k + cols].copy_from_slice(&m[i * cols..(i + 1) * cols]);
+            b[i * k + cols] = self.w0[i];
+        }
+        for (i, v) in (rows..k).zip(&self.v0) {
+            b[i * k..i * k + cols].copy_from_slice(v);
+        }
+        let bt: Vec<f64> = (0..k * k).map(|i| b[i % k * k + i / k]).collect();
+        let solved = (rows..k)
+            .map(|i| lu_solve(&b, &unit_vector(k, i)))
+            .collect::<Option<Vec<_>>>()?;
+        let w = lu_solve(&bt, &unit_vector(k, k - 1))?;
+        Some(Bordered {
+            q: solved.iter().map(|s| s[..cols].to_vec()).collect(),
+            psi: solved.iter().map(|s| s[cols]).collect(),
+            w: w[..rows].to_vec(),
+        })
     }
 
-    /// Borders for a seed, where no `q` is known yet: approximate null
-    /// vectors of `M` and `Mᵀ`.
+    /// Borders for a seed, where no `Q` is known yet: approximate null
+    /// vectors `q` of the square part `S` of `M` and `w₀` of `Sᵀ`. On a
+    /// branch-point curve `V₀ = [(q, 0), e_{u₁}]`, whose `V₀ᵀ` is invertible
+    /// on the kernel of `M`, spanned by `(q, 0)` and some `(v, 1)`.
     fn first_borders(&mut self, z: &[f64]) -> Option<()> {
-        let (m, size) = (self.singular_at(z), self.size());
+        let (n, size) = (self.dim(), self.size());
+        let s = self.square(&self.jacobian(&z[..n], &self.params_at(z)));
         let transposed: Vec<f64> = (0..size * size)
-            .map(|i| m[i % size * size + i / size])
+            .map(|i| s[i % size * size + i / size])
             .collect();
-        self.v0 = unit(null_vector(&m, size)?)?;
+        let cols = size + self.corank() - 1;
+        let mut q = unit(null_vector(&s, size)?)?;
+        q.resize(cols, 0.0);
+        self.v0 = std::iter::once(q)
+            .chain((size..cols).map(|i| unit_vector(cols, i)))
+            .collect();
         self.w0 = unit(null_vector(&transposed, size)?)?;
         Some(())
     }
 
-    /// The normalized `q` and `w` at an accepted point become the borders.
+    /// The orthonormalized `Q` and the normalized `w` at an accepted point
+    /// become the borders.
     fn renew_borders(&mut self, z: &[f64]) {
-        let found = self.bordered_solve(&self.singular_at(z));
-        if let Some((Some(v), Some(w))) = found.map(|(q, _, w)| (unit(q), unit(w))) {
+        let n = self.dim();
+        let (x, p) = (&z[..n], self.params_at(z));
+        let m = self.singular(&self.jacobian(x, &p), || {
+            self.param_column(x, &p, self.free[0])
+        });
+        let found = self.bordered_solve(&m);
+        if let Some((Some(v), Some(w))) = found.map(|b| (orthonormal(b.q), unit(b.w))) {
             (self.v0, self.w0) = (v, w);
         }
+    }
+
+    /// `|β|`, the size of the residual `g` once `β` is dropped, is beyond
+    /// Newton's tolerance.
+    fn unfolded(&self, z: &[f64]) -> bool {
+        let tol = TOL * (1.0 + norm_inf(z));
+        z[self.dim() + 2..].iter().any(|beta| beta.abs() > tol)
     }
 
     fn point(&self, s: f64, z: &[f64], tangent: Vec<f64>) -> CurvePoint {
@@ -368,7 +473,7 @@ impl<'a> Defining<'a> {
             p: (p[self.free[0]], p[self.free[1]]),
             x: z[..n].to_vec(),
             tangent,
-            nature: nature(self.kind, &eigenvalues),
+            nature: nature(self.base(), &eigenvalues),
             eigenvalues,
         }
     }
@@ -424,6 +529,9 @@ impl<'a> Defining<'a> {
                 h /= 2.0;
                 continue;
             };
+            if self.unfolded(&z_new) {
+                break CurveEnd::Unfolded;
+            }
             let len = dist(&z, &z_new);
             let next = self.point(last.s + len, &z_new, t_new);
             self.renew_borders(&z_new);
@@ -455,65 +563,100 @@ impl<'a> Defining<'a> {
     }
 }
 
+/// `[M w₀; V₀ᵀ 0][Q; ψ] = [0; I_c]` and `[Mᵀ V₀; w₀ᵀ 0][w; h] = [0; 1]`
+/// solved at one point.
+struct Bordered {
+    /// The `c` columns `qᵢ` of `Q`.
+    q: Vec<Vec<f64>>,
+    /// The `c` values `ψᵢ`, zero on the curve.
+    psi: Vec<f64>,
+    w: Vec<f64>,
+}
+
 impl Underdetermined for Defining<'_> {
-    /// Row `i < dim` is `[g_x | g_{p₁}·(hi₁ − lo₁) | g_{p₂}·(hi₂ − lo₂)]`,
-    /// the last row `ψ_z` with `ψ' = −wᵀ M' q` along each unknown. For a
-    /// fold or flip the symmetry of the second derivative gives all of
-    /// `ψ_x = −wᵀ D(q, 0)` from one derivative of the Jacobian.
+    /// Row `i < dim` is `[g_x | g_{p₁}·(hi₁ − lo₁) | g_{p₂}·(hi₂ − lo₂) | w₀]`,
+    /// `w₀` with `β` only, and the last `c` rows are `ψᵢ_z`, with
+    /// `ψᵢ' = −wᵀ M' qᵢ` along each unknown and `0` along `β`. For a fold,
+    /// branch point or flip the symmetry of the second derivative gives all
+    /// of `wᵀ (∂_x A) q` as `wᵀ D(q, 0)` from one derivative of the Jacobian;
+    /// it also gives the branch point's column `∂_x g_{u₁}` from `∂_{p₁} A`.
     fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>) {
         let n = self.dim();
+        let (rows, cols) = (z.len() - 1, z.len());
         let (x, p) = (&z[..n], self.params_at(z));
         let a = self.jacobian(x, &p);
-        let Some((q, psi, w)) = self.bordered_solve(&self.singular(&a)) else {
-            return (vec![f64::NAN; n + 1], vec![f64::NAN; (n + 1) * (n + 2)]);
+        let gp = self.free.map(|free| self.param_column(x, &p, free));
+        let Some(Bordered { q, psi, w }) =
+            self.bordered_solve(&self.singular(&a, || gp[0].clone()))
+        else {
+            return (vec![f64::NAN; rows], vec![f64::NAN; rows * cols]);
         };
         let width = self.edges.map(|(lo, hi)| hi - lo);
-        let unit_vector = |len: usize, i: usize| {
-            let mut e = vec![0.0; len];
-            e[i] = 1.0;
-            e
-        };
         let derivative = |dx: &[f64], dp: &[f64]| {
             let mut da = vec![0.0; n * n];
             self.power.jacobian_derivative(0.0, x, &p, dx, dp, &mut da);
             da
         };
-        let along = |da: &[f64]| -dot(&w, &matvec(&self.singular_derivative(&a, da), &q, q.len()));
         let (still_x, still_p) = (vec![0.0; n], vec![0.0; p.len()]);
-        let mut psi_z: Vec<f64> = match self.kind {
-            CurveKind::Fold | CurveKind::Flip => {
-                let d = derivative(&q, &still_p);
+        let a_p = self
+            .free
+            .map(|free| derivative(&still_x, &unit_vector(p.len(), free)));
+        let w_column = |d: &[f64], j: usize| (0..n).map(|i| w[i] * d[i * n + j]).sum::<f64>();
+        let branch = self.branch();
+        let w_dg_u1 =
+            branch.then(|| {
                 (0..n)
-                    .map(|j| -(0..n).map(|i| w[i] * d[i * n + j]).sum::<f64>())
-                    .collect()
+                    .map(|j| width[0] * w_column(&a_p[0], j))
+                    .chain((0..2).map(|k| {
+                        width[0] * width[k] * self.w_second_param_derivative(x, &p, &w, k)
+                    }))
+                    .collect::<Vec<f64>>()
+            });
+        let size = self.size();
+        let m_p = a_p.each_ref().map(|da| self.square_derivative(&a, da));
+        let mut psi_z = Vec::with_capacity(q.len() * cols);
+        for qi in &q {
+            let qa = &qi[..size];
+            let along = |dm: &[f64]| -dot(&w, &matvec(dm, qa, size));
+            let mut row: Vec<f64> = match self.base() {
+                CurveKind::Hopf | CurveKind::NeimarkSacker => (0..n)
+                    .map(|j| {
+                        along(
+                            &self.square_derivative(&a, &derivative(&unit_vector(n, j), &still_p)),
+                        )
+                    })
+                    .collect(),
+                _ => {
+                    let d = derivative(qa, &still_p);
+                    (0..n).map(|j| -w_column(&d, j)).collect()
+                }
+            };
+            row.extend((0..2).map(|k| along(&m_p[k]) * width[k]));
+            if let Some(d_u1) = &w_dg_u1 {
+                let qu = qi[size];
+                row.iter_mut().zip(d_u1).for_each(|(r, d)| *r -= qu * d);
+                row.push(0.0);
             }
-            CurveKind::Hopf | CurveKind::NeimarkSacker => (0..n)
-                .map(|j| along(&derivative(&unit_vector(n, j), &still_p)))
-                .collect(),
-        };
-        psi_z.extend(
-            (0..2).map(|k| {
-                along(&derivative(&still_x, &unit_vector(p.len(), self.free[k]))) * width[k]
-            }),
-        );
+            psi_z.extend(row);
+        }
         let mut g = vec![0.0; n];
         self.power.eval(0.0, x, &p, &mut g);
-        let gp = self.free.map(|free| {
-            let mut column = vec![0.0; n];
-            self.power.param_jacobian(0.0, x, &p, free, &mut column);
-            column
-        });
-        let mut dg = Vec::with_capacity((n + 1) * (n + 2));
+        let beta = branch.then(|| z[n + 2]);
+        let mut dg = Vec::with_capacity(rows * cols);
         for i in 0..n {
             dg.extend_from_slice(&a[i * n..(i + 1) * n]);
             if self.map {
                 g[i] -= x[i];
-                dg[i * (n + 2) + i] -= 1.0;
+                dg[i * cols + i] -= 1.0;
             }
             dg.extend((0..2).map(|k| gp[k][i] * width[k]));
+            if let Some(beta) = beta {
+                g[i] += beta * self.w0[i];
+                dg.push(self.w0[i]);
+            }
         }
         dg.extend(psi_z);
-        g.push(psi);
+        g.extend(psi);
         (g, dg)
     }
 }
@@ -580,7 +723,7 @@ fn nature(kind: CurveKind, eigenvalues: &[(f64, f64)]) -> Nature {
             .min_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
     };
     let omega = match kind {
-        CurveKind::Fold | CurveKind::Flip => None,
+        CurveKind::Fold | CurveKind::BranchPoint | CurveKind::Flip => None,
         CurveKind::Hopf => {
             let pair = closest(|a, b| (a.0 + b.0) * (a.0 + b.0) + (a.1 + b.1) * (a.1 + b.1));
             match pair.map(|(a, b)| a.0 * b.0 - a.1 * b.1) {
@@ -637,6 +780,25 @@ fn unit(v: Vec<f64>) -> Option<Vec<f64>> {
     (len.is_finite() && len > 0.0).then(|| v.iter().map(|c| c / len).collect())
 }
 
+fn unit_vector(len: usize, i: usize) -> Vec<f64> {
+    let mut e = vec![0.0; len];
+    e[i] = 1.0;
+    e
+}
+
+/// Gram–Schmidt on `vectors` in order; `None` if one is left zero.
+fn orthonormal(vectors: Vec<Vec<f64>>) -> Option<Vec<Vec<f64>>> {
+    let mut basis: Vec<Vec<f64>> = Vec::with_capacity(vectors.len());
+    for v in vectors {
+        let rest = basis.iter().fold(v, |r, b| {
+            let along = dot(b, &r);
+            r.iter().zip(b).map(|(r, b)| r - along * b).collect()
+        });
+        basis.push(unit(rest)?);
+    }
+    Some(basis)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,6 +819,10 @@ mod tests {
              y_{n+1} = b*x_n + 0.3*z_n\n\
              z_{n+1} = 0.5*y_n - 0.2*x_n*z_n + a*b",
         );
+        // `b` enters nonlinearly, and with `a`, so that `g_{p₁p₁}` and
+        // `g_{p₁p₂}` do not vanish.
+        let branch_flow =
+            system("x' = a*x - y + x*z^2 + a*b*y^2\ny' = x + b^2*y - x*y*z\nz' = -z + a*x^2 + y*z");
         let opts = CurveOptions {
             free: (1, 0),
             ranges: ((2.5, 0.5), (-1.0, 3.0)),
@@ -672,6 +838,8 @@ mod tests {
             (&map, CurveKind::Fold, 2),
             (&map, CurveKind::Flip, 2),
             (&map, CurveKind::NeimarkSacker, 2),
+            (&branch_flow, CurveKind::BranchPoint, 1),
+            (&map, CurveKind::BranchPoint, 2),
         ];
         for (f, kind, period) in cases {
             let x = [0.3, -0.4, 0.5];
@@ -685,12 +853,14 @@ mod tests {
             sys.first_borders(&z).expect("borders");
             let (g, dg) = sys.linear(&z);
             let (rows, cols) = (g.len(), z.len());
-            assert!(g[rows - 1].abs() > 1e-3, "{kind:?}: ψ = {}", g[rows - 1]);
-            let psi_z = &dg[(rows - 1) * cols..];
-            assert!(
-                psi_z.iter().all(|v| v.abs() > 1e-4),
-                "{kind:?}: ψ_z = {psi_z:?}"
-            );
+            for i in x.len()..rows {
+                assert!(g[i].abs() > 1e-3, "{kind:?}: ψ = {}", g[i]);
+                let psi_z = &dg[i * cols..i * cols + x.len() + 2];
+                assert!(
+                    psi_z.iter().all(|v| v.abs() > 1e-4),
+                    "{kind:?}: ψ_z = {psi_z:?}"
+                );
+            }
             let h = 1e-6;
             for j in 0..cols {
                 let at = |sign: f64| {

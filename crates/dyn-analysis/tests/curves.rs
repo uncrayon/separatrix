@@ -2,7 +2,7 @@
 
 use dyn_analysis::{
     continue_branch, continue_curve, ContinuationOptions, Curve, CurveEnd, CurveError, CurveKind,
-    CurveOptions, CurveSeed, Nature, SpecialKind,
+    CurveOptions, CurvePoint, CurveSeed, Nature, SpecialKind,
 };
 use dyn_expr::{compile, CompiledSystem, InputFormat};
 
@@ -466,5 +466,168 @@ fn a_closed_fold_curve_closes_on_its_seed() {
             quadrants[usize::from(a < 0.0) + 2 * usize::from(b < 0.0)] = true;
         }
         assert_eq!(quadrants, [true; 4]);
+    }
+}
+
+/// The branch point on the branch through `x0` as `params[param]` varies
+/// over `range`, as a seed, with the parameters there.
+fn branch_point(
+    sys: &CompiledSystem,
+    params: &[f64],
+    x0: &[f64],
+    param: usize,
+    range: (f64, f64),
+) -> (CurveSeed, Vec<f64>) {
+    let o = ContinuationOptions {
+        param,
+        period: 1,
+        range,
+        ds: 0.01,
+        ds_min: 1e-8,
+        ds_max: 0.05,
+        max_points: 2000,
+        max_angle: 0.3,
+    };
+    let branch = continue_branch(sys, params, x0, &o).expect("the branch starts");
+    let bp = branch
+        .special
+        .iter()
+        .find(|sp| sp.kind == SpecialKind::BranchPoint)
+        .expect("a branch point");
+    let mut at = params.to_vec();
+    at[param] = bp.p;
+    let seed = CurveSeed {
+        kind: CurveKind::BranchPoint,
+        x: bp.x.clone(),
+        period: bp.period,
+    };
+    (seed, at)
+}
+
+/// F3 of the predator–prey map crosses F2 = ((a − 1)/a, 0) where the
+/// multiplier `3.5x/(1 + εx)` of F2 is 1, on the invariant line `y = 0`:
+/// `a = (2ε − 7)/(2ε − 5)`, `x = 1/(3.5 − ε)`, with multipliers 1 and
+/// `2 − a`. The second is −1 at the fold-flip `(a, ε) = (3, 2)`.
+#[test]
+fn predator_prey_branch_point_curve_is_where_f3_crosses_f2() {
+    let sys = system(PREDATOR_PREY);
+    let (ia, ie) = (param(&sys, "a"), param(&sys, "epsilon"));
+    let mut params = vec![0.0; 2];
+    params[ia] = 1.5;
+    params[ie] = 1.0;
+    let (s, params) = branch_point(&sys, &params, &[1.0 / 3.0, 0.0], ia, (1.2, 2.5));
+    let o = |ds| opts((ia, ie), ((1.0, 4.0), (-2.0, 2.4)), ds);
+    let [right, left] = [0.01, -0.01].map(|ds| run(&sys, &params, &s, &o(ds)));
+    let multipliers = |pt: &CurvePoint| {
+        let mut mu = pt.eigenvalues.clone();
+        mu.sort_by(|p, q| p.0.total_cmp(&q.0));
+        [mu[0].0, mu[0].1, mu[1].0, mu[1].1]
+    };
+    for c in [&right, &left] {
+        assert_eq!(c.end, CurveEnd::Range);
+        for pt in &c.points {
+            let (a, epsilon) = pt.p;
+            let want = (2.0 * epsilon - 7.0) / (2.0 * epsilon - 5.0);
+            assert!(
+                (a - want).abs() <= 1e-8,
+                "a = {a} vs {want} at ε = {epsilon}"
+            );
+            assert!(
+                close(&pt.x, &[1.0 / (3.5 - epsilon), 0.0], 1e-8),
+                "{:?} at ε = {epsilon}",
+                pt.x
+            );
+            assert!(
+                close(&multipliers(pt), &[2.0 - a, 0.0, 1.0, 0.0], 1e-8),
+                "{:?} at a = {a}",
+                pt.eigenvalues
+            );
+            assert_eq!(pt.nature, Nature::Bifurcation { omega: None });
+        }
+    }
+    let (east, south) = (right.points.last().unwrap(), left.points.last().unwrap());
+    assert_eq!(east.p.0, 4.0);
+    assert!(
+        (east.p.1 - 13.0 / 6.0).abs() <= 1e-8,
+        "lands at ε = {}",
+        east.p.1
+    );
+    assert_eq!(south.p.1, -2.0);
+    assert!(
+        (south.p.0 - 11.0 / 9.0).abs() <= 1e-8,
+        "lands at a = {}",
+        south.p.0
+    );
+    let flip = right
+        .points
+        .windows(2)
+        .find(|w| (1.0 + multipliers(&w[0])[0]) * (1.0 + multipliers(&w[1])[0]) < 0.0)
+        .expect("a multiplier passes −1");
+    assert!(
+        flip[0].p.1 < 2.0 && 2.0 < flip[1].p.1,
+        "the fold-flip at ε = 2 is not between {:?} and {:?}",
+        flip[0].p,
+        flip[1].p
+    );
+    let fold = CurveSeed {
+        kind: CurveKind::Fold,
+        ..s.clone()
+    };
+    assert_eq!(
+        continue_curve(&sys, &params, &fold, &o(0.01)),
+        Err(CurveError::Singular)
+    );
+}
+
+/// Competition `x' = x(1 − x − ay)`, `y' = y(b − y − x)`: the semi-trivial
+/// equilibrium `(0, b)` has the eigenvalue `1 − ab` along the invariant line
+/// `x = 0`, where the coexistence branch crosses it.
+#[test]
+fn competition_branch_point_curve_is_the_hyperbola_ab_1() {
+    let sys = system("x' = x*(1 - x - a*y)\ny' = y*(b - y - x)");
+    let (ia, ib) = (param(&sys, "a"), param(&sys, "b"));
+    let mut params = vec![0.0; 2];
+    params[ia] = 0.3;
+    params[ib] = 2.0;
+    let (s, params) = branch_point(&sys, &params, &[0.0, 2.0], ia, (0.2, 0.8));
+    let o = |ds| opts((ia, ib), ((0.2, 1.25), (0.6, 3.0)), ds);
+    let [right, left] = [0.01, -0.01].map(|ds| run(&sys, &params, &s, &o(ds)));
+    for c in [&right, &left] {
+        assert_eq!(c.end, CurveEnd::Range);
+        for pt in &c.points {
+            let (a, b) = pt.p;
+            assert!((a * b - 1.0).abs() <= 1e-8, "ab = {} at b = {b}", a * b);
+            assert!(close(&pt.x, &[0.0, b], 1e-8), "{:?} at b = {b}", pt.x);
+        }
+    }
+    let (east, north) = (right.points.last().unwrap(), left.points.last().unwrap());
+    assert_eq!(east.p.0, 1.25);
+    assert!((east.p.1 - 0.8).abs() <= 1e-8, "lands at b = {}", east.p.1);
+    assert_eq!(north.p.1, 3.0);
+    assert!(
+        (north.p.0 - 1.0 / 3.0).abs() <= 1e-8,
+        "lands at a = {}",
+        north.p.0
+    );
+}
+
+/// `x' = px − x² + q` has a transcritical point at `x = p = 0` for `q = 0`
+/// only: any other `q` unfolds it, into two folds for `q < 0` and two
+/// branches that never meet for `q > 0`.
+#[test]
+fn a_parameter_that_unfolds_the_branch_point_ends_the_curve_at_its_seed() {
+    let sys = system("x' = p*x - x^2 + q");
+    let (ip, iq) = (param(&sys, "p"), param(&sys, "q"));
+    let s = seed(CurveKind::BranchPoint, &[0.0]);
+    for ds in [0.01, -0.01] {
+        let c = run(
+            &sys,
+            &[0.0, 0.0],
+            &s,
+            &opts((ip, iq), ((-1.0, 1.0), (-1.0, 1.0)), ds),
+        );
+        assert_eq!(c.end, CurveEnd::Unfolded, "ds = {ds}");
+        assert_eq!(c.points.len(), 1, "ds = {ds}");
+        assert_eq!((c.points[0].p, &c.points[0].x), ((0.0, 0.0), &vec![0.0]));
     }
 }

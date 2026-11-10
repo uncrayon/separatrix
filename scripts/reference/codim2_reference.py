@@ -222,6 +222,19 @@ def predator_prey_map():
     print("PD curve (1 + tr + det = 0): a =", sp.solve(sp.Eq(1 + tr + dt, 0), a))
     a_p1 = sp.solve(sp.Eq(1 - tr + dt, 0), a)
     print("mu = +1 curve: a =", a_p1, "; at eps=1:", [t.subs(e, 1) for t in a_p1], "(published BP a=5/3)")
+    # On it F3 = F2 = ((a − 1)/a, 0): a curve of branch points. [g_x | g_a] and [g_x | g_ε]
+    # have rank 1 there (every 2 × 2 minor vanishes), so the fold system is singular.
+    a_bp = a_p1[0]
+    assert sp.simplify(ys.subs(a, a_bp)) == 0 and sp.simplify(xs - (a_bp - 1) / a_bp) == 0
+    G = g - sp.Matrix([x, y])
+    on_bp = {x: xs, y: 0, a: a_bp}
+    for par in (a, e):
+        M = G.jacobian([x, y]).row_join(G.diff(par)).subs(on_bp)
+        assert all(sp.simplify(M.extract([0, 1], list(c)).det()) == 0 for c in [(0, 1), (0, 2), (1, 2)])
+    print("BP curve (F3 = F2): a =", a_bp, ", x =", xs, ", y = 0, multipliers", [sp.simplify(m_) for m_ in J.subs(a, a_bp).eigenvals()])
+    print("  box a in [1, 4], eps in [-2, 2.4]: a = 4 at eps =", sp.solve(sp.Eq(a_bp, 4), e), "; eps = -2 at a =", a_bp.subs(e, -2))
+    for so in sp.solve([sp.Eq(a, a_bp), sp.Eq(1 + tr + dt, 0)], [a, e], dict=True):
+        print(f"LPPD (BP curve meets the flip curve): eps = {so[e]}, a = {so[a]}, F3 = ({xs.subs(so)}, {ys.subs(so)}), multipliers {list(J.subs(so).eigenvals())}")
     pts = {}
     for name, trv in [("R1", 2), ("R2", -2), ("R3", -1), ("R4", 0)]:
         for so in sp.solve([sp.Eq(dt, 1), sp.Eq(tr, trv)], [a, e], dict=True):
