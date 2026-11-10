@@ -6,8 +6,8 @@ use std::f64::consts::PI;
 
 use dyn_core::{SystemKind, VectorField};
 
-use crate::eigvec::eigenvectors;
 use crate::linalg::{eigenvalues, lu_det, lu_solve};
+use crate::normal_form::first_lyapunov;
 
 const MAX_NEWTON: usize = 10;
 pub(crate) const TOL: f64 = 1e-10;
@@ -386,7 +386,9 @@ const DETECTORS: &[Detector] = &[
             let pair = critical_pair(pt, |re, _| re.abs());
             (
                 pair.map(|(_, im)| im),
-                pair.and_then(|l| first_lyapunov(g, pt, l)),
+                pair.and_then(|l| {
+                    first_lyapunov(&g.power, &g.params_at(pt.p), &pt.x, &pt.eigenvalues, l)
+                }),
             )
         },
     },
@@ -454,164 +456,6 @@ fn proximity_limit(map: bool, a: &BranchPoint, b: &BranchPoint, len: f64) -> f64
             (rate < 0.0 && db > TOL).then(|| PROXIMITY * db / -rate)
         })
         .fold(f64::INFINITY, f64::min)
-}
-
-/// The first Lyapunov coefficient at a Hopf point with critical eigenvalue
-/// `λ = (re, ω)`, by Kuznetsov's formula (Elements of Applied Bifurcation
-/// Theory, 3rd ed., §3.5, eq. 3.20):
-///
-/// ```text
-/// ℓ₁ = Re[⟨p, C(q,q,q̄)⟩ − 2⟨p, B(q, A⁻¹B(q,q̄))⟩ + ⟨p, B(q̄, (2iωI − A)⁻¹B(q,q))⟩] / 2ω
-/// ```
-///
-/// with `A q = iω q`, `Aᵀ p = −iω p`, `⟨p, q⟩ = 1`, `⟨q, q⟩ = 1/2`. `B` and
-/// `C` are central differences of the exact Jacobian; the complex solve goes
-/// through the real `2n` system.
-fn first_lyapunov(g: &Residual, pt: &BranchPoint, lambda: (f64, f64)) -> Option<f64> {
-    let n = pt.x.len();
-    let omega = lambda.1;
-    let params = g.params_at(pt.p);
-    let jac = |x: &[f64]| {
-        let mut j = vec![0.0; n * n];
-        g.power.jacobian(0.0, x, &params, &mut j);
-        j
-    };
-    let a = jac(&pt.x);
-    let k = pt.eigenvalues.iter().position(|&l| l == lambda)?;
-    let vector = |m: &[f64]| {
-        let v = eigenvectors(SystemKind::Ode, n, m, &pt.eigenvalues);
-        Some(C::new(v.re[k].clone()?, v.im[k].clone()?))
-    };
-    let transpose: Vec<f64> = (0..n * n).map(|i| a[i % n * n + i / n]).collect();
-    let q = vector(&a)?;
-    let q = q.scale(1.0 / (2.0 * q.dot_conj(&q).0).sqrt());
-    let w = vector(&transpose)?;
-    let w = w.div(w.dot(&q));
-
-    let scale = 1.0 + norm_inf(&pt.x);
-    let around = |c: &[f64], eps: f64| {
-        let len = norm2(c);
-        let at = |sign: f64| {
-            let x: Vec<f64> = (0..n).map(|i| pt.x[i] + sign * eps * c[i] / len).collect();
-            jac(&x)
-        };
-        (at(1.0), at(-1.0), len)
-    };
-    let b_real = |u: &[f64], c: &[f64]| -> Vec<f64> {
-        if c.iter().all(|v| *v == 0.0) {
-            return vec![0.0; n];
-        }
-        let eps = 1e-5 * scale;
-        let (jp, jm, len) = around(c, eps);
-        let d: Vec<f64> = (0..n * n)
-            .map(|i| (jp[i] - jm[i]) * len / (2.0 * eps))
-            .collect();
-        matvec(&d, u, n)
-    };
-    let b = |u: &C, v: &C| -> C {
-        let rr = b_real(&u.re, &v.re);
-        let ii = b_real(&u.im, &v.im);
-        let ri = b_real(&u.re, &v.im);
-        let ir = b_real(&u.im, &v.re);
-        C {
-            re: (0..n).map(|i| rr[i] - ii[i]).collect(),
-            im: (0..n).map(|i| ri[i] + ir[i]).collect(),
-        }
-    };
-    let d2j = |c: &[f64]| -> Vec<f64> {
-        if c.iter().all(|v| *v == 0.0) {
-            return vec![0.0; n * n];
-        }
-        let eps = 1e-4 * scale;
-        let (jp, jm, len) = around(c, eps);
-        (0..n * n)
-            .map(|i| (jp[i] - 2.0 * a[i] + jm[i]) * len * len / (eps * eps))
-            .collect()
-    };
-    let m: Vec<f64> = d2j(&q.re)
-        .iter()
-        .zip(d2j(&q.im))
-        .map(|(u, v)| u + v)
-        .collect();
-    let cqqq = C {
-        re: matvec(&m, &q.re, n),
-        im: matvec(&m, &q.im, n),
-    };
-    let h11 = lu_solve(&a, &b(&q, &q.conj()).re)?;
-    let minus_a: Vec<f64> = a.iter().map(|v| -v).collect();
-    let h20 = complex_solve(&minus_a, 2.0 * omega, &b(&q, &q))?;
-    let total =
-        w.dot(&cqqq).0 - 2.0 * w.dot(&b(&q, &C::real(h11))).0 + w.dot(&b(&q.conj(), &h20)).0;
-    let l1 = total / (2.0 * omega);
-    l1.is_finite().then_some(l1)
-}
-
-#[derive(Clone)]
-struct C {
-    re: Vec<f64>,
-    im: Vec<f64>,
-}
-
-impl C {
-    fn new(re: Vec<f64>, im: Vec<f64>) -> Self {
-        Self { re, im }
-    }
-    fn real(re: Vec<f64>) -> Self {
-        let im = vec![0.0; re.len()];
-        Self { re, im }
-    }
-    fn conj(&self) -> Self {
-        Self::new(self.re.clone(), self.im.iter().map(|v| -v).collect())
-    }
-    fn scale(&self, s: f64) -> Self {
-        Self::new(
-            self.re.iter().map(|v| v * s).collect(),
-            self.im.iter().map(|v| v * s).collect(),
-        )
-    }
-    fn div(&self, (re, im): (f64, f64)) -> Self {
-        let d = re * re + im * im;
-        let (cr, ci) = (re / d, -im / d);
-        Self::new(
-            (0..self.re.len())
-                .map(|i| self.re[i] * cr - self.im[i] * ci)
-                .collect(),
-            (0..self.re.len())
-                .map(|i| self.re[i] * ci + self.im[i] * cr)
-                .collect(),
-        )
-    }
-    fn dot(&self, v: &C) -> (f64, f64) {
-        (0..self.re.len()).fold((0.0, 0.0), |(r, i), k| {
-            (
-                r + self.re[k] * v.re[k] - self.im[k] * v.im[k],
-                i + self.re[k] * v.im[k] + self.im[k] * v.re[k],
-            )
-        })
-    }
-    fn dot_conj(&self, v: &C) -> (f64, f64) {
-        self.conj().dot(v)
-    }
-}
-
-fn complex_solve(m: &[f64], s: f64, r: &C) -> Option<C> {
-    let n = r.re.len();
-    let big: Vec<f64> = (0..4 * n * n)
-        .map(|k| {
-            let (row, col) = (k / (2 * n), k % (2 * n));
-            let (bi, bj) = (row / n, col / n);
-            let (i, j) = (row % n, col % n);
-            let eye = if i == j { s } else { 0.0 };
-            match (bi, bj) {
-                (0, 0) | (1, 1) => m[i * n + j],
-                (0, 1) => -eye,
-                _ => eye,
-            }
-        })
-        .collect();
-    let rhs: Vec<f64> = r.re.iter().chain(&r.im).copied().collect();
-    let z = lu_solve(&big, &rhs)?;
-    Some(C::new(z[..n].to_vec(), z[n..].to_vec()))
 }
 
 pub(crate) fn matvec(m: &[f64], v: &[f64], n: usize) -> Vec<f64> {
@@ -748,9 +592,11 @@ pub(crate) trait Underdetermined {
 
 /// A point of such a curve as [`locate`] brackets it: its unknown `z` and
 /// unit tangent, with whatever else the test function reads.
-trait OnCurve: Clone {
+pub(crate) trait OnCurve: Clone {
     fn z(&self) -> Vec<f64>;
     fn tangent(&self) -> &[f64];
+    /// The parameters among `z`, which the bisection pins to `1e-13`.
+    fn parameters(&self) -> &[f64];
 }
 
 impl OnCurve for BranchPoint {
@@ -759,6 +605,9 @@ impl OnCurve for BranchPoint {
     }
     fn tangent(&self) -> &[f64] {
         &self.tangent
+    }
+    fn parameters(&self) -> &[f64] {
+        std::slice::from_ref(&self.p)
     }
 }
 
@@ -894,7 +743,8 @@ impl<'a> Residual<'a> {
                         &dir,
                         |pt| f.detector.ranked(g, pt, f.rank),
                         |z, t| g.point(0.0, z, t),
-                    );
+                    )
+                    .point;
                     at.s = last.s + dist(&z_of(last), &z_of(&at));
                     points.push(at);
                     points.len() - 1
@@ -1050,19 +900,33 @@ fn solves(g: &impl Underdetermined, z: &[f64]) -> bool {
     norm_inf(&g.linear(z).0) <= TOL * (1.0 + norm_inf(z))
 }
 
+/// What [`locate`] found.
+pub(crate) struct Bisection<P> {
+    /// The point with the smallest `|test|` met, `a` or `b` included.
+    pub(crate) point: P,
+    /// `|test|` there; NaN at a point where the system turned singular.
+    pub(crate) test: f64,
+    /// The width of the last bracket, in arclength along `dir`.
+    pub(crate) width: f64,
+    /// The bracket closed to the tolerances, rather than the bisection
+    /// stopping on an exact zero, a failed correction or its last step.
+    pub(crate) converged: bool,
+}
+
 /// The point between `a` and `b` where `test` changes sign, by bisection
-/// in arclength along `dir` with [`correct_along`]. `test_a` is the test at
-/// `a`; `point` builds a point from `z` and its tangent. Where the
-/// corrector or the tangent turns singular the point there is returned, a
-/// branch point.
-fn locate<P: OnCurve>(
+/// in arclength along `dir` with [`correct_along`], until the bracket's
+/// ends agree to `1e-10 · (1 + |z|∞)` and their parameters to
+/// `1e-13 · (1 + |p|)`. `test_a` is the test at `a`; `point` builds a point
+/// from `z` and its tangent. Where the corrector or the tangent turns
+/// singular the point there is returned, a branch point.
+pub(crate) fn locate<P: OnCurve>(
     g: &impl Underdetermined,
     (a, test_a): (&P, f64),
     b: &P,
     dir: &[f64],
     test: impl Fn(&P) -> Option<f64>,
     point: impl Fn(&[f64], Vec<f64>) -> P,
-) -> P {
+) -> Bisection<P> {
     let za = a.z();
     let (mut lo, mut hi) = ((0.0, a.clone()), (dot(dir, &diff(&b.z(), &za)), b.clone()));
     let mut best_test = test(b).unwrap_or(f64::INFINITY).abs();
@@ -1070,25 +934,31 @@ fn locate<P: OnCurve>(
     if test_a.abs() < best_test {
         (best, best_test) = (a.clone(), test_a.abs());
     }
+    let mut converged = false;
     for _ in 0..MAX_BISECTION {
         let (zl, zh) = (lo.1.z(), hi.1.z());
-        let p_tol = 1e-13 * (1.0 + zl[zl.len() - 1].abs());
         let z_tol = TOL * (1.0 + norm_inf(&zl));
-        if (zh[zh.len() - 1] - zl[zl.len() - 1]).abs() <= p_tol
-            && norm_inf(&diff(&zh, &zl)) <= z_tol
-        {
+        let pinned =
+            lo.1.parameters()
+                .iter()
+                .zip(hi.1.parameters())
+                .all(|(l, h)| (h - l).abs() <= 1e-13 * (1.0 + l.abs()));
+        if pinned && norm_inf(&diff(&zh, &zl)) <= z_tol {
+            converged = true;
             break;
         }
         let pred = predict_from_bracket_end(&lo.1, 0.5 * (hi.0 - lo.0));
         let zm = match correct_along(g, &pred, lo.1.tangent()) {
             Ok((zm, _)) => zm,
             Err(Fail::Singular) if solves(g, &pred) => {
-                return point(&pred, lo.1.tangent().to_vec());
+                (best, best_test) = (point(&pred, lo.1.tangent().to_vec()), f64::NAN);
+                break;
             }
             Err(_) => break,
         };
         let Some(tm) = tangent(g, &zm, lo.1.tangent()) else {
-            return point(&zm, lo.1.tangent().to_vec());
+            (best, best_test) = (point(&zm, lo.1.tangent().to_vec()), f64::NAN);
+            break;
         };
         let sigma = dot(dir, &diff(&zm, &za));
         if !(sigma > lo.0 && sigma < hi.0) {
@@ -1110,7 +980,12 @@ fn locate<P: OnCurve>(
             hi = (sigma, mid);
         }
     }
-    best
+    Bisection {
+        point: best,
+        test: best_test,
+        width: hi.0 - lo.0,
+        converged,
+    }
 }
 
 pub(crate) fn newton(
@@ -1278,6 +1153,9 @@ mod tests {
         fn tangent(&self) -> &[f64] {
             &self.t
         }
+        fn parameters(&self) -> &[f64] {
+            &self.z[1..]
+        }
     }
 
     struct UnitCircle;
@@ -1320,7 +1198,8 @@ mod tests {
             &dir,
             |pt| Some(pt.z[1]),
             |z, t| Arc { z: z.to_vec(), t },
-        );
+        )
+        .point;
         assert!((crossing.z[0] - 1.0).abs() < 1e-12, "{:?}", crossing.z);
         assert!(crossing.z[1].abs() < 1e-12, "{:?}", crossing.z);
     }

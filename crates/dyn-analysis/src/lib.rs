@@ -26,7 +26,10 @@
 //! - [`continue_curve`]: a curve of folds, Hopf points, branch points,
 //!   flips or Neimark–Sacker points followed as two parameters vary, with
 //!   the stretches where a Hopf or Neimark–Sacker condition holds at a
-//!   neutral saddle marked ([`Nature`]);
+//!   neutral saddle marked ([`Nature`]) and its located codimension-2
+//!   points ([`Codim2Point`]): Bogdanov–Takens, cusp, Bautin, zero-Hopf,
+//!   Hopf–Hopf, the strong resonances, Chenciner, fold-flip and
+//!   generalized flip;
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -55,6 +58,7 @@ mod fixed;
 mod graph;
 mod linalg;
 mod lyapunov;
+mod normal_form;
 mod nullcline;
 mod orbit;
 mod plane;
@@ -66,8 +70,8 @@ pub use continuation::{
     ContinuationOptions, SpecialKind, SpecialPoint,
 };
 pub use curve::{
-    continue_curve, Curve, CurveEnd, CurveError, CurveKind, CurveOptions, CurvePoint, CurveSeed,
-    Nature,
+    continue_curve, Codim2Kind, Codim2Point, Curve, CurveEnd, CurveError, CurveKind, CurveOptions,
+    CurvePoint, CurveSeed, Nature,
 };
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
