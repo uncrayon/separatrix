@@ -482,6 +482,13 @@ def pp_curves(pts):
     e = e[k]
     x = np.column_stack([np.full_like(e, 2 / 3), np.zeros_like(e)])
     out.append(curve_json("flip", np.full_like(e, 3.0), e, x, np.zeros(len(e), bool), [lppd], PP_BOX, ("stepTooSmall", "range")))
+    # F2's other multiplier, 3.5x/(1 + εx), is −1 where x = −1/(ε + 7/2), so a = (ε + 7/2)/(ε + 9/2).
+    # For ε > −7/2 that F2 has x < 0 and a → 0 as ε → −7/2, the corner of the box.
+    a_f2 = lambda e: (e + 3.5) / (e + 4.5)
+    for e_lo, e_hi in [(-3.5 + 1e-4, 3.05), (-6.05, -4.5 - 1e-6)]:
+        a, e = piece(e_lo, e_hi, a_f2)
+        x = np.column_stack([1 - 1 / a, np.zeros_like(a)])
+        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), [], PP_BOX))
     for c in out:
         print(f"  {c['kind']}: {len(c['p1'])} points")
     return {"free": [0, 1], "curves": out}
