@@ -1117,9 +1117,10 @@ pub enum HomoclinicStop {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectCamera, ProjectContinuation, ProjectFile, ProjectInitialCondition,
-    ProjectLayers, ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed,
-    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectBranch, ProjectCamera, ProjectContinuation, ProjectCurveSeed,
+    ProjectCurves, ProjectFile, ProjectHomoclinicSeed, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed, ProjectSlice,
+    ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -1653,14 +1654,15 @@ pub struct ContinuationExportRequest {
     pub format: InputFormat,
 }
 
-/// Which LaTeX a branch plot exports.
+/// Which LaTeX a branch plot or the parameter plane exports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub enum ContinuationLatex {
     /// The pgfplots figure.
     Figure,
-    /// The booktabs table of the special points.
+    /// The booktabs table of the special points (of the parameter plane,
+    /// its codimension-2 points).
     SpecialPoints,
 }
 
@@ -1697,6 +1699,105 @@ pub struct ContinuationFigureRequest {
 pub struct SaveContinuationFigureRequest {
     /// The figure or table.
     pub figure: ContinuationFigureRequest,
+    /// File name offered in the dialog.
+    pub suggested_name: String,
+}
+
+/// A homoclinic curve of the parameter plane as the view drew it. It is a
+/// long job, so its export takes the view's points rather than following it
+/// again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicExport {
+    /// The across parameter at each point.
+    pub p1: Vec<f64>,
+    /// The up parameter at each point.
+    pub p2: Vec<f64>,
+    /// `points · dim` values: the saddle at each point.
+    pub x: Vec<f64>,
+}
+
+/// The Branch view's range, which the parameter plane draws across at the
+/// up parameter's value its branches were computed at.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SliceExport {
+    /// The Branch view's range of the across parameter.
+    pub range: (f64, f64),
+    /// The up parameter's value.
+    pub at: f64,
+}
+
+/// Request of `export_curves_csv` (and the `curves` of a figure): the
+/// parameter plane's curves, whose requests the core follows again (or the
+/// last export's run of the same requests is reused), its homoclinic curves
+/// as drawn, and the names to label them with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurvesExportRequest {
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// The sliders' parameter values (each curve has its own free two).
+    pub params: Vec<f64>,
+    /// The across and up parameters.
+    pub free: (usize, usize),
+    /// The box the curves are followed in: across, then up.
+    pub ranges: ((f64, f64), (f64, f64)),
+    /// The requests of the curves the view draws, in its order.
+    pub curves: Vec<CurveRequest>,
+    /// The homoclinic curves the view draws.
+    pub homoclinic: Vec<HomoclinicExport>,
+    /// The Branch view's range, when the view draws it.
+    pub slice: Option<SliceExport>,
+    /// The system's title (caption, label, file names).
+    pub title: String,
+    /// Where the system comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub source_ref: Option<String>,
+    /// The lines as typed (comments, metadata).
+    pub lines: Vec<String>,
+    /// Their format.
+    pub format: InputFormat,
+}
+
+/// Request of `export_curves_latex` (and the `figure` of
+/// `save_curves_latex`): the parameter plane drawn in the view's ranges, or
+/// its codimension-2 points as a table (`specialPoints`, which ignores the
+/// size and colors).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurvesFigureRequest {
+    /// The curves and their names.
+    pub curves: CurvesExportRequest,
+    /// The figure or the table.
+    pub content: ContinuationLatex,
+    /// The view's across range.
+    pub x_range: (f64, f64),
+    /// The view's up range.
+    pub y_range: (f64, f64),
+    /// Plot width in cm.
+    pub width_cm: f64,
+    /// Plot height in cm.
+    pub height_cm: f64,
+    /// Palette.
+    pub theme: ExportTheme,
+    /// Wrap in a `standalone` document.
+    pub standalone: bool,
+}
+
+/// Request of `save_curves_latex`: the `.tex` and, for the figure, its
+/// `.dat` files.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCurvesFigureRequest {
+    /// The figure or table.
+    pub figure: CurvesFigureRequest,
     /// File name offered in the dialog.
     pub suggested_name: String,
 }
@@ -1833,6 +1934,10 @@ mod bindings {
             ProjectOrbit::decl(&cfg),
             ProjectContinuation::decl(&cfg),
             ProjectSeed::decl(&cfg),
+            ProjectCurves::decl(&cfg),
+            ProjectCurveSeed::decl(&cfg),
+            ProjectHomoclinicSeed::decl(&cfg),
+            ProjectBranch::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -1874,6 +1979,11 @@ mod bindings {
             ContinuationLatex::decl(&cfg),
             ContinuationFigureRequest::decl(&cfg),
             SaveContinuationFigureRequest::decl(&cfg),
+            HomoclinicExport::decl(&cfg),
+            SliceExport::decl(&cfg),
+            CurvesExportRequest::decl(&cfg),
+            CurvesFigureRequest::decl(&cfg),
+            SaveCurvesFigureRequest::decl(&cfg),
             SaveCsvFileRequest::decl(&cfg),
             SaveTextRequest::decl(&cfg),
             ClipboardTextRequest::decl(&cfg),
@@ -1922,6 +2032,11 @@ mod bindings {
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),
             ("ORBIT_MISFIT", text(separatrix_project::ORBIT_MISFIT)),
+            ("CURVES_MISFIT", text(separatrix_project::CURVES_MISFIT)),
+            (
+                "CURVES_MISFIT_BRANCH",
+                text(separatrix_project::CURVES_MISFIT_BRANCH),
+            ),
             (
                 "ORBIT_MAX_TRANSIENT",
                 separatrix_project::ORBIT_TRANSIENT_MAX.to_string(),
@@ -1933,6 +2048,10 @@ mod bindings {
             (
                 "SPACE_LATEX_REFUSAL",
                 text(crate::export_service::SPACE_LATEX_REFUSAL),
+            ),
+            (
+                "CURVES_EXPORT_EMPTY",
+                text(crate::export_service::CURVES_EXPORT_EMPTY),
             ),
             (
                 "DEFAULT_CAMERA",

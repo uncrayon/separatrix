@@ -922,6 +922,12 @@ The codimension-2 gate (`scripts/codim2-gate.sh`, claims in `app/src-tauri/tests
 follows the curves of docs/codim2-reference.md's systems 1 to 3 with the plane's own requests
 and checks every point the page lists.
 
+The Parameter plane's exports (`export_curves_latex`, `save_curves_latex`,
+`export_curves_csv`, on a `CurvesExportRequest { systemId, params, free, ranges, curves,
+homoclinic, slice, title, sourceRef?, lines, format }`) send the view's `CurveRequest`s, which
+the shell follows again through `compute_curve`, and its homoclinic curves' points as drawn; see
+docs/exports.md, "Parameter plane".
+
 ### Homoclinic curves in two parameters
 
 `compute_homoclinic` takes `HomoclinicRequest { requestId, systemId, params, free, ranges, x,

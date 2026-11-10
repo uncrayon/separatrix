@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VIEWS=(phase-plane time-series cobweb 3d-view poincare-section lyapunov orbit-diagram continuation)
+VIEWS=(phase-plane time-series cobweb 3d-view poincare-section lyapunov orbit-diagram continuation parameter-plane)
 OUT=site/media/views
 mkdir -p "$OUT"
 

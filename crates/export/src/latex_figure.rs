@@ -617,7 +617,7 @@ impl Quantizer {
         from_px.max(from_sig).clamp(0.0, 100.0) as usize
     }
 
-    fn write(&self, col: usize, v: f64) -> String {
+    pub(crate) fn write(&self, col: usize, v: f64) -> String {
         if !v.is_finite() {
             return "nan".into();
         }

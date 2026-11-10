@@ -17,9 +17,10 @@ use separatrix_export::latex_figure::{figure, FigureInput, FigureOutput, Placeme
 use separatrix_export::latex_fixed_points::{self, FixedPointsInput};
 use separatrix_export::latex_system::{system, Notation, SystemInput};
 use separatrix_export::{
-    continuation_figure, lyapunov_latex, orbit_figure, special_points_table, BranchMeasure,
-    BranchRun, ContinuationFigureInput, ContinuationRun, Labels, LyapunovRun, LyapunovSpectrum,
-    Method, OrbitDiagram, OrbitFigureInput, OrbitRun, ParamValue, SolverOptions, SpecialKind,
+    continuation_figure, curves_figure, lyapunov_latex, orbit_figure, plane_points_table,
+    special_points_table, BranchMeasure, BranchRun, ContinuationFigureInput, ContinuationRun,
+    CurvesFigureInput, Labels, LyapunovRun, LyapunovSpectrum, Method, OrbitDiagram,
+    OrbitFigureInput, OrbitRun, ParamValue, PlaneRun, PlaneSlice, SolverOptions, SpecialKind,
     SpecialRow, StateName, Status, SystemKind, SystemMeta, Theme,
 };
 
@@ -1364,4 +1365,214 @@ fn logistic_cascade_lists_each_flip_once() {
         ]
     );
     assert!(!table.contains("\\omega") && !table.contains("\\ell_1"));
+}
+
+fn co_oxidation_plane() -> PlaneRun {
+    PlaneRun {
+        free: (0, 1),
+        ranges: ((0.5, 2.5), (0.0, 2.0)),
+        curves: plane::co_oxidation_curves(),
+        slice: Some(PlaneSlice {
+            range: (0.8, 1.3),
+            at: 0.4,
+        }),
+    }
+}
+
+#[test]
+fn co_oxidation_plane_figure_table_and_csv() {
+    let (t, labels) = template_labels("co-oxidation", &[]);
+    let sys = SystemMeta {
+        kind: SystemKind::Ode,
+        labels: &labels,
+        title: &t.title,
+        source_ref: Some("MatCont Tutorial IV"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = co_oxidation_plane();
+    let pal = palette(Theme::Light);
+    let input = CurvesFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (0.66, 1.7),
+        y_range: (0.1, 2.06),
+        width_cm: 8.0,
+        height_cm: 6.0,
+        theme: Theme::Light,
+        palette: &pal,
+        placement: Placement::Inline,
+        standalone: false,
+    };
+    let fig = curves_figure(&input);
+    check_figure("co-oxidation-plane-figure", &fig);
+    assert!(fig.files.is_empty());
+    for line in [
+        "% Curve 1: fold (LP), solid\n",
+        "% Curve 2: Hopf (H), neutral saddle (dotted)\n",
+        "% Curve 2: Hopf (H), dashed\n",
+        "% Curve 3: homoclinic (Hom), dash-dotted\n",
+        "% The Branch view's range, at K = 0.4\n\\addplot[sepxtick, line width=0.75bp, line cap=butt] coordinates {(0.8,0.4) (1.3,0.4)};\n",
+        "% Parameter plane: K against k_2, followed in k_2 from 0.5 to 2.5 and K from 0 to 2; 3 curves, 5 codimension-2 points.\n",
+        "\\definecolor{sepxfold}{HTML}{B35900}%\n",
+        "\\definecolor{sepxhopf}{HTML}{0072B2}%\n",
+        "\\definecolor{sepxhom}{HTML}{6A3FC8}%\n",
+    ] {
+        assert!(fig.tex.contains(line), "{line}");
+    }
+    assert!(
+        !fig.tex.contains("% Parameters:"),
+        "both parameters are free"
+    );
+    assert_eq!(
+        fig.tex.matches("dash pattern=on 6bp off 2.25bp]").count(),
+        1
+    );
+    assert_eq!(
+        fig.tex
+            .matches("dash pattern=on 6bp off 2.25bp on 1.125bp off 2.25bp]")
+            .count(),
+        1
+    );
+    assert_eq!(fig.tex.matches("dash pattern=on 0bp off 2.6bp]").count(), 1);
+    assert_eq!(fig.tex.matches("{BT};").count(), 2, "one glyph per point");
+    assert_eq!(fig.tex.matches("{CP};").count(), 1);
+    assert_eq!(fig.tex.matches("{GH};").count(), 2);
+
+    let saved = curves_figure(&CurvesFigureInput {
+        placement: Placement::External {
+            base: "CO plane.tex".into(),
+        },
+        ..input
+    });
+    let names: Vec<&str> = saved.files.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "co-plane-curve-1.dat",
+            "co-plane-curve-2-neutral.dat",
+            "co-plane-curve-2.dat",
+            "co-plane-curve-3.dat",
+            "co-plane-special-points.dat"
+        ]
+    );
+    for f in &saved.files {
+        assert!(saved.tex.contains(&format!("{{\\sepxdir {}}}", f.name)));
+    }
+
+    let table = plane_points_table(&sys, &run);
+    check("co-oxidation-plane-points.tex", &table);
+    assert_portable("co-oxidation-plane-points", &table);
+    let rows: Vec<&str> = table
+        .lines()
+        .filter(|l| ["BT &", "CP &", "GH &"].iter().any(|k| l.starts_with(k)))
+        .collect();
+    assert_eq!(rows.len(), 5, "{table}");
+    assert_eq!(
+        rows[0],
+        "BT & \\num{1.161199} & \\num{0.722339} & $(\\num{0.016337}, \\num{0.63841}, \\num{0.200456})$ & LP, H & \\num{0.0482256} & \\num{1.93763} & -- \\\\"
+    );
+
+    let csv = csv::curves(&sys, &run, "0.2.0");
+    assert_eq!(csv.file.stem, "co-oxidation-curves");
+    assert_eq!(
+        csv.file.csv.lines().next(),
+        Some("curve,kind,period,point,k_2,K,x,y,s,neutral")
+    );
+    assert_eq!(
+        csv.special.lines().next(),
+        Some("curve,point,type,period,k_2,K,x,y,s,a,b,c,theta")
+    );
+    let points: usize = run.curves.iter().map(|c| c.len()).sum();
+    assert_eq!(csv.file.csv.lines().count(), 1 + points);
+    assert_eq!(
+        csv.special.lines().count(),
+        1 + 7,
+        "as each curve reports them"
+    );
+    check("co-oxidation-curves.csv", &csv.file.csv);
+    check("co-oxidation-curves.meta.json", &csv.file.meta);
+    check("co-oxidation-curves-special.csv", &csv.special);
+}
+
+#[test]
+fn predator_prey_plane_ticks_and_merged_fold_flip() {
+    let (t, labels) = template_labels("predator-prey-map", &[]);
+    let sys = SystemMeta {
+        kind: SystemKind::Map,
+        labels: &labels,
+        title: &t.title,
+        source_ref: Some("MatContM Tutorial M-II"),
+        lines: &t.equations,
+        format: t.format,
+    };
+    let run = PlaneRun {
+        free: (0, 1),
+        ranges: ((0.0, 16.0), (-6.0, 3.0)),
+        curves: plane::predator_prey_curves(),
+        slice: None,
+    };
+    let pal = palette(Theme::Light);
+    let fig = curves_figure(&CurvesFigureInput {
+        sys: &sys,
+        run: &run,
+        x_range: (-0.5, 16.5),
+        y_range: (-6.3, 3.3),
+        width_cm: 8.0,
+        height_cm: 6.0,
+        theme: Theme::Light,
+        palette: &pal,
+        placement: Placement::Inline,
+        standalone: false,
+    });
+    check_figure("predator-prey-plane-figure", &fig);
+    for q in 5..=9 {
+        assert_eq!(
+            fig.tex.matches(&format!("{{$1{{:}}{q}$}};")).count(),
+            1,
+            "1:{q}"
+        );
+    }
+    assert_eq!(
+        fig.tex
+            .matches("\\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates")
+            .count(),
+        5
+    );
+    assert_eq!(fig.tex.matches("{LPPD};").count(), 1, "one glyph per point");
+    assert_eq!(fig.tex.matches("{R2};").count(), 1);
+    assert!(fig.tex.contains(
+        "dash pattern=on 6bp off 1.875bp on 1.125bp off 1.875bp on 1.125bp off 1.875bp]"
+    ));
+    assert!(fig.tex.contains("dash pattern=on 2.25bp off 2.25bp]"));
+    assert!(!fig.tex.contains("The Branch view's range"));
+
+    let table = plane_points_table(&sys, &run);
+    check("predator-prey-plane-points.tex", &table);
+    assert_portable("predator-prey-plane-points", &table);
+    assert!(
+        table.lines().any(
+            |l| l.starts_with("LPPD & \\num{3.000000} & \\num{2.000000} & ")
+                && l.contains(" & \\num{1} & BP, PD & ")
+        ),
+        "{table}"
+    );
+    assert!(table.contains(" & \\num{1.570796} \\\\"), "R4's θ = π/2");
+    assert!(table.contains("Period & Curves & $\\theta$"));
+    assert!(
+        !table.contains("$b$") && !table.contains("$c$"),
+        "no BT or cusp column"
+    );
+
+    let csv = csv::curves(&sys, &run, "0.2.0");
+    assert!(csv.file.meta.contains("\"format\": \"separatrix-curves\""));
+    assert!(csv.file.meta.contains("\"q\": 5"));
+    assert_eq!(
+        csv.file
+            .csv
+            .lines()
+            .nth(1)
+            .map(|l| l.split(',').take(2).collect::<Vec<_>>()),
+        Some(vec!["1", "NS"])
+    );
 }

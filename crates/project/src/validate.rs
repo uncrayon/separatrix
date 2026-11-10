@@ -10,13 +10,18 @@
 //! range isn't usable (see [`range_ok`]), whose cobweb axes are wrong (see
 //! [`cobweb_axes_ok`]), whose section doesn't fit (see [`section_misfit`]),
 //! whose 3D axes don't (see [`space_misfit`]), whose Lyapunov run can't be
-//! run (see [`lyapunov_misfit`]) or whose orbit diagram can't be drawn (see
-//! [`orbit_misfit`]).
+//! run (see [`lyapunov_misfit`]), whose orbit diagram can't be drawn (see
+//! [`orbit_misfit`]) or whose Parameter plane can't be shown (see
+//! [`curves_misfit`]). The seeds of a Parameter plane that don't fit are
+//! left out, as a continuation's are.
 
 use std::collections::HashSet;
 
 use crate::schema::{default_atol, default_method, default_rtol, default_t_end};
-use crate::{ProjectFile, ProjectSeed, ProjectView, KNOWN_METHODS};
+use crate::{
+    ProjectBranch, ProjectCurveSeed, ProjectFile, ProjectHomoclinicSeed, ProjectSeed, ProjectView,
+    KNOWN_METHODS,
+};
 
 /// Number of trajectory colors (`traj-1` … `traj-7`).
 pub const COLORS: i32 = 7;
@@ -230,6 +235,143 @@ fn seed_fits(seed: &ProjectSeed, dim: Option<usize>) -> bool {
         && (seed.from != "switch" || seed.tangent.as_ref().is_some_and(|t| t.len() == n + 1))
 }
 
+/// The view kind of the Parameter plane (bifurcation curves in two
+/// parameters).
+pub const CURVES: &str = "curves";
+/// The warning for a saved Parameter plane the app can't show, when it shows
+/// the default view instead (the app gives the same one when it judges the
+/// view itself).
+pub const CURVES_MISFIT: &str =
+    "The saved Parameter plane doesn't fit this system, so the default view is shown.";
+/// The warning for a saved Parameter plane the app can't show, when it shows
+/// the Branch view the plane came from instead.
+pub const CURVES_MISFIT_BRANCH: &str =
+    "The saved Parameter plane doesn't fit this system, so the Branch view it came from is shown.";
+
+const DIRECTIONS: [&str; 3] = ["forward", "backward", "both"];
+
+/// Why the Parameter plane `view` can't be shown for a system with `states`
+/// and `params` (each empty when not known until the app compiles), or
+/// `None` when it can: `x_axis` and `y_axis` are two different parameters
+/// the system has, as `{ "kind": "param", "name": p }`, the view's ranges
+/// are usable, and `curves` holds
+/// the box (`across_range`, `up_range`, each with lo < hi), a positive `ds`,
+/// `max_points` of 2 or more and a known `direction`. A parameter the system
+/// lacks is named. The sentence says what is shown instead: the Branch view
+/// saved in `curves.branch` when it fits (see [`branch_fits`]), otherwise
+/// the default view.
+pub fn curves_misfit(view: &ProjectView, states: &[String], params: &[String]) -> Option<String> {
+    let has = |n: &String| params.is_empty() || params.contains(n);
+    let (x, y) = (&view.x_axis, &view.y_axis);
+    let missing = [x, y]
+        .into_iter()
+        .filter(|a| a.kind == "param")
+        .find_map(|a| a.name.as_ref().filter(|n| !has(n)));
+    let c = view.curves.as_ref();
+    let ok = x.kind == "param"
+        && y.kind == "param"
+        && x.name.is_some()
+        && y.name.is_some()
+        && x.name != y.name
+        && (params.is_empty() || params.len() >= 2)
+        && range_ok(&view.x_range)
+        && range_ok(&view.y_range)
+        && c.is_some_and(|c| {
+            c.across_range.as_ref().is_some_and(range_ok)
+                && c.up_range.as_ref().is_some_and(range_ok)
+                && c.ds.is_some_and(|ds| ds.is_finite() && ds > 0.0)
+                && c.max_points.is_some_and(|m| m >= 2)
+                && c.direction
+                    .as_deref()
+                    .is_some_and(|d| DIRECTIONS.contains(&d))
+        });
+    if ok && missing.is_none() {
+        return None;
+    }
+    let branch = c
+        .and_then(|c| c.branch.as_ref())
+        .is_some_and(|b| branch_fits(b, states, params));
+    Some(match missing {
+        Some(n) => format!(
+            "The saved Parameter plane uses the parameter {n}, which the system doesn't have, so {}",
+            if branch {
+                "the Branch view it came from is shown."
+            } else {
+                "the default view is shown."
+            }
+        ),
+        None if branch => CURVES_MISFIT_BRANCH.to_string(),
+        None => CURVES_MISFIT.to_string(),
+    })
+}
+
+/// True when the Branch view a Parameter plane came from can be shown for
+/// a system with `states` and `params` (each empty when not known): a
+/// parameter it has across, a state it has or the norm up, usable ranges,
+/// and a continuation with a usable range, a positive `ds` and `max_points`
+/// of 2 or more.
+pub fn branch_fits(b: &ProjectBranch, states: &[String], params: &[String]) -> bool {
+    let named = |list: &[String], name: &Option<String>| {
+        name.as_ref()
+            .is_some_and(|n| list.is_empty() || list.contains(n))
+    };
+    b.x_axis.kind == "param"
+        && named(params, &b.x_axis.name)
+        && (b.y_axis.kind == "norm" || (b.y_axis.kind == "state" && named(states, &b.y_axis.name)))
+        && range_ok(&b.x_range)
+        && range_ok(&b.y_range)
+        && b.continuation.as_ref().is_some_and(|c| {
+            c.range.as_ref().is_some_and(range_ok)
+                && c.ds.is_some_and(|ds| ds.is_finite() && ds > 0.0)
+                && c.max_points.is_some_and(|m| m >= 2)
+        })
+}
+
+/// True when a curve seed can be followed in a system of `kind` with `dim`
+/// states (each unknown when empty or `None`), with the parameters `free`
+/// across and up: one value per state, a period of 1 or more, a curve the
+/// system can have (no Hopf curve of a map, no flip or Neimark–Sacker curve
+/// of a flow, neither Hopf nor Neimark–Sacker in one dimension), and a
+/// value for both free parameters. A kind this version doesn't know is left
+/// to the app, which keeps it in the file.
+fn curve_seed_fits(
+    seed: &ProjectCurveSeed,
+    kind: &str,
+    dim: Option<usize>,
+    free: &[Option<String>; 2],
+) -> bool {
+    let n = dim.unwrap_or(seed.x.len());
+    let map = kind == "map";
+    let flow = !kind.is_empty() && !map;
+    let possible = match seed.kind.as_str() {
+        "hopf" => !map && n >= 2,
+        "flip" => !flow,
+        "neimarkSacker" => !flow && n >= 2,
+        _ => true,
+    };
+    seed.x.len() == n
+        && seed.period >= 1
+        && possible
+        && free
+            .iter()
+            .flatten()
+            .all(|name| seed.params.contains_key(name))
+}
+
+/// True when a homoclinic seed can be followed in a system of `kind` with
+/// `dim` states and `params` (each unknown when empty or `None`): a flow, one
+/// value per state, and a value for every parameter.
+fn homoclinic_seed_fits(
+    seed: &ProjectHomoclinicSeed,
+    kind: &str,
+    dim: Option<usize>,
+    params: &[String],
+) -> bool {
+    kind != "map"
+        && seed.x.len() == dim.unwrap_or(seed.x.len())
+        && params.iter().all(|p| seed.params.contains_key(p))
+}
+
 /// True when `view` has the shape of a cobweb plot: `x_axis` is the state
 /// `s` and `y_axis` is `{ "kind": "next", "name": s }`, for a state the
 /// system has (any, when `states` is empty).
@@ -329,6 +471,7 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
         }
     }
 
+    let params: Vec<String> = p.system.params.iter().map(|q| q.id.clone()).collect();
     let primary = primary_view_index(&p.views);
     for (i, view) in p.views.iter_mut().enumerate() {
         let grid = view.layers.field_grid.clamp(FIELD_GRID_MIN, FIELD_GRID_MAX);
@@ -358,6 +501,40 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 fits
             });
         }
+        let curves = kind == Some(CURVES);
+        if curves {
+            if let Some(w) = curves_misfit(view, states, &params) {
+                warnings.push(w);
+                continue;
+            }
+        }
+        let free = [view.x_axis.name.clone(), view.y_axis.name.clone()];
+        if let Some(c) = view.curves.as_mut().filter(|_| curves) {
+            let dim = (!states.is_empty()).then_some(states.len());
+            let sys = p.system.kind.as_str();
+            let mut n = 0;
+            c.seeds.retain(|seed| {
+                n += 1;
+                let fits = curve_seed_fits(seed, sys, dim, &free);
+                if !fits {
+                    warnings.push(format!(
+                        "The saved Parameter plane's curve {n} doesn't fit this system, so it was left out."
+                    ));
+                }
+                fits
+            });
+            let mut n = 0;
+            c.homoclinic.retain(|seed| {
+                n += 1;
+                let fits = homoclinic_seed_fits(seed, sys, dim, &params);
+                if !fits {
+                    warnings.push(format!(
+                        "The saved Parameter plane's homoclinic curve {n} doesn't fit this system, so it was left out."
+                    ));
+                }
+                fits
+            });
+        }
         let section = kind == Some(SECTION);
         if section {
             if let Some(w) = section_misfit(view, &p.system.kind, states) {
@@ -380,7 +557,6 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
             }
         }
         let orbit = kind == Some(ORBIT);
-        let params: Vec<String> = p.system.params.iter().map(|q| q.id.clone()).collect();
         if orbit {
             if let Some(w) = orbit_misfit(view, &p.system.kind, states, &params) {
                 warnings.push(w);
@@ -392,6 +568,7 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
             && !lyapunov
             && !orbit
             && !continuation
+            && !curves
             && (kind.is_some_and(|k| k != "plane")
                 || [&view.x_axis, &view.y_axis]
                     .iter()
@@ -426,7 +603,7 @@ pub fn validate(p: &mut ProjectFile) -> Vec<String> {
                 // Checked above, with the view's kind.
                 "next" if cobweb || section => true,
                 "exponent" if lyapunov => true,
-                "param" if orbit => true,
+                "param" if orbit || curves => true,
                 "param" if continuation => axis.name.as_ref().is_some_and(|n| params.contains(n)),
                 "norm" if continuation => true,
                 "state" => axis

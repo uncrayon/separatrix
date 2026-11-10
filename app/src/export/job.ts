@@ -12,6 +12,7 @@
 import type {
   ContinuationExportRequest,
   CsvRequest,
+  CurvesExportRequest,
   ExportPortraitRequest,
   InputFormat,
   LyapunovExportRequest,
@@ -24,6 +25,8 @@ import type { Scene } from "../canvas/draw";
 import type { FigureFonts } from "../canvas/figure";
 import { fitCamera, spaceNames, type SpaceFigure } from "../canvas/space";
 import { viewAxisLabels } from "../math/format";
+import { planeContext, planeSlice, type CurveRow } from "../state/curves";
+import { drawnHomoclinic, type HomoclinicRow } from "../state/homoclinic";
 import {
   COBWEB_GRAPH_SAMPLES,
   MAX_GRAPH_SAMPLES,
@@ -34,6 +37,7 @@ import {
   isCobweb,
   isLyapunov,
   isContinuation,
+  isCurves,
   isOrbit,
   isReturnMap,
   isSection,
@@ -188,13 +192,19 @@ export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   if (isOrbit(v)) return { x: sys.params[v.param]?.latex ?? "r", y: sys.states[v.yAxis.index]?.latex ?? "x" };
   if (isContinuation(v))
     return { x: sys.params[v.param]?.latex ?? "r", y: v.yAxis.kind === "state" ? (sys.states[v.yAxis.index]?.latex ?? "x") : "\\lVert x \\rVert" };
+  if (isCurves(v)) return { x: sys.params[v.across]?.latex ?? "p", y: sys.params[v.up]?.latex ?? "q" };
   return viewAxisLabels(v, sys.states, sys.kind);
 }
 
-export type AnalysisKind = "lyapunov" | "orbit" | "continuation";
+export type AnalysisKind = "lyapunov" | "orbit" | "continuation" | "curves";
 
 export function analysisKind(s: Pick<StudioSnapshot, "view">): AnalysisKind | null {
-  return isLyapunov(s.view) ? "lyapunov" : isOrbit(s.view) ? "orbit" : isContinuation(s.view) ? "continuation" : null;
+  const v = s.view;
+  if (isLyapunov(v)) return "lyapunov";
+  if (isOrbit(v)) return "orbit";
+  if (isContinuation(v)) return "continuation";
+  if (isCurves(v)) return "curves";
+  return null;
 }
 
 export interface ExportSource {
@@ -226,6 +236,37 @@ export function buildContinuationExport(
     range: [v.continuation.range[0], v.continuation.range[1]],
     yAxis: v.yAxis,
     branches: buildContinuationJobs(s).map((job) => ({ request: { ...job.body, requestId: 0 }, color: job.meta.seed })),
+    ...source,
+  };
+}
+
+/**
+ * The parameter plane's export: the requests of the curves it draws (a
+ * merged or failed row draws nothing), which the core follows again, and its
+ * homoclinic curves as drawn.
+ */
+export function buildCurvesExport(
+  s: Parameters<typeof planeContext>[0] & {
+    params: readonly { value: number }[];
+    planeRows: readonly CurveRow[];
+    homoclinicRows: readonly HomoclinicRow[];
+  },
+  source: ExportSource,
+): CurvesExportRequest | null {
+  const ctx = planeContext(s);
+  if (!ctx) return null;
+  const { systemId, v, c } = ctx;
+  return {
+    systemId,
+    params: s.params.map((p) => p.value),
+    free: [v.across, v.up],
+    ranges: [
+      [c.ranges[0][0], c.ranges[0][1]],
+      [c.ranges[1][0], c.ranges[1][1]],
+    ],
+    curves: s.planeRows.flatMap((r) => (r.status === "done" ? [{ ...r.job.body, requestId: 0 }] : [])),
+    homoclinic: drawnHomoclinic(s.homoclinicRows).map((h) => ({ p1: h.p1, p2: h.p2, x: h.x })),
+    slice: planeSlice(v),
     ...source,
   };
 }

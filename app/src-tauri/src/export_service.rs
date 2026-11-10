@@ -19,12 +19,14 @@ use separatrix_export::{
 };
 
 use crate::ipc::{
-    AxisRef, BranchAxis, ContinuationExportRequest, ContinuationFigureRequest, ContinuationLatex,
-    ContinuationRequest, ContinuationResponse, CsvFileOut, CsvRequest, CsvResponse,
-    ExportPortraitRequest, ExportTheme, FigureLatexRequest, FixedPointsLatexRequest,
-    LyapunovExportRequest, LyapunovRequest, LyapunovResponse, Notation, OrbitExportRequest,
-    OrbitFigureRequest, PortraitRequest, PortraitResponse, SectionSpec, SpecialKindOut,
-    SystemLatexRequest, SystemLatexResponse, TrajectoryTag,
+    AxisRef, BranchAxis, Codim2KindOut, ContinuationExportRequest, ContinuationFigureRequest,
+    ContinuationLatex, ContinuationRequest, ContinuationResponse, CsvFileOut, CsvRequest,
+    CsvResponse, CurveKindOut, CurveOut, CurveRequest, CurveResponse, CurvesExportRequest,
+    CurvesFigureRequest, ExportPortraitRequest, ExportTheme, FigureLatexRequest,
+    FixedPointsLatexRequest, LyapunovExportRequest, LyapunovRequest, LyapunovResponse,
+    NormalFormOut, Notation, OrbitExportRequest, OrbitFigureRequest, PortraitRequest,
+    PortraitResponse, SectionSpec, SpecialKindOut, SystemLatexRequest, SystemLatexResponse,
+    TrajectoryTag,
 };
 use crate::service;
 
@@ -42,15 +44,18 @@ pub fn figure_px(cm: f64) -> f64 {
 /// The last export portrait, so the dialog's preview and its LaTeX for the
 /// same options share one computation; and the last Lyapunov run, so its
 /// table, its CSV and their Save share one (a long run takes seconds); and
-/// the last branch plot's branches, so its figure, table and CSV share them.
+/// the last branch plot's branches, so its figure, table and CSV share them;
+/// and the parameter plane's last curves, likewise.
 #[derive(Default)]
 pub struct ExportCache {
     last: Mutex<Option<(CacheKey, Arc<PortraitResponse>)>>,
     lyapunov: Mutex<Option<(LyapunovRequest, Arc<LyapunovResponse>)>>,
     continuation: Mutex<Option<(Vec<ContinuationRequest>, Arc<BranchResults>)>>,
+    curves: Mutex<Option<(Vec<CurveRequest>, Arc<CurveResults>)>>,
 }
 
 type BranchResults = Vec<Result<ContinuationResponse, String>>;
+type CurveResults = Vec<Result<CurveResponse, String>>;
 
 #[derive(Clone, PartialEq)]
 struct CacheKey {
@@ -222,15 +227,7 @@ pub fn orbit_latex(
     req: &OrbitFigureRequest,
     placement: Placement,
 ) -> Result<separatrix_export::FigureOutput, String> {
-    if !(req.width_cm.is_finite() && req.height_cm.is_finite())
-        || req.width_cm <= 0.0
-        || req.height_cm <= 0.0
-    {
-        return Err(format!(
-            "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
-            req.width_cm, req.height_cm
-        ));
-    }
+    figure_size_ok(req.width_cm, req.height_cm)?;
     let o = &req.orbit;
     let run = orbit_run(system, &o.diagram)?;
     let labels = Labels::from_info(&system.info, &o.diagram.params);
@@ -251,10 +248,7 @@ pub fn orbit_latex(
             y_range: req.y_range,
             width_cm: req.width_cm,
             height_cm: req.height_cm,
-            theme: match req.theme {
-                ExportTheme::Light => separatrix_export::Theme::Light,
-                ExportTheme::Dark => separatrix_export::Theme::Dark,
-            },
+            theme: export_theme(req.theme),
             palette: &palette,
             placement,
             standalone: req.standalone,
@@ -403,15 +397,7 @@ pub fn continuation_latex(
             notes: Vec::new(),
         });
     }
-    if !(req.width_cm.is_finite() && req.height_cm.is_finite())
-        || req.width_cm <= 0.0
-        || req.height_cm <= 0.0
-    {
-        return Err(format!(
-            "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
-            req.width_cm, req.height_cm
-        ));
-    }
+    figure_size_ok(req.width_cm, req.height_cm)?;
     let palette = palette(req.theme)?;
     Ok(separatrix_export::continuation_figure(
         &separatrix_export::ContinuationFigureInput {
@@ -421,10 +407,7 @@ pub fn continuation_latex(
             y_range: req.y_range,
             width_cm: req.width_cm,
             height_cm: req.height_cm,
-            theme: match req.theme {
-                ExportTheme::Light => separatrix_export::Theme::Light,
-                ExportTheme::Dark => separatrix_export::Theme::Dark,
-            },
+            theme: export_theme(req.theme),
             palette: &palette,
             placement,
             standalone: req.standalone,
@@ -456,6 +439,257 @@ pub fn continuation_csv(
         meta: out.file.meta,
         special: Some(out.special),
     })
+}
+
+/// Why the parameter plane has nothing to export.
+pub const CURVES_EXPORT_EMPTY: &str =
+    "There are no curves to export yet. Follow a fold, Hopf, flip or Neimark–Sacker point of the Branch view in two parameters first.";
+
+fn curve_results(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &CurvesExportRequest,
+) -> Arc<CurveResults> {
+    let key: Vec<CurveRequest> = req
+        .curves
+        .iter()
+        .map(|r| CurveRequest {
+            request_id: 0,
+            ..r.clone()
+        })
+        .collect();
+    let mut last = cache.curves.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, v)) = last.as_ref() {
+        if *k == key {
+            return v.clone();
+        }
+    }
+    let out: Arc<CurveResults> = Arc::new(
+        key.iter()
+            .map(|r| service::compute_curve(system, r))
+            .collect(),
+    );
+    *last = Some((key, out.clone()));
+    out
+}
+
+fn plane_kind(kind: CurveKindOut) -> separatrix_export::PlaneCurveKind {
+    use separatrix_export::PlaneCurveKind as K;
+    match kind {
+        CurveKindOut::Fold => K::Fold,
+        CurveKindOut::Hopf => K::Hopf,
+        CurveKindOut::BranchPoint => K::BranchPoint,
+        CurveKindOut::Flip => K::Flip,
+        CurveKindOut::NeimarkSacker => K::NeimarkSacker,
+    }
+}
+
+fn codim2_kind(kind: Codim2KindOut) -> separatrix_export::Codim2Kind {
+    use separatrix_export::Codim2Kind as K;
+    match kind {
+        Codim2KindOut::BogdanovTakens => K::BogdanovTakens,
+        Codim2KindOut::Cusp => K::Cusp,
+        Codim2KindOut::Bautin => K::Bautin,
+        Codim2KindOut::ZeroHopf => K::ZeroHopf,
+        Codim2KindOut::HopfHopf => K::HopfHopf,
+        Codim2KindOut::Resonance1 => K::Resonance1,
+        Codim2KindOut::Resonance2 => K::Resonance2,
+        Codim2KindOut::Resonance3 => K::Resonance3,
+        Codim2KindOut::Resonance4 => K::Resonance4,
+        Codim2KindOut::Chenciner => K::Chenciner,
+        Codim2KindOut::FoldFlip => K::FoldFlip,
+        Codim2KindOut::GeneralizedFlip => K::GeneralizedFlip,
+    }
+}
+
+fn plane_curve(c: &CurveOut) -> separatrix_export::PlaneCurve {
+    separatrix_export::PlaneCurve {
+        kind: plane_kind(c.kind),
+        period: c.period,
+        p1: c.p1.clone(),
+        p2: c.p2.clone(),
+        x: c.x.clone(),
+        neutral: c.neutral.clone(),
+        special: c
+            .special
+            .iter()
+            .map(|sp| separatrix_export::PlanePoint {
+                kind: codim2_kind(sp.kind),
+                index: sp.index,
+                p: sp.p,
+                x: sp.x.clone(),
+                normal_form: sp.normal_form.map(|nf| match nf {
+                    NormalFormOut::BogdanovTakens { a, b } => {
+                        separatrix_export::NormalForm::BogdanovTakens { a, b }
+                    }
+                    NormalFormOut::Cusp { c } => separatrix_export::NormalForm::Cusp { c },
+                }),
+                angle: sp.angle,
+            })
+            .collect(),
+        ticks: c
+            .ticks
+            .iter()
+            .map(|t| separatrix_export::ResonanceTick { q: t.q, p: t.p })
+            .collect(),
+    }
+}
+
+/// The parameter plane: the curves of `req` followed again (those the core
+/// can't follow left out, as the view leaves them out), then its homoclinic
+/// curves as the view drew them.
+fn plane_run(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &CurvesExportRequest,
+) -> Result<separatrix_export::PlaneRun, String> {
+    let f: &dyn VectorField = system;
+    let n = req.params.len();
+    if req.free.0 >= n || req.free.1 >= n || req.free.0 == req.free.1 {
+        return Err(format!(
+            "The parameter plane needs two different parameters of the {n}; it was sent {} and {}.",
+            req.free.0, req.free.1
+        ));
+    }
+    let dim = f.dim();
+    if let Some(k) = req
+        .homoclinic
+        .iter()
+        .position(|h| h.p1.len() != h.p2.len() || h.x.len() != h.p1.len() * dim)
+    {
+        return Err(format!(
+            "Homoclinic curve {} has {} across values, {} up values and {} state values; it needs as many of each, {} states per point.",
+            k + 1,
+            req.homoclinic[k].p1.len(),
+            req.homoclinic[k].p2.len(),
+            req.homoclinic[k].x.len(),
+            dim
+        ));
+    }
+    if req.curves.is_empty() && req.homoclinic.is_empty() {
+        return Err(CURVES_EXPORT_EMPTY.into());
+    }
+    let results = curve_results(cache, system, req);
+    let mut curves: Vec<separatrix_export::PlaneCurve> = results
+        .iter()
+        .filter_map(|r| r.as_ref().ok().map(|r| plane_curve(&r.curve)))
+        .collect();
+    if curves.is_empty() && req.homoclinic.is_empty() {
+        if let Some(Err(e)) = results.first() {
+            return Err(e.clone());
+        }
+    }
+    curves.extend(
+        req.homoclinic
+            .iter()
+            .map(|h| separatrix_export::PlaneCurve {
+                kind: separatrix_export::PlaneCurveKind::Homoclinic,
+                period: 1,
+                p1: h.p1.clone(),
+                p2: h.p2.clone(),
+                x: h.x.clone(),
+                neutral: vec![false; h.p1.len()],
+                special: Vec::new(),
+                ticks: Vec::new(),
+            }),
+    );
+    Ok(separatrix_export::PlaneRun {
+        free: req.free,
+        ranges: req.ranges,
+        curves,
+        slice: req.slice.map(|s| separatrix_export::PlaneSlice {
+            range: s.range,
+            at: s.at,
+        }),
+    })
+}
+
+/// The parameter plane as a pgfplots figure (inline for Copy, `.dat` files
+/// for Save), or its codimension-2 points as a booktabs table.
+pub fn curves_latex(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &CurvesFigureRequest,
+    placement: Placement,
+) -> Result<separatrix_export::FigureOutput, String> {
+    let c = &req.curves;
+    let run = plane_run(cache, system, c)?;
+    let labels = Labels::from_info(&system.info, &c.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &c.title,
+        c.source_ref.as_deref(),
+        &c.lines,
+        c.format,
+    );
+    if req.content == ContinuationLatex::SpecialPoints {
+        return Ok(separatrix_export::FigureOutput {
+            tex: separatrix_export::plane_points_table(&sys, &run),
+            files: Vec::new(),
+            points: run.special_points().len(),
+            thinned: false,
+            notes: Vec::new(),
+        });
+    }
+    figure_size_ok(req.width_cm, req.height_cm)?;
+    let palette = palette(req.theme)?;
+    Ok(separatrix_export::curves_figure(
+        &separatrix_export::CurvesFigureInput {
+            sys: &sys,
+            run: &run,
+            x_range: req.x_range,
+            y_range: req.y_range,
+            width_cm: req.width_cm,
+            height_cm: req.height_cm,
+            theme: export_theme(req.theme),
+            palette: &palette,
+            placement,
+            standalone: req.standalone,
+        },
+    ))
+}
+
+/// The parameter plane's curves as a CSV with its `.meta.json`, and their
+/// codimension-2 points as `<stem>-special.csv`.
+pub fn curves_csv(
+    cache: &ExportCache,
+    system: &CompiledSystem,
+    req: &CurvesExportRequest,
+) -> Result<CsvFileOut, String> {
+    let run = plane_run(cache, system, req)?;
+    let labels = Labels::from_info(&system.info, &req.params);
+    let sys = system_meta(
+        system,
+        &labels,
+        &req.title,
+        req.source_ref.as_deref(),
+        &req.lines,
+        req.format,
+    );
+    let out = separatrix_export::csv::curves(&sys, &run, APP_VERSION);
+    Ok(CsvFileOut {
+        stem: out.file.stem,
+        csv: out.file.csv,
+        meta: out.file.meta,
+        special: Some(out.special),
+    })
+}
+
+fn figure_size_ok(width_cm: f64, height_cm: f64) -> Result<(), String> {
+    if !(width_cm.is_finite() && height_cm.is_finite()) || width_cm <= 0.0 || height_cm <= 0.0 {
+        return Err(format!(
+            "The figure size {width_cm} × {height_cm} cm is not valid. Set a width and a height above 0, then export again."
+        ));
+    }
+    Ok(())
+}
+
+fn export_theme(theme: ExportTheme) -> separatrix_export::Theme {
+    match theme {
+        ExportTheme::Light => separatrix_export::Theme::Light,
+        ExportTheme::Dark => separatrix_export::Theme::Dark,
+    }
 }
 
 fn to_axis(a: AxisRef) -> separatrix_export::Axis {
@@ -658,11 +892,7 @@ fn max_iterates(req: &PortraitRequest) -> usize {
 
 /// The plot colors of `theme`.
 pub fn palette(theme: ExportTheme) -> Result<Palette, String> {
-    let theme = match theme {
-        ExportTheme::Light => separatrix_export::Theme::Light,
-        ExportTheme::Dark => separatrix_export::Theme::Dark,
-    };
-    Palette::from_tokens(TOKENS_JSON, theme)
+    Palette::from_tokens(TOKENS_JSON, export_theme(theme))
 }
 
 /// The pgfplots figure: inline data for Copy, or files named after `base`
@@ -673,15 +903,7 @@ pub fn figure_latex(
     req: &FigureLatexRequest,
     placement: Placement,
 ) -> Result<separatrix_export::FigureOutput, String> {
-    if !(req.width_cm.is_finite() && req.height_cm.is_finite())
-        || req.width_cm <= 0.0
-        || req.height_cm <= 0.0
-    {
-        return Err(format!(
-            "The figure size {} × {} cm is not valid. Set a width and a height above 0, then export again.",
-            req.width_cm, req.height_cm
-        ));
-    }
+    figure_size_ok(req.width_cm, req.height_cm)?;
     if req.portrait.z_axis.is_some() {
         return Err(SPACE_LATEX_REFUSAL.to_string());
     }
@@ -702,10 +924,7 @@ pub fn figure_latex(
         labels: &labels,
         width_cm: req.width_cm,
         height_cm: req.height_cm,
-        theme: match req.theme {
-            ExportTheme::Light => separatrix_export::Theme::Light,
-            ExportTheme::Dark => separatrix_export::Theme::Dark,
-        },
+        theme: export_theme(req.theme),
         palette: &palette,
         title: &req.title,
         source_ref: req.source_ref.as_deref(),
@@ -1649,5 +1868,158 @@ mod tests {
         assert!(continuation_csv(&cache, &system, &req)
             .unwrap_err()
             .starts_with("There are no branches to export yet."));
+    }
+
+    #[test]
+    fn plane_exports_follow_the_view_and_share_one_run() {
+        use crate::ipc::{ContinuationDirection, CurveSeed, HomoclinicExport, SliceExport};
+        let store = SystemStore::new();
+        let res = service::compile_system(
+            &store,
+            &CompileRequest {
+                source: "\\dot{x}=a+bx-x^3".into(),
+                format: InputFormat::Latex,
+            },
+        );
+        let id = res.system_id.unwrap();
+        let system = store.get(id).unwrap();
+        // The fold curve of the cusp's normal form, a = -2bx/3 with x = ±sqrt(b/3),
+        // from the fold at (a, b) = (-2, 3), x = 1, through the cusp at 0.
+        let fold = |request_id: u64| CurveRequest {
+            request_id,
+            system_id: id,
+            params: vec![-2.0, 3.0],
+            free: (0, 1),
+            ranges: ((-3.0, 3.0), (-1.0, 4.0)),
+            seed: CurveSeed {
+                kind: CurveKindOut::Fold,
+                x: vec![1.0],
+                period: 1,
+            },
+            direction: ContinuationDirection::Both,
+            ds: 0.01,
+            ds_max: 0.02,
+            max_points: 2000,
+        };
+        let mut req = CurvesExportRequest {
+            system_id: id,
+            params: vec![-2.0, 3.0],
+            free: (0, 1),
+            ranges: ((-3.0, 3.0), (-1.0, 4.0)),
+            curves: vec![fold(4)],
+            homoclinic: vec![HomoclinicExport {
+                p1: vec![0.5, 1.0],
+                p2: vec![2.0, 2.5],
+                x: vec![0.1, 0.2],
+            }],
+            slice: Some(SliceExport {
+                range: (-2.5, 2.5),
+                at: 3.0,
+            }),
+            title: "Cusp".into(),
+            source_ref: None,
+            lines: vec!["\\dot{x}=a+bx-x^3".into()],
+            format: InputFormat::Latex,
+        };
+        let cache = ExportCache::new();
+        let first = curve_results(&cache, &system, &req);
+        let mut again = req.clone();
+        again.curves[0].request_id = 11;
+        assert!(Arc::ptr_eq(&first, &curve_results(&cache, &system, &again)));
+
+        let run = plane_run(&cache, &system, &req).unwrap();
+        assert_eq!(run.curves.len(), 2);
+        assert_eq!(
+            run.curves[1].kind,
+            separatrix_export::PlaneCurveKind::Homoclinic
+        );
+        let rows = run.special_points();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].point.kind, separatrix_export::Codim2Kind::Cusp);
+        assert!(rows[0].point.p.0.abs() < 1e-6 && rows[0].point.p.1.abs() < 1e-6);
+
+        let mut fig = CurvesFigureRequest {
+            curves: req.clone(),
+            content: ContinuationLatex::Figure,
+            x_range: (-3.1, 3.1),
+            y_range: (-1.1, 4.1),
+            width_cm: 8.0,
+            height_cm: 6.0,
+            theme: ExportTheme::Light,
+            standalone: false,
+        };
+        let copied = curves_latex(&cache, &system, &fig, Placement::Inline).unwrap();
+        assert!(copied.files.is_empty());
+        assert_eq!(copied.tex.matches("{CP};").count(), 1, "{}", copied.tex);
+        assert!(copied.tex.contains("% Curve 1: fold (LP), solid\n"));
+        assert!(copied
+            .tex
+            .contains("% Curve 2: homoclinic (Hom), dash-dotted\n"));
+        assert!(copied.tex.contains("% The Branch view's range, at b = 3\n"));
+        let saved = curves_latex(
+            &cache,
+            &system,
+            &fig,
+            Placement::External {
+                base: "plane".into(),
+            },
+        )
+        .unwrap();
+        let names: Vec<&str> = saved.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "plane-curve-1.dat",
+                "plane-curve-2.dat",
+                "plane-special-points.dat"
+            ]
+        );
+
+        fig.content = ContinuationLatex::SpecialPoints;
+        let table = curves_latex(&cache, &system, &fig, Placement::Inline).unwrap();
+        assert_eq!(table.points, 1);
+        let row = table.tex.lines().find(|l| l.starts_with("CP & ")).unwrap();
+        assert!(
+            row.starts_with("CP & \\num{0.000000} & \\num{0.000000} & ")
+                && row.ends_with(" & LP & \\num{-1} \\\\"),
+            "{row}"
+        );
+        fig.width_cm = 0.0;
+        fig.content = ContinuationLatex::Figure;
+        assert!(curves_latex(&cache, &system, &fig, Placement::Inline)
+            .unwrap_err()
+            .starts_with("The figure size 0 × 6 cm is not valid."));
+
+        let csv = curves_csv(&cache, &system, &req).unwrap();
+        assert_eq!(csv.stem, "cusp-curves");
+        assert!(csv
+            .csv
+            .starts_with("curve,kind,period,point,a,b,x,neutral\n"));
+        assert!(
+            csv.csv.ends_with("2,Hom,1,1,1,2.5,0.2,false\n"),
+            "{}",
+            csv.csv
+        );
+        let special = csv.special.clone().unwrap();
+        assert_eq!(special.lines().count(), 2, "{special}");
+        assert!(special.lines().nth(1).unwrap().starts_with("1,"));
+        let plan = csv_save_plan(Path::new("/d/cusp.csv"), &req.title, &[csv]);
+        assert!(plan[2].1.contains("\"csv\": \"cusp.csv\""));
+        assert!(plan[2].1.contains("\"special_csv\": \"cusp-special.csv\""));
+
+        req.homoclinic[0].x.pop();
+        assert!(plane_run(&cache, &system, &req)
+            .unwrap_err()
+            .starts_with("Homoclinic curve 1 has 2 across values, 2 up values and 1 state values"));
+        req.homoclinic.clear();
+        // No fold has b < 0.
+        req.curves[0].params = vec![-2.0, -0.5];
+        let refused = service::compute_curve(&system, &req.curves[0]).unwrap_err();
+        assert_eq!(plane_run(&cache, &system, &req).unwrap_err(), refused);
+        req.curves.clear();
+        assert_eq!(
+            curves_csv(&cache, &system, &req).unwrap_err(),
+            CURVES_EXPORT_EMPTY
+        );
     }
 }

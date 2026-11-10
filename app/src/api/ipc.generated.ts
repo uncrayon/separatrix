@@ -1231,8 +1231,10 @@ id: string,
  * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
  * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
  * `"continuation"` for a branch plot of fixed points against a
- * parameter (see `continuation`); absent for the phase plane and the
- * time series, which the axes tell apart.
+ * parameter (see `continuation`); `"curves"` for the Parameter plane,
+ * bifurcation curves in two parameters (`x_axis` and `y_axis` are
+ * `{ "kind": "param", "name": p }`; see `curves`); absent for the phase
+ * plane and the time series, which the axes tell apart.
  */
 kind?: string, 
 /**
@@ -1274,7 +1276,12 @@ orbit?: ProjectOrbit,
  * `{ "kind": "param", "name": p }`, `y_axis` a state or
  * `{ "kind": "norm" }`).
  */
-continuation?: ProjectContinuation, slice: ProjectSlice, layers: ProjectLayers, };
+continuation?: ProjectContinuation, 
+/**
+ * The requests of a `"curves"` view (the Parameter plane: `x_axis` is
+ * the parameter across, `y_axis` the one up).
+ */
+curves?: ProjectCurves, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -1303,6 +1310,31 @@ x: Array<number>,
  * The value of the view's parameter.
  */
 param: number, period: number, direction: string, kind?: string, tangent?: Array<number>, };
+
+export type ProjectCurves = { across_range?: [number, number], up_range?: [number, number], ds?: number, max_points?: number, 
+/**
+ * `"forward"`, `"backward"` or `"both"`.
+ */
+direction?: string, seeds: Array<ProjectCurveSeed>, homoclinic: Array<ProjectHomoclinicSeed>, 
+/**
+ * The Branch view the plane came from: its range is the slice drawn
+ * across the plane, and the Branch view shows it again.
+ */
+branch?: ProjectBranch, };
+
+export type ProjectCurveSeed = { kind: string, 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, period: number, params: { [key in string]: number }, };
+
+export type ProjectHomoclinicSeed = { 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, params: { [key in string]: number }, };
+
+export type ProjectBranch = { x_axis: ProjectAxis, y_axis: ProjectAxis, x_range: [number, number], y_range: [number, number], continuation?: ProjectContinuation, params: { [key in string]: number }, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -1891,6 +1923,120 @@ figure: ContinuationFigureRequest,
  */
 suggestedName: string, };
 
+export type HomoclinicExport = { 
+/**
+ * The across parameter at each point.
+ */
+p1: Array<number>, 
+/**
+ * The up parameter at each point.
+ */
+p2: Array<number>, 
+/**
+ * `points · dim` values: the saddle at each point.
+ */
+x: Array<number>, };
+
+export type SliceExport = { 
+/**
+ * The Branch view's range of the across parameter.
+ */
+range: [number, number], 
+/**
+ * The up parameter's value.
+ */
+at: number, };
+
+export type CurvesExportRequest = { 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * The sliders' parameter values (each curve has its own free two).
+ */
+params: Array<number>, 
+/**
+ * The across and up parameters.
+ */
+free: [number, number], 
+/**
+ * The box the curves are followed in: across, then up.
+ */
+ranges: [[number, number], [number, number]], 
+/**
+ * The requests of the curves the view draws, in its order.
+ */
+curves: Array<CurveRequest>, 
+/**
+ * The homoclinic curves the view draws.
+ */
+homoclinic: Array<HomoclinicExport>, 
+/**
+ * The Branch view's range, when the view draws it.
+ */
+slice: SliceExport | null, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type CurvesFigureRequest = { 
+/**
+ * The curves and their names.
+ */
+curves: CurvesExportRequest, 
+/**
+ * The figure or the table.
+ */
+content: ContinuationLatex, 
+/**
+ * The view's across range.
+ */
+xRange: [number, number], 
+/**
+ * The view's up range.
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveCurvesFigureRequest = { 
+/**
+ * The figure or table.
+ */
+figure: CurvesFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
 export type SaveCsvFileRequest = { 
 /**
  * The file and its metadata.
@@ -1953,10 +2099,16 @@ export const LYAPUNOV_MISFIT = "The saved Lyapunov view can't be run as saved, s
 
 export const ORBIT_MISFIT = "The saved orbit diagram doesn't fit this system, so the default view is shown.";
 
+export const CURVES_MISFIT = "The saved Parameter plane doesn't fit this system, so the default view is shown.";
+
+export const CURVES_MISFIT_BRANCH = "The saved Parameter plane doesn't fit this system, so the Branch view it came from is shown.";
+
 export const ORBIT_MAX_TRANSIENT = 100000;
 
 export const ORBIT_MAX_KEPT = 976;
 
 export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
+export const CURVES_EXPORT_EMPTY = "There are no curves to export yet. Follow a fold, Hopf, flip or Neimark–Sacker point of the Branch view in two parameters first.";
 
 export const DEFAULT_CAMERA = { yaw: -0.7853981633974483, pitch: 0.5235987755982988, zoom: 1.0 };

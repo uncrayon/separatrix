@@ -22,11 +22,11 @@ The **Content** menu offers what fits the view:
 
 | Content | Views | What it is |
 | --- | --- | --- |
-| **Figure** | Phase plane, time series, cobweb, section, orbit diagram, Branch | A pgfplots figure of the plot. |
+| **Figure** | Phase plane, time series, cobweb, section, orbit diagram, Branch, Parameter plane | A pgfplots figure of the plot. |
 | **Equations** | All | The system in an `align` environment, numbered or not. |
 | **Fixed points** | Phase plane, time series, cobweb, section, 3D | A booktabs table of the fixed points, their eigenvalues and their type. A system whose equations contain `t` has none. |
 | **Spectrum** | Lyapunov | A booktabs table of the exponents, with siunitx uncertainties. |
-| **Special points** | Branch | A booktabs table of the bifurcations with siunitx numbers. |
+| **Special points** | Branch, Parameter plane | A booktabs table of the bifurcations with siunitx numbers. In the Parameter plane, the points where curves meet, with their coefficients. |
 
 The first lines of every snippet are comments that name the system, its parameter values and the
 LaTeX packages it needs. **Standalone document** wraps the snippet in a document that compiles on
@@ -48,7 +48,8 @@ The 3D view and the Lyapunov view have no LaTeX figure. Export their plots as PN
 A trajectory's CSV has a column for `t` or `n` and one for each state. **Samples per run** sets
 how many rows each trajectory gets. Other views write their own columns. A section writes each
 crossing, the Lyapunov view the running estimates, the orbit diagram one row per kept iterate, and
-the Branch view one row per branch point, with the special points in a second file.
+the Branch view one row per branch point, and the Parameter plane one row per curve point, each
+with the special points in a second file.
 
 ## Your settings are kept
 

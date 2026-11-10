@@ -35,6 +35,16 @@ All notable changes to this project are documented in this file.
   the run without keeping any of it. The row says where the saddle quantity σ changes sign and
   where the orbit is a Shilnikov orbit, with chaos nearby. The codimension-2 gate checks the
   Freire circuit's orbits against AUTO-07p's.
+- The Parameter plane exports like the other views. LaTeX writes a pgfplots figure in each curve
+  kind's colour and dash pattern, with the codimension-2 points, the resonance ticks and the
+  Branch view's range, or a booktabs table of the codimension-2 points with their coefficients.
+  CSV writes every curve point, with the codimension-2 points in a second file, and PNG and SVG
+  draw the plot without the crosshair and the inset.
+- Project files save the Parameter plane as the view kind `curves`, with the points each curve was
+  followed from and the Branch view it came from. Opening the file follows the curves again.
+  Older projects open as before, and Separatrix 1.0.1 opens a saved plane in the default view.
+- The guide's Parameter plane page is complete, with an example project, `parameter-plane.sepx`,
+  CO oxidation after **Search in two parameters**.
 
 ## [1.0.1] - 2026-11-09
 

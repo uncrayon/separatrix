@@ -9,6 +9,10 @@ contain `t` or `n`.
 The desktop app follows the curves of any such system and marks the points where they meet. The
 browser preview draws the curves of the two gallery templates below only.
 
+Example project: [parameter-plane.sepx](examples/parameter-plane.sepx), CO oxidation after
+**Search in two parameters**, with k₂ across and K up. Its fold and Hopf curves meet at the two
+Bogdanov–Takens points, the fold curve has a cusp, and the Hopf curve two Bautin points.
+
 ## Reach it
 
 - In the **Branch** view, click **Follow in two parameters…** on an LP, H, BP, PD or NS row, pick
@@ -118,4 +122,22 @@ reference values. Two examples from its output:
   for β = 0.4535645, where AUTO-07p has −0.7213093 and −0.7256925. σ is −0.0170 at the first and
   +0.2888 at the second, the Shilnikov case.
 
-The plane is not saved in project files yet: saving while it is shown saves the Branch view.
+## Save and open
+
+**Save** while the plane is shown writes it into the project file: the two parameters, the box,
+Δs and the most points, the points each curve was followed from, the Bogdanov–Takens points each
+homoclinic curve was followed from, and the Branch view it came from, with the parameter values
+its branches were computed at. Opening the file follows every curve again, so it shows the same
+curves, special points and slice. **Branch** then shows the Branch view the plane came from.
+
+A curve that no longer fits the system, because you changed the equations, is left out and the
+open banner says which. A plane whose parameter is gone opens as its Branch view, or as the
+default view. Separatrix 1.0.1 and older open a saved plane in the default view.
+
+## Export
+
+**Export…** writes the plane as a pgfplots figure in the curves' colours and patterns, with the
+special points and the resonance ticks, and the special points as a booktabs table with their
+coefficients. It also writes the curves as CSV, with the special points in a second file, and the
+plot as PNG or SVG. The crosshair and the inset are left out. See
+[Export figures and data](exports.md).

@@ -131,8 +131,10 @@ pub struct ProjectView {
     /// (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
     /// is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
     /// `"continuation"` for a branch plot of fixed points against a
-    /// parameter (see `continuation`); absent for the phase plane and the
-    /// time series, which the axes tell apart.
+    /// parameter (see `continuation`); `"curves"` for the Parameter plane,
+    /// bifurcation curves in two parameters (`x_axis` and `y_axis` are
+    /// `{ "kind": "param", "name": p }`; see `curves`); absent for the phase
+    /// plane and the time series, which the axes tell apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
@@ -177,6 +179,11 @@ pub struct ProjectView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub continuation: Option<ProjectContinuation>,
+    /// The requests of a `"curves"` view (the Parameter plane: `x_axis` is
+    /// the parameter across, `y_axis` the one up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub curves: Option<ProjectCurves>,
     #[serde(default)]
     pub slice: ProjectSlice,
     #[serde(default)]
@@ -313,6 +320,103 @@ pub struct ProjectSeed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub tangent: Option<Vec<f64>>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// The requests of the Parameter plane: the box the curves stay in (the
+/// parameter across, then the one up), the first step in arclength, the most
+/// points per direction, which way each curve is followed, the bifurcations
+/// the curves are followed from, the Bogdanov–Takens points the homoclinic
+/// curves are followed from, and the Branch view the plane came from. Seeds
+/// are saved, never the computed curves, so opening the file replays the same
+/// requests.
+///
+/// Lenient like [`ProjectContinuation`]: a missing value makes the view a
+/// warning, not an unreadable file.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectCurves {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub across_range: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub up_range: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub ds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub max_points: Option<u32>,
+    /// `"forward"`, `"backward"` or `"both"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub direction: Option<String>,
+    #[serde(default)]
+    pub seeds: Vec<ProjectCurveSeed>,
+    #[serde(default)]
+    pub homoclinic: Vec<ProjectHomoclinicSeed>,
+    /// The Branch view the plane came from: its range is the slice drawn
+    /// across the plane, and the Branch view shows it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub branch: Option<ProjectBranch>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// Where one curve of the Parameter plane starts: a bifurcation of `kind`
+/// `"fold"`, `"hopf"`, `"branchPoint"`, `"flip"` or `"neimarkSacker"`, the
+/// state there, `period` (`k` of `f^k` for a map, 1 for a flow), and every
+/// parameter's value there by name, so the seed keeps its meaning whichever
+/// two parameters are free.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectCurveSeed {
+    pub kind: String,
+    /// One value per entry of `system.states`, in that order.
+    pub x: Vec<f64>,
+    #[serde(default = "one")]
+    pub period: u32,
+    #[serde(default)]
+    pub params: BTreeMap<String, f64>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// Where a homoclinic curve of a flow starts: a Bogdanov–Takens point, its
+/// equilibrium and every parameter's value there by name.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectHomoclinicSeed {
+    /// One value per entry of `system.states`, in that order.
+    pub x: Vec<f64>,
+    #[serde(default)]
+    pub params: BTreeMap<String, f64>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub extra: Map<String, Value>,
+}
+
+/// The Branch view a Parameter plane came from, with the keys of a
+/// `"continuation"` view, and every parameter's value by name when the plane
+/// opened from it (its branches were computed there).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ProjectBranch {
+    pub x_axis: ProjectAxis,
+    pub y_axis: ProjectAxis,
+    pub x_range: [f64; 2],
+    pub y_range: [f64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub continuation: Option<ProjectContinuation>,
+    #[serde(default)]
+    pub params: BTreeMap<String, f64>,
     #[serde(flatten)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub extra: Map<String, Value>,

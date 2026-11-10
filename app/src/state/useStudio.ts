@@ -1200,14 +1200,7 @@ export function useStudio() {
     const views = viewMemory.current.views;
     views.continuation = cur.view;
     const kept = views.curves && isCurves(views.curves) ? views.curves : null;
-    const next = openPlane(
-      kept,
-      cur.view,
-      cur.view,
-      cur.params,
-      seeds,
-      up,
-    );
+    const next = openPlane(kept, cur.view, cur.params, seeds, up);
     refitCurves.current = true;
     setViewState(next);
     setHomeView(next);

@@ -1145,3 +1145,92 @@ fn the_preview_mock_agrees_with_the_engine() {
         problems.join("\n")
     );
 }
+
+const PLANE_EXAMPLE: &str = include_str!("../../../docs/guide/examples/parameter-plane.sepx");
+
+/// docs/guide/examples/parameter-plane.sepx replays as the app replays it on
+/// open: one request per saved seed, the free pair from the seed and every
+/// other parameter from its slider.
+#[test]
+fn the_guides_parameter_plane_example_replays_its_curves_through_both_bogdanov_takens_points() {
+    let opened = separatrix_project::parse(PLANE_EXAMPLE).expect("the example opens");
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let file = &opened.project;
+    let co = compile_as(file.system.lines.join("\n"), InputFormat::Latex);
+    let view = &file.views[0];
+    let c = view.curves.as_ref().expect("a Parameter plane");
+    let free = (
+        co.param(view.x_axis.name.as_deref().unwrap()),
+        co.param(view.y_axis.name.as_deref().unwrap()),
+    );
+    assert_eq!(
+        (co.names[free.0].as_str(), co.names[free.1].as_str()),
+        ("k_2", "K")
+    );
+    let pair = |r: Option<[f64; 2]>| {
+        let [lo, hi] = r.expect("a range");
+        (lo, hi)
+    };
+    let ranges = (pair(c.across_range), pair(c.up_range));
+    let slider = |name: &String| {
+        file.system
+            .params
+            .iter()
+            .find(|p| &p.id == name)
+            .expect("a slider")
+            .value
+    };
+    let mut bt = Vec::new();
+    for seed in &c.seeds {
+        let params = co
+            .names
+            .iter()
+            .enumerate()
+            .map(|(j, n)| {
+                if j == free.0 || j == free.1 {
+                    seed.params[n]
+                } else {
+                    slider(n)
+                }
+            })
+            .collect();
+        let kind = match seed.kind.as_str() {
+            "fold" => CurveKindOut::Fold,
+            "hopf" => CurveKindOut::Hopf,
+            other => panic!("a {other} seed in CO oxidation"),
+        };
+        let mut req = co.request(
+            params,
+            free,
+            ranges,
+            CurveSeed {
+                kind,
+                x: seed.x.clone(),
+                period: seed.period as usize,
+            },
+        );
+        req.ds = c.ds.unwrap();
+        req.ds_max = 2.0 * req.ds;
+        req.max_points = c.max_points.unwrap() as usize;
+        let curve = co.curve(&req);
+        assert_eq!(
+            curve.end, BOTH_IN_RANGE,
+            "{kind:?} from k₂ = {}",
+            seed.params["k_2"]
+        );
+        bt.extend(
+            curve
+                .special
+                .iter()
+                .filter(|s| s.kind == Codim2KindOut::BogdanovTakens)
+                .map(|s| s.p),
+        );
+    }
+    for (k2, k) in [(1.161199, 0.722339), (1.417628, 0.971398)] {
+        assert!(
+            bt.iter()
+                .any(|p| (p.0 - k2).abs() < 1e-6 && (p.1 - k).abs() < 1e-6),
+            "no BT at (k₂, K) = ({k2}, {k}) in {bt:?}"
+        );
+    }
+}

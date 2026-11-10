@@ -196,7 +196,7 @@ row_updater_off_without_key() {
 row_checklist() {
   local list=docs/release-checklist.md steps undone wanted listed missing extra
   require_strings checklist "$list" \
-    "Release workflow" "TAURI_SIGNING_PRIVATE_KEY" "Mac" "Windows" "PyPI" "beta" || return
+    "Release workflow" "TAURI_SIGNING_PRIVATE_KEY" "Mac" "Windows" "latest.json" "Check for Updates" || return
   read -r steps undone < <(awk '/^[0-9]+\. \[[ x]\] /{if(n&&!d)u++;n++;d=0;next} /Done when/{d=1}
     END{if(n&&!d)u++;print n+0, u+0}' "$list")
   if [ "$steps" -eq 0 ]; then fail checklist "$list has no '1. [ ] ...' steps"; return; fi
