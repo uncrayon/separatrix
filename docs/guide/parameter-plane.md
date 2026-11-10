@@ -76,9 +76,9 @@ The browser preview has the homoclinic curves of the CO oxidation template only.
   (a, ε) = (0.646447, −1.671573).
 - **Freire circuit** (AUTO-07p's HomCont demo `cir`): type
   `x' = (-(beta + nu)*x + beta*y - 0.328578*x^3 + 0.933578*(y - x)^3)/0.6`,
-  `y' = beta*x - beta*y - z - 0.933578*(y - x)^3` and `z' = y`, open the Branch view over ν at
-  β = 0.7, and follow its Hopf point in β. The Hopf curve meets the branch-point curve at a
-  Bogdanov–Takens point, (ν, β) = (−0.774597, 0.774597). **Follow homoclinic** there draws the
+  `y' = beta*x - beta*y - z - 0.933578*(y - x)^3` and `z' = y`, set β to 0.8 and open the Branch
+  view over ν. It finds a branch point at ν = −0.8 and a Hopf point at ν = −0.4173. Followed in
+  β, the Hopf curve passes a Bogdanov–Takens point at (ν, β) = (−0.774597, 0.774597). **Follow homoclinic** there draws the
   curve of homoclinic orbits to the origin. σ changes sign near β = 0.5912: below it the orbit is
   a Shilnikov orbit.
 
