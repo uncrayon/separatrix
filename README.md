@@ -20,6 +20,10 @@ works offline.
   3.564407 of the logistic map.
 - **Continuation** of equilibria and cycles, with folds, Hopf points, branch points, flips and
   Neimark–Sacker points marked. Sel'kov's Hopf points come out at b = 0.346410 and 0.848528.
+- **The Parameter plane**, which follows folds, Hopf points, branch points, flips,
+  Neimark–Sacker points and homoclinic orbits as two parameters change, and marks and explains
+  the points where curves meet. CO oxidation's Bogdanov–Takens points come out at
+  (k₂, K) = (1.417628, 0.971398) and (1.161199, 0.722339).
 - **A gallery of 33 examples**: 31 from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), each
   citing its section of the book, and two reference systems of two-parameter continuation.
 - **Exports** to LaTeX (pgfplots figures, equations and tables), SVG, PNG and CSV, and project

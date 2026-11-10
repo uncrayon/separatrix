@@ -574,6 +574,9 @@ function copy(fromRel, toOut) {
   fs.copyFileSync(path.join(ROOT, fromRel), abs);
 }
 
+/** Where a template comes from, as the gallery says it: its Strogatz section, else its credit. */
+const sourceOf = (t) => (t.section ? `Strogatz §${t.section}` : t.credit);
+
 function homePage(pages) {
   const root = "";
   const manifest = JSON.parse(read("site/media/manifest.json"));
@@ -582,6 +585,10 @@ function homePage(pages) {
   return Promise.all(
     readmeViews().map(async (v) => {
       const m = manifest[v.key];
+      if (!m && !exists(`docs/media/${v.key}.png`)) {
+        warn(`docs/media/${v.key}.png is missing, so the home page leaves out ${v.key}; run bash scripts/docs-screenshots.sh, then bash site/media.sh.`);
+        return null;
+      }
       let img;
       if (m && exists(`site/media/${m.file}`) && sha256(m.source) === m.sha256) {
         COPIES.set(`site/media/${m.file}`, `media/${m.file}`);
@@ -593,7 +600,8 @@ function homePage(pages) {
       }
       return { ...v, img };
     }),
-  ).then((views) => {
+  ).then((shown) => {
+    const views = shown.filter(Boolean);
     const video = manifest.video;
     if (!video || !exists(`site/media/${video.file}`) || !exists(`site/media/${video.poster}`)) fail("site/media is missing the video or its poster");
     COPIES.set(`site/media/${video.file}`, `media/${video.file}`);
@@ -615,7 +623,7 @@ function homePage(pages) {
         <div class="site-card-body">
           <h3 class="heading"><a class="site-card-title" href="${v.page}">${esc(v.title)}</a></h3>
           <p class="body site-card-text">${v.summary}</p>
-          <p class="caption site-card-example">Example: ${esc(v.template.title)}, Strogatz §${esc(v.template.section)}</p>
+          <p class="caption site-card-example">Example: ${esc(v.template.title)}, ${esc(sourceOf(v.template))}</p>
           <p class="label site-card-links"><a href="${v.page}">Read the guide</a><a href="${v.example}" download>Download ${esc(path.posix.basename(v.example))}</a></p>
         </div>
       </li>`,
@@ -626,7 +634,7 @@ function homePage(pages) {
         (v) => `<tr>
           <td><a class="code" href="${v.example}" download>${esc(path.posix.basename(v.example))}</a></td>
           <td>${esc(v.template.title)}</td>
-          <td class="numeric">§${esc(v.template.section)}</td>
+          <td class="numeric">${esc(v.template.section ? `§${v.template.section}` : v.template.credit)}</td>
           <td><a href="${v.page}">${esc(v.title)}</a></td>
           <td class="numeric site-num">${kb(fs.statSync(path.join(ROOT, v.exampleSrc)).size)}</td>
         </tr>`,
@@ -659,7 +667,7 @@ function homePage(pages) {
     <h2 class="title" id="examples-title">Examples</h2>
     <p class="body site-section-lede">Download a project and open it with <strong>Open…</strong>, or drop it on the Separatrix window. Each file is a few kilobytes: it holds the equations, the start points and the view, and Separatrix recomputes the rest.</p>
     <div class="site-table-wrap"><table class="site-table body">
-      <thead><tr><th scope="col" class="label">Project</th><th scope="col" class="label">System</th><th scope="col" class="label">Strogatz</th><th scope="col" class="label">Opens in</th><th scope="col" class="label site-num">Size</th></tr></thead>
+      <thead><tr><th scope="col" class="label">Project</th><th scope="col" class="label">System</th><th scope="col" class="label">Source</th><th scope="col" class="label">Opens in</th><th scope="col" class="label site-num">Size</th></tr></thead>
       <tbody>${exampleRows}</tbody>
     </table></div>
     <p class="body site-gallery-note">The app also opens on a gallery of <span class="numeric">${TEMPLATES.length}</span> examples from ${chapterList(chapters)} of Strogatz's <cite>Nonlinear Dynamics and Chaos</cite> (2nd edition), grouped by chapter. Click a card to start from that system.</p>
@@ -691,13 +699,13 @@ function homePage(pages) {
     );
   });
 
-  // The eight views, in the order of the guide index's table, with each guide page's own
+  // The nine views, in the order of the guide index's table, with each guide page's own
   // title, first sentence, and example project.
   function readmeViews() {
     const rows = read("docs/guide/README.md")
       .split("\n")
       .filter((l) => /^\|.*\]\(examples\/[^)]+\.sepx\)/.test(l));
-    if (rows.length !== 8) fail(`docs/guide/README.md's views table has ${rows.length} rows with an example, expected 8`);
+    if (rows.length !== 9) fail(`docs/guide/README.md's views table has ${rows.length} rows with an example, expected 9`);
     return rows.map((row) => {
       const pageMd = row.match(/\]\(([a-z0-9-]+\.md)\)/)[1];
       const exampleMd = row.match(/\]\((examples\/[a-z0-9-]+\.sepx)\)/)[1];
@@ -709,7 +717,8 @@ function homePage(pages) {
       COPIES.set(exampleSrc, `guide/${exampleMd}`);
       const project = JSON.parse(read(exampleSrc));
       const template = TEMPLATES.find((t) => t.id === project.system?.template);
-      if (!template || !template.section) fail(`${exampleSrc} names template ${project.system?.template}, which has no section in templates.json`);
+      if (!template || !(template.section || template.credit))
+        fail(`${exampleSrc} names template ${project.system?.template}, which has neither a section nor a credit in templates.json`);
       const para = page.tokens.findIndex((t) => t.type === "paragraph_open");
       const sentence = firstSentence(page.tokens[para + 1].content);
       return {
