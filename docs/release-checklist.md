@@ -44,11 +44,16 @@ a 1.0.x install.
    It opens `docs/guide/examples/parameter-plane.sepx` and saves `docs/media/parameter-plane.png`,
    and retakes the other views. Keep the other screenshots unless the app changed how they look.
    Then run `bash site/media.sh` (it needs ffmpeg with libwebp) to make the web copy and its
-   entry in `site/media/manifest.json`.
+   entry in `site/media/manifest.json`. Last, add the picture to the guide page: in
+   `docs/guide/parameter-plane.md`, before "Example project:", add an image of
+   `../media/parameter-plane.png`, written as the one in `docs/guide/continuation.md`, with the
+   alt text "CO oxidation in the Parameter plane: the fold and Hopf curves in k₂ and K, meeting at
+   two Bogdanov–Takens points, with the cusp and two Bautin points marked".
 
    **Done when** `docs/media/parameter-plane.png` shows CO oxidation's fold and Hopf curves with
-   their Bogdanov–Takens points, and `cd site && npm ci && npm run build` prints no warning about
-   `parameter-plane`.
+   their Bogdanov–Takens points, the guide page shows it, `bash scripts/release-check.sh
+   --skip-gates` still passes its `docs-links` row, and `cd site && npm ci && npm run build`
+   prints no warning about `parameter-plane`.
 
 4. [ ] **Date the changelog.** In `CHANGELOG.md`, change `## [Unreleased]` to
    `## [1.1.0] - YYYY-MM-DD` with today's date. Commit the version, the screenshots and the date,
