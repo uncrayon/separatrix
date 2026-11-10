@@ -13,6 +13,10 @@ All notable changes to this project are documented in this file.
   desktop app says the computation is not implemented yet.
 - Two gallery templates for it: CO oxidation (Bykov, Yablonskii and Kim) and a predator–prey map
   (MatContM), each credited in the title bar.
+- Curves of branch points in two parameters, where another branch crosses (transcritical,
+  pitchfork) and a fold curve cannot be followed, as on an invariant line. The engine follows the
+  predator–prey map's F3 = F2 curve through its fold-flip at `(ε, a) = (2, 3)`. The Parameter
+  plane does not draw these curves yet.
 
 ## [1.0.1] - 2026-11-09
 

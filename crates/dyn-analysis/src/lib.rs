@@ -23,10 +23,10 @@
 //!   stability of each point and its located folds, Hopf, branch, flip and
 //!   Neimark–Sacker points ([`SpecialPoint`]), and [`switch_branch`]: the
 //!   second branch through a branch point, or the `2k`-cycle born at a flip;
-//! - [`continue_curve`]: a curve of folds, Hopf points, flips or
-//!   Neimark–Sacker points followed as two parameters vary, with the
-//!   stretches where a Hopf or Neimark–Sacker condition holds at a neutral
-//!   saddle marked ([`Nature`]);
+//! - [`continue_curve`]: a curve of folds, Hopf points, branch points,
+//!   flips or Neimark–Sacker points followed as two parameters vary, with
+//!   the stretches where a Hopf or Neimark–Sacker condition holds at a
+//!   neutral saddle marked ([`Nature`]);
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
