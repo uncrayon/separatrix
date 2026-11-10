@@ -178,3 +178,5 @@ user and why. Update [CHANGELOG.md](CHANGELOG.md) for any change a user can noti
 - [docs/exports.md](docs/exports.md) specifies every export.
 - [docs/project-format.md](docs/project-format.md) specifies the `.sepx` format.
 - [docs/updater.md](docs/updater.md) says how the owner switches on the updater.
+- [docs/codim2-reference.md](docs/codim2-reference.md) lists the literature systems and values
+  that two-parameter continuation is tested against.
