@@ -754,7 +754,7 @@ impl Underdetermined for Defining<'_> {
 
 /// `z` with `z[k] = e` held and the other unknowns corrected by Newton's
 /// method on `G = 0`, a square system.
-fn correct_fixed(
+pub(crate) fn correct_fixed(
     g: &impl Underdetermined,
     z: &[f64],
     k: usize,
@@ -784,7 +784,7 @@ fn correct_fixed(
 /// The edge of `[0, 1]²` in `(u₁, u₂)` that the step from `z` to `pred`
 /// along `dir` crosses first: the index of the coordinate in `z`, and its
 /// value on the edge.
-fn first_edge(z: &[f64], pred: &[f64], dir: &[f64], n: usize) -> Option<(usize, f64)> {
+pub(crate) fn first_edge(z: &[f64], pred: &[f64], dir: &[f64], n: usize) -> Option<(usize, f64)> {
     [n, n + 1]
         .into_iter()
         .filter_map(|k| {
@@ -866,7 +866,7 @@ fn shifted(a: &[f64], n: usize, c: f64) -> Vec<f64> {
     a
 }
 
-fn unit(v: Vec<f64>) -> Option<Vec<f64>> {
+pub(crate) fn unit(v: Vec<f64>) -> Option<Vec<f64>> {
     let len = norm2(&v);
     (len.is_finite() && len > 0.0).then(|| v.iter().map(|c| c / len).collect())
 }
