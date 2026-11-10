@@ -1861,10 +1861,7 @@ mod bindings {
                 "MAX_CONTINUATION_POINTS",
                 MAX_CONTINUATION_POINTS.to_string(),
             ),
-            (
-                "MAX_HOMOCLINIC_POINTS",
-                MAX_HOMOCLINIC_POINTS.to_string(),
-            ),
+            ("MAX_HOMOCLINIC_POINTS", MAX_HOMOCLINIC_POINTS.to_string()),
             (
                 "SAME_BIFURCATION_TOL",
                 format!("{:e}", separatrix_export::model::SAME_BIFURCATION_TOL),

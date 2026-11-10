@@ -55,6 +55,7 @@
 pub mod export_service;
 pub mod files;
 pub mod ipc;
+pub mod jobs;
 pub mod service;
 pub mod updater;
 
