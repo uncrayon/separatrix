@@ -266,13 +266,51 @@ pair; the saddle quantity is `σ = λᵤ + Re λₛ`, and Shilnikov's chaos need
   `ν = −β`, second coefficient `1 − β²/r`, so the double zero is at `ν = −β`, `β = √r`:
   `(ν, β) = (−0.7745967, 0.7745967)`. AUTO's run of the homoclinic curve ends beside it at
   `(−0.7746628, 0.7746453)`.
-- **Shooting check (derived).** Following the unstable manifold and bisecting on `ν` until it
-  returns to the origin gives `ν = −0.72131951` at `β = 0.6` and `ν = −0.72568945` at
-  `β = 0.4535645`. AUTO has `−0.7213093` and `−0.7256925`.
-- **Precision.** Use five digits. AUTO's demo truncates the orbit to a finite interval on a coarse
-  mesh, and the shooting check takes the stable manifold as flat within 0.05 of the origin.
-- At `β = 0.4535645` the shooting also finds a second homoclinic orbit at `ν = −0.72695630`, with
-  about twice the return time. Such subsidiary orbits are expected where `σ > 0`.
+- **Shooting check (derived).** Follow the unstable manifold from `1e-6` off the origin and bisect on
+  `ν` until the first return. The orbit has returned when its stable coordinates (everything but the
+  component along the unstable eigenvector) are under `ρ` times its largest distance from the origin
+  so far, so the radius scales with the orbit. That distance is 0.53 at `β = 0.6` and 0.79 at
+  `β = 0.4535645`. The split is the unstable coordinate at that moment, and the bisected `ν`
+  converges as `ρ` shrinks.
+
+  | β | ρ = 0.05 | ρ = 0.025 | ρ = 0.0125 | AUTO |
+  | --- | --- | --- | --- | --- |
+  | 0.6 | −0.72130792 | −0.72130915 | −0.72130925 | −0.7213093 |
+  | 0.4535645 | −0.72569223 | −0.72569256 | −0.72569253 | −0.7256925 |
+
+  The converged values are `ν = −0.7213093` and `−0.7256925`, and `σ` there is `−0.01701` and
+  `+0.28883`, as in the table above. Both match AUTO to `1e-7`.
+- **Why an earlier check differed.** A fixed ball of radius 0.05 around the origin gave
+  `ν = −0.72131951` at `β = 0.6` and `−0.72568945` at `β = 0.4535645`. That radius is a tenth of the
+  orbit's size, and inside it the stable manifold is not flat: its curvature moves the zero of the
+  split by about `1e-5`. A root also needs `|split| → 0` at the end of its bisection.
+  At `β = 0.6` and `ρ = 0.05` a ball around the origin shows a false sign change near
+  `ν = −0.72201`, where the first return jumps to another loop. There the split is of order `1e-2` at the end of the bisection.
+- **Precision.** Use five digits, `−0.72131` and `−0.72569`. AUTO's demo truncates the orbit to a
+  finite interval on a coarse mesh, so it agrees with the converged shooting only to about `1e-7`.
+- **The curve in two parameters (derived).** The oracle follows the zero of the split in `(ν, β)` from
+  the demo's start point with `ρ = 0.05`, inside `ν ∈ [−1.2, −0.4]`, `β ∈ [0.1, 1.0]`. Each step
+  predicts along the tangent and bisects on the sign of the split along the normal. A zero is kept only
+  if the split goes to 0 there. The curve passes `ν = −0.7213079` at `β = 0.6` and `−0.7256922` at
+  `β = 0.4535645`, the `ρ = 0.05` values in the table, within `2e-6` of AUTO's. `σ` changes sign at
+  `β = 0.5912`, and AUTO's neutral saddle-focus is at `0.5912315`.
+- **Where the followed curve ends.** Toward Bogdanov–Takens it stops at `(−0.772953, 0.771588)`, which
+  is 0.0034 from the point, where the step falls below `1e-6` of the box. AUTO's run ends within `1e-4`.
+  The other way it stops at `(−0.772953, 0.306081)` with `σ = 0.659`. Further down the first return
+  changes loop for parameter changes of `1e-3`, so first-return shooting cannot carry on. AUTO's curve
+  continues to the Shilnikov–Hopf point near `β = 0`.
+- At `β = 0.4535645` the old ball also found a second homoclinic orbit at `ν = −0.72695630`, with about
+  twice the return time. The relative test does not reproduce it: for most `ν` below −0.7267 the
+  first return misses the radius, and the split is undefined. Such subsidiary orbits are expected where
+  `σ > 0`, and a first-return shooting does not find them reliably.
+- The engine (`crates/dyn-analysis/src/homoclinic.rs`) reads the return on an ellipsoid in the
+  saddle's own coordinates, long along the unstable eigenvector, and finds more. It locates the
+  orbits at `ν = −0.7213088` and `−0.7256928`, and the subsidiary orbit at `ν = −0.7269565` with a
+  return time of 52.8 against the primary orbit's 36.9, about 1.4 times, not twice. Its curve from
+  the Bogdanov–Takens point ends within `1e-7` of it.
+- AUTO's last points beside the Bogdanov–Takens point, `(−0.7746628, 0.7746453)` and the neutral
+  saddle `(−0.7746686, 0.7746147)`, are not homoclinic orbits of the shooting: at `β = 0.7746147` the
+  split stays near −0.47 and never changes sign. They read as an artefact of AUTO's coarse mesh.
 
 ## Not used
 

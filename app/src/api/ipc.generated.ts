@@ -1019,6 +1019,136 @@ p: [number, number], };
 
 export type Codim2KindOut = "bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopfHopf" | "resonance1" | "resonance2" | "resonance3" | "resonance4" | "chenciner" | "foldFlip" | "generalizedFlip";
 
+export type HomoclinicRequest = { 
+/**
+ * Echoed back, and the job's handle for `cancel_job`.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order, with
+ * `(params[free.0], params[free.1])` at the Bogdanov–Takens point.
+ */
+params: Array<number>, 
+/**
+ * The two free parameters: across, then up.
+ */
+free: [number, number], 
+/**
+ * The box the curve stays in: the across range, then the up range,
+ * each `lo < hi`.
+ */
+ranges: [[number, number], [number, number]], 
+/**
+ * The equilibrium at the Bogdanov–Takens point (`dim` values).
+ */
+x: Array<number>, 
+/**
+ * Which way to follow the curve from the homoclinic orbit found.
+ */
+direction: ContinuationDirection, 
+/**
+ * First step in arclength, `> 0`.
+ */
+ds: number, 
+/**
+ * Largest step, `>= ds`.
+ */
+dsMax: number, 
+/**
+ * Most points in each direction, the first included,
+ * `2..=MAX_HOMOCLINIC_POINTS`.
+ */
+maxPoints: number, };
+
+export type HomoclinicProgress = { 
+/**
+ * The request's `request_id`.
+ */
+requestId: number, 
+/**
+ * Points accepted so far, both directions together.
+ */
+points: number, 
+/**
+ * The across and up parameters of the latest point.
+ */
+p: [number, number], };
+
+export type HomoclinicResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The curve.
+ */
+curve: HomoclinicOut, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type HomoclinicOut = { 
+/**
+ * The across parameter at each point.
+ */
+p1: Array<number>, 
+/**
+ * The up parameter at each point.
+ */
+p2: Array<number>, 
+/**
+ * `points · dim` values: the saddle at each point.
+ */
+x: Array<number>, 
+/**
+ * The saddle quantity `σ` at each point: the sum of the real parts of
+ * the leading unstable and the leading stable eigenvalue.
+ */
+sigma: Array<number>, 
+/**
+ * `true` where the saddle is a saddle-focus: the leading eigenvalues on
+ * the side of the two-or-more-dimensional manifold are complex.
+ */
+focus: Array<boolean>, 
+/**
+ * `true` where the orbit has Shilnikov's chaos nearby: a saddle-focus
+ * whose complex leading pair is weaker than the real eigenvalue, `σ > 0`
+ * when the unstable manifold is the one-dimensional one.
+ */
+chaotic: Array<boolean>, 
+/**
+ * The time the orbit takes from `ε = 1e-6` off the saddle to its first
+ * return, at each point.
+ */
+returnTime: Array<number>, 
+/**
+ * `true` when the stable manifold is the one-dimensional one, followed
+ * in reversed time.
+ */
+reversed: boolean, 
+/**
+ * Why each end of the curve stopped.
+ */
+end: HomoclinicEndOut, };
+
+export type HomoclinicEndOut = { 
+/**
+ * The first point's, with direction `both`; `null` when the first
+ * point is the start.
+ */
+first: HomoclinicStop | null, 
+/**
+ * The last point's.
+ */
+last: HomoclinicStop, };
+
+export type HomoclinicStop = "range" | "maxPoints" | "stepTooSmall" | "shrunk";
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.
@@ -1810,6 +1940,8 @@ export const LYAPUNOV_HISTORY = 2000;
 export const MAX_ORBIT_POINTS = 4000000;
 
 export const MAX_CONTINUATION_POINTS = 20000;
+
+export const MAX_HOMOCLINIC_POINTS = 2000;
 
 export const SAME_BIFURCATION_TOL = 1e-7;
 

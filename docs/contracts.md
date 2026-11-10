@@ -700,6 +700,55 @@ codimension-2 point of its systems 1 to 3, the predator–prey map's Neimark–S
 branch-point curves and Hénon's fold curve against closed forms, a neutral stretch past each
 Bogdanov–Takens point, a closed fold curve, `NoEffect` and an unfolding branch point.
 
+### Homoclinic curves
+
+```rust
+pub struct Saddle { pub x: Vec<f64>, pub eigenvalues: Vec<(f64, f64)>, pub sigma: f64,
+                    pub focus: bool, pub chaotic: bool }
+pub struct HomoclinicOrbit { pub params: Vec<f64>, pub saddle: Saddle, pub reversed: bool,
+                             pub half: Half /* Plus | Minus */, pub return_time: f64 }
+pub fn homoclinic_at(f: &dyn VectorField, params: &[f64], x: &[f64], param: usize,
+                     range: (f64, f64), samples: usize, cancelled: &dyn Fn() -> bool)
+    -> Result<Vec<HomoclinicOrbit>, HomoclinicError>;
+pub fn homoclinic_from_bt(f: &dyn VectorField, params: &[f64], x: &[f64], opts: &CurveOptions,
+                          cancelled: &dyn Fn() -> bool) -> Result<HomoclinicOrbit, HomoclinicError>;
+pub fn continue_homoclinic(f: &dyn VectorField, orbit: &HomoclinicOrbit, opts: &CurveOptions,
+                           cancelled: &dyn Fn() -> bool, progress: &mut dyn FnMut(&HomoclinicPoint))
+    -> Result<Homoclinic, HomoclinicError>;
+pub struct Homoclinic { pub reversed: bool, pub half: Half, pub points: Vec<HomoclinicPoint>,
+                        pub end: HomoclinicEnd /* Range | MaxPoints | StepTooSmall | Shrunk */ }
+pub struct HomoclinicPoint { pub s: f64, pub p: (f64, f64), pub saddle: Saddle, pub return_time: f64 }
+pub enum HomoclinicError { NotAutonomous, Unsupported, NoSaddle, NotFound, Cancelled }
+```
+
+A homoclinic orbit of a flow to a saddle whose unstable manifold is one-dimensional (or, with
+`reversed`, whose stable manifold is, followed in reversed time) is a zero of a split function.
+The orbit is shot from `x* ± 1e−6 v` along the one-dimensional eigenvector `v` and read in the
+saddle's own coordinates, the component along `v` and the rest. The split is the component
+along `v` where the orbit first comes back into an ellipsoid around `x*` whose radii are `0.05`
+and `0.5` of the orbit's largest distance from `x*`, across and along `v`. A sign change of the
+split counts as a root only if the split goes to zero there, so a jump to another loop of the
+orbit is dropped. `homoclinic_at` scans `params[param]` over `range` at `samples` points and
+returns every root it finds, the shortest return time first, so the primary orbit leads and the
+subsidiary orbits with more loops follow. `homoclinic_from_bt` finds the orbit beside a
+Bogdanov–Takens point on a square of half-side `BT_OFFSET = 0.001` of the box around it. It works
+whether the saddle is the equilibrium born at the BT point (a generic BT point) or the BT
+equilibrium itself (a symmetric one, as the Freire circuit's origin). `continue_homoclinic`
+follows the zero in the scaled parameters with `continue_curve`'s step control, one direction by
+the sign of `ds`. A step where the split is undefined is halved.
+
+`Saddle::sigma` is the sum of the real parts of the leading unstable and stable eigenvalues,
+those nearest the imaginary axis. `focus` says the leading eigenvalues on the side of the larger
+manifold are complex. `chaotic` says it is a Shilnikov saddle-focus: `focus`, with the complex
+pair's real part smaller in size than the one-dimensional eigenvalue (`σ > 0` when the unstable
+manifold is the one-dimensional one). A curve ends `Shrunk` where the orbit shrinks onto the
+saddle at a BT point: at its last point `l·v < 1e−3` for the unit left and right eigenvectors of
+the one-dimensional eigenvalue, or the ellipsoid is narrower than the shot's offset.
+`cancelled` is called before each shot and every 256 integration steps, and `Cancelled` returns
+nothing else. `crates/dyn-analysis/tests/homoclinic.rs` checks the Freire circuit's orbits at
+`β = 0.6` and `0.4535645` against AUTO-07p to `5e−6`, the starts at CO oxidation's and
+Lorenz-84's BT points over a grid of seeds and boxes, and that a cancelled run keeps nothing.
+
 ## IPC (Tauri commands)
 
 JSON, camelCase. `app/src-tauri/src/ipc.rs` is the source of the TypeScript types: ts-rs renders
@@ -872,6 +921,33 @@ stand-in has no bisection, so it sends `bracket: null` and indexes each point's 
 The codimension-2 gate (`scripts/codim2-gate.sh`, claims in `app/src-tauri/tests/codim2.rs`)
 follows the curves of docs/codim2-reference.md's systems 1 to 3 with the plane's own requests
 and checks every point the page lists.
+
+### Homoclinic curves in two parameters
+
+`compute_homoclinic` takes `HomoclinicRequest { requestId, systemId, params, free, ranges, x,
+direction, ds, dsMax, maxPoints }`, with `(params[free.0], params[free.1])` and `x` a
+Bogdanov–Takens point of a flow, and a `Channel<HomoclinicProgress>` as `onProgress`. It runs as a
+job: `homoclinic_from_bt` once, then `continue_homoclinic` forward and backward, joined like a
+curve's halves, the backward half reversed and without its start. Each accepted point sends
+`HomoclinicProgress { requestId, points, p }`, with `points` counting both halves together, from
+1 to the joined curve's length. It resolves to `HomoclinicResponse { requestId, curve,
+elapsedMs }` with `curve: HomoclinicOut { p1, p2, x, sigma, focus, chaotic, returnTime, reversed,
+end }`, one entry per point (`x` the saddle, `dim` values per point), and `end.first` and
+`end.last` among `"range"`, `"maxPoints"`, `"stepTooSmall"` and `"shrunk"`. `maxPoints` bounds
+each direction, in `2..=MAX_HOMOCLINIC_POINTS = 2000`.
+
+`cancel_job { requestId }` stops it. It is idempotent and valid before the job starts (the shell
+keeps the flag until the job registers) and after it ends. A cancelled job resolves to `null` and
+keeps nothing, so no partial curve reaches the interface. The interface takes job ids from the
+clock, so no id repeats, not even after a reload. Refusals are sentences, as for
+`compute_curve`: the curve's for a bad request, and for the engine's errors "No equilibrium
+next to this point is a saddle with a one-dimensional unstable or stable manifold; …" and "No
+homoclinic orbit was found next to this point; narrower ranges of `{across}` and `{up}` search
+closer to it." (the parameters by their LaTeX). `app/src-tauri/tests/homoclinic.rs` is part of
+the codimension-2 gate. It starts the Freire circuit from the BT row the plane locates and checks
+its orbits against AUTO-07p. It checks that the CO oxidation and Lorenz-84 curves end at their BT
+points, and the CO curve against the oracle's, which the browser preview draws
+(`mockHomoclinic` in api/mock.ts, from `mockCurves.generated.json`).
 
 ### Cobweb plots and transients
 

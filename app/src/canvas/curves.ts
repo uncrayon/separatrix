@@ -1,4 +1,4 @@
-import type { CurveKindOut, CurveOut } from "../api/types";
+import type { CurveKindOut, CurveOut, HomoclinicOut } from "../api/types";
 import { CODIM2_KINDS, CURVE_KIND_ORDER, type PlanePointRow } from "../state/curves";
 import { frameOnly } from "./branch";
 import { FP_HALO_R, clampPx, drawFixedPoint, drawScene, overlaps, tickLabelBoxes, type Box, type DrawContext } from "./draw";
@@ -10,23 +10,25 @@ import { sx, sy, type Viewport } from "./viewport";
  * units of the line scale `s` (empty is solid). The one place to change a
  * curve's look; the canvas, the legend and the Curves list all read it.
  */
-export const CURVE_STYLES: Record<CurveKindOut, { token: string; dash: number[] }> = {
+export type CurveStyleKey = CurveKindOut | "homoclinic";
+export const CURVE_STYLES: Record<CurveStyleKey, { token: string; dash: number[] }> = {
   fold: { token: "--curve-fold", dash: [] },
   hopf: { token: "--curve-hopf", dash: [8, 3] },
   branchPoint: { token: "--curve-bp", dash: [8, 2.5, 1.5, 2.5, 1.5, 2.5] },
   flip: { token: "--curve-flip", dash: [3, 3] },
   neimarkSacker: { token: "--curve-ns", dash: [8, 3] },
+  homoclinic: { token: "--curve-hom", dash: [8, 3, 1.5, 3] },
 };
 export const CURVE_WIDTH = 1.75;
 /** A stretch where the curve is no bifurcation: its kind's colour, faded and dotted. */
 export const NEUTRAL_STYLE = { alpha: 0.55, width: 1.5, dash: [0, 3.5] };
 
 /** The colour of each curve kind, read from the design tokens now (they change with the theme). */
-export function readCurveColors(): Record<CurveKindOut, string> {
+export function readCurveColors(): Record<CurveStyleKey, string> {
   const css = getComputedStyle(document.documentElement);
   return Object.fromEntries(
-    CURVE_KIND_ORDER.map((k) => [k, css.getPropertyValue(CURVE_STYLES[k].token).trim() || "#888"]),
-  ) as Record<CurveKindOut, string>;
+    [...CURVE_KIND_ORDER, "homoclinic" as const].map((k) => [k, css.getPropertyValue(CURVE_STYLES[k].token).trim() || "#888"]),
+  ) as Record<CurveStyleKey, string>;
 }
 
 /** The runs of segments `i → i+1` that are neutral (both ends neutral) or not, as [from, to, neutral]. */
@@ -42,7 +44,7 @@ export function segmentRuns(neutral: readonly boolean[]): [number, number, boole
 }
 
 export interface CurvesDrawOptions {
-  colors: Record<CurveKindOut, string>;
+  colors: Record<CurveStyleKey, string>;
   points: readonly PlanePointRow[];
   /** The current parameters (across, up). */
   crosshair: [number, number] | null;
@@ -57,6 +59,7 @@ export function drawCurves(
   curves: readonly CurveOut[],
   th: PlotTheme,
   opts: CurvesDrawOptions,
+  homoclinic: readonly Pick<HomoclinicOut, "p1" | "p2">[] = [],
 ): void {
   const frame = frameOnly(opts.avoid ?? [], { kind: "time" });
   drawScene(ctx, vp.left + vp.width, vp.top + vp.height, vp, frame, th, { background: false });
@@ -87,7 +90,7 @@ export function drawCurves(
     ctx.stroke();
   }
 
-  const path = (c: CurveOut, from: number, to: number) => {
+  const path = (c: Pick<CurveOut, "p1" | "p2">, from: number, to: number) => {
     ctx.beginPath();
     for (let i = from; i <= to; i++) {
       const [x, y] = px(c.p1[i], c.p2[i]);
@@ -114,6 +117,9 @@ export function drawCurves(
     ctx.setLineDash(CURVE_STYLES[c.kind].dash.map((d) => d * s));
     for (const [from, to, neutral] of segmentRuns(c.neutral)) if (!neutral) path(c, from, to);
   }
+  ctx.strokeStyle = opts.colors.homoclinic;
+  ctx.setLineDash(CURVE_STYLES.homoclinic.dash.map((d) => d * s));
+  for (const h of homoclinic) path(h, 0, h.p1.length - 1);
   ctx.setLineDash([]);
   const tickLabels = drawResonanceTicks(ctx, vp, curves, th, opts.colors.neimarkSacker);
 

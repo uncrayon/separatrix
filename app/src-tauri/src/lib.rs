@@ -5,6 +5,8 @@
 //! - [`ipc`]: the JSON types, mirroring `app/src/api/types.ts`.
 //! - [`service`]: what the maths commands do, testable without a window.
 //! - [`export_service`]: what the export commands do, testable without a window.
+//! - [`homoclinic_service`]: what `compute_homoclinic` does, testable without a window.
+//! - [`jobs`]: the cancel flags of the jobs `cancel_job` can stop.
 //! - [`files`]: launch arguments, single instance, macOS `Opened`, drops,
 //!   the close guard, the paths the webview may read or write and the
 //!   recent projects.
@@ -22,6 +24,8 @@
 //! | `compute_orbit_diagram` | [`ipc::OrbitDiagramRequest`] | [`ipc::OrbitDiagramResponse`] |
 //! | `compute_continuation` | [`ipc::ContinuationRequest`] | [`ipc::ContinuationResponse`] |
 //! | `compute_curve` | [`ipc::CurveRequest`] | [`ipc::CurveResponse`] |
+//! | `compute_homoclinic` | [`ipc::HomoclinicRequest`], and `onProgress`, a `Channel` of [`ipc::HomoclinicProgress`] | [`ipc::HomoclinicResponse`], or `null` when cancelled |
+//! | `cancel_job` | `requestId`, a job's `request_id` | `()` |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -54,7 +58,9 @@
 
 pub mod export_service;
 pub mod files;
+pub mod homoclinic_service;
 pub mod ipc;
+pub mod jobs;
 pub mod service;
 pub mod updater;
 
@@ -65,6 +71,7 @@ use std::sync::{Arc, Mutex};
 
 use export_service::ExportCache;
 use files::{DocState, GrantedPaths, LaunchFiles, RecentProjects, MAIN_WINDOW};
+use jobs::Jobs;
 use separatrix_export::Placement;
 use service::SystemStore;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State, WindowEvent};
@@ -151,6 +158,33 @@ async fn compute_curve(
 ) -> Result<ipc::CurveResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_curve(&system, &req)).await
+}
+
+/// Follows the homoclinic curve from a Bogdanov–Takens point as job
+/// `req.request_id`, reporting each point it accepts on `on_progress`;
+/// `cancel_job` stops it, and it resolves to `None`.
+#[tauri::command]
+async fn compute_homoclinic(
+    req: ipc::HomoclinicRequest,
+    on_progress: tauri::ipc::Channel<ipc::HomoclinicProgress>,
+    store: State<'_, SystemStore>,
+    jobs: State<'_, Arc<Jobs>>,
+) -> Result<Option<ipc::HomoclinicResponse>, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    let jobs = Arc::clone(&jobs);
+    blocking(move || {
+        homoclinic_service::run_job(&jobs, &system, &req, &mut |p| {
+            // Fails only once the webview is gone, and then nobody listens.
+            let _ = on_progress.send(p);
+        })
+    })
+    .await
+}
+
+/// Cancels job `request_id`, now or as soon as it starts. Idempotent.
+#[tauri::command]
+fn cancel_job(request_id: u64, jobs: State<'_, Arc<Jobs>>) {
+    jobs.cancel(request_id);
 }
 
 // ---------------------------------------------------------------------
@@ -998,6 +1032,7 @@ pub fn run() {
         // before `setup` has finished.
         .manage(SystemStore::new())
         .manage(Arc::new(ExportCache::new()))
+        .manage(Arc::new(Jobs::new()))
         .manage(LaunchFiles::default())
         .manage(DocState::default())
         .manage(GrantedPaths::default())
@@ -1077,6 +1112,8 @@ pub fn run() {
             compute_orbit_diagram,
             compute_continuation,
             compute_curve,
+            compute_homoclinic,
+            cancel_job,
             project_choose_open_path,
             project_read,
             project_choose_save_path,

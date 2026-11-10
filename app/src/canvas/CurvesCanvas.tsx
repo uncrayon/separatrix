@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { CurveKindOut } from "../api/types";
+
 import { Tex } from "../math/Tex";
 import { plainSubscripted } from "../math/format";
 import { Button } from "../components/controls";
@@ -8,14 +8,27 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   CURVE_KINDS,
   CURVE_KIND_ORDER,
+  HOMOCLINIC_LEGEND,
+  HOMOCLINIC_NAME,
   NEUTRAL_LEGEND,
   drawnCurves,
   planePointRows,
   ticksText,
 } from "../state/curves";
+import { drawnHomoclinic } from "../state/homoclinic";
 import { isCurves } from "../state/model";
 import { axisLines } from "./draw";
-import { CURVE_STYLES, CURVE_WIDTH, NEUTRAL_STYLE, cornerBoxes, drawCurves, emptiestCorner, readCurveColors, segmentRuns } from "./curves";
+import {
+  CURVE_STYLES,
+  CURVE_WIDTH,
+  NEUTRAL_STYLE,
+  cornerBoxes,
+  drawCurves,
+  emptiestCorner,
+  readCurveColors,
+  segmentRuns,
+  type CurveStyleKey,
+} from "./curves";
 import { INSET_CAPTION_H, INSET_MARGIN, PlaneInset, insetWidth } from "./PlaneInset";
 import { INSET_ASPECT } from "../state/inset";
 import { usePanZoom, usePlotChrome } from "./usePlotChrome";
@@ -28,7 +41,7 @@ interface Props {
 }
 
 /** A legend or list sample of a curve kind, in its colour and pattern. */
-export function CurveSample({ kind, neutral }: { kind: CurveKindOut; neutral?: boolean }) {
+export function CurveSample({ kind, neutral }: { kind: CurveStyleKey; neutral?: boolean }) {
   const dash = neutral ? NEUTRAL_STYLE.dash : CURVE_STYLES[kind].dash;
   return (
     <svg viewBox="0 0 24 16" aria-hidden="true" className="curve-sample">
@@ -67,11 +80,12 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const aLatex = (plane && compiled?.params[plane.across]?.latex) || across?.name || "p";
   const uLatex = (plane && compiled?.params[plane.up]?.latex) || up?.name || "q";
   const vp = useMemo(() => makeViewport(size.w, size.h, view.xRange, view.yRange), [size.w, size.h, view.xRange, view.yRange]);
-  const [colors, setColors] = useState<Record<CurveKindOut, string> | null>(null);
+  const [colors, setColors] = useState<Record<CurveStyleKey, string> | null>(null);
   useEffect(() => setColors(readCurveColors()), [th]);
 
   const ranges = plane?.curves.ranges ?? FALLBACK_RANGES;
   const curves = useMemo(() => drawnCurves(state.planeRows), [state.planeRows]);
+  const homoclinic = useMemo(() => drawnHomoclinic(state.homoclinicRows), [state.homoclinicRows]);
   const points = useMemo(() => planePointRows(curves, ranges), [curves, ranges]);
   const branch = plane?.branch ?? null;
   const sliceOn = !!plane && !!branch && branch.param === plane.across;
@@ -87,13 +101,13 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
     [acrossValue, upValue],
   );
   const avoid = useMemo(() => [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes], [toolbarBox, nameBoxes]);
-  const empty = !!plane && plane.curves.seeds.length === 0;
+  const empty = !!plane && plane.curves.seeds.length === 0 && plane.curves.homoclinic.length === 0;
   const inset = state.inset;
   const insetW = insetWidth(vp.width);
   const insetTop = (toolbarBox ? toolbarBox[3] : vp.top) + 8;
   const corners = useMemo(
-    () => cornerBoxes(vp, curves, insetW, insetW / INSET_ASPECT + INSET_CAPTION_H, insetTop, INSET_MARGIN),
-    [vp, curves, insetW, insetTop],
+    () => cornerBoxes(vp, [...curves, ...homoclinic], insetW, insetW / INSET_ASPECT + INSET_CAPTION_H, insetTop, INSET_MARGIN),
+    [vp, curves, homoclinic, insetW, insetTop],
   );
   const corner = emptiestCorner(corners, crosshair && [sx(vp, crosshair[0]), sy(vp, crosshair[1])]);
   const ticks = useMemo(() => ticksText(curves.flatMap((c) => c.ticks.map((t) => t.q))), [curves]);
@@ -114,14 +128,21 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
     ctx.fillStyle = th.bg;
     ctx.fillRect(0, 0, size.w, size.h);
     if (empty) return;
-    drawCurves(ctx, vp, curves, th, {
-      colors,
-      points,
-      crosshair,
-      slice: slice && { range: [slice.range[0], slice.range[1]], at: slice.at },
-      avoid,
-    });
-  }, [canvasRef, th, colors, size.w, size.h, plane, empty, vp, curves, points, crosshair, slice, avoid]);
+    drawCurves(
+      ctx,
+      vp,
+      curves,
+      th,
+      {
+        colors,
+        points,
+        crosshair,
+        slice: slice && { range: [slice.range[0], slice.range[1]], at: slice.at },
+        avoid,
+      },
+      homoclinic,
+    );
+  }, [canvasRef, th, colors, size.w, size.h, plane, empty, vp, curves, homoclinic, points, crosshair, slice, avoid]);
 
   const upY = useRef(0);
   const setAt = (clientX: number) => {
@@ -145,7 +166,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const uName = plainSubscripted(uLatex);
   const label = plane
     ? `Parameter plane, ${aName} across from ${view.xRange[0].toPrecision(4)} to ${view.xRange[1].toPrecision(4)}, ${uName} up from ${view.yRange[0].toPrecision(4)} to ${view.yRange[1].toPrecision(4)}; ` +
-      `${curves.map((c) => CURVE_KINDS[c.kind].name).join(", ") || "no curve"}. ${aName} = ${across?.value.toPrecision(4)}, ${uName} = ${up?.value.toPrecision(4)}. Click to set both.`
+      `${[...curves.map((c) => CURVE_KINDS[c.kind].name), ...homoclinic.map(() => HOMOCLINIC_NAME)].join(", ") || "no curve"}. ${aName} = ${across?.value.toPrecision(4)}, ${uName} = ${up?.value.toPrecision(4)}. Click to set both.`
     : "Parameter plane";
 
   const kinds = CURVE_KIND_ORDER.filter((k) => curves.some((c) => c.kind === k));
@@ -208,7 +229,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
         )}
       </div>
       <div className="legend-bar">
-        {(kinds.length > 0 || slice) && (
+        {(kinds.length > 0 || homoclinic.length > 0 || slice) && (
           <ul className="ds-phase-legend caption" aria-label="Legend">
             {kinds.map((k) => (
               <li className="ds-phase-key" key={k}>
@@ -218,6 +239,14 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
                 {CURVE_KINDS[k].legend}
               </li>
             ))}
+            {homoclinic.length > 0 && (
+              <li className="ds-phase-key" key="homoclinic">
+                <span className="ds-phase-sample">
+                  <CurveSample kind="homoclinic" />
+                </span>
+                {HOMOCLINIC_LEGEND}
+              </li>
+            )}
             {neutralKind && (
               <li className="ds-phase-key" key="neutral">
                 <span className="ds-phase-sample">

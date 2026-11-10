@@ -10,6 +10,10 @@ import type {
   Codim2PointOut,
   CompileRequest,
   CompileResponse,
+  HomoclinicOut,
+  HomoclinicProgress,
+  HomoclinicRequest,
+  HomoclinicResponse,
   ContinuationExportRequest,
   ContinuationFigureRequest,
   ContinuationRequest,
@@ -71,6 +75,7 @@ import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
 import { BLOW_UP_THRESHOLD, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
 import { METHODS } from "../state/methods";
 import { roundWithUncertainty } from "../state/model";
+import { SAME_POINT_TOL } from "../state/curves";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -541,7 +546,64 @@ interface MockCurve {
 
 /** By template id; written by `scripts/reference/codim2_reference.py --mock-curves`. Loaded on first use, so the desktop bundle doesn't carry it. */
 const loadMockCurves = async () =>
-  (await import("./mockCurves.generated.json")).default as unknown as Record<string, { free: [number, number]; curves: MockCurve[] }>;
+  (await import("./mockCurves.generated.json")).default as unknown as Record<
+    string,
+    { free: [number, number]; curves: MockCurve[]; homoclinic?: MockHomoclinic[] }
+  >;
+
+/** A homoclinic curve from the Bogdanov–Takens point `bt` (at `x`), as the oracle computed it. */
+interface MockHomoclinic {
+  bt: [number, number];
+  x: number[];
+  curve: HomoclinicOut;
+}
+
+const MOCK_HOMOCLINIC_MESSAGES = 20;
+const MOCK_HOMOCLINIC_MS = 1500;
+const mockCancelled = new Set<number>();
+
+export async function mockCancelJob(requestId: number): Promise<void> {
+  mockCancelled.add(requestId);
+}
+
+/**
+ * `compute_homoclinic` on precomputed data: the curve whose Bogdanov–Takens
+ * point is the request's, announced in about 20 messages over 1.5 s. A
+ * cancel, before or during, resolves to `null` and keeps nothing. The
+ * data is the whole curve: the request's direction, box and Max points
+ * are not applied.
+ */
+export async function mockHomoclinic(
+  req: HomoclinicRequest,
+  onProgress: (p: HomoclinicProgress) => void,
+): Promise<HomoclinicResponse | null> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  const data = (await loadMockCurves())[MOCK_TEMPLATES[req.systemId - 1].id];
+  const [f1, f2] = req.free;
+  const [[lo1, hi1], [lo2, hi2]] = req.ranges;
+  const found = data?.homoclinic?.find(
+    (h) =>
+      data.free[0] === f1 &&
+      data.free[1] === f2 &&
+      Math.abs(h.bt[0] - req.params[f1]) <= SAME_POINT_TOL * (hi1 - lo1) &&
+      Math.abs(h.bt[1] - req.params[f2]) <= SAME_POINT_TOL * (hi2 - lo2),
+  );
+  if (!found)
+    throw new Error(
+      "This browser preview has no homoclinic curve from this Bogdanov–Takens point. Open the desktop app to follow it.",
+    );
+  const n = found.curve.p1.length;
+  for (let k = 1; k <= MOCK_HOMOCLINIC_MESSAGES; k++) {
+    if (mockCancelled.has(req.requestId)) return null;
+    await new Promise((r) => setTimeout(r, MOCK_HOMOCLINIC_MS / MOCK_HOMOCLINIC_MESSAGES));
+    if (mockCancelled.has(req.requestId)) return null;
+    const i = Math.max(0, Math.round((k / MOCK_HOMOCLINIC_MESSAGES) * n) - 1);
+    onProgress({ requestId: req.requestId, points: i + 1, p: [found.curve.p1[i], found.curve.p2[i]] });
+  }
+  return { requestId: req.requestId, curve: found.curve, elapsedMs: performance.now() - started };
+}
 
 /** Seeds farther than this from every curve, in the request's box scale plus the state, have no curve. */
 const MOCK_CURVE_SEED_TOL = 0.03;

@@ -106,6 +106,7 @@ import { fixedPointGlyph } from "../canvas/draw";
 import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
 import { CurveSample } from "../canvas/CurvesCanvas";
+import { FollowHomoclinic, HomoclinicRowItems } from "./HomoclinicRows";
 import {
   CODIM2_KINDS,
   CURVE_KINDS,
@@ -1436,7 +1437,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
         </div>
       )}
       <h3 className="ds-panel-section-subhead label">Curves</h3>
-      {rows.length === 0 ? (
+      {rows.length === 0 && state.homoclinicRows.length === 0 ? (
         <p className="ds-panel-section-hint caption">Curves appear here, one per bifurcation followed.</p>
       ) : (
         <ul className="ds-traj-list" aria-label="Curves" data-curves="">
@@ -1513,6 +1514,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
               </li>
             );
           })}
+          <HomoclinicRowItems state={state} actions={actions} />
         </ul>
       )}
     </PanelSection>
@@ -1565,6 +1567,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
                   <span className="caption inspector-plane-sentence" data-plane-sentence="">
                     {pointSentence(pt, spans)}
                   </span>
+                  <FollowHomoclinic state={state} actions={actions} point={pt} />
                   <span className="caption inspector-plane-on">
                     {onCurvesText(pt.on)}
                     {located && ` · ${located}`}

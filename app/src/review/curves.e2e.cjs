@@ -90,7 +90,7 @@ test("CO oxidation: from an H row in the Branch view to a BT row of the Paramete
 
     const bt = points.first();
     assert.match(await bt.innerText(), /BT Bogdanov–Takens\s+k₂ = 1\.161199 {2}K = 0\.722339/);
-    await bt.getByRole("button").click();
+    await bt.getByRole("button").first().click();
     await page.waitForTimeout(200);
     assert.match(await paramValue(page, "k_2"), /^1\.161/);
     assert.match(await paramValue(page, "K"), /^0\.7223/);
@@ -263,7 +263,7 @@ test("CO oxidation: each special point says what happens there, with its coeffic
     await page.waitForFunction(() => document.querySelector("[data-plane-inset]:not(.is-stale)"));
     assert.match(await inset.locator("figcaption").innerText(), /^k₂ = 1\.050, K = 0\.400\n(One fixed point in view|\d fixed points in view|No fixed point in view)/);
 
-    await bt.first().getByRole("button").click();
+    await bt.first().getByRole("button", { name: /^Bogdanov–Takens: / }).click();
     await page.waitForFunction(() => /K = 0\.722/.test(document.querySelector("[data-plane-inset]:not(.is-stale) figcaption")?.textContent ?? ""));
   } finally {
     await browser.close();
