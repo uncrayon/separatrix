@@ -64,6 +64,7 @@ In the **View** panel, click **Series**. The plot now shows x against t for each
 - [Enter your own equations](equations.md).
 - Try the other views: [phase plane](phase-plane.md), [cobweb](cobweb.md),
   [3D view](3d-view.md), [Poincaré section](poincare-section.md), [Lyapunov spectrum](lyapunov.md),
-  [orbit diagram](orbit-diagram.md) and [continuation](continuation.md).
+  [orbit diagram](orbit-diagram.md), [continuation](continuation.md) and the
+  [Parameter plane](parameter-plane.md).
 - Before a lecture, switch on [projector mode](projector-mode.md).
 - To open the gallery again, click **Templates…** at the top of the window.

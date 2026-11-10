@@ -1,7 +1,7 @@
 # Separatrix user guide
 
-Separatrix draws phase portraits, cobwebs, Poincaré sections, Lyapunov spectra, orbit diagrams and
-bifurcation branches of the systems you type. This guide has one page per task or view. To install
+Separatrix draws phase portraits, cobwebs, Poincaré sections, Lyapunov spectra, orbit diagrams,
+bifurcation branches and curves of bifurcations in two parameters of the systems you type. This guide has one page per task or view. To install
 the app first, follow the guide for [Windows](../install/windows.md), [macOS](../install/macos.md)
 or [Linux](../install/linux.md).
 
@@ -29,7 +29,7 @@ doesn't fit the system is grayed out, and the panel says why.
 | Lyapunov spectrum | λ | [lyapunov.md](lyapunov.md) | [lyapunov.sepx](examples/lyapunov.sepx) |
 | Orbit diagram | Orbit | [orbit-diagram.md](orbit-diagram.md) | [orbit-diagram.sepx](examples/orbit-diagram.sepx) |
 | Continuation | Branch | [continuation.md](continuation.md) | [continuation.sepx](examples/continuation.sepx) |
-| Parameter plane | Parameter plane | [parameter-plane.md](parameter-plane.md) | None yet |
+| Parameter plane | Parameter plane | [parameter-plane.md](parameter-plane.md) | [parameter-plane.sepx](examples/parameter-plane.sepx) |
 
 Each example project opens in its view. Download it and open it with **Open…**, or drop it on the
 Separatrix window.
