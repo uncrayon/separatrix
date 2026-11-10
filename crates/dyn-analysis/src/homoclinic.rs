@@ -347,6 +347,7 @@ fn shoot(
     let mut stepper = Stepper::new(f, p, 0.0, &x0, t_end, &opts);
     let mut buf = vec![0.0; n];
     let mut fx = vec![0.0; n];
+    let mut fx_turn = vec![0.0; n];
     let lv = dot(&lin.l, &lin.v);
     let coordinates = |x: &[f64]| {
         let offset: Vec<f64> = x.iter().zip(xs).map(|(a, b)| a - b).collect();
@@ -387,7 +388,7 @@ fn shoot(
         if was_outward && !now_outward && reach > dmax {
             let tm = bisect_time(t0, t1, |t| {
                 stepper.interpolate(t, &mut buf);
-                outward(&buf, &mut fx)
+                outward(&buf, &mut fx_turn)
             });
             stepper.interpolate(tm, &mut buf);
             dmax = dmax.max(distance(&buf));

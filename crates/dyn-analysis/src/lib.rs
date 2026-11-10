@@ -84,7 +84,7 @@ pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, 
 pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
 pub use homoclinic::{
     continue_homoclinic, homoclinic_at, homoclinic_from_bt, Half, Homoclinic, HomoclinicEnd,
-    HomoclinicError, HomoclinicOrbit, HomoclinicPoint, Saddle, BT_OFFSET, EPSILON, RHO, RHO_U,
+    HomoclinicError, HomoclinicOrbit, HomoclinicPoint, Saddle, BT_OFFSET,
 };
 pub use linalg::eigenvalues;
 pub use lyapunov::{lyapunov_spectrum, LyapunovOptions, LyapunovSpectrum};
