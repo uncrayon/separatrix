@@ -134,6 +134,35 @@ const CONTINUATION: &[F] = &[
     opt("seeds", Ty::List(&Ty::Obj(SEED))),
 ];
 
+const CURVE_SEED: &[F] = &[
+    req("kind", Ty::Str),
+    req("x", Ty::List(&Ty::Num)),
+    opt("period", Ty::U32),
+    opt("params", Ty::NumMap),
+];
+
+const HOMOCLINIC_SEED: &[F] = &[req("x", Ty::List(&Ty::Num)), opt("params", Ty::NumMap)];
+
+const BRANCH: &[F] = &[
+    req("x_axis", Ty::Obj(AXIS)),
+    req("y_axis", Ty::Obj(AXIS)),
+    req("x_range", Ty::Pair),
+    req("y_range", Ty::Pair),
+    opt("continuation", Ty::Nullable(&Ty::Obj(CONTINUATION))),
+    opt("params", Ty::NumMap),
+];
+
+const CURVES: &[F] = &[
+    opt("across_range", Ty::Nullable(&Ty::Pair)),
+    opt("up_range", Ty::Nullable(&Ty::Pair)),
+    opt("ds", Ty::Nullable(&Ty::Num)),
+    opt("max_points", Ty::Nullable(&Ty::U32)),
+    opt("direction", Ty::Nullable(&Ty::Str)),
+    opt("seeds", Ty::List(&Ty::Obj(CURVE_SEED))),
+    opt("homoclinic", Ty::List(&Ty::Obj(HOMOCLINIC_SEED))),
+    opt("branch", Ty::Nullable(&Ty::Obj(BRANCH))),
+];
+
 const VIEW: &[F] = &[
     opt("id", Ty::Str),
     opt("kind", Ty::Nullable(&Ty::Str)),
@@ -148,6 +177,7 @@ const VIEW: &[F] = &[
     opt("lyapunov", Ty::Nullable(&Ty::Obj(LYAPUNOV))),
     opt("orbit", Ty::Nullable(&Ty::Obj(ORBIT))),
     opt("continuation", Ty::Nullable(&Ty::Obj(CONTINUATION))),
+    opt("curves", Ty::Nullable(&Ty::Obj(CURVES))),
     opt("slice", Ty::Obj(SLICE)),
     opt("layers", Ty::Obj(LAYERS)),
 ];

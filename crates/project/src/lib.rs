@@ -32,16 +32,17 @@ pub use io::{
 };
 pub use migrate::{migrate_with, Step, STEPS};
 pub use schema::{
-    ProjectAxis, ProjectCamera, ProjectContinuation, ProjectFile, ProjectInitialCondition,
-    ProjectLayers, ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed,
-    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW,
-    DEFAULT_ZOOM,
+    ProjectAxis, ProjectBranch, ProjectCamera, ProjectContinuation, ProjectCurveSeed,
+    ProjectCurves, ProjectFile, ProjectHomoclinicSeed, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed, ProjectSlice,
+    ProjectSolver, ProjectSystem, ProjectView, DEFAULT_PITCH, DEFAULT_YAW, DEFAULT_ZOOM,
 };
 pub use validate::{
-    cobweb_axes_ok, default_param_range, lyapunov_misfit, orbit_misfit, primary_view_index,
-    range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT, CONTINUATION, LYAPUNOV,
-    LYAPUNOV_MISFIT, ORBIT, ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION,
-    SECTION_MISFIT, SPACE, SPACE_MISFIT, TRANSIENT_MAX,
+    branch_fits, cobweb_axes_ok, curves_misfit, default_param_range, lyapunov_misfit, orbit_misfit,
+    primary_view_index, range_ok, section_misfit, space_misfit, COBWEB, COBWEB_MISFIT,
+    CONTINUATION, CURVES, CURVES_MISFIT, CURVES_MISFIT_BRANCH, LYAPUNOV, LYAPUNOV_MISFIT, ORBIT,
+    ORBIT_KEPT_MAX, ORBIT_MISFIT, ORBIT_TRANSIENT_MAX, SECTION, SECTION_MISFIT, SPACE,
+    SPACE_MISFIT, TRANSIENT_MAX,
 };
 
 /// The value of the `format` key.
@@ -96,6 +97,10 @@ mod bindings {
             ProjectOrbit::decl(&cfg),
             ProjectContinuation::decl(&cfg),
             ProjectSeed::decl(&cfg),
+            ProjectCurves::decl(&cfg),
+            ProjectCurveSeed::decl(&cfg),
+            ProjectHomoclinicSeed::decl(&cfg),
+            ProjectBranch::decl(&cfg),
         ];
         for d in &decls {
             assert!(!d.contains("extra"), "{d}");
@@ -150,6 +155,28 @@ mod bindings {
             decls[4].contains("x_range: [number, number]"),
             "{}",
             decls[4]
+        );
+        assert!(decls[4].contains("curves?: ProjectCurves"), "{}", decls[4]);
+        assert!(
+            decls[15].contains("up_range?: [number, number]"),
+            "{}",
+            decls[15]
+        );
+        assert!(
+            decls[15].contains("branch?: ProjectBranch"),
+            "{}",
+            decls[15]
+        );
+        assert!(
+            decls[16].contains("params: { [key in string]: number }"),
+            "{}",
+            decls[16]
+        );
+        assert!(decls[17].contains("x: Array<number>"), "{}", decls[17]);
+        assert!(
+            decls[18].contains("continuation?: ProjectContinuation"),
+            "{}",
+            decls[18]
         );
     }
 }

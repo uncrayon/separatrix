@@ -5,12 +5,12 @@ mod common;
 use common::{fixture, APP};
 use separatrix_project::{
     from_value_checked, parse, parse_named, to_json, Opened, ProjectAxis, ProjectError,
-    ProjectFile, CURRENT_VERSION, LYAPUNOV_MISFIT, MAX_FILE_BYTES, ORBIT_MISFIT, SECTION_MISFIT,
-    SPACE_MISFIT,
+    ProjectFile, CURRENT_VERSION, CURVES_MISFIT, CURVES_MISFIT_BRANCH, LYAPUNOV_MISFIT,
+    MAX_FILE_BYTES, ORBIT_MISFIT, SECTION_MISFIT, SPACE_MISFIT,
 };
 use serde_json::{json, Value};
 
-const GOOD: [&str; 11] = [
+const GOOD: [&str; 12] = [
     "rabbits-vs-sheep.sepx",
     "cobweb.sepx",
     "section-view.sepx",
@@ -18,6 +18,7 @@ const GOOD: [&str; 11] = [
     "lyapunov-view.sepx",
     "orbit-view.sepx",
     "continuation-view.sepx",
+    "curves-view.sepx",
     "float-integers.sepx",
     "lorenz-text-mode.sepx",
     "unknown-fields.sepx",
@@ -25,7 +26,7 @@ const GOOD: [&str; 11] = [
 ];
 
 /// Fixtures stored exactly as this build writes them.
-const CANONICAL: [&str; 8] = [
+const CANONICAL: [&str; 9] = [
     "rabbits-vs-sheep.sepx",
     "lorenz-text-mode.sepx",
     "cobweb.sepx",
@@ -34,6 +35,7 @@ const CANONICAL: [&str; 8] = [
     "lyapunov-view.sepx",
     "orbit-view.sepx",
     "continuation-view.sepx",
+    "curves-view.sepx",
 ];
 
 fn open(name: &str) -> Opened {
@@ -1595,5 +1597,242 @@ fn a_branch_plot_names_a_parameter_the_system_has() {
     assert_eq!(
         opened.project.views[0].continuation.as_ref().unwrap().seeds[0].period,
         1
+    );
+}
+
+#[test]
+fn curves_view_round_trips_byte_for_byte() {
+    let name = "curves-view.sepx";
+    let opened = open(name);
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let view = &opened.project.views[0];
+    assert_eq!(view.kind.as_deref(), Some("curves"));
+    assert_eq!(view.x_axis, ProjectAxis::param("k_2"));
+    assert_eq!(view.y_axis, ProjectAxis::param("K"));
+    let c = view.curves.as_ref().unwrap();
+    assert_eq!(
+        (
+            c.across_range,
+            c.up_range,
+            c.ds,
+            c.max_points,
+            c.direction.as_deref()
+        ),
+        (
+            Some([0.5, 2.5]),
+            Some([0.0, 2.0]),
+            Some(0.01),
+            Some(2000),
+            Some("both")
+        )
+    );
+    let seeds: Vec<_> = c
+        .seeds
+        .iter()
+        .map(|s| (s.kind.as_str(), s.period, s.params["k_2"], s.params["K"]))
+        .collect();
+    assert_eq!(
+        seeds,
+        [
+            ("hopf", 1, 1.040991569531932, 0.4),
+            ("fold", 1, 1.0420485053785267, 0.4),
+            ("hopf", 1, 1.051557462459076, 0.4),
+            ("fold", 1, 1.0522002878699546, 0.4),
+        ]
+    );
+    assert_eq!(c.homoclinic.len(), 1);
+    assert_eq!(c.homoclinic[0].params["K"], 0.72233907);
+    let branch = c.branch.as_ref().unwrap();
+    assert_eq!(branch.x_axis, ProjectAxis::param("k_2"));
+    assert_eq!(branch.continuation.as_ref().unwrap().seeds.len(), 3);
+    assert_eq!(
+        branch.params.iter().collect::<Vec<_>>(),
+        [(&"K".to_string(), &0.4), (&"k_2".to_string(), &1.05)]
+    );
+    assert_eq!(to_json(&opened.project, APP).unwrap(), fixture(name));
+
+    let mut v = value(&fixture(name));
+    v["views"][0]["curves"]["seeds"][0]["label"] = json!("the first Hopf point");
+    v["views"][0]["curves"]["homoclinic"][0]["label"] = json!("BT1");
+    v["views"][0]["curves"]["branch"]["note"] = json!(true);
+    v["views"][0]["curves"]["ds_max"] = json!(0.02);
+    let opened = parse(&v.to_string()).unwrap();
+    assert!(opened.warnings.is_empty(), "{:?}", opened.warnings);
+    let back = value(&to_json(&opened.project, APP).unwrap());
+    assert_eq!(back["views"][0], v["views"][0]);
+}
+
+#[test]
+fn a_curves_seed_that_does_not_fit_is_left_out() {
+    let base = value(&fixture("curves-view.sepx"));
+    let open_edited = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap()
+    };
+    let kept = |o: &Opened| -> (Vec<String>, usize) {
+        let c = o.project.views[0].curves.as_ref().unwrap();
+        (
+            c.seeds.iter().map(|s| s.kind.clone()).collect(),
+            c.homoclinic.len(),
+        )
+    };
+    let curve = |n: usize| {
+        format!(
+            "The saved Parameter plane's curve {n} doesn't fit this system, so it was left out."
+        )
+    };
+    let homoclinic = "The saved Parameter plane's homoclinic curve 1 doesn't fit this system, so it was left out.";
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    /// An edit, the warnings it gives, and the seed kinds and homoclinic seeds kept.
+    type Case<'a> = (&'a str, Edit<'a>, Vec<String>, (Vec<&'a str>, usize));
+    let misfits: [Case; 6] = [
+        (
+            "two values for three states",
+            &|v| v["views"][0]["curves"]["seeds"][1]["x"] = json!([0.1, 0.2]),
+            vec![curve(2)],
+            (vec!["hopf", "hopf", "fold"], 1),
+        ),
+        (
+            "a flip curve of a flow",
+            &|v| v["views"][0]["curves"]["seeds"][0]["kind"] = json!("flip"),
+            vec![curve(1)],
+            (vec!["fold", "hopf", "fold"], 1),
+        ),
+        (
+            "no value for K, the parameter up",
+            &|v| {
+                v["views"][0]["curves"]["seeds"][2]["params"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("K");
+            },
+            vec![curve(3)],
+            (vec!["hopf", "fold", "fold"], 1),
+        ),
+        (
+            "a period of 0",
+            &|v| v["views"][0]["curves"]["seeds"][3]["period"] = json!(0),
+            vec![curve(4)],
+            (vec!["hopf", "fold", "hopf"], 1),
+        ),
+        (
+            "a homoclinic seed without k_2",
+            &|v| {
+                v["views"][0]["curves"]["homoclinic"][0]["params"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("k_2");
+            },
+            vec![homoclinic.to_string()],
+            (vec!["hopf", "fold", "hopf", "fold"], 0),
+        ),
+        (
+            "a map: no Hopf curve and no homoclinic orbit",
+            &|v| v["system"]["kind"] = json!("map"),
+            vec![curve(1), curve(3), homoclinic.to_string()],
+            (vec!["fold", "fold"], 0),
+        ),
+    ];
+    for (why, edit, warnings, (kinds, homoclinic)) in misfits {
+        let opened = open_edited(edit);
+        assert_eq!(opened.warnings, warnings, "{why}");
+        assert_eq!(
+            kept(&opened),
+            (kinds.iter().map(|k| k.to_string()).collect(), homoclinic),
+            "{why}"
+        );
+    }
+    let newer = open_edited(&|v| v["views"][0]["curves"]["seeds"][0]["kind"] = json!("cycleFold"));
+    assert!(
+        newer.warnings.is_empty(),
+        "the app judges a kind it may not know: {:?}",
+        newer.warnings
+    );
+    let one_param = open_edited(&|v| {
+        v["views"][0]["curves"]["seeds"][0]["params"] = json!({ "k_2": 1.04, "K": 0.4 });
+        v["system"]["params"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "id": "c", "value": 1.0 }));
+    });
+    assert_eq!(
+        one_param
+            .warnings
+            .iter()
+            .filter(|w| w.contains("Parameter plane"))
+            .collect::<Vec<_>>(),
+        [homoclinic],
+        "a curve seed needs only the two free parameters; a homoclinic seed needs all"
+    );
+}
+
+#[test]
+fn a_plane_that_does_not_fit_falls_back_to_its_branch_view_else_the_default_view() {
+    let base = value(&fixture("curves-view.sepx"));
+    let warns = |edit: &dyn Fn(&mut Value)| {
+        let mut v = base.clone();
+        edit(&mut v);
+        parse(&v.to_string()).unwrap().warnings
+    };
+    assert_eq!(
+        warns(&|v| v["system"]["params"][1]["id"] = json!("L")),
+        ["The saved Parameter plane uses the parameter K, which the system doesn't have, so the Branch view it came from is shown."]
+    );
+    assert_eq!(
+        warns(&|v| {
+            v["system"]["params"][1]["id"] = json!("L");
+            v["views"][0]["curves"]
+                .as_object_mut()
+                .unwrap()
+                .remove("branch");
+        }),
+        ["The saved Parameter plane uses the parameter K, which the system doesn't have, so the default view is shown."]
+    );
+    type Edit<'a> = &'a dyn Fn(&mut Value);
+    let misfits: [(&str, Edit); 7] = [
+        ("an empty plot range", &|v| {
+            v["views"][0]["x_range"] = json!([1.2, 1.2])
+        }),
+        ("an unknown direction", &|v| {
+            v["views"][0]["curves"]["direction"] = json!("sideways")
+        }),
+        ("the same parameter across and up", &|v| {
+            v["views"][0]["y_axis"]["name"] = json!("k_2")
+        }),
+        ("a state up", &|v| {
+            v["views"][0]["y_axis"] = json!({ "kind": "state", "name": "x" })
+        }),
+        ("an empty box", &|v| {
+            v["views"][0]["curves"]["up_range"] = json!([1.0, 1.0])
+        }),
+        ("no step", &|v| {
+            v["views"][0]["curves"]
+                .as_object_mut()
+                .unwrap()
+                .remove("ds");
+        }),
+        ("one point", &|v| {
+            v["views"][0]["curves"]["max_points"] = json!(1)
+        }),
+    ];
+    for (why, edit) in misfits {
+        assert_eq!(warns(edit), [CURVES_MISFIT_BRANCH], "{why}");
+        let gone = |v: &mut Value| {
+            edit(v);
+            v["views"][0]["curves"]["branch"]["y_axis"]["name"] = json!("w");
+        };
+        assert_eq!(
+            warns(&gone),
+            [CURVES_MISFIT],
+            "{why}, with a Branch view that doesn't fit either"
+        );
+    }
+    let mut v = base.clone();
+    v["views"][0]["curves"]["seeds"][0]["params"]["K"] = json!("0.4");
+    let err = parse(&v.to_string()).unwrap_err().to_string();
+    assert!(
+        err.contains("views[0].curves.seeds[0].params.K should be a number, not \"0.4\""),
+        "{err}"
     );
 }

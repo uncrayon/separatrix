@@ -83,16 +83,17 @@ from the `project_read` and `project_write` commands.
 | Key | Type | Meaning |
 |---|---|---|
 | `id` | string | Unique among the views. |
-| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` \| `"lyapunov"` \| `"orbit"` \| `"continuation"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section, a 3D, a Lyapunov, an orbit or a continuation view, after `id`. |
+| `kind` | `"plane"` \| `"cobweb"` \| `"section"` \| `"space"` \| `"lyapunov"` \| `"orbit"` \| `"continuation"` \| `"curves"` | Absent = `"plane"`: the phase plane and the time series, which the axes tell apart. Written only for a cobweb, a section, a 3D, a Lyapunov, an orbit, a continuation or a Parameter plane view, after `id`. |
 | `section` | object | Only in a `"section"` view, after `kind`: the Poincaré section (below). |
 | `z_axis` | `{ "kind": "state", "name": "z" }` | Only in a `"space"` view, after `y_axis`: the third state of the 3D view. |
-| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` \| `{ "kind": "exponent" }` \| `{ "kind": "param", "name": "r" }` \| `{ "kind": "norm" }` | Axes are stored by state (or parameter) name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. `exponent` is λ, the `y_axis` of a Lyapunov view, whose `x_axis` is time. `param` is a parameter by its id, the `x_axis` of an orbit diagram, whose `y_axis` is a state, or of a branch plot. `norm` is ‖x‖₂, the Euclidean norm of the state, a `y_axis` of a branch plot. |
+| `x_axis`, `y_axis` | `{ "kind": "state", "name": "x" }` \| `{ "kind": "time" }` \| `{ "kind": "next", "name": "x" }` \| `{ "kind": "exponent" }` \| `{ "kind": "param", "name": "r" }` \| `{ "kind": "norm" }` | Axes are stored by state (or parameter) name, never by index. `next` is the state one iterate later: `x_{n+1}` as the `y_axis` of a cobweb view, or the next crossing `x_{k+1}` as the `y_axis` of a section's return map; either way the `x_axis` is `{ "kind": "state" }` of the same state. `exponent` is λ, the `y_axis` of a Lyapunov view, whose `x_axis` is time. `param` is a parameter by its id, the `x_axis` of an orbit diagram, whose `y_axis` is a state, or of a branch plot, and both axes of a Parameter plane. `norm` is ‖x‖₂, the Euclidean norm of the state, a `y_axis` of a branch plot. |
 | `x_range`, `y_range` | `[lo, hi]` | The user's ranges (not the ones equalized for the plot's aspect). |
 | `z_range` | `[lo, hi]` | Only in a `"space"` view, after `y_range`: the range of `z_axis`. |
 | `camera` | `{ "yaw": number, "pitch": number, "zoom": number }` | Only in a `"space"` view, after `z_range`: where the box is seen from (below). |
 | `lyapunov` | `{ "transient", "total", "interval", "blocks" }` | Only in a `"lyapunov"` view, after the ranges: the run whose running estimates it shows (below). |
 | `orbit` | `{ "transient", "kept" }` | Only in an `"orbit"` view, after the ranges: the iterates dropped and drawn in every column of the orbit diagram (below). |
 | `continuation` | `{ "range", "ds", "max_points", "seeds" }` | Only in a `"continuation"` view, after the ranges: the requests the branch plot replays (below). |
+| `curves` | `{ "across_range", "up_range", "ds", "max_points", "direction", "seeds", "homoclinic", "branch" }` | Only in a `"curves"` view, after the ranges: the requests the Parameter plane replays and the Branch view it came from (below). |
 | `slice` | `{ "states": { name: value }, "t": number }` | The values of the states that aren't on an axis, and the time the field is drawn at. |
 | `layers` | object | `field`, `field_grid` (arrows per side, 2–200), `nullclines`, `fixed_points`, `backward`. |
 
@@ -262,6 +263,83 @@ with no `tangent` or one of the wrong length, is left out with "The saved contin
 doesn't fit this system, so it was left out." (the seed's position, from 1). Unknown keys inside
 `continuation` and each seed are kept.
 
+A Parameter plane (view kind `curves`) of the CO oxidation model: `k_2` across, `K` up, the fold
+and Hopf curves followed from the four points the Branch view over `k_2` found at `K = 0.4`, and
+a homoclinic curve from the Bogdanov–Takens point at `(k_2, K) ≈ (1.16120, 0.72234)`
+(`crates/project/tests/fixtures/curves-view.sepx`, abridged):
+
+```json
+{
+  "id": "main",
+  "kind": "curves",
+  "x_axis": { "kind": "param", "name": "k_2" },
+  "y_axis": { "kind": "param", "name": "K" },
+  "x_range": [0.6605993315005815, 1.7046002101563948],
+  "y_range": [0.05432962459999999, 2.1101322854],
+  "curves": {
+    "across_range": [0.5, 2.5],
+    "up_range": [0.0, 2.0],
+    "ds": 0.01,
+    "max_points": 2000,
+    "direction": "both",
+    "seeds": [
+      { "kind": "hopf", "x": [0.07792777059959122, 0.2330649301279717, 0.4921480709088836],
+        "period": 1, "params": { "K": 0.4, "k_2": 1.040991569531932 } },
+      "…": "the fold at k_2 = 1.0420485, the Hopf point at 1.0515575 and the fold at 1.0522003"
+    ],
+    "homoclinic": [
+      { "x": [0.016337039, 0.63840988, 0.20045593], "params": { "K": 0.72233907, "k_2": 1.1611987 } }
+    ],
+    "branch": {
+      "x_axis": { "kind": "param", "name": "k_2" },
+      "y_axis": { "kind": "state", "name": "x" },
+      "x_range": [0.42, 2.58],
+      "y_range": [-0.49148179322098895, 0.6806655329038447],
+      "continuation": { "range": [0.5, 2.5], "ds": 0.02, "max_points": 500, "seeds": ["…"] },
+      "params": { "K": 0.4, "k_2": 1.05 }
+    }
+  },
+  "…": "slice and layers as in any view; the plane draws neither"
+}
+```
+
+`x_axis` is the parameter across and `y_axis` the parameter up, two different parameters of the
+system, each `{ "kind": "param", "name": … }`. `x_range` and `y_range` are the plot's ranges in
+those parameters. Every other parameter keeps its value from `system.params`.
+
+| `curves` key | Type | Meaning |
+|---|---|---|
+| `across_range`, `up_range` | `[lo, hi]` | The box the curves stay in: the range of the parameter across, then of the one up. |
+| `ds` | number | The first step in arclength. |
+| `max_points` | integer | The most points of a curve in each direction. |
+| `direction` | `"forward"` \| `"backward"` \| `"both"` | Which way every curve is followed from its seed. |
+| `seeds` | list | One per curve, in the order they were followed (below). |
+| `homoclinic` | list | One per homoclinic curve, a flow's only (below). Written empty when there is none. |
+| `branch` | object | The Branch view the plane came from (below). Absent when the plane wasn't opened from one. |
+
+| Seed key | Type | Meaning |
+|---|---|---|
+| `kind` | `"fold"` \| `"hopf"` \| `"branchPoint"` \| `"flip"` \| `"neimarkSacker"` | The bifurcation the curve is made of. A map has no Hopf curve and a flow no flip or Neimark–Sacker curve; a system of one state has neither a Hopf nor a Neimark–Sacker curve. |
+| `x` | list of numbers | The state at the bifurcation, one value per entry of `system.states` (the cycle's first point for a map). |
+| `period` | integer ≥ 1 | `k` of `f^k` for a map, 1 for a flow. Absent = 1. |
+| `params` | `{ name: value }` | Every parameter's value at the bifurcation, by name, so the seed keeps its meaning whichever two parameters are free. The two on the axes must be there; the request takes every other one from its slider, so a missing one does no harm. |
+
+A homoclinic seed has the keys `x`, the equilibrium at the Bogdanov–Takens point, and `params`,
+every parameter's value there by name. The request takes all of them from the seed, not from the
+sliders: a Bogdanov–Takens point is isolated, so moving a parameter that isn't free would leave
+it. Its computed curve is not saved: opening the file follows it again, which takes seconds.
+
+`branch` has the keys of a `"continuation"` view (`x_axis`, `y_axis`, `x_range`, `y_range` and
+`continuation`), and `params`, every parameter's value by name when the plane opened from it, which
+its branches were computed at. Its `continuation.range` is the slice the plane draws across, at
+the value of the parameter up in `params` (empty when the values are not known; then no slice is
+drawn). Choosing the Branch view after opening the file shows this view.
+
+The seeds are saved, never the computed curves or their special points, so the file stays small
+and opening it replays the same requests. Unknown keys inside `curves`, each seed and `branch` are
+kept. A seed of a kind this version doesn't know is left out of the plane with a warning and
+written back after the others.
+
 | `section` key | Type | Meaning |
 |---|---|---|
 | `kind` | `"plane"` \| `"stroboscopic"` | A plane `x_i = c`, or the state once per forcing period. |
@@ -313,6 +391,13 @@ axes; this build reads the plane view those axes say and drops the stale `orbit`
 diagrams (trunk before branch plots) opens a continuation view with its view-kind warning, "The
 saved cobweb view doesn't fit this system, so the default view is shown.", shows its default view
 and keeps `kind` and `continuation` as unknown keys.
+
+`curves` is additive in the same way, so `format_version` and `min_reader_version` stay 1 and no
+migration step is needed. Separatrix 1.0, the reader that knows branch plots, opens a Parameter
+plane with its view-kind warning, "The saved cobweb view doesn't fit this system, so the default
+view is shown.", shows its default view and keeps `kind` and `curves` as unknown keys. Its studio
+drops `kind` when it saves from its default view and writes its own axes; this build reads the
+plane view those axes say and drops the stale `curves` on its next save.
 
 The **primary view** is the one with id `main`, otherwise the first. Version 1 edits only the
 primary view and writes it back under its own id; other views are kept verbatim.
@@ -403,6 +488,8 @@ Everything else is repaired on open, with one warning per repair:
 | A primary `"lyapunov"` view with no `lyapunov` or a key of it missing, axes other than `time` across and `exponent` up, a negative `transient`, a `total` or `interval` that isn't above 0 (or isn't a whole number for a map), or `blocks` outside 2 to the number of QR steps | "The saved Lyapunov view can't be run as saved, so the default view is shown." The app gives the same sentence when it judges the run itself, and also when the run would take more than 10⁷ QR steps. An `exponent` axis outside a Lyapunov view is an axis kind the view doesn't know. The view is kept as written. |
 | A primary `"orbit"` view of a flow, with no `orbit` or a key of it missing, a `transient` above 100,000, a `kept` outside 1–976, an `x_axis` other than a `param` the system has, or a `y_axis` other than a state it has | "The saved orbit diagram doesn't fit this system, so the default view is shown." The app gives the same sentence when the compiled system can't take the view. A `param` axis outside an orbit diagram is an axis kind the view doesn't know. A `transient` or `kept` that isn't a whole number makes the file unreadable, as any wrongly typed key does. The view is kept as written. |
 | A seed of the primary `"continuation"` view whose `x` doesn't have one value per state (only when `states` is present), or a switch seed with no `tangent` or a `tangent` without `x` + 1 values | "The saved continuation's branch N doesn't fit this system, so it was left out." The seed is dropped; the other seeds are kept in order. A `param` axis naming a parameter the system lacks gets the axis warning ("uses the parameter mu, which the system doesn't have"). |
+| A seed of the primary `"curves"` view whose `x` doesn't have one value per state (only when `states` is present), whose `period` is 0, whose `kind` the system can't have (by `system.kind` and the number of states), or whose `params` lack either parameter on the axes; a homoclinic seed of a map, or whose `x` doesn't fit, or whose `params` lack a parameter of `system.params` | "The saved Parameter plane's curve N doesn't fit this system, so it was left out." or "The saved Parameter plane's homoclinic curve N doesn't fit this system, so it was left out." (the seed's position in its list, from 1). The seed is dropped; the others are kept in order. The app gives the same sentences when the compiled system can't take a seed. |
+| A primary `"curves"` view whose axes are not two different parameters the system has, of a system with fewer than two parameters, with an empty `x_range` or `y_range`, or whose `curves` lacks a box with lo < hi, a `ds` above 0, a `max_points` of 2 or more or a known `direction` | "The saved Parameter plane doesn't fit this system, so the Branch view it came from is shown." when `branch` fits the system (a parameter it has across, a state it has or the norm up, usable ranges, a continuation with a usable range, `ds` and `max_points`), otherwise "…, so the default view is shown." A parameter the system lacks is named: "The saved Parameter plane uses the parameter K, which the system doesn't have, so …". The seeds are then not judged. The app gives the same sentences when it judges the view itself, also for a system that changes with `t` or `n` and for more than 20,000 points. The view is kept as written. |
 | Unknown solver `method` | `dopri5` (Dormand–Prince 5(4)). |
 | `rtol` or `atol` ≤ 0, `h` < 0, `t_end` ≤ 0 | The default (1e-6, 1e-9, 0, 20). |
 | `max_steps` outside 1–10⁷, `samples` above 200 000 | Clamped. |
