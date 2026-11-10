@@ -1,33 +1,63 @@
-# Release checklist for v1.0.0
+# Release checklist for v1.1.0
 
-These are the steps that only the owner can take, because they need the GitHub and PyPI accounts,
-the updater's private key, or a real Mac and a real Windows PC. Do them in order. Tick each box when
-its **Done when** line is true.
+Version 1.1.0 adds the Parameter plane: curves of bifurcations in two parameters, the points where
+they meet, homoclinic curves, its exports and its place in project files. Everything in it is on
+`main` and passes every check. These are the steps that only the owner can take, because they
+need the GitHub account, the updater's private key, a Linux machine for the screenshots, or a real
+Mac and a real Windows PC. Do them in order. Tick each box when its **Done when** line is true.
+The checklist for v1.0.0 is in the history of this file.
 
-Before you start, run `bash scripts/release-check.sh` on `main`. Every row must read `PASS`.
+The updater key from v1.0.0 must still be in the repository secrets, `TAURI_SIGNING_PRIVATE_KEY`
+and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and the five Apple secrets of
+[Sign and notarize the Mac app](macos-signing.md). A build signed with any other key can't update
+a 1.0.x install.
 
-To sign and notarize the Mac app, add the five Apple secrets in
-[Sign and notarize the Mac app](macos-signing.md) before the build that people will install.
+1. [ ] **Check `main`.** Pull `main` and run `bash scripts/release-check.sh`, with the gates.
 
-1. [ ] **Add the updater key.** Follow [Turn on automatic updates](updater.md): create the key, keep
-   two offline backups, add the `TAURI_SIGNING_PRIVATE_KEY` and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets, then put the public key in
-   `app/src-tauri/tauri.conf.json` and push the commit to `main`. Do this before any build that
-   people will install. A copy built without the key can never update itself.
+   **Done when** every row reads `PASS`, the four gates among them.
 
-   **Done when** `bash scripts/release-check.sh --skip-gates` prints
-   `PASS  updater-off-without-key: a minisign pubkey is configured, so the updater is on`, and both
-   secrets appear under **Settings** > **Secrets and variables** > **Actions**.
+2. [ ] **Set the version to 1.1.0.** Change `version` to `1.1.0` in `[workspace.package]` of
+   `Cargo.toml` and in `app/package.json`, then run `npm install` in `app/` so that
+   `app/package-lock.json` follows. `tauri.conf.json` inherits the version. Then run
+   `bash scripts/release-check.sh --skip-gates`: the `install-guides` row names any asset in
+   `docs/install/*.md` that still says 1.0.1. Change those names to 1.1.0.
 
-2. [ ] **Run the Release workflow for a test build.** On GitHub, open **Actions**, click
+   **Done when** the `versions` row reads `PASS  versions: 1.1.0 in Cargo, package.json,
+   package-lock.json; tauri.conf.json inherits` and the `install-guides` row reads `PASS`.
+
+3. [ ] **Take the Parameter plane's screenshot.** On a Linux machine with Xvfb and ImageMagick,
+   build the app with the bundled UI and run the screenshot script, as its header says:
+
+   ```sh
+   cd app && npm run build && cd ..
+   cargo build --release -p separatrix --features tauri/custom-protocol
+   bash scripts/docs-screenshots.sh
+   ```
+
+   It opens `docs/guide/examples/parameter-plane.sepx` and saves `docs/media/parameter-plane.png`,
+   and retakes the other views. Keep the other screenshots unless the app changed how they look.
+   Then run `bash site/media.sh` (it needs ffmpeg with libwebp) to make the web copy and its
+   entry in `site/media/manifest.json`.
+
+   **Done when** `docs/media/parameter-plane.png` shows CO oxidation's fold and Hopf curves with
+   their Bogdanov–Takens points, and `cd site && npm ci && npm run build` prints no warning about
+   `parameter-plane`.
+
+4. [ ] **Date the changelog.** In `CHANGELOG.md`, change `## [Unreleased]` to
+   `## [1.1.0] - YYYY-MM-DD` with today's date. Commit the version, the screenshots and the date,
+   and push them to `main`.
+
+   **Done when** `main` on GitHub shows the dated heading, the new version and the new screenshot.
+
+5. [ ] **Run the Release workflow for a test build.** On GitHub, open **Actions**, click
    **Release**, click **Run workflow**, choose `main`, and click **Run workflow**. The run ends with
-   a draft release named **Separatrix 1.0.0**.
+   a draft release named **Separatrix 1.1.0**.
 
    **Done when** all five jobs of the run are green and the draft release lists seven installers,
-   `Separatrix_1.0.0_macos_universal.app.tar.gz`, the `.sig` signature files, `latest.json` and
+   `Separatrix_1.1.0_macos_universal.app.tar.gz`, the `.sig` signature files, `latest.json` and
    `SHA256SUMS.txt`.
 
-3. [ ] **Download the draft and check the checksums.** Open the draft on the **Releases** page,
+6. [ ] **Download the draft and check the checksums.** Open the draft on the **Releases** page,
    download every file into one empty folder, and run `sha256sum -c SHA256SUMS.txt` in that folder
    (on a Mac, `shasum -a 256 -c SHA256SUMS.txt`).
 
@@ -35,45 +65,36 @@ To sign and notarize the Mac app, add the five Apple secrets in
    (the AppImage), `linux-x86_64-deb`, `linux-x86_64-rpm`, `windows-x86_64` (the setup `.exe`),
    `windows-x86_64-msi`, `darwin-x86_64` and `darwin-aarch64`.
 
-4. [ ] **Test on a real Mac with macOS Sequoia.** Follow [the macOS guide](install/macos.md) word for
-   word with the draft's `.dmg`, and correct any step or button name that differs. Then check that
-   each of these works:
-   - **Open…** in the gallery, **⌘O**, dragging a `.sepx` onto the window and onto the Dock icon,
-     and double-clicking a `.sepx` in the Finder.
-   - The **Recent** list in the gallery after you quit and start Separatrix again.
-   - Choosing a value from a dropdown, such as **Solver**, and then clicking the plot once adds a
-     trajectory on that first click.
-   - **Separatrix** > **Check for Updates…** in the menu bar opens the update panel. Until v1.0.0
-     is published, the panel says it couldn't check for updates. That is expected.
-   - With Wi-Fi turned off, Separatrix starts as fast as with it on.
+7. [ ] **Test the Parameter plane on a real Mac.** Install the draft's `.dmg` over 1.0.1, then
+   check each of these:
+   - Open `docs/guide/examples/parameter-plane.sepx`. It opens in the Parameter plane with CO
+     oxidation's fold and Hopf curves, and **Special points** lists two BT, a CP and two GH rows,
+     each with its sentence.
+   - The first BT row reads `k₂ = 1.161199  K = 0.722339` and `a = 0.0482, b = 1.9376 · ab > 0`.
+   - On that row, **Follow homoclinic** draws a homoclinic curve, and **Cancel** on a second run
+     stops it.
+   - The inset follows the crosshair while you drag the K slider.
+   - Open the **Predator–prey map** template, open the Branch view, and click **Search in two
+     parameters**. The Neimark–Sacker curve has the ticks 1:5 to 1:9.
+   - **Export…** in the plane: the LaTeX figure and the special points table compile in a LaTeX
+     document with the packages their `% Needs:` line names, and the PNG, SVG and CSV save.
+   - **Save** the plane, quit, and open the file again. It opens in the plane with the same curves.
+   - A project saved by 1.0.1 still opens in the view it was saved in.
+   - **Separatrix** > **Check for Updates…** opens the update panel.
 
-   **Done when** every step in the macOS guide worked as written on the Mac, and every check above
-   passed.
+   **Done when** every check above passed on the Mac.
 
-5. [ ] **Test on a real Windows PC, online and offline.** Follow [the Windows guide](install/windows.md)
-   twice. First install the standard installer on a PC with an internet connection. Then uninstall
-   it, disconnect the PC from the network, and install the offline installer. If you can, use a PC
-   or a virtual machine that has no WebView2 for the offline run. Check the same list as for the
-   Mac, with **Ctrl+O** in place of **⌘O** and File Explorer in place of the Finder.
+8. [ ] **Test on a real Windows PC.** Install the draft's setup `.exe` over 1.0.1 and repeat the
+   first, sixth and seventh checks of step 7, with **Ctrl+O** in place of **⌘O**.
 
-   **Done when** both installs started Separatrix and opened a project, the offline install worked
-   with no network, and every step in the Windows guide worked as written.
+   **Done when** those checks passed on Windows.
 
-6. [ ] **Run the professor test (the M1 gate).** Give a colleague who has not seen Separatrix the
-   draft's installer for their own computer and one task, such as "show where the rabbits and the
-   sheep can live together, and export the figure for a paper". Do not help or explain. Watch, and
-   write down every place they stop, guess or ask. Fix what blocks them before you publish, or list
-   it as a known issue in the release notes.
-
-   **Done when** the colleague installed Separatrix, ran a first simulation and exported a figure
-   without help, and each place they got stuck is either fixed on `main` or listed in the release
-   notes.
-
-7. [ ] **Replace the screenshot placeholders.** While you test on the Mac and the PC, take each
-   screenshot below. Save it in `docs/install/images/` with a name such as `macos-open-anyway.png`,
-   and replace its `> **Screenshot to add on a real ...**` line in the guide with an image link to
-   that file, written the same way as the images in the Linux guide. Tick each box
-   here as you replace its line, so the list stays equal to the placeholders still in the guides.
+9. [ ] **Replace the screenshot placeholders.** These are still open from v1.0.0. While you test on
+   the Mac and the PC, take each screenshot below. Save it in `docs/install/images/` with a name
+   such as `macos-open-anyway.png`, and replace its `> **Screenshot to add on a real ...**` line in
+   the guide with an image link to that file, written the same way as the images in the Linux
+   guide. Tick each box here as you replace its line, so the list stays equal to the placeholders
+   still in the guides.
    - [ ] [macos.md](install/macos.md): The disk image window, with the Separatrix icon and the Applications folder side by side.
    - [ ] [macos.md](install/macos.md): The dialog that asks whether to open Separatrix, an app downloaded from the internet, with its Open button.
    - [ ] [macos.md](install/macos.md): The "Separatrix" Not Opened dialog, with the Done and Move to Trash buttons.
@@ -84,46 +105,35 @@ To sign and notarize the Mac app, add the five Apple secrets in
    - [ ] [windows.md](install/windows.md): The first page of the Separatrix installer.
 
    **Done when** `bash scripts/release-check.sh --skip-gates` reports `0 screenshot placeholders`
-   on the `install-guides` row and the `checklist` row reads `PASS`.
+   on the `install-guides` row and the `checklist` row reads `PASS`. If you skip this step for
+   1.1.0, leave the boxes open: the `checklist` row passes as long as the list matches the guides.
 
-8. [ ] **Set the release date in the changelog.** In `CHANGELOG.md`, replace `unreleased` in the
-   `## [1.0.0]` heading with today's date, written as `YYYY-MM-DD`. Commit the date and the
-   screenshots, and push them to `main`.
+10. [ ] **Build the final draft from `main`.** The test draft points at the commit you built in
+    step 5. On the **Releases** page, delete the test draft. Then tag the latest commit and push
+    the tag:
 
-   **Done when** `main` on GitHub shows the dated heading and the new screenshots.
+    ```sh
+    git checkout main && git pull
+    git tag v1.1.0
+    git push origin v1.1.0
+    ```
 
-9. [ ] **Build the final draft from `main`.** The test draft points at the commit you built in
-   step 2, so its tag would miss the screenshots and the date. On the **Releases** page, delete the
-   test draft. Then tag the latest commit and push the tag:
+    The tag starts the Release workflow, which makes a new draft. Repeat the checksum check from
+    step 6 on the new draft's files.
 
-   ```sh
-   git checkout main && git pull
-   git tag v1.0.0
-   git push origin v1.0.0
-   ```
+    **Done when** the new draft is green, its files pass the checksum check, and its tag `v1.1.0`
+    points at the latest commit on `main`.
 
-   The tag starts the Release workflow, which makes a new draft. Repeat the checksum check from
-   step 3 on the new draft's files.
+11. [ ] **Publish v1.1.0.** Open the draft and click **Edit**. Paste the `[1.1.0]` section of
+    `CHANGELOG.md` as the release notes. Make sure **Set as a pre-release** is clear and **Set as
+    the latest release** is selected, and click **Publish release**. The updater reads
+    `releases/latest/download/latest.json`, which only a full, latest release provides.
 
-   **Done when** the new draft is green, its files pass the checksum check, and its tag `v1.0.0`
-   points at the commit from step 8.
+    **Done when** the release page shows v1.1.0 as **Latest**.
 
-10. [ ] **Publish v1.0.0.** Open the draft and click **Edit**. Make sure
-   **Set as a pre-release** is clear and **Set as the latest release** is selected, and click **Publish release**. The updater reads
-   `releases/latest/download/latest.json`, which only a full, latest release provides.
+12. [ ] **Check the update from 1.0.1.** On a computer with 1.0.1 installed, click its version
+    number in the status bar, or **Separatrix** > **Check for Updates…** on a Mac, and install the
+    update.
 
-   **Done when** the release page shows v1.0.0 as **Latest**, and a copy installed from it says
-   "Separatrix is up to date" when you click its version number.
-
-11. [ ] **Post the PyPI notice.** Follow [the PyPI deprecation steps](pypi-deprecation.md) to
-    publish `equation-phase-portrait-tool` 0.1.1 with the notice, then archive the project.
-
-    **Done when** <https://pypi.org/project/equation-phase-portrait-tool/> shows version 0.1.1 with
-    the notice and the archived banner, and version 0.1.0 is still installable.
-
-12. [ ] **Run the class beta.** Send the beta class a link to the v1.0.0 release and the three
-    install guides. Ask each student to install Separatrix on their own computer, open a project,
-    and report any problem as a GitHub issue.
-
-    **Done when** every student in the beta has opened a project in Separatrix on their own
-    computer, and each problem they reported is a GitHub issue.
+    **Done when** the updated app starts, says "Separatrix is up to date", and offers the
+    **Parameter plane** in the View control.
