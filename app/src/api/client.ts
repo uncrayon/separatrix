@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   CompileRequest,
@@ -9,6 +9,9 @@ import type {
   ConvertResponse,
   CurveRequest,
   CurveResponse,
+  HomoclinicProgress,
+  HomoclinicRequest,
+  HomoclinicResponse,
   LyapunovRequest,
   LyapunovResponse,
   OrbitDiagramRequest,
@@ -22,7 +25,9 @@ import {
   mockCompile,
   mockContinuation,
   mockConvert,
+  mockCancelJob,
   mockCurve,
+  mockHomoclinic,
   mockInstallUpdate,
   mockLyapunov,
   mockOrbitDiagram,
@@ -60,6 +65,26 @@ export function computeContinuation(req: ContinuationRequest): Promise<Continuat
 
 export function computeCurve(req: CurveRequest): Promise<CurveResponse> {
   return isTauri() ? invoke<CurveResponse>("compute_curve", { req }) : mockCurve(req);
+}
+
+/**
+ * A job with progress: `onProgress` hears each point the shell accepts.
+ * Resolves to `null` when the job was cancelled with {@link cancelJob},
+ * which keeps nothing of the run.
+ */
+export function computeHomoclinic(
+  req: HomoclinicRequest,
+  onProgress: (p: HomoclinicProgress) => void,
+): Promise<HomoclinicResponse | null> {
+  if (!isTauri()) return mockHomoclinic(req, onProgress);
+  const channel = new Channel<HomoclinicProgress>();
+  channel.onmessage = onProgress;
+  return invoke<HomoclinicResponse | null>("compute_homoclinic", { req, onProgress: channel });
+}
+
+/** Stops the job with `requestId`; idempotent, and valid before the job starts or after it ended. */
+export function cancelJob(requestId: number): Promise<void> {
+  return isTauri() ? invoke<void>("cancel_job", { requestId }) : mockCancelJob(requestId);
 }
 
 export function checkForUpdate(): Promise<UpdateCheck> {

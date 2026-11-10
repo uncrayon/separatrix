@@ -106,6 +106,7 @@ import { fixedPointGlyph } from "../canvas/draw";
 import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
 import { CurveSample } from "../canvas/CurvesCanvas";
+import { FollowHomoclinic, HomoclinicRowItems } from "./HomoclinicRows";
 import {
   CODIM2_KINDS,
   CURVE_KINDS,
@@ -1510,6 +1511,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
               </li>
             );
           })}
+          <HomoclinicRowItems state={state} actions={actions} />
         </ul>
       )}
     </PanelSection>
@@ -1557,6 +1559,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
                     <span className="caption inspector-plane-on">{onCurvesText(pt.on)}</span>
                   </span>
                 </button>
+                <FollowHomoclinic state={state} actions={actions} point={pt} />
               </li>
             );
           })}

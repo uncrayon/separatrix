@@ -11,7 +11,9 @@ import type {
 import {
   compileSystem,
   computeContinuation,
+  cancelJob,
   computeCurve,
+  computeHomoclinic,
   computeLyapunov,
   computeOrbitDiagram,
   computePortrait,
@@ -38,6 +40,16 @@ import {
   type PlaneSeed,
   type CurvesView,
 } from "./curves";
+import {
+  buildHomoclinicJobs,
+  homoclinicRequestId,
+  homoclinicRows,
+  homoclinicSeed,
+  withHomoclinicSeed,
+  type HomoclinicProgressState,
+  type HomoclinicRow,
+  type HomoclinicRun,
+} from "./homoclinic";
 import {
   DEFAULT_LAYERS,
   DEFAULT_SOLVER,
@@ -157,6 +169,12 @@ export interface StudioState extends StudioSnapshot {
   curveRuns: Record<string, CurveRun>;
   /** The rows of the plane's Curves list; none in another view. */
   planeRows: CurveRow[];
+  /** The Parameter plane's homoclinic curves, by request key (see `buildHomoclinicJobs`). */
+  homoclinicRuns: Record<string, HomoclinicRun>;
+  /** The homoclinic job in flight and the latest point it reported. */
+  homoclinicProgress: HomoclinicProgressState | null;
+  /** The homoclinic rows of the plane's Curves list; none in another view. */
+  homoclinicRows: HomoclinicRow[];
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -222,6 +240,8 @@ export function useStudio() {
   const [orbitColumns, setOrbitColumnsState] = useState(0);
   const [branches, setBranches] = useState<Record<string, BranchRun>>({});
   const [curveRuns, setCurveRuns] = useState<Record<string, CurveRun>>({});
+  const [homoclinicRuns, setHomoclinicRuns] = useState<Record<string, HomoclinicRun>>({});
+  const [homoclinicProgress, setHomoclinicProgress] = useState<HomoclinicProgressState | null>(null);
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -235,6 +255,11 @@ export function useStudio() {
   const planeRows = useMemo(
     () => (isCurves(view) ? shownCurves({ compiled, params, view, curveRuns }) : []),
     [compiled, view, params, curveRuns],
+  );
+
+  const homoclinicShown = useMemo(
+    () => (isCurves(view) ? homoclinicRows(buildHomoclinicJobs({ compiled, params, view }), homoclinicRuns, homoclinicProgress) : []),
+    [compiled, view, params, homoclinicRuns, homoclinicProgress],
   );
 
   const state: StudioState = {
@@ -261,6 +286,9 @@ export function useStudio() {
     branches,
     curveRuns,
     planeRows,
+    homoclinicRuns,
+    homoclinicProgress,
+    homoclinicRows: homoclinicShown,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -444,6 +472,55 @@ export function useStudio() {
   useEffect(() => {
     if (curvesKey) void pumpCurves();
   }, [pumpCurves, curvesKey]);
+
+  /** The homoclinic job in flight: its key and the id the shell cancels it by. */
+  const homoclinicFlight = useRef<{ key: string; requestId: number } | null>(null);
+  const runningHomoclinic = useRef(false);
+  const pumpHomoclinic = useCallback(async () => {
+    if (runningHomoclinic.current) return;
+    runningHomoclinic.current = true;
+    try {
+      for (;;) {
+        const cache = latest.current.homoclinicRuns;
+        const job = buildHomoclinicJobs(latest.current).find((j) => !(j.meta.key in cache));
+        if (!job) break;
+        const flight = { key: job.meta.key, requestId: homoclinicRequestId() };
+        homoclinicFlight.current = flight;
+        setHomoclinicProgress({ key: flight.key, points: 0, p: null });
+        const started = performance.now();
+        let run: HomoclinicRun | null;
+        try {
+          const res = await computeHomoclinic({ ...job.body, requestId: flight.requestId }, (m) => {
+            if (m.requestId === flight.requestId && homoclinicFlight.current === flight)
+              setHomoclinicProgress({ key: flight.key, points: m.points, p: [m.p[0], m.p[1]] });
+          });
+          run = res && { ok: true, res, roundTripMs: performance.now() - started };
+        } catch (err) {
+          run = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        homoclinicFlight.current = null;
+        setHomoclinicProgress(null);
+        const wanted = new Set(buildHomoclinicJobs(latest.current).map((j) => j.meta.key));
+        // A cancelled job keeps nothing; one cancelled yet still wanted is shown as stopped, not rerun.
+        const kept =
+          run ?? (wanted.has(job.meta.key) ? ({ ok: false, error: "The run was cancelled." } satisfies HomoclinicRun) : null);
+        const next: Record<string, HomoclinicRun> = kept && wanted.has(job.meta.key) ? { [job.meta.key]: kept } : {};
+        for (const [k, v] of Object.entries(latest.current.homoclinicRuns)) if (wanted.has(k)) next[k] = v;
+        latest.current = { ...latest.current, homoclinicRuns: next };
+        setHomoclinicRuns(next);
+      }
+    } finally {
+      runningHomoclinic.current = false;
+    }
+  }, []);
+  const homoclinicKey = buildHomoclinicJobs(state)
+    .map((j) => j.meta.key)
+    .join("\n");
+  useEffect(() => {
+    const flight = homoclinicFlight.current;
+    if (flight && !homoclinicKey.split("\n").includes(flight.key)) void cancelJob(flight.requestId).catch(() => {});
+    if (homoclinicKey) void pumpHomoclinic();
+  }, [pumpHomoclinic, homoclinicKey]);
 
   const continuationKey = buildContinuationJobs(state)
     .map((j) => j.meta.key)
@@ -1049,6 +1126,31 @@ export function useStudio() {
     [updateCurves],
   );
 
+  /**
+   * Follows a homoclinic curve from the Bogdanov–Takens point at `at` with
+   * state `x`; the point's other parameters are the sliders' now.
+   */
+  const followHomoclinic = useCallback(
+    (x: readonly number[], at: readonly [number, number]) => {
+      const cur = latest.current;
+      const v = cur.view;
+      if (!isCurves(v)) return;
+      const seed = homoclinicSeed(x, cur.params.map((p) => p.value), [v.across, v.up], at);
+      updateCurves((w) => ({ ...w, curves: { ...w.curves, homoclinic: withHomoclinicSeed(w.curves.homoclinic, seed) } }));
+    },
+    [updateCurves],
+  );
+
+  /**
+   * Removes a homoclinic seed. The job running for it, if any, is cancelled
+   * by the effect that watches the wanted keys, and nothing of it is kept.
+   */
+  const removeHomoclinic = useCallback(
+    (index: number) =>
+      updateCurves((v) => ({ ...v, curves: { ...v.curves, homoclinic: v.curves.homoclinic.filter((_, i) => i !== index) } })),
+    [updateCurves],
+  );
+
   /** Ends a search: the seeds not computed yet are dropped, the curves already drawn stay. */
   const stopCurves = useCallback(() => {
     const done = new Set(
@@ -1229,6 +1331,8 @@ export function useStudio() {
       setCurvesParam,
       removeCurveSeed,
       stopCurves,
+      followHomoclinic,
+      removeHomoclinic,
       followInPlane,
       searchInPlane,
       setPlaneParams,
@@ -1278,6 +1382,8 @@ export function useStudio() {
       setCurvesParam,
       removeCurveSeed,
       stopCurves,
+      followHomoclinic,
+      removeHomoclinic,
       followInPlane,
       searchInPlane,
       setPlaneParams,

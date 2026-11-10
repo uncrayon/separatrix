@@ -16,6 +16,7 @@ import type {
 } from "../api/types";
 import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
 import type { Job } from "../api/client";
+import type { HomoclinicSeed } from "./homoclinic.ts";
 import {
   followParamIndex,
   isCurves,
@@ -107,6 +108,8 @@ export interface CurvesSettings {
   maxPoints: number;
   direction: ContinuationDirection;
   seeds: PlaneSeed[];
+  /** The Bogdanov–Takens points a homoclinic curve is followed from (flows). */
+  homoclinic: HomoclinicSeed[];
 }
 
 export type CurvesView = {
@@ -175,7 +178,7 @@ export function curvesView(
     yRange: padRange(ranges[1]),
     across,
     up,
-    curves: { ranges, ds: CURVES_DS, maxPoints: CURVES_MAX_POINTS, direction: "both", seeds: [] },
+    curves: { ranges, ds: CURVES_DS, maxPoints: CURVES_MAX_POINTS, direction: "both", seeds: [], homoclinic: [] },
     branch,
     branchParams: null,
     home,
@@ -235,7 +238,7 @@ export function withBranch(view: CurvesView, branch: ContinuationView | null, pa
 }
 
 export function curvesSettingsError(
-  s: Omit<CurvesSettings, "seeds" | "direction">,
+  s: Omit<CurvesSettings, "seeds" | "direction" | "homoclinic">,
 ): { field: "across" | "up" | "ds" | "maxPoints"; message: string } | null {
   const bad = ([lo, hi]: readonly [number, number]) => !(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi);
   if (bad(s.ranges[0])) return { field: "across", message: "The lower end must be below the upper" };
@@ -291,7 +294,7 @@ export function buildCurveJobs(s: {
 /** A seed whose curve repeats one already drawn lies on it within this fraction of the box. */
 const SAME_CURVE_TOL = 1e-3;
 /** Two codimension-2 points within this fraction of the box are one. */
-const SAME_POINT_TOL = 1e-6;
+export const SAME_POINT_TOL = 1e-6;
 
 /** Distance from (a, b) to the polyline of `c`, each parameter scaled by its range. */
 function distanceToCurve(c: Pick<CurveOut, "p1" | "p2">, a: number, b: number, w1: number, w2: number): number {
@@ -449,7 +452,7 @@ export function neutralText(c: Pick<CurveOut, "neutral" | "special">): string {
   return runs.length > 1 ? `neutral past the ${label} points` : `neutral past ${label}`;
 }
 
-const dec4 = (v: number) => v.toFixed(4).replace(/^-/, "−");
+export const dec4 = (v: number) => v.toFixed(4).replace(/^-/, "−");
 
 /**
  * The warning of a curve that stopped because the step became too small,
