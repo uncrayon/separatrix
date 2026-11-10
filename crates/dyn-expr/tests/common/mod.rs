@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use dyn_core::{fd_jacobian, fd_param_jacobian, VectorField};
+use dyn_core::{fd_jacobian, fd_jacobian_derivative, fd_param_jacobian, VectorField};
 use dyn_expr::{compile, CompiledSystem, Diagnostic, InputFormat, Severity};
 
 pub fn ok(src: &str, f: InputFormat) -> CompiledSystem {
@@ -67,6 +67,21 @@ pub fn check_derivatives(sys: &CompiledSystem, t: f64, x: &[f64], p: &[f64], tol
         fd_param_jacobian(sys, t, x, p, k, &mut fdp);
         assert_close(&ad, &fdp, tol);
     }
+}
+
+/// `jacobian_derivative` along `(dx, dp)`, and its finite-difference value.
+pub fn jac_derivative(
+    sys: &CompiledSystem,
+    x: &[f64],
+    p: &[f64],
+    dx: &[f64],
+    dp: &[f64],
+) -> (Vec<f64>, Vec<f64>) {
+    let n = sys.dim();
+    let (mut exact, mut fd) = (vec![0.0; n * n], vec![0.0; n * n]);
+    sys.jacobian_derivative(0.0, x, p, dx, dp, &mut exact);
+    fd_jacobian_derivative(sys, 0.0, x, p, dx, dp, &mut fd);
+    (exact, fd)
 }
 
 /// xorshift64* generator.

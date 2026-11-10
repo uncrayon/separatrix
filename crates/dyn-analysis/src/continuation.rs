@@ -699,6 +699,43 @@ impl VectorField for Power<'_> {
         });
         out.copy_from_slice(&v);
     }
+
+    /// Along the orbit `x_j`, with `M = D f^j`, `u = dx_j` and `dM` its
+    /// derivative: `dM ← D(x_j; u, dp)·M + J(x_j)·dM`, `M ← J(x_j)·M`,
+    /// `u ← J(x_j)·u + f_p(x_j)·dp`, from `M = I`, `dM = 0`, `u = dx`.
+    fn jacobian_derivative(
+        &self,
+        _t: f64,
+        x: &[f64],
+        p: &[f64],
+        dx: &[f64],
+        dp: &[f64],
+        out: &mut [f64],
+    ) {
+        let n = x.len();
+        let mut m = identity(n);
+        let mut dm = vec![0.0; n * n];
+        let mut u = dx.to_vec();
+        let mut j = vec![0.0; n * n];
+        let mut d = vec![0.0; n * n];
+        let mut fp = vec![0.0; n];
+        self.walk(x, p, |xj| {
+            self.f.jacobian(0.0, xj, p, &mut j);
+            self.f.jacobian_derivative(0.0, xj, p, &u, dp, &mut d);
+            dm = matmul(&d, &m, n)
+                .iter()
+                .zip(matmul(&j, &dm, n))
+                .map(|(a, b)| a + b)
+                .collect();
+            m = matmul(&j, &m, n);
+            u = matvec(&j, &u, n);
+            for (k, &dpk) in dp.iter().enumerate().filter(|(_, d)| **d != 0.0) {
+                self.f.param_jacobian(0.0, xj, p, k, &mut fp);
+                u.iter_mut().zip(&fp).for_each(|(c, f)| *c += f * dpk);
+            }
+        });
+        out.copy_from_slice(&dm);
+    }
 }
 
 /// `N` equations `G(z) = 0` in `N + 1` unknowns, whose solutions form a
@@ -1199,6 +1236,30 @@ mod tests {
         let dr = fx * (1.0 - fx) + r * (1.0 - 2.0 * fx) * x * (1.0 - x);
         assert!((out[0] - dr).abs() < 1e-12, "{out:?} vs {dr}");
         assert_eq!(f2.cycle(&[x], &[r]), [x, fx]);
+    }
+
+    #[test]
+    fn jacobian_derivative_of_the_third_power_of_the_henon_map() {
+        let sys = compile(
+            "x_{n+1} = 1 - a*x_n^2 + y_n\ny_{n+1} = b*x_n",
+            InputFormat::Text,
+        )
+        .system
+        .expect("compiles");
+        let f3 = Power { f: &sys, k: 3 };
+        let (x, p) = ([0.4, -0.2], [1.3, 0.3]);
+        let (dx, dp) = ([0.7, -1.2], [0.5, -2.0]);
+        let mut recurrence = [0.0; 4];
+        let mut fd = [0.0; 4];
+        f3.jacobian_derivative(0.0, &x, &p, &dx, &dp, &mut recurrence);
+        dyn_core::fd_jacobian_derivative(&f3, 0.0, &x, &p, &dx, &dp, &mut fd);
+        assert!(recurrence.iter().all(|v| v.abs() > 0.1), "{recurrence:?}");
+        for (r, d) in recurrence.iter().zip(fd) {
+            assert!(
+                (r - d).abs() <= 1e-7 * (1.0 + d.abs()),
+                "{recurrence:?} vs {fd:?}"
+            );
+        }
     }
 
     #[derive(Clone)]
