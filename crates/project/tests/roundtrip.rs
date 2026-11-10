@@ -1836,3 +1836,31 @@ fn a_plane_that_does_not_fit_falls_back_to_its_branch_view_else_the_default_view
         "{err}"
     );
 }
+
+#[test]
+fn every_guide_example_opens_without_a_repair_and_is_written_back_byte_for_byte() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide/examples");
+    let update = std::env::var_os("UPDATE_FIXTURES").is_some();
+    let mut names: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "sepx"))
+        .collect();
+    names.sort();
+    assert!(names.len() >= 9, "{names:?}");
+    for path in names {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let opened = parse_named(&text, &name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(opened.warnings.is_empty(), "{name}: {:?}", opened.warnings);
+        let out = to_json(&opened.project, &opened.project.app_version).unwrap();
+        if update {
+            std::fs::write(&path, &out).unwrap();
+        } else {
+            assert_eq!(
+                out, text,
+                "{name} is not in canonical form (UPDATE_FIXTURES=1 rewrites it)"
+            );
+        }
+    }
+}

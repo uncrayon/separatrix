@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { chromium } = require("playwright");
 
 const BASE = process.env.UI_URL || "http://localhost:5613/";
@@ -396,6 +398,43 @@ test("CO oxidation: the plane saved after Search and Follow homoclinic opens aga
       .locator("[data-special-points] [data-special-kind]")
       .evaluateAll((rows) => rows.map((r) => r.dataset.specialKind));
     assert.deepEqual(kinds, ["hopf", "fold", "hopf", "fold"], "the Branch view the plane came from");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the guide's example project opens CO oxidation in the Parameter plane after Search in two parameters, with K up", async () => {
+  const text = fs.readFileSync(path.join(__dirname, "../../../docs/guide/examples/parameter-plane.sepx"), "utf8");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.addInitScript((text) => {
+      window.__sepxMock = { files: new Map([["/mock/parameter-plane.sepx", text]]), launchFiles: [], saved: [] };
+    }, text);
+    await page.goto(BASE);
+    await page.waitForSelector(".gallery");
+    await page.evaluate(() =>
+      window.dispatchEvent(new CustomEvent("sepx:project-open-requested", { detail: { path: "/mock/parameter-plane.sepx" } })),
+    );
+    await page.waitForFunction(() => document.title === "parameter-plane — Separatrix");
+    assert.equal(await viewRadio(page, "Parameter plane").getAttribute("aria-checked"), "true");
+    await curvesSettled(page);
+    const rows = await inspector(page)
+      .locator("[data-curves] > li")
+      .evaluateAll((els) => els.map((el) => [el.dataset.curveKind, el.dataset.curveStatus]));
+    assert.deepEqual(rows, [
+      ["hopf", "done"],
+      ["fold", "done"],
+      ["hopf", "merged"],
+      ["fold", "merged"],
+    ]);
+    assert.deepEqual(
+      await inspector(page).locator("[data-plane-points] [data-plane-point]").evaluateAll((els) => els.map((el) => el.dataset.planePoint)),
+      ["bogdanovTakens", "bogdanovTakens", "cusp", "bautin", "bautin"],
+    );
+    assert.match(await page.locator(".legend-bar").innerText(), /Branch view’s range, K = 0\.4/);
+    assert.deepEqual([await paramValue(page, "k_2"), await paramValue(page, "K")], ["1.05", "0.4"]);
+    assert.equal(await page.locator(".project-banner").count(), 0);
   } finally {
     await browser.close();
   }
