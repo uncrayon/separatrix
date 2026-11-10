@@ -86,7 +86,7 @@ The installers land in `target/release/bundle/`.
 
 ## Contribute
 
-[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks every change must pass, including the three
+[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks every change must pass, including the four
 numerical gates that hold Separatrix to Strogatz's results and to published values.
 
 The previous Python version (v0.1.0, PyPI `equation-phase-portrait-tool`) is deprecated and lives

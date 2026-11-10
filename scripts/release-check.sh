@@ -241,7 +241,7 @@ row_docs_links() {
 row_gates() {
   if [ "$SKIP_GATES" = 1 ]; then printf 'SKIP  gates: --skip-gates\n'; return; fi
   local gate out rc tests counts=() failed=()
-  for gate in strogatz chaos continuation; do
+  for gate in strogatz chaos continuation codim2; do
     out=$(bash "scripts/$gate-gate.sh" 2>&1)
     rc=$?
     tests=$(sed -nE 's/^test result: ok\. ([0-9]+) passed.*/\1/p' <<<"$out" | awk '{n+=$1} END{print n+0}')

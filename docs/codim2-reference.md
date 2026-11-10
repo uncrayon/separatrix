@@ -177,6 +177,19 @@ fold-flip on its flip curve, but gives no location to compare.
 | --- | --- | --- | --- | --- |
 | Fold-flip (LPPD) | 2 | 3 | (2/3, 0) | 1, −1 |
 
+`F2 = ((a − 1)/a, 0)` has the multipliers `2 − a` and `3.5x/(1 + εx)`. The second is −1 on the flip
+curve `a = (ε + 7/2)/(ε + 9/2)`, which has two more codimension-2 points (derived):
+
+| Point | ε | a | F2 |
+| --- | --- | --- | --- |
+| Generalized flip (GPD) | 2√2 − 9/2 = −1.6715728753 | 1 − √2/4 = 0.6464466094 | (−(2√2 + 1)/7, 0) = (−0.5469181607, 0) |
+| 1:2 resonance | −5 | 3 | (2/3, 0) |
+
+- The flip coefficient vanishes at the generalized flip, solved symbolically
+  (`crates/dyn-analysis/tests/curves.rs`).
+- At the 1:2 resonance the curve crosses `a = 3`, where `2 − a = −1` as well, and
+  `D f = [[−1, 6/7], [0, −1]]` is a Jordan block.
+
 ### 3b. Delayed logistic map with migration
 
 Source: MatContM Tutorial M-I.

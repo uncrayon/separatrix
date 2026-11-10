@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 
 use dyn_expr::CompiledSystem;
 use separatrix_lib::ipc::{
-    BranchEndOut, BranchOut, BranchStop, CompileRequest, ContinuationDirection,
+    BranchEndOut, BranchOut, BranchStop, Codim2KindOut, CompileRequest, ContinuationDirection,
     ContinuationRequest, ContinuationStart, CurveKindOut, CurveOut, CurveRequest, CurveSeed,
     InputFormat, Severity, SpecialKindOut, SpecialPointOut, MAX_CONTINUATION_POINTS,
 };
@@ -463,6 +463,65 @@ fn a_backward_half_that_closes_is_the_whole_curve() {
     assert_closes_once(&c, on);
 }
 
+/// The same loop as a Hopf curve whose first Lyapunov coefficient is `b`,
+/// so it has Bautin points at `(a, b) = (1, 0)` and `(−1, 0)`, met in that
+/// order the forward way. The backward half closes first again; reversed,
+/// it keeps each point at its own vertex and in arclength order.
+#[test]
+fn a_backward_half_that_closes_keeps_its_points_at_their_vertices() {
+    let sys = compile(
+        "x' = (a^2 + 4*b^2 + a*b^3 - 1)*x - y + b*x*(x^2 + y^2)\n\
+         y' = x + (a^2 + 4*b^2 + a*b^3 - 1)*y + b*y*(x^2 + y^2)",
+    );
+    let on = |a: f64, b: f64| a * a + 4.0 * b * b + a * b * b * b - 1.0;
+    let mut b: f64 = 0.4;
+    for _ in 0..50 {
+        b -= on(0.6, b) / (8.0 * b + 1.8 * b * b);
+    }
+    let req = CurveRequest {
+        seed: CurveSeed {
+            kind: CurveKindOut::Hopf,
+            x: vec![0.0, 0.0],
+            period: 1,
+        },
+        ds: 0.003,
+        ds_max: 0.05,
+        ..loop_request(&sys, vec![0.6, b])
+    };
+    let length = |direction| {
+        let half = CurveRequest {
+            direction,
+            max_points: MAX_CONTINUATION_POINTS,
+            ..req.clone()
+        };
+        sys.curve(&half).p1.len()
+    };
+    let forward = length(ContinuationDirection::Forward);
+    let backward = length(ContinuationDirection::Backward);
+    assert!(
+        backward < forward,
+        "halves of {forward} and {backward} points"
+    );
+    let c = sys.curve(&CurveRequest {
+        max_points: backward,
+        ..req
+    });
+    assert_closes_once(&c, on);
+    let found: Vec<(Codim2KindOut, (f64, f64))> =
+        c.special.iter().map(|sp| (sp.kind, sp.p)).collect();
+    assert_eq!(found.len(), 2, "{found:?}");
+    for (sp, want) in c.special.iter().zip([(1.0, 0.0), (-1.0, 0.0)]) {
+        assert_eq!(sp.kind, Codim2KindOut::Bautin);
+        assert_eq!((c.p1[sp.index], c.p2[sp.index]), sp.p, "at its vertex");
+        assert!(
+            (sp.p.0 - want.0).abs() <= 1e-9 && sp.p.1.abs() <= 1e-9,
+            "{:?}, not {want:?}",
+            sp.p
+        );
+    }
+    assert!(c.special[0].index < c.special[1].index);
+}
+
 #[test]
 fn bad_requests_get_their_sentences() {
     let co = template("co-oxidation");
@@ -539,10 +598,23 @@ fn curves_the_engine_cannot_follow_get_their_sentences() {
         period: 1,
     };
     assert_eq!(
-        pp.refusal(&pp.request(params, (a, e), pp.plane((a, e)), hopf)),
+        pp.refusal(&pp.request(params.clone(), (a, e), pp.plane((a, e)), hopf)),
         "Curves in two parameters follow folds, branch points and Hopf points of a flow, and \
          folds, branch points, flips and Neimark–Sacker points of a map; Hopf and \
          Neimark–Sacker points need two or more states."
+    );
+    // F2 = ((a − 1)/a, 0) flips where its multiplier 2 − a is −1, at a = 3
+    // whatever ε is. The sentence names ε by its LaTeX, for the interface to
+    // spell out.
+    params[a] = 3.0;
+    let flip = CurveSeed {
+        kind: CurveKindOut::Flip,
+        x: vec![2.0 / 3.0, 0.0],
+        period: 1,
+    };
+    assert_eq!(
+        pp.refusal(&pp.request(params, (a, e), pp.plane((a, e)), flip)),
+        "\\varepsilon doesn't move this flip; choose another parameter to follow it in."
     );
 
     let at_origin = |source: &str, params: Vec<f64>, kind| {
@@ -599,7 +671,16 @@ struct MockCurve {
     p2: Vec<f64>,
     x: Vec<f64>,
     neutral: Vec<bool>,
+    special: Vec<MockPoint>,
     stops: [String; 2],
+}
+
+#[derive(Deserialize)]
+struct MockPoint {
+    /// As `Codim2KindOut` serializes it.
+    kind: String,
+    p: (f64, f64),
+    x: Vec<f64>,
 }
 
 /// A polyline in the coordinates both followers measure arclength in: each
@@ -831,12 +912,61 @@ fn parity(sys: &System, free: (usize, usize), mock: &MockCurve) -> (String, Vec<
         problems.push(format!("a mock vertex is {to_engine} from the engine"));
     }
 
+    // Each codimension-2 point of one has a point of the same kind on the
+    // other. The mock's are the reference script's to 8 significant digits,
+    // and the engine's are within Newton's tolerance 1e-10 · (1 + |z|∞).
+    let point = |p: (f64, f64), x: &[f64]| scaled(&[p.0], &[p.1], x, plane).remove(0);
+    let engine_points: Vec<(String, Vec<f64>)> = c
+        .special
+        .iter()
+        .map(|sp| (kind_name(sp.kind), point(sp.p, &sp.x)))
+        .collect();
+    let mock_points: Vec<(String, Vec<f64>)> = mock
+        .special
+        .iter()
+        .map(|sp| (sp.kind.clone(), point(sp.p, &sp.x)))
+        .collect();
+    let mut points = Worst::default();
+    for (from, to, which) in [
+        (&mock_points, &engine_points, "the engine"),
+        (&engine_points, &mock_points, "the mock"),
+    ] {
+        for (kind, q) in from {
+            let nearest = to
+                .iter()
+                .filter(|(k, _)| k == kind)
+                .map(|(_, v)| norm(&sub(v, q)))
+                .min_by(f64::total_cmp);
+            let bound = rounding(q) + 1e-10 * (1.0 + q.iter().fold(0.0, |m, v| v.abs().max(m)));
+            let at = (q[0] * (hi1 - lo1), q[1] * (hi2 - lo2));
+            match nearest {
+                Some(d) => points.add(d, bound, at),
+                None => problems.push(format!(
+                    "{which} has no {kind} point; the other has one at {at:?}"
+                )),
+            }
+        }
+    }
+    if points.ratio > 1.0 {
+        problems.push(format!("a codimension-2 point is {points} from its match"));
+    }
+
     let at = |i: usize| format!("({:.6}, {:.6})", c.p1[i], c.p2[i]);
+    let kinds = |pts: &[(String, Vec<f64>)]| {
+        pts.iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let row = format!(
         "engine → mock {to_mock} ({:.2}); mock → engine {to_engine} ({:.2}); κ = {kappa:.1}; \
+         points: mock [{}], engine [{}], worst {points} ({:.2}); \
          mock stops {:?}; engine {n} points from {} ({:?}) to {} ({:?})",
         to_mock.ratio,
         to_engine.ratio,
+        kinds(&mock_points),
+        kinds(&engine_points),
+        points.ratio,
         mock.stops,
         at(0),
         c.end.first,
@@ -844,6 +974,13 @@ fn parity(sys: &System, free: (usize, usize), mock: &MockCurve) -> (String, Vec<
         c.end.last
     );
     (row, problems)
+}
+
+fn kind_name(kind: Codim2KindOut) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .expect("a unit variant")
 }
 
 #[test]

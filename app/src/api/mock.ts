@@ -561,7 +561,7 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
   const [f1, f2] = data.free;
   if (req.free[0] !== f1 || req.free[1] !== f2)
     throw new Error(
-      `This browser preview follows this system's curves with ${sys.params[f1].name} across and ${sys.params[f2].name} up only.`,
+      `This browser preview follows this system's curves with ${sys.params[f1].latex} across and ${sys.params[f2].latex} up only.`,
     );
   const dim = sys.states.length;
   if (req.seed.x.length !== dim) throw new Error(`The seed has ${req.seed.x.length} states; the system has ${dim}.`);
@@ -640,7 +640,7 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
     .flatMap((sp) => {
       const j = nearestVertex(sp.p);
       const index = pts.findIndex((v) => v.src === j);
-      return index < 0 ? [] : [{ kind: sp.kind, index, p: sp.p, x: sp.x, period: c.period }];
+      return index < 0 ? [] : [{ kind: sp.kind, index, p: sp.p, x: sp.x, period: c.period, bracket: null }];
     })
     .sort((a, b) => a.index - b.index);
 

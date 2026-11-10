@@ -16,7 +16,16 @@ import type {
 } from "../api/types";
 import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
 import type { Job } from "../api/client";
-import { followParamIndex, isCurves, type Availability, type ContinuationView, type ParamState, type TimeAxis, type View } from "./model.ts";
+import {
+  followParamIndex,
+  isCurves,
+  scientificText,
+  type Availability,
+  type ContinuationView,
+  type ParamState,
+  type TimeAxis,
+  type View,
+} from "./model.ts";
 
 interface CurveKindInfo {
   /** The one-parameter bifurcation's label, as in the Branch view. */
@@ -371,6 +380,8 @@ export interface PlanePointRow {
   period: number;
   /** The kinds of the curves it was found on, in kind order. */
   on: CurveKindOut[];
+  /** The widest of its bisection brackets on those curves, or null where none was bisected (the preview). */
+  bracket: number | null;
 }
 
 /** The Special points list: each point once, with every curve kind it lies on; by kind, then across. */
@@ -389,12 +400,17 @@ export function planePointRows(curves: readonly CurveOut[], ranges: CurvesSettin
       );
       if (same) {
         if (!same.on.includes(c.kind)) same.on.push(c.kind);
-      } else rows.push({ kind: sp.kind, p: [sp.p[0], sp.p[1]], x: sp.x.slice(), period: sp.period, on: [c.kind] });
+        if (sp.bracket !== null) same.bracket = Math.max(same.bracket ?? 0, sp.bracket);
+      } else
+        rows.push({ kind: sp.kind, p: [sp.p[0], sp.p[1]], x: sp.x.slice(), period: sp.period, on: [c.kind], bracket: sp.bracket });
     }
   }
   for (const r of rows) r.on.sort((a, b) => CURVE_KIND_ORDER.indexOf(a) - CURVE_KIND_ORDER.indexOf(b));
   return rows.sort((a, b) => CODIM2_ORDER.indexOf(a.kind) - CODIM2_ORDER.indexOf(b.kind) || a.p[0] - b.p[0]);
 }
+
+/** "located to 1.5 × 10⁻¹³", or null for a point no bisection located. */
+export const locatedText = (bracket: number | null): string | null => (bracket === null ? null : `located to ${scientificText(bracket)}`);
 
 /** "On the fold and Hopf curves". */
 export function onCurvesText(on: readonly CurveKindOut[]): string {

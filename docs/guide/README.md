@@ -43,10 +43,11 @@ Separatrix window.
 
 ## Where the numbers come from
 
-Separatrix checks its numbers against published values on every change. Three scripts in the
+Separatrix checks its numbers against published values on every change. Four scripts in the
 repository print one row per claim: `scripts/strogatz-gate.sh` for the chapter 2 to 8 examples of
 Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), `scripts/chaos-gate.sh` for Lyapunov
-exponents and period doublings, and `scripts/continuation-gate.sh` for bifurcation points. The
+exponents and period doublings, `scripts/continuation-gate.sh` for bifurcation points, and
+`scripts/codim2-gate.sh` for the points where curves in two parameters meet. The
 numbers quoted in this guide are copied from their output. [CONTRIBUTING.md](../../CONTRIBUTING.md)
 says how to run them.
 

@@ -11,7 +11,6 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import { MAX_SECTION_POINTS } from "../api/ipc.generated";
-import { isTauri } from "../api/client";
 import { Tex } from "../math/Tex";
 import { MathProse } from "../math/MathProse";
 import {
@@ -23,6 +22,7 @@ import {
   mapMultiplier,
   plainSubscripted,
   mapStabilityHint,
+  refusalText,
   sameAxis,
   viewAxisLabels,
   withSubscript,
@@ -114,6 +114,7 @@ import {
   curvesAvailability,
   curvesSettingsError,
   drawnCurves,
+  locatedText,
   mergedText,
   neutralText,
   nextParam,
@@ -1448,7 +1449,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
               row.status === "computing"
                 ? null
                 : row.status === "failed"
-                  ? row.error
+                  ? refusalText(row.error)
                   : row.status === "merged"
                     ? mergedText(row.into)
                     : `${whole(curve!.p1.length)} points · ${endText(curve!.end)}${neutral ? ` · ${neutral}` : ""}`;
@@ -1527,7 +1528,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
     <PanelSection title="Special points" count={rows.length} open={open} onToggle={onToggle}>
       {rows.length === 0 ? (
         <p className="ds-panel-section-hint caption" data-plane-points="">
-          {isTauri() ? "The desktop app does not mark the points where curves meet yet." : "None on these curves."}
+          None on these curves.
         </p>
       ) : (
         <ul className="ds-fp-list" aria-label="Special points" data-plane-points="">
@@ -1535,6 +1536,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
             const info = CODIM2_KINDS[pt.kind];
             const where = `${a} = ${dec(pt.p[0], 6)}  ${u} = ${dec(pt.p[1], 6)}`;
             const at = stateNames.map((n, i) => `${n} = ${dec(pt.x[i], 4)}`).join(", ");
+            const located = locatedText(pt.bracket);
             return (
               <li key={`${pt.kind}-${pt.p[0]}-${pt.p[1]}`} className="ds-fp-item" data-plane-point={pt.kind}>
                 <button
@@ -1551,6 +1553,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
                     </span>
                     <span className="ds-fp-eig numeric-sm inspector-special-text">{where}</span>
                     <span className="ds-fp-eig numeric-sm">{at}</span>
+                    {located && <span className="ds-fp-eig numeric-sm">{located}</span>}
                     <span className="caption inspector-plane-on">{onCurvesText(pt.on)}</span>
                   </span>
                 </button>
@@ -1563,6 +1566,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
         {sys.kind === "map"
           ? "R1 to R4 strong resonances, CH Chenciner, LPPD fold-flip, GPD generalized flip."
           : "BT Bogdanov–Takens, CP cusp, GH Bautin (generalized Hopf), ZH zero-Hopf, HH Hopf–Hopf."}{" "}
+        {rows.some((pt) => pt.bracket !== null) && "“Located to” is the width of the last bisection step along the curve, each parameter as a fraction of its range. "}
         Click a row to set both parameters there.
       </p>
     </PanelSection>

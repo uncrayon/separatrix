@@ -620,10 +620,15 @@ pub struct CurveOptions { pub free: (usize, usize), pub ranges: ((f64, f64), (f6
 pub fn continue_curve(f: &dyn VectorField, params: &[f64], seed: &CurveSeed,
                       opts: &CurveOptions) -> Result<Curve, CurveError>;
 pub struct Curve { pub kind: CurveKind, pub period: usize, pub points: Vec<CurvePoint>,
+                   pub special: Vec<Codim2Point>,
                    pub end: CurveEnd /* Range | MaxPoints | StepTooSmall | Closed | Unfolded */ }
 pub struct CurvePoint { pub s: f64, pub p: (f64, f64), pub x: Vec<f64>, pub tangent: Vec<f64>,
                         pub eigenvalues: Vec<(f64, f64)>, pub nature: Nature }
 pub enum Nature { Bifurcation { omega: Option<f64> }, Neutral }
+pub struct Codim2Point { pub kind: Codim2Kind, pub index: usize, pub p: (f64, f64),
+                         pub x: Vec<f64>, pub bracket: f64 }
+pub enum Codim2Kind { BogdanovTakens, Cusp, Bautin, ZeroHopf, HopfHopf, Resonance1, Resonance2,
+                      Resonance3, Resonance4, Chenciner, FoldFlip, GeneralizedFlip }
 pub enum CurveError { NotAutonomous, Unsupported, NotABifurcation, Singular, NoEffect }
 ```
 
@@ -667,12 +672,24 @@ cycle's first point), the unit tangent `ż` oriented along the curve (`dim + 2` 
 with `Im μ ≥ 0` on a Neimark–Sacker curve, `None` otherwise. `Neutral` marks a neutral saddle,
 where the defining system holds without a bifurcation: on a Hopf curve the pair with the smallest
 `|λᵢ + λⱼ|` has `Re(λᵢλⱼ) ≤ 0` (real `±κ`), and on a Neimark–Sacker curve the pair with the
-smallest `|μᵢμⱼ − 1|` has `|Re(μᵢ + μⱼ)/2| ≥ 1` (real `μ`, `1/μ`). No codimension-2 point is
-located yet. `crates/dyn-analysis/tests/curves.rs` checks the CO oxidation fold and Hopf curves
-through docs/codim2-reference.md's points at `K = 0.4` to 1e−8, the predator–prey map's
-Neimark–Sacker, flip and branch-point curves and Hénon's fold curve against closed forms, a
-neutral stretch past each Bogdanov–Takens point, a closed fold curve, `NoEffect` and an
-unfolding branch point.
+smallest `|μᵢμⱼ − 1|` has `|Re(μᵢ + μⱼ)/2| ≥ 1` (real `μ`, `1/μ`).
+
+At every accepted point the curve evaluates the test functions of its kind, one table (`ROWS` in
+`curve/codim2.rs`): BT, CP and ZH on a fold curve of a flow, BT, ZH, GH and HH on a Hopf curve,
+ZH on a branch-point curve of a flow; R1, CP and LPPD on a fold curve of a map, R2, LPPD and GPD
+on a flip curve, R1 to R4 and CH on a Neimark–Sacker curve, LPPD on a branch-point curve of a
+map. Where a test changes sign between two points it is bisected along the chord, as a branch
+locates its points, and the point is inserted into `points` and listed in `special` with its own
+`index`, its `p` and `x`, and `bracket`, the width of the last bracket in the arclength of `s`.
+A sign change counts only between two true Hopf or Neimark–Sacker points, except for BT, ZH, R1
+and R2, which begin a neutral stretch, and only if the test shrinks to `1e−4` of its value at
+the nearer end, so the poles of `ℓ₁` and of the Neimark–Sacker coefficient are dropped. The
+points do not change the steps, so two zeros of one test within one step cancel: `ds_max` below
+their distance finds both. `crates/dyn-analysis/tests/curves.rs` checks the CO oxidation fold
+and Hopf curves through docs/codim2-reference.md's points at `K = 0.4` to 1e−8, every
+codimension-2 point of its systems 1 to 3, the predator–prey map's Neimark–Sacker, flip and
+branch-point curves and Hénon's fold curve against closed forms, a neutral stretch past each
+Bogdanov–Takens point, a closed fold curve, `NoEffect` and an unfolding branch point.
 
 ## IPC (Tauri commands)
 
@@ -806,9 +823,15 @@ can close where the forward one ran out of points first). Otherwise the two are 
 polyline: the backward half reversed and without its seed, then the forward half, so the seed is
 in the middle. The arrays are flat, as in `BranchOut`: `p1`, `p2` and `neutral` have one entry
 per point, and `x` has `dim` values per point (for a map the cycle's first point). `neutral` is
-`true` at a neutral saddle (`Nature::Neutral`). The tangents are not sent. `special` is always
-empty: the codimension-2 points (`Codim2PointOut`) are located from M6 of the
-special-bifurcations plan. `end.last` says why the last point stopped (`"range"`, `"maxPoints"`,
+`true` at a neutral saddle (`Nature::Neutral`). The tangents are not sent. `special` lists the
+codimension-2 points in arclength order, each `Codim2PointOut { kind, index, p, x, period,
+bracket }`. `kind` is `"bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopfHopf" |
+"resonance1" | "resonance2" | "resonance3" | "resonance4" | "chenciner" | "foldFlip" |
+"generalizedFlip"`, labelled BT, CP, GH, ZH, HH, R1 to R4, CH, LPPD and GPD. `index` is the
+point's own vertex, shifted with the halves as they are joined and reversed with a backward half
+that closes; `p` is `[across, up]`; and `bracket` is the width of the last bisection bracket in
+the scaled arclength, which the Special points list shows as "located to". `end.last` says why
+the last point stopped (`"range"`, `"maxPoints"`,
 `"stepTooSmall"`, `"closed"` or `"unfolded"`), and `end.first` why the first did, with direction
 `both`, or `null` when the first point is the seed, as on a closed curve, whose last point
 repeats its first. `maxPoints` bounds each direction, in `2..=MAX_CONTINUATION_POINTS = 20000`,
@@ -820,7 +843,9 @@ it, or the same parameter freed twice; ranges that are not finite with `lo < hi`
 wrong dimension or a non-finite seed or parameter; `period = 0`, or `period > 1` for a flow; `ds`
 that is not a positive number, `dsMax < ds`; and `maxPoints` outside `2..=20000`. The engine's
 refusals come back as sentences that name an equilibrium (flow) or a fixed point (map), the
-kind, and the up parameter by its name: `Unsupported` lists the kinds a flow and a map have,
+kind, and the up parameter by its LaTeX (`\varepsilon`, `k_{2}`), which the Parameter plane
+spells out as its lists name it, "ε" and "k₂" (`refusalText` in math/format.ts): `Unsupported`
+lists the kinds a flow and a map have,
 `NotABifurcation` says Newton's method found no such point near the seed with the up parameter
 held and to start from the special point the Branch view found, `Singular` that the curve has no
 unique direction at the seed, and `NoEffect` that the up parameter doesn't move the bifurcation
@@ -828,7 +853,11 @@ and to choose another. It runs on a blocking worker thread. `app/src-tauri/tests
 checks it on the CO oxidation model and the predator–prey map, seeded as the Parameter plane
 seeds it, and checks every curve of the browser preview's stand-in (`mockCurve` in api/mock.ts,
 which walks the precomputed curves of `mockCurves.generated.json`, written by
-`scripts/reference/codim2_reference.py`) against it.
+`scripts/reference/codim2_reference.py`) against it, its codimension-2 points both ways. The
+stand-in has no bisection, so it sends `bracket: null` and indexes each point's nearest vertex.
+The codimension-2 gate (`scripts/codim2-gate.sh`, claims in `app/src-tauri/tests/codim2.rs`)
+follows the curves of docs/codim2-reference.md's systems 1 to 3 with the plane's own requests
+and checks every point the page lists.
 
 ### Cobweb plots and transients
 

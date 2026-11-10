@@ -961,7 +961,14 @@ x: Array<number>,
 /**
  * `k` of `f^k`, as `CurveOut::period`.
  */
-period: number, };
+period: number, 
+/**
+ * The width of the last bracket of the bisection that located it, in
+ * the curve's scaled arclength (each parameter as a fraction of its
+ * range, the state as it is); `null` where no bisection ran, as in the
+ * browser preview.
+ */
+bracket: number | null, };
 
 export type Codim2KindOut = "bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopfHopf" | "resonance1" | "resonance2" | "resonance3" | "resonance4" | "chenciner" | "foldFlip" | "generalizedFlip";
 

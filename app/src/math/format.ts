@@ -95,9 +95,11 @@ export function latexToPlain(s: string): string {
   return latexToPlainText(s).replace(/-/g, "−");
 }
 
+const subscriptDigits = (s: string) => s.replace(/_(\d+)/g, (_, d: string) => d.replace(/\d/g, (c) => "₀₁₂₃₄₅₆₇₈₉"[Number(c)]));
+
 /** {@link latexToPlain} with a digit subscript as subscript digits: `k_{2}` as "k₂". */
 export function plainSubscripted(latex: string): string {
-  return latexToPlain(latex).replace(/_(\d+)/g, (_, d: string) => d.replace(/\d/g, (c) => "₀₁₂₃₄₅₆₇₈₉"[Number(c)]));
+  return subscriptDigits(latexToPlain(latex));
 }
 
 /**
@@ -108,6 +110,15 @@ export function plainSubscripted(latex: string): string {
  */
 export function diagnosticText(message: string): string {
   return latexToPlainText(message).replace(/(^|[\s(])'([^'\s]{1,12})'(?=$|[\s,.;:)])/g, "$1‘$2’");
+}
+
+/**
+ * A refusal of the Rust core or the browser preview for display. Both name a
+ * parameter by its LaTeX, which this spells out as the lists name it:
+ * `\varepsilon` as "ε", `k_{2}` as "k₂".
+ */
+export function refusalText(message: string): string {
+  return subscriptDigits(diagnosticText(message));
 }
 
 export function axisLatex(axis: AxisRef, states: StateInfo[], kind: SystemKind | undefined): string {
