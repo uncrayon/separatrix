@@ -14,3 +14,7 @@ app/src-tauri/gen/
 
 # Website build output
 site/dist/
+
+# Python bytecode from the reference scripts
+__pycache__/
+*.pyc
