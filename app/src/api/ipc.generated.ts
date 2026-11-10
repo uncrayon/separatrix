@@ -829,6 +829,147 @@ tangent: Array<number>, };
 
 export type SpecialKindOut = "fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker";
 
+export type CurveRequest = { 
+/**
+ * Echoed back so the UI can drop stale responses.
+ */
+requestId: number, 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * Parameter values, in `CompileResponse::params` order; the curve
+ * starts at `(params[free.0], params[free.1])`.
+ */
+params: Array<number>, 
+/**
+ * The two free parameters: across (the Branch view's), then up.
+ */
+free: [number, number], 
+/**
+ * The box the curve stays in: the across range, then the up range,
+ * each `lo < hi`.
+ */
+ranges: [[number, number], [number, number]], 
+/**
+ * The bifurcation the curve starts from.
+ */
+seed: CurveSeed, 
+/**
+ * Which way to follow it from the seed.
+ */
+direction: ContinuationDirection, 
+/**
+ * First step in arclength, `> 0`.
+ */
+ds: number, 
+/**
+ * Largest step, `>= ds`.
+ */
+dsMax: number, 
+/**
+ * Most points in each direction, the seed included,
+ * `2..=MAX_CONTINUATION_POINTS`.
+ */
+maxPoints: number, };
+
+export type CurveSeed = { 
+/**
+ * Which bifurcation is followed.
+ */
+kind: CurveKindOut, 
+/**
+ * The state (`dim` values; the cycle's first point for a map).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, 
+/**
+ * Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ`. A starting
+ * guess; `null` otherwise.
+ */
+omega: number | null, };
+
+export type CurveKindOut = "fold" | "hopf" | "flip" | "neimarkSacker";
+
+export type CurveResponse = { 
+/**
+ * Copied from the request.
+ */
+requestId: number, 
+/**
+ * The curve.
+ */
+curve: CurveOut, 
+/**
+ * Wall time spent in Rust, in milliseconds.
+ */
+elapsedMs: number, };
+
+export type CurveOut = { 
+/**
+ * Which bifurcation it is.
+ */
+kind: CurveKindOut, 
+/**
+ * `k` of `f^k` for a map, 1 for a flow.
+ */
+period: number, 
+/**
+ * The across parameter at each point.
+ */
+p1: Array<number>, 
+/**
+ * The up parameter at each point.
+ */
+p2: Array<number>, 
+/**
+ * `points · dim` values: the state at each point (the cycle's first
+ * point for a map).
+ */
+x: Array<number>, 
+/**
+ * `true` where the curve is no bifurcation: a neutral saddle, whose
+ * eigenvalues `±κ` (Hopf) or multipliers `μ, 1/μ` (Neimark–Sacker)
+ * are real.
+ */
+neutral: Array<boolean>, 
+/**
+ * The located codimension-2 points in arclength order.
+ */
+special: Array<Codim2PointOut>, 
+/**
+ * Why each end of the curve stopped.
+ */
+end: BranchEndOut, };
+
+export type Codim2PointOut = { 
+/**
+ * What it is.
+ */
+kind: Codim2KindOut, 
+/**
+ * Its nearest point in `CurveOut::p1`.
+ */
+index: number, 
+/**
+ * The across and up parameters.
+ */
+p: [number, number], 
+/**
+ * The state (`dim` values; the cycle's first point for a map).
+ */
+x: Array<number>, 
+/**
+ * `k` of `f^k`, as `CurveOut::period`.
+ */
+period: number, };
+
+export type Codim2KindOut = "bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopfHopf" | "resonance1" | "resonance2" | "resonance3" | "resonance4" | "chenciner" | "foldFlip" | "generalizedFlip";
+
 export type ProjectFile = { 
 /**
  * Always `"separatrix"`.

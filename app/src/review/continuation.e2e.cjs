@@ -146,13 +146,13 @@ test("Continue on a fixed point row opens the Branch view from it; the selection
   }
 });
 
-test("at 1,024 × 768 in projector mode every View label fits its segment, three to a row", async () => {
+test("at 1,024 × 768 in projector mode every View label fits its segment, three to a row and the Parameter plane on its own", async () => {
   const { browser, page } = await open(1024, 768);
   try {
     await page.evaluate(() => (document.documentElement.dataset.theme = "light"));
     for (const [title, labels] of [
-      ["Sel'kov", ["Phase", "Series", "Section", "3D", "λ", "Branch"]],
-      ["Logistic map", ["Phase", "Series", "Cobweb", "λ", "Orbit", "Branch"]],
+      ["Sel'kov", ["Phase", "Series", "Section", "3D", "λ", "Branch", "Parameter plane"]],
+      ["Logistic map", ["Phase", "Series", "Cobweb", "λ", "Orbit", "Branch", "Parameter plane"]],
     ]) {
       if (title !== "Sel'kov") {
         await page.goto(BASE);
@@ -171,7 +171,7 @@ test("at 1,024 × 768 in projector mode every View label fits its segment, three
           return range.getBoundingClientRect().width + pad <= el.getBoundingClientRect().width + 0.5;
         }),
       );
-      assert.deepEqual(fits, [true, true, true, true, true, true], title);
+      assert.deepEqual(fits, [true, true, true, true, true, true, true], title);
       await viewRadio(page, "Continuation").click();
       const button = inspector(page).getByRole("button", { name: "Continue from selection" });
       assert.ok(
@@ -179,9 +179,11 @@ test("at 1,024 × 768 in projector mode every View label fits its segment, three
         `${title}: the Continue label fits its button`,
       );
       const rows = await radios.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
-      assert.equal(new Set(rows).size, 2, `two rows: ${rows}`);
+      assert.equal(new Set(rows).size, 3, `three rows: ${rows}`);
       const widths = await radios.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().width)));
-      assert.ok(Math.max(...widths) - Math.min(...widths) <= 1, `equal segments: ${widths}`);
+      const thirds = widths.slice(0, 6);
+      assert.ok(Math.max(...thirds) - Math.min(...thirds) <= 1, `equal segments: ${widths}`);
+      assert.ok(widths[6] >= 3 * thirds[0] - 2, `the Parameter plane spans its row: ${widths}`);
     }
   } finally {
     await browser.close();

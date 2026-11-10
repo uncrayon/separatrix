@@ -84,3 +84,88 @@
 .inspector .inspector-special-text {
   white-space: pre-wrap;
 }
+
+/* The Parameter plane, the one option alone on the View control's last row, spans it. */
+.inspector .inspector-view-control .segmented-grid .ds-segmented-item:last-child:nth-child(3n + 1) {
+  grid-column: 1 / -1;
+}
+
+/* A list's subhead with an action at its end (Special points · Search in two parameters). */
+.inspector .inspector-subhead-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.inspector .inspector-subhead-row .ds-panel-section-subhead {
+  margin-right: auto;
+}
+
+/* The inline "Follow in two parameters" panel under a special point. */
+.inspector .inspector-follow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding: var(--space-3);
+  background: var(--raised);
+  border-radius: var(--radius-md);
+}
+.inspector .inspector-follow-title,
+.inspector .inspector-follow .ds-panel-section-hint {
+  margin: 0;
+}
+.inspector .inspector-follow-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.inspector .inspector-range-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-1);
+  width: 100%;
+}
+
+/* A search in progress: how far it is, and Stop. */
+.inspector .inspector-search {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--raised);
+  border-radius: var(--radius-md);
+  color: var(--ink-2);
+}
+
+.inspector .inspector-curve-row {
+  flex-wrap: wrap;
+}
+.inspector .inspector-curve-swatch {
+  display: inline-flex;
+  flex: none;
+  width: var(--space-6);
+  margin-top: calc((var(--control-h-sm) - var(--icon)) / 2);
+}
+.inspector .inspector-curve-swatch svg {
+  display: block;
+  width: var(--space-6);
+  height: var(--icon);
+  overflow: visible;
+}
+.inspector .inspector-curve-tag {
+  margin-left: var(--space-2);
+  color: var(--ink-2);
+}
+.inspector .inspector-curve-tag--warn {
+  color: var(--warn);
+}
+.inspector .inspector-stall {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+}
+.inspector .inspector-plane-on {
+  color: var(--ink-2);
+}

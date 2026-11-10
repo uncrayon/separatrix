@@ -44,6 +44,7 @@ import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedSeed, LoadedView, ProjectLoad } from "../project/serialize";
+import { curvesAvailability, openPlane, planeSeed, withBranch, type CurvesView, type PlaneSeed } from "./curves.ts";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -178,9 +179,10 @@ export type View =
   | SpaceView
   | LyapunovView
   | OrbitView
-  | ContinuationView;
+  | ContinuationView
+  | CurvesView;
 export type ViewKind = NonNullable<View["kind"]>;
-export type PlotView = Exclude<View, ContinuationView>;
+export type PlotView = Exclude<View, ContinuationView | CurvesView>;
 
 export const viewKind = (v: Pick<View, "kind">): ViewKind => v.kind ?? "plane";
 export const isCobweb = (v: Pick<View, "kind">): boolean => v.kind === "cobweb";
@@ -189,13 +191,25 @@ export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
 export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
 export const isContinuation = (v: View): v is ContinuationView => v.kind === "continuation";
-export const isAnalysis = (v: View): v is LyapunovView | OrbitView | ContinuationView =>
-  isLyapunov(v) || isOrbit(v) || isContinuation(v);
+export const isCurves = (v: Pick<View, "kind">): v is CurvesView => v.kind === "curves";
+export const isAnalysis = (v: View): v is LyapunovView | OrbitView | ContinuationView | CurvesView =>
+  isLyapunov(v) || isOrbit(v) || isContinuation(v) || isCurves(v);
+/** The Branch view and the Parameter plane: parameters on the axes, no portrait and no start points. */
+export const isParameterView = (v: View): v is ContinuationView | CurvesView => isContinuation(v) || isCurves(v);
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
 /** Every option of the View control, in the order shown. */
-export type ViewChoice = "phase" | "series" | "cobweb" | "section" | "space" | "lyapunov" | "orbit" | "continuation";
+export type ViewChoice =
+  | "phase"
+  | "series"
+  | "cobweb"
+  | "section"
+  | "space"
+  | "lyapunov"
+  | "orbit"
+  | "continuation"
+  | "curves";
 export const VIEW_CHOICES: readonly ViewChoice[] = [
   "phase",
   "series",
@@ -205,11 +219,12 @@ export const VIEW_CHOICES: readonly ViewChoice[] = [
   "lyapunov",
   "orbit",
   "continuation",
+  "curves",
 ];
 
 export const VIEW_CHOICES_BY_KIND: Record<SystemKind, readonly ViewChoice[]> = {
-  ode: ["phase", "series", "section", "space", "lyapunov", "continuation"],
-  map: ["phase", "series", "cobweb", "lyapunov", "orbit", "continuation"],
+  ode: ["phase", "series", "section", "space", "lyapunov", "continuation", "curves"],
+  map: ["phase", "series", "cobweb", "lyapunov", "orbit", "continuation", "curves"],
 };
 
 export const viewChoicesFor = (sys: Pick<CompileResponse, "kind"> | null | undefined): readonly ViewChoice[] =>
@@ -223,6 +238,7 @@ export function viewChoice(v: View): ViewChoice {
   if (isLyapunov(v)) return "lyapunov";
   if (isOrbit(v)) return "orbit";
   if (isContinuation(v)) return "continuation";
+  if (isCurves(v)) return "curves";
   return v.xAxis.kind === "time" || v.yAxis.kind === "time" ? "series" : "phase";
 }
 
@@ -294,12 +310,14 @@ export const VIEW_CHOICE_LABELS: Record<ViewChoice, string> = {
   lyapunov: "Lyapunov spectrum",
   orbit: "Orbit diagram",
   continuation: "Continuation",
+  curves: "Parameter plane",
 };
 
 /**
  * The View control's visible labels, short enough for three equal segments
  * of a 1,024 px window's inspector in projector mode; the full names stay
- * in each segment's title and accessible name.
+ * in each segment's title and accessible name. The Parameter plane comes
+ * last and spans a row of its own, so it keeps its full name.
  */
 export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   phase: "Phase",
@@ -310,6 +328,7 @@ export const VIEW_CHOICE_SHORT: Record<ViewChoice, string> = {
   lyapunov: "λ",
   orbit: "Orbit",
   continuation: "Branch",
+  curves: "Parameter plane",
 };
 
 /** Which of the View control's options `sys` can show, with the reason for each it can't. */
@@ -326,6 +345,7 @@ export function viewChoiceAvailability(
     lyapunov: { ok: true },
     orbit: orbitAvailability(sys, name),
     continuation: continuationAvailability(sys, name),
+    curves: curvesAvailability(sys, name),
   };
 }
 
@@ -963,6 +983,22 @@ export function specialRows(runs: readonly (BranchRun | undefined)[]): { at: Spe
   return rows.sort((a, b) => a.at.p - b.at.p);
 }
 
+/**
+ * The bifurcations the Branch view `branch` found that a curve can be
+ * followed from (LP, H, PD, NS), each with every parameter's value there.
+ */
+export function branchSeeds(
+  sys: CompileResponse,
+  params: readonly Partial<Pick<ParamState, "value">>[],
+  branch: ContinuationView | null,
+  branches: Readonly<Record<string, BranchRun>>,
+): PlaneSeed[] {
+  if (!branch) return [];
+  const values = params.map((p) => p.value ?? 0);
+  const runs = shownBranches({ compiled: sys, params: values.map((value) => ({ value }) as ParamState), view: branch, branches });
+  return specialRows(runs.map((b) => b.run)).flatMap(({ at }) => planeSeed(at, values, branch.param) ?? []);
+}
+
 export function continuationSummary(
   runs: readonly (BranchRun | undefined)[],
 ): { elapsedMs: number; roundTripMs: number; points: number; special: number } {
@@ -1530,6 +1566,12 @@ export function adaptView(
   next?: Pick<CompileResponse, "kind" | "autonomous">,
 ): View | null {
   if (isLyapunov(view)) return view;
+  if (isCurves(view)) {
+    // The seeds are states of the old system; the view a project file saves follows like any other.
+    const home = adaptView(view.home, oldStates, newStates, next);
+    if (!home || isCurves(home)) return null;
+    return { ...view, branch: isContinuation(home) ? home : null, home, curves: { ...view.curves, seeds: [] } };
+  }
   if (isContinuation(view)) {
     const y = view.yAxis;
     const k = y.kind === "state" ? newStates.findIndex((s) => s.name === oldStates[y.index]?.name) : 0;
@@ -1572,13 +1614,22 @@ export function adaptView(
   return { ...view, xAxis, yAxis };
 }
 
+/** Where parameter `i` went after a recompile: by name, else by position when the count is unchanged; -1 when gone. */
+export function followParamIndex(
+  oldParams: readonly Pick<ParamInfo, "name">[],
+  newParams: readonly Pick<ParamInfo, "name">[],
+  i: number,
+): number {
+  const k = newParams.findIndex((p) => p.name === oldParams[i]?.name);
+  return k >= 0 ? k : oldParams.length === newParams.length && i < newParams.length ? i : -1;
+}
+
 export function followOrbitParam<V extends OrbitView | ContinuationView>(
   view: V,
   oldParams: readonly Pick<ParamInfo, "name">[],
   newParams: readonly Pick<ParamInfo, "name">[],
 ): V | null {
-  const k = newParams.findIndex((p) => p.name === oldParams[view.param]?.name);
-  const index = k >= 0 ? k : oldParams.length === newParams.length && view.param < newParams.length ? view.param : -1;
+  const index = followParamIndex(oldParams, newParams, view.param);
   if (index < 0) return null;
   return index === view.param ? view : { ...view, param: index };
 }
@@ -1688,7 +1739,7 @@ export function isFlowPhasePlane(xAxis: AxisRef, yAxis: AxisRef, kind: SystemKin
  * the diagonal is at 45° and f's slope can be compared with it by eye).
  */
 export function hasEqualScales(view: View, kind: SystemKind | undefined): boolean {
-  if (isSpace(view) || isContinuation(view)) return false;
+  if (isSpace(view) || isParameterView(view)) return false;
   return isCobweb(view) || isFlowPhasePlane(view.xAxis, view.yAxis, kind);
 }
 
@@ -1844,6 +1895,7 @@ export function switchView(
     params?: readonly (Pick<ParamState, "min" | "max"> & Partial<Pick<ParamState, "value">>)[];
     selection?: Selection;
     shapeId?: number;
+    branches?: Readonly<Record<string, BranchRun>>;
   },
   memory: ViewMemory,
 ): View | null {
@@ -1854,6 +1906,14 @@ export function switchView(
   if (choice === from) return null;
   if (!viewChoiceAvailability(sys)[choice].ok) return null;
   memory[from] = v;
+  if (choice === "curves") {
+    const kept = memory.curves && isCurves(memory.curves) ? memory.curves : null;
+    const branch = memory.continuation && isContinuation(memory.continuation) ? memory.continuation : null;
+    const home = branch ?? defaultView(sys, s.solver);
+    const params = s.params ?? [];
+    if (kept?.curves.seeds.length) return { ...(kept.branch === branch ? kept : withBranch(kept, branch, params)), home };
+    return openPlane(kept, branch, home, params, branchSeeds(sys, params, branch, s.branches ?? {}));
+  }
   const kept = memory[choice];
   if (kept) return kept;
   const dim = sys.states.length;

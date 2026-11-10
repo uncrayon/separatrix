@@ -2,9 +2,12 @@ import type {
   Method,
   Arrow,
   AxisRef,
+  BranchStop,
   ChosenSavePath,
   Classification,
   ClipboardTextRequest,
+  Codim2KindOut,
+  Codim2PointOut,
   CompileRequest,
   CompileResponse,
   ContinuationExportRequest,
@@ -16,6 +19,9 @@ import type {
   CsvFileOut,
   CsvRequest,
   CsvResponse,
+  CurveKindOut,
+  CurveRequest,
+  CurveResponse,
   DocumentStateRequest,
   ExportPortraitRequest,
   FigureLatexRequest,
@@ -333,6 +339,30 @@ const SYSTEMS: Record<string, MockSystem> = {
     ],
     f: (t, [x, v], [d, f, w]) => [v, -d * v + x - x * x * x + f * Math.cos(w * t)],
   },
+  "co-oxidation": {
+    kind: "ode",
+    states: [s("x"), s("y"), s("s")],
+    params: [par("k_2", "k_{2}"), par("K")],
+    equationsLatex: [
+      "\\dot{x} = 5 \\left(1 - x - y - s\\right)^{2} - 2 x^{2} - 10 x y",
+      "\\dot{y} = k_{2} \\left(1 - x - y - s\\right) - 0.1 y - 10 x y",
+      "\\dot{s} = 0.0675 \\left(1 - x - y - s - K s\\right)",
+    ],
+    f: (_t, [x, y, sv], [k2, k]) => {
+      const z = 1 - x - y - sv;
+      return [5 * z * z - 2 * x * x - 10 * x * y, k2 * z - 0.1 * y - 10 * x * y, 0.0675 * (z - k * sv)];
+    },
+  },
+  "predator-prey-map": {
+    kind: "map",
+    states: xy,
+    params: [par("a"), par("varepsilon", "\\varepsilon")],
+    equationsLatex: [
+      "x_{n+1} = a x_{n} \\left(1 - x_{n}\\right) - \\frac{3 x_{n} y_{n}}{1 + \\varepsilon x_{n}}",
+      "y_{n+1} = \\frac{3.5 x_{n} y_{n}}{1 + \\varepsilon x_{n}}",
+    ],
+    f: (_n, [x, y], [a, e]) => [a * x * (1 - x) - (3 * x * y) / (1 + e * x), (3.5 * x * y) / (1 + e * x)],
+  },
   blank: {
     kind: "ode",
     states: xy,
@@ -487,6 +517,152 @@ export async function mockContinuation(req: ContinuationRequest): Promise<Contin
   return res;
 }
 
+interface MockCurve {
+  kind: CurveKindOut;
+  period: number;
+  p1: number[];
+  p2: number[];
+  x: number[];
+  neutral: boolean[];
+  special: { kind: Codim2KindOut; p: [number, number]; x: number[] }[];
+  /** How a real follower ends on reaching the data's first and last point inside the box. */
+  stops: [BranchStop, BranchStop];
+}
+
+/** By template id; written by `scripts/reference/codim2_reference.py --mock-curves`. Loaded on first use, so the desktop bundle doesn't carry it. */
+const loadMockCurves = async () =>
+  (await import("./mockCurves.generated.json")).default as unknown as Record<string, { free: [number, number]; curves: MockCurve[] }>;
+
+/** Seeds farther than this from every curve, in the request's box scale plus the state, have no curve. */
+const MOCK_CURVE_SEED_TOL = 0.03;
+
+interface MockCurveVertex {
+  p1: number;
+  p2: number;
+  x: number[];
+  neutral: boolean;
+  /** Its index in the data; `null` for a point interpolated on the box's edge. */
+  src: number | null;
+}
+
+/**
+ * `compute_curve` on precomputed data: the curve of the seed's kind nearest
+ * the seed, cut there and walked like the real follower, clipped to the box.
+ */
+export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
+  const started = performance.now();
+  const sys = byId.get(req.systemId);
+  if (!sys) throw new Error("Unknown system; compile it first.");
+  const data = (await loadMockCurves())[MOCK_TEMPLATES[req.systemId - 1].id];
+  if (!data)
+    throw new Error(
+      "This browser preview has no curves in two parameters for this system. Open the desktop app to follow them.",
+    );
+  const [f1, f2] = data.free;
+  if (req.free[0] !== f1 || req.free[1] !== f2)
+    throw new Error(
+      `This browser preview follows this system's curves with ${sys.params[f1].name} across and ${sys.params[f2].name} up only.`,
+    );
+  const dim = sys.states.length;
+  if (req.seed.x.length !== dim) throw new Error(`The seed has ${req.seed.x.length} states; the system has ${dim}.`);
+  const [[lo1, hi1], [lo2, hi2]] = req.ranges;
+  const w1 = hi1 - lo1;
+  const w2 = hi2 - lo2;
+  const q1 = req.params[f1];
+  const q2 = req.params[f2];
+  const scaled = (c: MockCurve, i: number) => [c.p1[i] / w1, c.p2[i] / w2, ...c.x.slice(i * dim, i * dim + dim)];
+  const target = [q1 / w1, q2 / w2, ...req.seed.x];
+
+  let best: { c: MockCurve; k: number; d: number } | null = null;
+  for (const c of data.curves) {
+    if (c.kind !== req.seed.kind || c.period !== req.seed.period) continue;
+    let a = scaled(c, 0);
+    for (let i = 0; i + 1 < c.p1.length; i++) {
+      const b = scaled(c, i + 1);
+      const ab = b.map((v, j) => v - a[j]);
+      const len2 = ab.reduce((acc, v) => acc + v * v, 0);
+      const t = len2 > 0 ? Math.min(1, Math.max(0, ab.reduce((acc, v, j) => acc + v * (target[j] - a[j]), 0) / len2)) : 0;
+      const d = Math.sqrt(a.reduce((acc, v, j) => acc + (v + t * ab[j] - target[j]) ** 2, 0));
+      if (!best || d < best.d) best = { c, k: t < 0.5 ? i : i + 1, d };
+      a = b;
+    }
+  }
+  if (!best || best.d > MOCK_CURVE_SEED_TOL) throw new Error("The preview has no curve through this point.");
+  const { c, k } = best;
+  const n = c.p1.length;
+  const inBox = (v: { p1: number; p2: number }) => v.p1 >= lo1 && v.p1 <= hi1 && v.p2 >= lo2 && v.p2 <= hi2;
+  const vertex = (i: number): MockCurveVertex => ({
+    p1: c.p1[i],
+    p2: c.p2[i],
+    x: c.x.slice(i * dim, i * dim + dim),
+    neutral: c.neutral[i],
+    src: i,
+  });
+  const onEdge = (a: MockCurveVertex, b: MockCurveVertex): MockCurveVertex => {
+    const cut = (from: number, to: number, lo: number, hi: number) =>
+      to > hi ? (hi - from) / (to - from) : to < lo ? (lo - from) / (to - from) : 1;
+    const t = Math.min(cut(a.p1, b.p1, lo1, hi1), cut(a.p2, b.p2, lo2, hi2));
+    const at = (u: number, v: number) => u + t * (v - u);
+    return {
+      p1: Math.min(hi1, Math.max(lo1, at(a.p1, b.p1))),
+      p2: Math.min(hi2, Math.max(lo2, at(a.p2, b.p2))),
+      x: a.x.map((v, j) => at(v, b.x[j])),
+      neutral: a.neutral,
+      src: null,
+    };
+  };
+  const start: MockCurveVertex = { ...vertex(k), p1: q1, p2: q2, x: req.seed.x.slice() };
+  const walk = (step: 1 | -1): { points: MockCurveVertex[]; end: BranchStop } => {
+    const points = [start];
+    if (!inBox(start)) return { points, end: "range" };
+    for (let i = k + step; ; i += step) {
+      if (i < 0 || i >= n) return { points, end: c.stops[step < 0 ? 0 : 1] };
+      if (points.length >= req.maxPoints) return { points, end: "maxPoints" };
+      const v = vertex(i);
+      if (!inBox(v)) {
+        points.push(onEdge(points[points.length - 1], v));
+        return { points, end: "range" };
+      }
+      points.push(v);
+    }
+  };
+  const back = req.direction === "both" ? walk(-1) : null;
+  const last = walk(req.direction === "backward" ? -1 : 1);
+  const pts = [...(back ? back.points.slice(1).reverse() : []), ...last.points];
+
+  const nearestVertex = (p: [number, number]) => {
+    const d2 = (i: number) => ((c.p1[i] - p[0]) / w1) ** 2 + ((c.p2[i] - p[1]) / w2) ** 2;
+    let j = 0;
+    for (let i = 1; i < n; i++) if (d2(i) < d2(j)) j = i;
+    return j;
+  };
+  const special: Codim2PointOut[] = c.special
+    .flatMap((sp) => {
+      const j = nearestVertex(sp.p);
+      const index = pts.findIndex((v) => v.src === j);
+      return index < 0 ? [] : [{ kind: sp.kind, index, p: sp.p, x: sp.x, period: c.period }];
+    })
+    .sort((a, b) => a.index - b.index);
+
+  const res: CurveResponse = {
+    requestId: req.requestId,
+    curve: {
+      kind: c.kind,
+      period: c.period,
+      p1: pts.map((v) => v.p1),
+      p2: pts.map((v) => v.p2),
+      x: pts.flatMap((v) => v.x),
+      neutral: pts.map((v) => v.neutral),
+      special,
+      end: { first: back ? back.end : null, last: last.end },
+    },
+    elapsedMs: performance.now() - started,
+  };
+  const m = sepxMock();
+  m.curves = [...(m.curves ?? []), { req, res }];
+  return res;
+}
+
 interface MockPoint {
   z: number[];
   t: number[];
@@ -609,6 +785,8 @@ class MockBranch {
     const tol = 1e-5;
     if (kind === "hopf") return p.eig.some(([re, im]) => im !== 0 && Math.abs(re) < tol * (1 + Math.abs(im)));
     if (kind === "neimarkSacker") return p.eig.some(([re, im]) => im !== 0 && Math.abs(Math.sqrt(re * re + im * im) - 1) < tol);
+    // A multiplier that passes through infinity (where the map is singular) also changes the flip test's sign.
+    if (kind === "flip") return p.eig.some(([re, im]) => im === 0 && Math.abs(re + 1) < 1e-3);
     return true;
   }
 
@@ -1833,6 +2011,7 @@ export interface SepxMock {
   lastLyapunov?: { req: LyapunovRequest; res: LyapunovResponse };
   lastOrbit?: { req: OrbitDiagramRequest; res: OrbitDiagramResponse };
   continuations?: { req: ContinuationRequest; res: ContinuationResponse }[];
+  curves?: { req: CurveRequest; res: CurveResponse }[];
 }
 
 function sepxMock(): SepxMock {

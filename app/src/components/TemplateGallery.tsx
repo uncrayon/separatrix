@@ -3,7 +3,7 @@ import type { RecentProject } from "../api/types";
 import { Tex } from "../math/Tex";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
 import { modalShortcuts } from "../project/useShortcuts";
-import { TEMPLATES, strogatzRef, templateChapters, type Template } from "../templates";
+import { TEMPLATES, templateRef, templateChapters, type Template } from "../templates";
 import { tipDismiss } from "./Chrome";
 import { Button } from "./controls";
 import { IconClose, IconOpen, IconPlus } from "./icons";
@@ -109,7 +109,7 @@ function TemplateCardButton({ template: t, onPick }: { template: Template; onPic
       </span>
       <span className="ds-template-card-meta">
         <TemplateTags template={t} />
-        {strogatzRef(t) && <span className="ds-template-card-ref">{strogatzRef(t)}</span>}
+        {templateRef(t) && <span className="ds-template-card-ref">{templateRef(t)}</span>}
       </span>
     </button>
   );

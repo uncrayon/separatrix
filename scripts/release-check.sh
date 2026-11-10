@@ -63,6 +63,7 @@ view_page() {
     lyapunov) echo lyapunov.md ;;
     orbit) echo orbit-diagram.md ;;
     continuation) echo continuation.md ;;
+    curves) echo parameter-plane.md ;;
   esac
 }
 GUIDE_TOPICS=(getting-started.md equations.md time-series.md exports.md project-files.md projector-mode.md keyboard-shortcuts.md)
@@ -72,7 +73,7 @@ view_kinds() {
   awk '/^export type View =/{p=1;next} p{print} p&&/;$/{exit}' "$model" | sed -n 's/^ *| *//p' |
     while read -r member; do
       if [[ ! "$member" =~ kind ]]; then
-        member=$(awk -v n="${member%;}" '$0 ~ "^export type " n " =" {p=1} p{print} p&&/;$/{exit}' "$model")
+        member=$(awk -v n="${member%;}" '$0 ~ "^export type " n " =" {p=1} p{print} p&&/;$/{exit}' app/src/state/*.ts)
       fi
       grep -oE 'kind\??: "[a-z]+"' <<<"$member" | head -1 | sed -E 's/.*"([a-z]+)"/\1/'
     done

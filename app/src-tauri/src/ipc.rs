@@ -767,6 +767,160 @@ pub enum SpecialKindOut {
     NeimarkSacker,
 }
 
+/// Request of the `compute_curve` command: follow a fold, Hopf, flip or
+/// Neimark–Sacker bifurcation as two parameters vary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurveRequest {
+    /// Echoed back so the UI can drop stale responses.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order; the curve
+    /// starts at `(params[free.0], params[free.1])`.
+    pub params: Vec<f64>,
+    /// The two free parameters: across (the Branch view's), then up.
+    pub free: (usize, usize),
+    /// The box the curve stays in: the across range, then the up range,
+    /// each `lo < hi`.
+    pub ranges: ((f64, f64), (f64, f64)),
+    /// The bifurcation the curve starts from.
+    pub seed: CurveSeed,
+    /// Which way to follow it from the seed.
+    pub direction: ContinuationDirection,
+    /// First step in arclength, `> 0`.
+    pub ds: f64,
+    /// Largest step, `>= ds`.
+    pub ds_max: f64,
+    /// Most points in each direction, the seed included,
+    /// `2..=MAX_CONTINUATION_POINTS`.
+    pub max_points: usize,
+}
+
+/// The one-parameter bifurcation a curve starts from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurveSeed {
+    /// Which bifurcation is followed.
+    pub kind: CurveKindOut,
+    /// The state (`dim` values; the cycle's first point for a map).
+    pub x: Vec<f64>,
+    /// `k` of `f^k` for a map, 1 for a flow.
+    pub period: usize,
+    /// Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ`. A starting
+    /// guess; `null` otherwise.
+    pub omega: Option<f64>,
+}
+
+/// The kinds of bifurcation curve; their labels are `LP`, `H`, `PD`, `NS`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum CurveKindOut {
+    /// Folds (limit points): an eigenvalue `0` (flow) or a multiplier `+1`
+    /// (map).
+    Fold,
+    /// Hopf points of a flow.
+    Hopf,
+    /// Flips (period doublings) of a map.
+    Flip,
+    /// Neimark–Sacker points of a map.
+    NeimarkSacker,
+}
+
+/// Response of the `compute_curve` command.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurveResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// The curve.
+    pub curve: CurveOut,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
+/// A bifurcation curve as one polyline in arclength order. With direction
+/// `both` the backward half comes first, reversed, so the seed is in the
+/// middle.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CurveOut {
+    /// Which bifurcation it is.
+    pub kind: CurveKindOut,
+    /// `k` of `f^k` for a map, 1 for a flow.
+    pub period: usize,
+    /// The across parameter at each point.
+    pub p1: Vec<f64>,
+    /// The up parameter at each point.
+    pub p2: Vec<f64>,
+    /// `points · dim` values: the state at each point (the cycle's first
+    /// point for a map).
+    pub x: Vec<f64>,
+    /// `true` where the curve is no bifurcation: a neutral saddle, whose
+    /// eigenvalues `±κ` (Hopf) or multipliers `μ, 1/μ` (Neimark–Sacker)
+    /// are real.
+    pub neutral: Vec<bool>,
+    /// The located codimension-2 points in arclength order.
+    pub special: Vec<Codim2PointOut>,
+    /// Why each end of the curve stopped.
+    pub end: BranchEndOut,
+}
+
+/// A located codimension-2 point on a curve.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct Codim2PointOut {
+    /// What it is.
+    pub kind: Codim2KindOut,
+    /// Its nearest point in `CurveOut::p1`.
+    pub index: usize,
+    /// The across and up parameters.
+    pub p: (f64, f64),
+    /// The state (`dim` values; the cycle's first point for a map).
+    pub x: Vec<f64>,
+    /// `k` of `f^k`, as `CurveOut::period`.
+    pub period: usize,
+}
+
+/// The kinds of codimension-2 point; their labels are `BT`, `CP`, `GH`,
+/// `ZH`, `HH`, `R1` to `R4`, `CH`, `LPPD`, `GPD`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum Codim2KindOut {
+    /// Bogdanov–Takens: a double zero eigenvalue, where a fold and a Hopf
+    /// curve meet.
+    BogdanovTakens,
+    /// Cusp: two fold curves meet, the fold's quadratic coefficient is 0.
+    Cusp,
+    /// Bautin (generalized Hopf): the first Lyapunov coefficient is 0.
+    Bautin,
+    /// Zero-Hopf: an eigenvalue 0 and a pair `±iω`.
+    ZeroHopf,
+    /// Hopf–Hopf: two pairs `±iω₁`, `±iω₂`.
+    HopfHopf,
+    /// 1:1 resonance: a double multiplier `+1`.
+    Resonance1,
+    /// 1:2 resonance: a double multiplier `−1`.
+    Resonance2,
+    /// 1:3 resonance: multipliers `e^{±2πi/3}`.
+    Resonance3,
+    /// 1:4 resonance: multipliers `±i`.
+    Resonance4,
+    /// Chenciner: the Neimark–Sacker coefficient is 0.
+    Chenciner,
+    /// Fold-flip: multipliers `+1` and `−1`.
+    FoldFlip,
+    /// Generalized flip: the flip's normal-form coefficient is 0.
+    GeneralizedFlip,
+}
+
 // ---------------------------------------------------------------------
 // Project files (`.sepx`). The project itself is `ProjectFile` from
 // `separatrix-project`, whose keys are snake_case on the wire (the one
@@ -1464,6 +1618,13 @@ mod bindings {
             SpecialPointOut::decl(&cfg),
             SwitchPoint::decl(&cfg),
             SpecialKindOut::decl(&cfg),
+            CurveRequest::decl(&cfg),
+            CurveSeed::decl(&cfg),
+            CurveKindOut::decl(&cfg),
+            CurveResponse::decl(&cfg),
+            CurveOut::decl(&cfg),
+            Codim2PointOut::decl(&cfg),
+            Codim2KindOut::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),

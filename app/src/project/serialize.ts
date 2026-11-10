@@ -268,7 +268,9 @@ function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<u
  * from the state, every other key as it was read. Rust checks it and stamps
  * the version fields when it writes.
  */
-export function projectFromState(s: DocumentState, opts: SerializeOptions = {}): ProjectFile {
+export function projectFromState(doc: DocumentState, opts: SerializeOptions = {}): ProjectFile {
+  // The file format has no Parameter plane yet: it saves the view the plane came from.
+  const s = doc.view.kind === "curves" ? { ...doc, view: doc.view.home } : doc;
   const loaded = opts.loaded ?? null;
   const pending = !!opts.pending && !!loaded;
   const lsys = loaded?.system;

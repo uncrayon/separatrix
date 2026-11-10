@@ -66,8 +66,8 @@ function snapshot(over = {}) {
 test("the View control offers the Lyapunov spectrum to flows and to maps", () => {
   assert.ok(model.VIEW_CHOICES_BY_KIND.ode.includes("lyapunov"));
   assert.ok(model.VIEW_CHOICES_BY_KIND.map.includes("lyapunov"));
-  assert.deepEqual(model.VIEW_CHOICES_BY_KIND.ode.at(-1), "continuation", "the branch plot comes last for both kinds");
-  assert.deepEqual(model.VIEW_CHOICES_BY_KIND.map.at(-1), "continuation");
+  assert.deepEqual(model.VIEW_CHOICES_BY_KIND.ode.slice(-2), ["continuation", "curves"], "the branch plot, then the parameter plane, end both kinds");
+  assert.deepEqual(model.VIEW_CHOICES_BY_KIND.map.slice(-2), ["continuation", "curves"]);
   assert.deepEqual(model.viewChoiceAvailability(lorenz).lyapunov, { ok: true });
   assert.deepEqual(model.viewChoiceAvailability(system("map", ["x"])).lyapunov, { ok: true });
   assert.equal(model.VIEW_CHOICE_LABELS.lyapunov, "Lyapunov spectrum");

@@ -15,7 +15,8 @@ or [Linux](../install/linux.md).
 ## The views
 
 The **View** control in the right-hand panel switches between views. A flow offers Phase, Series,
-Section, 3D, λ and Branch. A map offers Phase, Series, Cobweb, λ, Orbit and Branch. A view that
+Section, 3D, λ, Branch and Parameter plane. A map offers Phase, Series, Cobweb, λ, Orbit, Branch
+and Parameter plane. A view that
 doesn't fit the system is grayed out, and the panel says why.
 
 | View | Control | Page | Example project |
@@ -28,6 +29,7 @@ doesn't fit the system is grayed out, and the panel says why.
 | Lyapunov spectrum | λ | [lyapunov.md](lyapunov.md) | [lyapunov.sepx](examples/lyapunov.sepx) |
 | Orbit diagram | Orbit | [orbit-diagram.md](orbit-diagram.md) | [orbit-diagram.sepx](examples/orbit-diagram.sepx) |
 | Continuation | Branch | [continuation.md](continuation.md) | [continuation.sepx](examples/continuation.sepx) |
+| Parameter plane | Parameter plane | [parameter-plane.md](parameter-plane.md) | None yet |
 
 Each example project opens in its view. Download it and open it with **Open…**, or drop it on the
 Separatrix window.

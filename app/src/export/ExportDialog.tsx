@@ -40,7 +40,7 @@ import {
 } from "../state/model";
 import { spaceNames } from "../canvas/space";
 import type { StudioState } from "../state/useStudio";
-import { strogatzRef, templateById } from "../templates";
+import { templateRef, templateById } from "../templates";
 import {
   clipboardWritePng,
   clipboardWriteText,
@@ -401,7 +401,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const tpl = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
   const lines = useMemo(() => state.equations.map((l) => l.source), [state.equations]);
   const name = title ?? systemTitle(tpl, lines, state.format).name;
-  const ref = sourceRef ?? (tpl ? strogatzRef(tpl) || undefined : undefined);
+  const ref = sourceRef ?? (tpl ? templateRef(tpl) || undefined : undefined);
   const stem = fileStem(stemProp ?? name);
 
   const sys = state.compiled && state.compiled.ok ? state.compiled : null;

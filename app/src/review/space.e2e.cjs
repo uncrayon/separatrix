@@ -61,7 +61,7 @@ async function waitPortrait(page, pred) {
 
 async function lorenz3d(page) {
   await pick(page, "Lorenz equations");
-  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ", "Branch"]);
+  assert.deepEqual(await viewGroup(page).getByRole("radio").allInnerTexts(), ["Phase", "Series", "Section", "3D", "λ", "Branch", "Parameter plane"]);
   await viewRadio(page, "3D view").click();
   await overlay(page).waitFor();
   await waitPortrait(page, "req.zAxis && req.zAxis.index === 2");

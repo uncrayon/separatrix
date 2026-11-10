@@ -7,6 +7,8 @@ import type {
   ContinuationResponse,
   ConvertRequest,
   ConvertResponse,
+  CurveRequest,
+  CurveResponse,
   LyapunovRequest,
   LyapunovResponse,
   OrbitDiagramRequest,
@@ -20,6 +22,7 @@ import {
   mockCompile,
   mockContinuation,
   mockConvert,
+  mockCurve,
   mockInstallUpdate,
   mockLyapunov,
   mockOrbitDiagram,
@@ -53,6 +56,10 @@ export function computeOrbitDiagram(req: OrbitDiagramRequest): Promise<OrbitDiag
 
 export function computeContinuation(req: ContinuationRequest): Promise<ContinuationResponse> {
   return isTauri() ? invoke<ContinuationResponse>("compute_continuation", { req }) : mockContinuation(req);
+}
+
+export function computeCurve(req: CurveRequest): Promise<CurveResponse> {
+  return isTauri() ? invoke<CurveResponse>("compute_curve", { req }) : mockCurve(req);
 }
 
 export function checkForUpdate(): Promise<UpdateCheck> {

@@ -21,6 +21,7 @@
 //! | `compute_lyapunov` | [`ipc::LyapunovRequest`] | [`ipc::LyapunovResponse`] |
 //! | `compute_orbit_diagram` | [`ipc::OrbitDiagramRequest`] | [`ipc::OrbitDiagramResponse`] |
 //! | `compute_continuation` | [`ipc::ContinuationRequest`] | [`ipc::ContinuationResponse`] |
+//! | `compute_curve` | [`ipc::CurveRequest`] | [`ipc::CurveResponse`] |
 //! | `project_choose_open_path` | none | `string \| null` |
 //! | `project_read` | [`ipc::ProjectReadRequest`] | [`ipc::OpenedProject`] |
 //! | `project_choose_save_path` | [`ipc::ProjectChooseSaveRequest`] | [`ipc::ChosenSavePath`] or `null` |
@@ -141,6 +142,15 @@ async fn compute_continuation(
 ) -> Result<ipc::ContinuationResponse, String> {
     let system = system_or_err(&store, req.system_id)?;
     blocking(move || service::compute_continuation(&system, &req)).await
+}
+
+#[tauri::command]
+async fn compute_curve(
+    req: ipc::CurveRequest,
+    store: State<'_, SystemStore>,
+) -> Result<ipc::CurveResponse, String> {
+    let system = system_or_err(&store, req.system_id)?;
+    blocking(move || service::compute_curve(&system, &req)).await
 }
 
 // ---------------------------------------------------------------------
@@ -1066,6 +1076,7 @@ pub fn run() {
             compute_lyapunov,
             compute_orbit_diagram,
             compute_continuation,
+            compute_curve,
             project_choose_open_path,
             project_read,
             project_choose_save_path,

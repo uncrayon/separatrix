@@ -5,7 +5,14 @@ the published value, a closed form, or shooting), never by continuation, so
 the result is independent of the code under test.
 
     uv run --with numpy --with scipy --with sympy python scripts/reference/codim2_reference.py
+
+With --mock-curves PATH it also follows the CO oxidation fold and Hopf curves
+by pseudo-arclength continuation, samples the predator–prey map's curves from
+their closed forms, and writes them as the browser preview's mock data.
 """
+
+import argparse
+import json
 
 import numpy as np
 import sympy as sp
@@ -112,42 +119,45 @@ def bykov():
         return c[3] - c[1] * c[2]
 
     at = lambda v: parts(m, [*v, 0.4])
-    for lab, u0 in [
+    pts = {}
+    for key, (lab, u0) in zip(("LP1", "LP2"), [
         ("LP  (published Q2=1.042049)", [0.024717, 0.450257, 0.375018, 1.042049]),
         ("LP  (published Q2=1.052200)", [0.054030, 0.302241, 0.459807, 1.052200]),
-    ]:
-        solve(lambda v: [*at(v)[0], np.linalg.det(at(v)[1])], u0, lab, lambda v: f"|a|={abs(fold_a(m, [*v, 0.4])):.6e}")
-    for lab, u0 in [
+    ]):
+        u = solve(lambda v: [*at(v)[0], np.linalg.det(at(v)[1])], u0, lab, lambda v: f"|a|={abs(fold_a(m, [*v, 0.4])):.6e}")
+        pts[key] = [*u, 0.4]
+    for key, (lab, u0) in zip(("H1", "H2"), [
         ("H   (published Q2=1.051557)", [0.016358, 0.523971, 0.328337, 1.051557]),
         ("H   (published Q2=1.040991)", [0.077929, 0.233063, 0.492149, 1.040991]),
-    ]:
-        solve(
+    ]):
+        pts[key] = [*solve(
             lambda v: [*at(v)[0], hopf(at(v)[1])],
             u0,
             lab,
             lambda v: "l1=%.6e omega=%.6f l1*omega=%.6e" % (*l1(m, [*v, 0.4]), np.prod(l1(m, [*v, 0.4]))),
-        )
+        ), 0.4]
 
     def bt(v):  # double zero eigenvalue: c₀ = c₁ = 0
         F, A, *_ = parts(m, v)
         c = np.poly(A)
         return [*F, c[3], c[2]]
 
-    for lab, u0 in [
+    for key, (lab, u0) in zip(("BT1", "BT2"), [
         ("BT  (published 1.417628, 0.971397)", [0.115909, 0.315467, 0.288437, 1.417628, 0.971397]),
         ("BT  (published 1.161199, 0.722339)", [0.016337, 0.638410, 0.200456, 1.161199, 0.722339]),
-    ]:
-        solve(bt, u0, lab)
-    solve(
+    ]):
+        pts[key] = solve(bt, u0, lab)
+    pts["CP"] = solve(
         lambda v: [*parts(m, v)[0], np.linalg.det(parts(m, v)[1]), fold_a(m, v)],
         [0.035940, 0.352008, 0.451368, 1.006408, 0.355991],
         "CP  (published 1.006408, 0.355991)",
     )
-    for lab, u0 in [
+    for key, (lab, u0) in zip(("GH1", "GH2"), [
         ("GH  (published 0.891319, 0.232487)", [0.018022, 0.368238, 0.497968, 0.891319, 0.232487]),
         ("GH  (published 0.924255, 0.305879)", [0.064311, 0.211095, 0.554870, 0.924255, 0.305879]),
-    ]:
-        solve(lambda v: [*parts(m, v)[0], hopf(parts(m, v)[1]), l1(m, v)[0]], u0, lab, lambda v: "omega=%.6f" % l1(m, v)[1])
+    ]):
+        pts[key] = solve(lambda v: [*parts(m, v)[0], hopf(parts(m, v)[1]), l1(m, v)[0]], u0, lab, lambda v: "omega=%.6f" % l1(m, v)[1])
+    return m, hopf, {k: np.array(v, float) for k, v in pts.items()}
 
 
 def lorenz84():
@@ -200,8 +210,10 @@ def predator_prey_map():
     print("PD curve (1 + tr + det = 0): a =", sp.solve(sp.Eq(1 + tr + dt, 0), a))
     a_p1 = sp.solve(sp.Eq(1 - tr + dt, 0), a)
     print("mu = +1 curve: a =", a_p1, "; at eps=1:", [t.subs(e, 1) for t in a_p1], "(published BP a=5/3)")
+    pts = {}
     for name, trv in [("R1", 2), ("R2", -2), ("R3", -1), ("R4", 0)]:
         for so in sp.solve([sp.Eq(dt, 1), sp.Eq(tr, trv)], [a, e], dict=True):
+            pts[name] = (float(so[e]), float(so[a]))
             print(f"{name}: eps = {so[e]} = {float(so[e]):.10f}, a = {so[a]} = {float(so[a]):.10f}, F3 = ({float(xs.subs(so)):.10f}, {float(ys.subs(so)):.10f})")
     for so in sp.solve([sp.Eq(dt, -1), sp.Eq(tr, 0)], [a, e], dict=True):
         print(f"mu = +1 and -1: eps = {so[e]}, a = {so[a]}, F3 = ({float(xs.subs(so)):.6f}, {float(ys.subs(so)):.6f})")
@@ -219,6 +231,8 @@ def predator_prey_map():
     ev = brentq(lambda v: on_ns(v)[0][0], -5, -3, xtol=1e-14)
     (dv, mu), av, xv, yv = on_ns(ev)
     print(f"CH: eps = {ev:.10f}, a = {av:.10f}, F3 = ({xv:.10f}, {yv:.10f}), theta = {np.angle(mu):.8f}, d = {dv:.1e}")
+    pts["CH"] = (ev, av)
+    return pts
 
 
 def delayed_logistic():
@@ -298,9 +312,200 @@ def freire():
                 print(f"beta={be}: homoclinic by shooting at nu = {0.5 * (a + b):.8f}, return time {sm[1]:.2f}")
 
 
+# ---------------------------------------------------------------------------
+# Mock curves for the browser preview (app/src/api/mockCurves.generated.json).
+# Each curve is a polyline over (across, up) with the state at each point; the
+# boxes are the gallery templates' slider ranges.
+
+CO_BOX = ((0.5, 2.5), (0.0, 2.0))  # k₂, K
+PP_BOX = ((0.0, 16.0), (-6.0, 3.0))  # a, ε
+
+
+def inside(box, p1, p2):
+    return box[0][0] <= p1 <= box[0][1] and box[1][0] <= p2 <= box[1][1]
+
+
+def follow_curve(G, u0, box, ds_max=4e-3):
+    """Pseudo-arclength continuation of G(u) = 0, u = (state, p₁, p₂), both ways
+    from u0, each way up to and including its first point outside `box`."""
+    k = len(u0)
+
+    def DG(u, h=1e-7):
+        return np.array([(G(u + h * e) - G(u - h * e)) / (2 * h) for e in np.eye(k)]).T
+
+    def tangent(u, prev):
+        t = np.linalg.svd(DG(u))[2][-1]
+        return -t if t @ prev < 0 else t
+
+    def correct(u, t, ds):
+        v = u + ds * t
+        for _ in range(12):
+            dv = np.linalg.solve(np.vstack([DG(v), t]), -np.array([*G(v), t @ (v - u) - ds]))
+            v = v + dv
+            if np.linalg.norm(dv) < 1e-12:
+                return v
+        return v if np.linalg.norm(G(v)) < 1e-9 else None
+
+    u = np.array(u0, float)
+    t0 = np.linalg.svd(DG(u))[2][-1]
+    halves = []
+    for sign in (-1, 1):
+        u, t, ds, out = np.array(u0, float), sign * t0, 2e-3, [np.array(u0, float)]
+        while inside(box, *u[-2:]):
+            v = correct(u, t, ds)
+            if v is None:
+                ds /= 2
+                assert ds > 1e-8, f"stalled at {u}"
+                continue
+            t, u = tangent(v, t), v
+            out.append(u)
+            ds = min(1.3 * ds, ds_max)
+        halves.append(out)
+    return halves[0][::-1] + halves[1][1:]
+
+
+def distance_to(poly, q, box):
+    """Distance from q to the polyline over (p₁, p₂), both scaled by the box."""
+    w = np.array([box[0][1] - box[0][0], box[1][1] - box[1][0]])
+    P, q = poly / w, np.asarray(q) / w
+    a, b = P[:-1], P[1:]
+    d = b - a
+    t = np.clip(np.einsum("ij,ij->i", q - a, d) / np.maximum(np.einsum("ij,ij->i", d, d), 1e-300), 0, 1)
+    return float(np.min(np.linalg.norm(a + t[:, None] * d - q, axis=1)))
+
+
+def curve_json(kind, p1, p2, x, neutral, special, box, stops=("range", "range")):
+    poly = np.column_stack([p1, p2])
+    for sp_ in special:
+        gap = distance_to(poly, sp_["p"], box)
+        print(f"  {kind:14s} {sp_['kind']:15s} at {np.round(sp_['p'], 8)}: {gap:.1e} from the polyline")
+        assert gap < 1e-5, "a reference point is off its curve"
+    r = lambda v: float(f"{v:.8g}")
+    return {
+        "kind": kind,
+        "period": 1,
+        "p1": [r(v) for v in p1],
+        "p2": [r(v) for v in p2],
+        "x": [r(v) for v in np.ravel(x)],
+        "neutral": [bool(v) for v in neutral],
+        "special": [{"kind": q["kind"], "p": [r(v) for v in q["p"]], "x": [r(v) for v in q["x"]]} for q in special],
+        "stops": list(stops),
+    }
+
+
+def resample(p1, p2, box, x=None, h=5e-3):
+    """Indices of a dense polyline at about every h of arclength, the parameters
+    in the box's scale and the state x as it is, with its ends."""
+    w = (box[0][1] - box[0][0], box[1][1] - box[1][0])
+    steps = [np.diff(p1) / w[0], np.diff(p2) / w[1], *(np.diff(np.zeros((len(p1), 0)) if x is None else x, axis=0).T)]
+    s = np.concatenate([[0], np.cumsum(np.sqrt(np.sum(np.square(steps), axis=0)))])
+    keep = np.unique(np.searchsorted(s, np.arange(0, s[-1], h)))
+    return np.unique(np.concatenate([keep, [len(s) - 1]]))
+
+
+def co_curves(m, hopf, pts):
+    print("\n===== Mock curves: CO oxidation, k₂ across, K up =====")
+
+    def G(test):
+        return lambda u: np.array([*np.array(m["F"](*u), float).ravel(), test(np.array(m["J"](*u), float))])
+
+    def point(kind, key):
+        u = pts[key]
+        return {"kind": kind, "p": u[3:5], "x": u[:3]}
+
+    out = []
+    for kind, seed, also, test, special in [
+        ("fold", "LP1", "LP2", np.linalg.det, [point("cusp", "CP"), point("bogdanovTakens", "BT1"), point("bogdanovTakens", "BT2")]),
+        ("hopf", "H1", "H2", hopf, [point("bogdanovTakens", "BT1"), point("bogdanovTakens", "BT2"), point("bautin", "GH1"), point("bautin", "GH2")]),
+    ]:
+        U = np.array(follow_curve(G(test), pts[seed], CO_BOX, ds_max=1e-3))
+        U = U[resample(U[:, 3], U[:, 4], CO_BOX, U[:, :3])]
+        # On the Hopf curve c₀ = c₁c₂ also holds at a neutral saddle λ = ±√(−c₁): there c₁ < 0.
+        neutral = [kind == "hopf" and np.poly(np.array(m["J"](*u), float))[2] < 0 for u in U]
+        poly = U[:, 3:5]
+        print(f"  {kind}: {len(U)} points, ends {np.round(poly[0], 4)} and {np.round(poly[-1], 4)}, x in [{U[:, 0].min():.4f}, {U[:, 0].max():.4f}]")
+        gap = distance_to(poly, pts[also][3:5], CO_BOX)
+        print(f"  {kind:14s} {also} (K = 0.4) is {gap:.1e} from the curve followed from {seed}")
+        assert gap < 1e-5
+        out.append(curve_json(kind, U[:, 3], U[:, 4], U[:, :3], neutral, special, CO_BOX))
+    return {"free": [0, 1], "curves": out}
+
+
+def pp_curves(pts):
+    print("\n===== Mock curves: predator–prey map, a across, ε up =====")
+
+    def F3(a, e):
+        x = 1 / (3.5 - e)
+        return x, 3.5 * x * (a * (1 - x) - 1) / 3
+
+    def half_trace(a, e, x, y):
+        return (a * (1 - 2 * x) - 3 * y / (1 + e * x) ** 2 + 3.5 * x / (1 + e * x)) / 2
+
+    def piece(e_lo, e_hi, a_of):
+        """The run of ε in (e_lo, e_hi) whose (a, ε) is in the box, with the first
+        point outside it at each end that leaves the box."""
+        e = np.linspace(e_lo, e_hi, 400001)
+        a = a_of(e)
+        ok = (a >= PP_BOX[0][0]) & (a <= PP_BOX[0][1]) & (e >= PP_BOX[1][0]) & (e <= PP_BOX[1][1])
+        i = np.flatnonzero(ok)
+        assert len(i) and np.all(np.diff(i) == 1), "one run per piece"
+        lo, hi = max(i[0] - 1, 0), min(i[-1] + 1, len(e) - 1)
+        e, a = e[lo : hi + 1], a[lo : hi + 1]
+        k = resample(a, e, PP_BOX)
+        return a[k], e[k]
+
+    def special(kind, key):
+        e, a = pts[key]
+        return {"kind": kind, "p": (a, e), "x": F3(a, e)}
+
+    def on_f3(kind, a, e, neutral, sp_, stops=("range", "range")):
+        x, y = F3(a, e)
+        return curve_json(kind, a, e, np.column_stack([x, y]), neutral, sp_, PP_BOX, stops)
+
+    a_ns = lambda e: (2 * e - 7) / (2 * e - 3)
+    a_pd = lambda e: (4 * e**2 - 56 * e + 147) / (4 * e**2 + 4 * e - 7)
+    pole = (-1 + 2 * np.sqrt(2)) / 2, (-1 - 2 * np.sqrt(2)) / 2
+    lppd = {"kind": "foldFlip", "p": (3.0, 2.0), "x": (2 / 3, 0.0)}
+    out = []
+    a, e = piece(-6.05, 1.49, a_ns)
+    # On det = 1 the multipliers are e^{±iθ} with cos θ = tr/2; past |tr/2| = 1 they are real, μ and 1/μ.
+    neutral = np.abs(half_trace(a, e, *F3(a, e))) > 1
+    out.append(on_f3("neimarkSacker", a, e, neutral, [special("resonance4", "R4"), special("resonance3", "R3"), special("resonance2", "R2"), special("chenciner", "CH")]))
+    a, e = piece(pole[0] + 1e-6, 3.05, a_pd)
+    out.append(on_f3("flip", a, e, np.zeros(len(a), bool), [special("resonance2", "R2"), lppd]))
+    a, e = piece(-6.05, pole[1] - 1e-6, a_pd)
+    out.append(on_f3("flip", a, e, np.zeros(len(a), bool), []))
+    # F2 = ((a − 1)/a, 0) has the multiplier 2 − a, so its flip line is a = 3. The map is
+    # singular where 1 + εx = 0, at ε = −3/2 on the line, which a follower can't pass.
+    e = np.linspace(-1.499, 3.05, 2001)
+    k = resample(np.full_like(e, 3.0), e, PP_BOX)
+    e = e[k]
+    x = np.column_stack([np.full_like(e, 2 / 3), np.zeros_like(e)])
+    out.append(curve_json("flip", np.full_like(e, 3.0), e, x, np.zeros(len(e), bool), [lppd], PP_BOX, ("stepTooSmall", "range")))
+    # F2's other multiplier, 3.5x/(1 + εx), is −1 where x = −1/(ε + 7/2), so a = (ε + 7/2)/(ε + 9/2).
+    # For ε > −7/2 that F2 has x < 0 and a → 0 as ε → −7/2, the corner of the box.
+    a_f2 = lambda e: (e + 3.5) / (e + 4.5)
+    for e_lo, e_hi in [(-3.5 + 1e-4, 3.05), (-6.05, -4.5 - 1e-6)]:
+        a, e = piece(e_lo, e_hi, a_f2)
+        x = np.column_stack([1 - 1 / a, np.zeros_like(a)])
+        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), [], PP_BOX))
+    for c in out:
+        print(f"  {c['kind']}: {len(c['p1'])} points")
+    return {"free": [0, 1], "curves": out}
+
+
 if __name__ == "__main__":
-    bykov()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mock-curves", metavar="PATH", help="also write the preview's mock curves as JSON to PATH")
+    path = ap.parse_args().mock_curves
+    co = bykov()
     lorenz84()
-    predator_prey_map()
+    pp = predator_prey_map()
     delayed_logistic()
     freire()
+    if path:
+        data = {"co-oxidation": co_curves(*co), "predator-prey-map": pp_curves(pp)}
+        with open(path, "w") as f:
+            json.dump(data, f, separators=(",", ":"))
+            f.write("\n")
+        print(f"\nwrote {path}")
