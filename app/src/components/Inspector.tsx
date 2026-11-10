@@ -1434,7 +1434,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
         </div>
       )}
       <h3 className="ds-panel-section-subhead label">Curves</h3>
-      {rows.length === 0 ? (
+      {rows.length === 0 && state.homoclinicRows.length === 0 ? (
         <p className="ds-panel-section-hint caption">Curves appear here, one per bifurcation followed.</p>
       ) : (
         <ul className="ds-traj-list" aria-label="Curves" data-curves="">

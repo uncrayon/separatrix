@@ -9,15 +9,16 @@ import type {
   HomoclinicResponse,
   HomoclinicStop,
 } from "../api/types";
-import { MAX_HOMOCLINIC_POINTS } from "../api/ipc.generated.ts";
 import type { Job } from "../api/client";
-import { CODIM2_KINDS, curvesAvailability, curvesSettingsError, dec4 } from "./curves.ts";
-import { isCurves, type ParamState, type View } from "./model.ts";
+import { CODIM2_KINDS, dec4, planeContext } from "./curves.ts";
+import type { View } from "./model.ts";
 
 /**
  * A Bogdanov–Takens point to follow a homoclinic curve from: the
  * equilibrium there and every parameter's value there, so it keeps its
- * meaning whichever two parameters are free (as `PlaneSeed` does).
+ * meaning whichever two parameters are free (as `PlaneSeed` does). The job
+ * takes all of them from here, not from the sliders: a BT point is isolated,
+ * so moving a parameter that is not free would leave it.
  */
 export interface HomoclinicSeed {
   x: number[];
@@ -29,7 +30,7 @@ export interface HomoclinicSeed {
  * default 2,000 would run for minutes; 500 reaches across a plane of the
  * reference systems and stays within `MAX_HOMOCLINIC_POINTS`.
  */
-export const HOMOCLINIC_MAX_POINTS = Math.min(500, MAX_HOMOCLINIC_POINTS);
+export const HOMOCLINIC_MAX_POINTS = 500;
 
 export const HOMOCLINIC_NAME = "Homoclinic curve";
 export const HOMOCLINIC_LEGEND = "Homoclinic (Hom)";
@@ -42,10 +43,14 @@ export function homoclinicSeed(x: readonly number[], values: readonly number[], 
   return { x: x.slice(), params };
 }
 
+export const hasHomoclinicSeed = (seeds: readonly HomoclinicSeed[], seed: HomoclinicSeed) => {
+  const key = JSON.stringify(seed);
+  return seeds.some((s) => JSON.stringify(s) === key);
+};
+
 /** `seeds` with `add` appended unless an identical seed is there. */
 export function withHomoclinicSeed(seeds: readonly HomoclinicSeed[], add: HomoclinicSeed): HomoclinicSeed[] {
-  const key = JSON.stringify(add);
-  return seeds.some((s) => JSON.stringify(s) === key) ? seeds.slice() : [...seeds, add];
+  return hasHomoclinicSeed(seeds, add) ? seeds.slice() : [...seeds, add];
 }
 
 interface HomoclinicMeta {
@@ -64,24 +69,16 @@ export interface HomoclinicProgressState {
   p: [number, number] | null;
 }
 
-/** One request per seed, on a flow, keyed by its JSON (property order matters). */
-export function buildHomoclinicJobs(s: {
-  compiled: CompileResponse | null;
-  params: readonly Pick<ParamState, "value">[];
-  view: View;
-}): HomoclinicJob[] {
-  const sys = s.compiled;
-  if (!sys || !sys.ok || sys.systemId === undefined || sys.kind === "map" || !isCurves(s.view) || !curvesAvailability(sys).ok) return [];
-  const v = s.view;
-  const c = v.curves;
-  const n = sys.params.length;
-  if (v.across >= n || v.up >= n || v.across === v.up || s.params.length !== n || curvesSettingsError(c)) return [];
-  const systemId = sys.systemId;
+/** One request per seed, on a flow, keyed by its JSON (property order matters); every parameter is the seed's. */
+export function buildHomoclinicJobs(s: { compiled: CompileResponse | null; view: View }): HomoclinicJob[] {
+  const ctx = planeContext(s);
+  if (!ctx || ctx.sys.kind === "map") return [];
+  const { systemId, sys, v, c, n } = ctx;
   return c.homoclinic.flatMap((seed, i): HomoclinicJob[] => {
     if (seed.x.length !== sys.states.length || seed.params.length !== n) return [];
     const body: HomoclinicJob["body"] = {
       systemId,
-      params: s.params.map((q, j) => (j === v.across || j === v.up ? seed.params[j] : q.value)),
+      params: seed.params.slice(),
       free: [v.across, v.up],
       ranges: [
         [c.ranges[0][0], c.ranges[0][1]],
@@ -126,6 +123,25 @@ export function homoclinicRows(
 
 export const drawnHomoclinic = (rows: readonly HomoclinicRow[]) =>
   rows.flatMap((r) => (r.status === "done" ? [r.res.curve] : []));
+
+/**
+ * The runs after a job ends: those still wanted stay, and so does the job's
+ * own result when it is wanted. A cancelled job (null) keeps nothing, so a key
+ * wanted again reruns. Outside the plane no job is wanted, which says nothing
+ * about the finished runs, so they all stay.
+ */
+export function settleHomoclinic(
+  runs: Readonly<Record<string, HomoclinicRun>>,
+  wanted: ReadonlySet<string>,
+  key: string,
+  run: HomoclinicRun | null,
+  inPlane: boolean,
+): Record<string, HomoclinicRun> {
+  const next: Record<string, HomoclinicRun> = {};
+  for (const [k, v] of Object.entries(runs)) if (!inPlane || wanted.has(k)) next[k] = v;
+  if (run && wanted.has(key)) next[key] = run;
+  return next;
+}
 
 /** An id no earlier job of this or a previous run of the app had: the shell keeps a cancel flag per id. */
 let idCounter = 0;

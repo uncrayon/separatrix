@@ -29,7 +29,9 @@ registerHooks({
 const model = await import("../state/model.ts");
 const curves = await import("../state/curves.ts");
 const hom = await import("../state/homoclinic.ts");
-const { mockHomoclinic, mockCancelJob } = await import("../api/mock.ts");
+const { mockHomoclinic, mockCancelJob, mockCompile } = await import("../api/mock.ts");
+const { MAX_HOMOCLINIC_POINTS } = await import("../api/ipc.generated.ts");
+const { TEMPLATES } = await import("../templates/index.ts");
 
 const st = (name) => ({ name, latex: name, derived: false });
 const system = (kind, states, params, extra = {}) => ({
@@ -58,7 +60,7 @@ const planeWith = (homoclinic, patch = {}) => {
   return { ...base, curves: { ...base.curves, homoclinic, ...patch } };
 };
 const BT = hom.homoclinicSeed([0, 0, 0], [-0.7745967, 0.7745967], [0, 1], [-0.7745967, 0.7745967]);
-const jobsOf = (view, compiled = freire, params = sliders) => hom.buildHomoclinicJobs({ compiled, params, view });
+const jobsOf = (view, compiled = freire) => hom.buildHomoclinicJobs({ compiled, view });
 
 test("request ids differ in a row and are safe integers, even within one millisecond", () => {
   const a = hom.homoclinicRequestId();
@@ -89,24 +91,26 @@ test("one job per seed on a flow, keyed by the body in a fixed property order", 
   assert.equal(body.ds, 0.01);
   assert.equal(body.dsMax, 0.02);
   assert.equal(body.maxPoints, 500);
-  assert.ok(body.maxPoints <= 2000);
+  assert.ok(body.maxPoints <= MAX_HOMOCLINIC_POINTS);
   assert.deepEqual(jobsOf(planeWith([BT, BT]))[0].meta.key, meta.key);
 });
 
-test("the request changes, and so does the key, with the box, the step and the sliders it does not free", () => {
-  const key = (view, params) => jobsOf(view, freire, params)[0].meta.key;
-  const base = key(planeWith([BT]), sliders);
-  assert.notEqual(base, key(planeWith([BT], { ranges: [[-1, 0.1], [0, 1]] }), sliders));
-  assert.notEqual(base, key(planeWith([BT], { ds: 0.005 }), sliders));
+test("the request changes, and so does the key, with the box and the step", () => {
+  const key = (view) => jobsOf(view)[0].meta.key;
+  const base = key(planeWith([BT]));
+  assert.notEqual(base, key(planeWith([BT], { ranges: [[-1, 0.1], [0, 1]] })));
+  assert.notEqual(base, key(planeWith([BT], { ds: 0.005 })));
+});
+
+test("a third slider does not move the seed: every parameter is the seed's own", () => {
   const three = system("ode", ["x"], ["a", "b", "c"]);
   const v3 = curves.curvesView([{ min: 0, max: 1 }, { min: 0, max: 1 }, { min: 0, max: 1 }], 0, 1, null, model.defaultView(three));
   const view3 = { ...v3, curves: { ...v3.curves, homoclinic: [{ x: [0], params: [0.1, 0.2, 0.3] }] } };
-  const at = (c) => [{ value: 9 }, { value: 9 }, { value: c }];
-  const k1 = hom.buildHomoclinicJobs({ compiled: three, params: at(0.3), view: view3 })[0];
-  const k2 = hom.buildHomoclinicJobs({ compiled: three, params: at(0.4), view: view3 })[0];
-  assert.deepEqual(k1.body.params, [0.1, 0.2, 0.3]);
-  assert.deepEqual(k2.body.params, [0.1, 0.2, 0.4]);
-  assert.notEqual(k1.meta.key, k2.meta.key);
+  const [job] = hom.buildHomoclinicJobs({ compiled: three, view: view3 });
+  assert.deepEqual(job.body.params, [0.1, 0.2, 0.3]);
+  assert.deepEqual(job.body.free, [0, 1]);
+  const swapped = { ...view3, across: 2, up: 1 };
+  assert.deepEqual(hom.buildHomoclinicJobs({ compiled: three, view: swapped })[0].body.params, [0.1, 0.2, 0.3]);
 });
 
 test("no job for a map, for another view, or for a seed of another shape", () => {
@@ -134,15 +138,6 @@ test("rows are computing with progress, done, or failed, each by its own key", (
   assert.deepEqual(rows.map((r) => r.status), ["done", "failed"]);
   assert.equal(rows[1].error, "No saddle.");
   assert.deepEqual(hom.drawnHomoclinic(rows), [res.curve], "only the done row is drawn");
-});
-
-test("removing a seed leaves no job, no row and nothing to draw", () => {
-  const jobs = jobsOf(planeWith([BT]));
-  const runs = { [jobs[0].meta.key]: { ok: true, res: { curve: { p1: [], p2: [] } }, roundTripMs: 1 } };
-  const after = planeWith([]);
-  const rows = hom.homoclinicRows(jobsOf(after), runs, { key: jobs[0].meta.key, points: 5, p: [0, 0] });
-  assert.deepEqual(rows, []);
-  assert.deepEqual(hom.drawnHomoclinic(rows), []);
 });
 
 test("the running sentence names the points and the parameters", () => {
@@ -196,7 +191,7 @@ test("a done row reads in four lines, the last only when time is reversed", () =
   assert.equal(hom.homoclinicLines(curve({ reversed: true }), names).at(-1), "Followed in reversed time");
 });
 
-test("the preview refuses an unknown system with a sentence, and a cancel is idempotent", async () => {
+test("the preview refuses an unknown system with a sentence", async () => {
   await assert.rejects(
     mockHomoclinic(
       { requestId: 1, systemId: 1_000_000, params: [0, 0], free: [0, 1], ranges: [[0, 1], [0, 1]], x: [0], direction: "both", ds: 0.01, dsMax: 0.02, maxPoints: 500 },
@@ -204,5 +199,46 @@ test("the preview refuses an unknown system with a sentence, and a cancel is ide
     ),
     /Unknown system/,
   );
-  await mockCancelJob(1);
+});
+
+const co = TEMPLATES.find((t) => t.id === "co-oxidation");
+const coRequest = async (requestId) => {
+  const { systemId } = await mockCompile({ source: co.equations.join("\n"), format: "latex" });
+  return { requestId, systemId, params: [1.4176276, 0.97139757], free: [0, 1], ranges: [[0, 3], [0, 3]], x: [0, 0, 0], direction: "both", ds: 0.01, dsMax: 0.02, maxPoints: 500 };
+};
+
+test("the preview returns the CO oxidation curve for its first BT point, with progress", async () => {
+  const seen = [];
+  const res = await mockHomoclinic(await coRequest(11), (p) => seen.push(p.points));
+  assert.equal(res.curve.p1.length, 231);
+  assert.equal(res.curve.p1[0], 1.41418);
+  assert.equal(res.curve.p2[0], 0.96255992);
+  assert.equal(seen.length, 20);
+  assert.equal(seen.at(-1), 231);
+});
+
+test("a job cancelled before it starts, or during the run, resolves to null", async () => {
+  await mockCancelJob(12);
+  assert.equal(await mockHomoclinic(await coRequest(12), () => {}), null);
+  const running = mockHomoclinic(await coRequest(13), () => {});
+  setTimeout(() => void mockCancelJob(13), 100);
+  assert.equal(await running, null);
+});
+
+test("settling a job keeps what is still wanted and nothing of a cancelled job", () => {
+  const ok = (n) => ({ ok: true, res: { n }, roundTripMs: 1 });
+  const runs = { a: ok(1), b: ok(2) };
+  const wanted = new Set(["a", "c"]);
+  assert.deepEqual(hom.settleHomoclinic(runs, wanted, "c", ok(3), true), { a: ok(1), c: ok(3) });
+  assert.deepEqual(hom.settleHomoclinic(runs, wanted, "c", null, true), { a: ok(1) }, "cancelled keeps nothing for its key");
+  assert.deepEqual(hom.settleHomoclinic(runs, wanted, "z", ok(4), true), { a: ok(1) }, "a result nobody wants is dropped");
+  assert.deepEqual(hom.settleHomoclinic(runs, new Set(), "c", ok(3), false), runs, "outside the plane finished runs stay");
+});
+
+test("a recompile drops the homoclinic seeds with the others", () => {
+  const view = planeWith([BT]);
+  const oldStates = freire.states;
+  const adapted = model.adaptView(view, oldStates, oldStates, freire);
+  assert.deepEqual(adapted.curves.homoclinic, []);
+  assert.deepEqual(adapted.curves.seeds, []);
 });

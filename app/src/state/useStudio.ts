@@ -45,6 +45,7 @@ import {
   homoclinicRequestId,
   homoclinicRows,
   homoclinicSeed,
+  settleHomoclinic,
   withHomoclinicSeed,
   type HomoclinicProgressState,
   type HomoclinicRow,
@@ -258,8 +259,8 @@ export function useStudio() {
   );
 
   const homoclinicShown = useMemo(
-    () => (isCurves(view) ? homoclinicRows(buildHomoclinicJobs({ compiled, params, view }), homoclinicRuns, homoclinicProgress) : []),
-    [compiled, view, params, homoclinicRuns, homoclinicProgress],
+    () => (isCurves(view) ? homoclinicRows(buildHomoclinicJobs({ compiled, view }), homoclinicRuns, homoclinicProgress) : []),
+    [compiled, view, homoclinicRuns, homoclinicProgress],
   );
 
   const state: StudioState = {
@@ -501,11 +502,7 @@ export function useStudio() {
         homoclinicFlight.current = null;
         setHomoclinicProgress(null);
         const wanted = new Set(buildHomoclinicJobs(latest.current).map((j) => j.meta.key));
-        // A cancelled job keeps nothing; one cancelled yet still wanted is shown as stopped, not rerun.
-        const kept =
-          run ?? (wanted.has(job.meta.key) ? ({ ok: false, error: "The run was cancelled." } satisfies HomoclinicRun) : null);
-        const next: Record<string, HomoclinicRun> = kept && wanted.has(job.meta.key) ? { [job.meta.key]: kept } : {};
-        for (const [k, v] of Object.entries(latest.current.homoclinicRuns)) if (wanted.has(k)) next[k] = v;
+        const next = settleHomoclinic(latest.current.homoclinicRuns, wanted, job.meta.key, run, isCurves(latest.current.view));
         latest.current = { ...latest.current, homoclinicRuns: next };
         setHomoclinicRuns(next);
       }

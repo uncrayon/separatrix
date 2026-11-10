@@ -258,19 +258,29 @@ type CurveJob = Job<Omit<CurveRequest, "requestId">, CurveMeta>;
 
 export type CurveRun = { ok: true; res: CurveResponse; roundTripMs: number } | { ok: false; error: string };
 
+/**
+ * What a job in the Parameter plane needs of the view: a compiled system, the
+ * plane's two distinct parameters, and settings that pass. Null otherwise.
+ */
+export function planeContext(s: { compiled: CompileResponse | null; view: View }) {
+  const sys = s.compiled;
+  if (!sys || !sys.ok || sys.systemId === undefined || !isCurves(s.view) || !curvesAvailability(sys).ok) return null;
+  const v = s.view;
+  const c = v.curves;
+  const n = sys.params.length;
+  if (v.across >= n || v.up >= n || v.across === v.up || curvesSettingsError(c)) return null;
+  return { systemId: sys.systemId, sys, v, c, n };
+}
+
 /** One request per seed, keyed by its JSON, every parameter but the free two from its slider. */
 export function buildCurveJobs(s: {
   compiled: CompileResponse | null;
   params: readonly Pick<ParamState, "value">[];
   view: View;
 }): CurveJob[] {
-  const sys = s.compiled;
-  if (!sys || !sys.ok || sys.systemId === undefined || !isCurves(s.view) || !curvesAvailability(sys).ok) return [];
-  const v = s.view;
-  const c = v.curves;
-  const n = sys.params.length;
-  if (v.across >= n || v.up >= n || v.across === v.up || s.params.length !== n || curvesSettingsError(c)) return [];
-  const systemId = sys.systemId;
+  const ctx = planeContext(s);
+  if (!ctx || s.params.length !== ctx.n) return [];
+  const { systemId, sys, v, c, n } = ctx;
   return c.seeds.flatMap((seed, i): CurveJob[] => {
     if (seed.x.length !== sys.states.length || seed.params.length !== n) return [];
     const body: CurveJob["body"] = {

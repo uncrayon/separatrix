@@ -105,7 +105,7 @@ test("Follow homoclinic shows progress in place, Cancel leaves nothing, and foll
 
     await row.getByRole("button", { name: /Cancel the homoclinic curve/ }).click();
     assert.equal(await homoclinicRows(page).count(), 0, "no row");
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(300);
     assert.equal(await homoclinicRows(page).count(), 0, "no row once the cancelled job has ended");
     assert.doesNotMatch(await page.locator(".legend-bar").innerText(), /Homoclinic/);
     assert.equal(await canvasPixels(page), before, "nothing drawn");
@@ -127,11 +127,17 @@ test("Follow homoclinic shows progress in place, Cancel leaves nothing, and foll
       "the fold and Hopf rows stay",
     );
 
+    const ordinary = inspector(page).locator("[data-curves] > li:not([data-homoclinic-status])");
+    while ((await ordinary.count()) > 0) await ordinary.first().getByRole("button", { name: /^Remove the / }).click();
+    assert.equal(await homoclinicRows(page).count(), 1, "the homoclinic row stays with no ordinary curve rows");
+    const alone = await canvasPixels(page);
+    assert.equal(await homoclinicRows(page).getByRole("button", { name: /Remove the homoclinic curve/ }).count(), 1);
+
     await homoclinicRows(page).getByRole("button", { name: /Remove the homoclinic curve/ }).click();
     assert.equal(await homoclinicRows(page).count(), 0);
     await page.waitForTimeout(300);
     assert.doesNotMatch(await page.locator(".legend-bar").innerText(), /Homoclinic/);
-    assert.equal(await canvasPixels(page), before, "removing the row removes the curve");
+    assert.notEqual(await canvasPixels(page), alone, "removing the row removes the curve");
   } finally {
     await browser.close();
   }

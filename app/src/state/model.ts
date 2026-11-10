@@ -1584,10 +1584,10 @@ export function adaptView(
 ): View | null {
   if (isLyapunov(view)) return view;
   if (isCurves(view)) {
-    // The seeds are states of the old system; the view a project file saves follows like any other.
+    // The seeds, homoclinic ones too, are states of the old system; the view a project file saves follows like any other.
     const home = adaptView(view.home, oldStates, newStates, next);
     if (!home || isCurves(home)) return null;
-    return { ...view, branch: isContinuation(home) ? home : null, home, curves: { ...view.curves, seeds: [] } };
+    return { ...view, branch: isContinuation(home) ? home : null, home, curves: { ...view.curves, seeds: [], homoclinic: [] } };
   }
   if (isContinuation(view)) {
     const y = view.yAxis;

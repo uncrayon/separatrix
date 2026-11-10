@@ -6,6 +6,7 @@ import {
   HOMOCLINIC_NAME,
   computingText,
   homoclinicLines,
+  hasHomoclinicSeed,
   homoclinicSeed,
 } from "../state/homoclinic";
 import { isCurves } from "../state/model";
@@ -92,10 +93,8 @@ export function FollowHomoclinic({ state, actions, point }: Props & { point: Pla
   const sys = state.compiled;
   const view = state.view;
   if (!sys || sys.kind === "map" || point.kind !== "bogdanovTakens" || !isCurves(view)) return null;
-  const seed = JSON.stringify(
-    homoclinicSeed(point.x, state.params.map((p) => p.value), [view.across, view.up], point.p),
-  );
-  const followed = view.curves.homoclinic.some((h) => JSON.stringify(h) === seed);
+  const seed = homoclinicSeed(point.x, state.params.map((p) => p.value), [view.across, view.up], point.p);
+  const followed = hasHomoclinicSeed(view.curves.homoclinic, seed);
   return (
     <div className="ds-fp-detail">
       {followed ? (
