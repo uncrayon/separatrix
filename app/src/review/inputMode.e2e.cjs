@@ -130,7 +130,8 @@ test("a line the converter could not convert is kept as typed, with a note", asy
     await setMode(page, "Text");
     const second = page.locator(".panel-left input.ds-equation-editor-field").nth(1);
     await second.click();
-    await page.keyboard.press("End");
+    // On macOS, End scrolls and leaves the caret where it is; Cmd+Right goes to the end of the line.
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
     await page.keyboard.type(" + 1");
     await page.waitForTimeout(400);
     await setMode(page, "LaTeX");

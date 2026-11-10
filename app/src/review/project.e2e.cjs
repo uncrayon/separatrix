@@ -275,7 +275,7 @@ test("closing the window while dirty asks first; Cancel keeps it open", async ()
   }
 });
 
-test("Ctrl+S saves to the open file; Ctrl+Shift+S asks where", async () => {
+test("Mod+S saves to the open file; Mod+Shift+S asks where", async () => {
   const { browser, page } = await open({ files: { "/mock/rabbits.sepx": fixtureText("rabbits-vs-sheep.sepx") } });
   try {
     await h(page, "openPath", "/mock/rabbits.sepx");
@@ -284,14 +284,14 @@ test("Ctrl+S saves to the open file; Ctrl+Shift+S asks where", async () => {
     // Make it dirty by moving to text mode, then save with the keyboard.
     await h(page, "setFormat", "text");
     await page.waitForFunction(() => window.__projectHarness.doc().dirty);
-    await page.keyboard.press("Control+s");
+    await page.keyboard.press("ControlOrMeta+s");
     await page.waitForFunction(() => !window.__projectHarness.doc().dirty);
     const after = JSON.parse(await fileText(page, "/mock/rabbits.sepx"));
     assert.notEqual(JSON.stringify(after), before);
     assert.equal(after.system.input_format, "text");
 
     await setNextSave(page, "/mock/copy.sepx");
-    await page.keyboard.press("Control+Shift+S");
+    await page.keyboard.press("ControlOrMeta+Shift+S");
     await page.waitForFunction(() => window.__projectHarness.doc().path === "/mock/copy.sepx");
     assert.ok(await fileText(page, "/mock/copy.sepx"));
   } finally {
