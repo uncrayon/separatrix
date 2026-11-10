@@ -760,7 +760,7 @@ first: BranchStop | null,
  */
 last: BranchStop, };
 
-export type BranchStop = "range" | "maxPoints" | "stepTooSmall";
+export type BranchStop = "range" | "maxPoints" | "stepTooSmall" | "closed" | "unfolded";
 
 export type SpecialPointOut = { 
 /**
@@ -886,14 +886,9 @@ x: Array<number>,
 /**
  * `k` of `f^k` for a map, 1 for a flow.
  */
-period: number, 
-/**
- * Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ`. A starting
- * guess; `null` otherwise.
- */
-omega: number | null, };
+period: number, };
 
-export type CurveKindOut = "fold" | "hopf" | "flip" | "neimarkSacker";
+export type CurveKindOut = "fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker";
 
 export type CurveResponse = { 
 /**

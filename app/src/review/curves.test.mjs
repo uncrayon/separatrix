@@ -74,8 +74,7 @@ test("the Parameter plane is the last choice, offered with two parameters and no
 
 test("one job per seed: the free pair from the seed, the other sliders from now, keyed by the body", () => {
   const seed = curves.planeSeed(hopf, [1.05, 0.4], 0);
-  assert.deepEqual(seed, { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, omega: 0.05074, params: [1.051557, 0.4] });
-  assert.equal(curves.planeSeed({ ...hopf, kind: "branchPoint" }, [1.05, 0.4], 0), null, "a branch point has no curve");
+  assert.deepEqual(seed, { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, params: [1.051557, 0.4] });
   const base = curves.curvesView(CO_SLIDERS, 0, 1, null, model.defaultView(co));
   const view = { ...base, curves: { ...base.curves, seeds: [seed] } };
   const [job] = curves.buildCurveJobs({ compiled: co, params: CO_SLIDERS, view });
@@ -87,7 +86,7 @@ test("one job per seed: the free pair from the seed, the other sliders from now,
       [0.5, 2.5],
       [0, 2],
     ],
-    seed: { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, omega: 0.05074 },
+    seed: { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1 },
     direction: "both",
     ds: 0.01,
     dsMax: 0.02,
@@ -97,6 +96,31 @@ test("one job per seed: the free pair from the seed, the other sliders from now,
   const moved = curves.buildCurveJobs({ compiled: co, params: sliders([1.3, 0.9], [[0.5, 2.5], [0, 2]]), view });
   assert.equal(moved[0].meta.key, job.meta.key, "clicking the plane moves both sliders and asks for nothing");
   assert.deepEqual(curves.buildCurveJobs({ compiled: logistic, params: CO_SLIDERS, view }), [], "one parameter: no plane");
+});
+
+test("a branch point is followed too: its row gives a branch-point seed, and opening the plane searches from it", () => {
+  assert.equal(curves.curveKindOf("branchPoint"), "branchPoint");
+  const bp = { kind: "branchPoint", index: 12, p: 1.666667, x: [0.4, 0], period: 1, tangent: [0, 0, 1], eigenvalues: [[1, 0], [0.333333, 0]], omega: null, lyapunov: null };
+  const pd = { ...bp, kind: "flip", index: 30, p: 3, x: [0.666667, 0], eigenvalues: [[-1, 0], [1.4, 0]] };
+  assert.deepEqual(curves.planeSeed(bp, [5.3, 1], 0), { kind: "branchPoint", x: [0.4, 0], period: 1, params: [1.666667, 1] });
+  const pp = system("map", ["x", "y"], ["a", "varepsilon"]);
+  const params = [
+    { name: "a", latex: "a", value: 5.3, min: 0, max: 16 },
+    { name: "varepsilon", latex: "\\varepsilon", value: 1, min: -6, max: 3 },
+  ];
+  const branchView = model.continuationView(params, [0, 16], 0, [model.pointSeed([0.8113, 0], 5.3, "both")]);
+  const [job] = model.buildContinuationJobs({ compiled: pp, params, view: branchView });
+  const res = {
+    requestId: 1,
+    elapsedMs: 1,
+    branch: { period: 1, p: [0, 16], x: [], stable: [], unstable: [], special: [pd, bp], end: { first: "range", last: "range" } },
+  };
+  const s = { compiled: pp, view: { xAxis: { kind: "state", index: 0 }, yAxis: { kind: "state", index: 1 }, xRange: [0, 1], yRange: [0, 1] }, solver: model.DEFAULT_SOLVER, params, branches: { [job.meta.key]: { ok: true, res, roundTripMs: 1 } } };
+  const plane = model.switchView("curves", s, { continuation: branchView });
+  assert.deepEqual(plane.curves.seeds, [
+    { kind: "branchPoint", x: [0.4, 0], period: 1, params: [1.666667, 1] },
+    { kind: "flip", x: [0.666667, 0], period: 1, params: [3, 1] },
+  ]);
 });
 
 test("opening the plane searches from the Branch view's special points, across its parameter, up the next", () => {
@@ -144,7 +168,7 @@ const RANGES = [
   [0, 2],
 ];
 const job = (kind, a, b, seed = 0) => ({
-  body: { systemId: 7, params: [a, b], free: [0, 1], ranges: RANGES, seed: { kind, x: [0, 0, 0], period: 1, omega: null }, direction: "both", ds: 0.01, dsMax: 0.02, maxPoints: 2000 },
+  body: { systemId: 7, params: [a, b], free: [0, 1], ranges: RANGES, seed: { kind, x: [0, 0, 0], period: 1 }, direction: "both", ds: 0.01, dsMax: 0.02, maxPoints: 2000 },
   meta: { key: `${kind}-${a}-${b}`, seed },
 });
 const run = (curve) => ({ ok: true, res: { requestId: 1, curve, elapsedMs: 2 }, roundTripMs: 3 });
@@ -185,6 +209,30 @@ test("a point found on two curves is one row, with both curve kinds; rows by kin
       ["CP", 1.00640833, "On the fold curve"],
       ["GH", 0.92425502, "On the Hopf curve"],
     ],
+  );
+});
+
+test("the fold-flip found on a flip curve and on a branch-point curve is one row, on both, in kind order", () => {
+  const lppd = (index) => ({ kind: "foldFlip", index, p: [3, 2], x: [0.666667, 0], period: 1 });
+  const rows = curves.planePointRows(
+    [curveOut("flip", [3], [2], { special: [lppd(40)] }), curveOut("branchPoint", [3], [2], { special: [lppd(170)] })],
+    [
+      [0, 16],
+      [-6, 3],
+    ],
+  );
+  assert.deepEqual(rows, [{ kind: "foldFlip", p: [3, 2], x: [0.666667, 0], period: 1, on: ["branchPoint", "flip"] }]);
+  assert.equal(curves.onCurvesText(rows[0].on), "On the branch-point and flip curves");
+});
+
+test("a row says where each end stopped, a closed curve and an unfolded branch point included", () => {
+  assert.equal(model.endText({ first: "range", last: "range" }), "stopped at the range's end");
+  assert.equal(model.endText({ first: null, last: "maxPoints" }), "stopped at Max points");
+  assert.equal(model.endText({ first: "stepTooSmall", last: "range" }), "stopped at a step too small to go on and at the range's end");
+  assert.equal(model.endText({ first: null, last: "closed" }), "stopped back at its start");
+  assert.equal(
+    model.endText({ first: "range", last: "unfolded" }),
+    "stopped at the range's end and where the parameters no longer keep the branch point",
   );
 });
 
@@ -269,7 +317,7 @@ test("CO oxidation: the Hopf curve from K = 0.4 passes both BT and both GH point
     [0, 2],
   ];
   const { curve: h } = await mockCurve(
-    curveRequest(sys.systemId, [1.051557, 0.4], ranges, { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, omega: 0.0507 }),
+    curveRequest(sys.systemId, [1.051557, 0.4], ranges, { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1 }),
   );
   for (const p of [
     [1.16119871, 0.72233907],
@@ -280,7 +328,7 @@ test("CO oxidation: the Hopf curve from K = 0.4 passes both BT and both GH point
     assert.ok(distance(h, p, ranges) < 1e-4, `Hopf curve through ${p}: ${distance(h, p, ranges)}`);
   assert.deepEqual(h.special.map((s) => s.kind).sort(), ["bautin", "bautin", "bogdanovTakens", "bogdanovTakens"]);
   const { curve: f } = await mockCurve(
-    curveRequest(sys.systemId, [1.042049, 0.4], ranges, { kind: "fold", x: [0.0247, 0.4503, 0.375], period: 1, omega: null }),
+    curveRequest(sys.systemId, [1.042049, 0.4], ranges, { kind: "fold", x: [0.0247, 0.4503, 0.375], period: 1 }),
   );
   for (const p of [
     [1.00640833, 0.35599127],
@@ -297,7 +345,7 @@ test("the predator–prey map: the NS curve from a = 5 passes R4, R3, R2 and CH"
     [-6, 3],
   ];
   const { curve } = await mockCurve(
-    curveRequest(sys.systemId, [5, 1], ranges, { kind: "neimarkSacker", x: [0.4, 0.9333], period: 1, omega: 1 }),
+    curveRequest(sys.systemId, [5, 1], ranges, { kind: "neimarkSacker", x: [0.4, 0.9333], period: 1 }),
   );
   for (const p of [
     [7, 7 / 6],
@@ -307,6 +355,48 @@ test("the predator–prey map: the NS curve from a = 5 passes R4, R3, R2 and CH"
   ])
     assert.ok(distance(curve, p, ranges) < 1e-4, `NS curve through ${p}: ${distance(curve, p, ranges)}`);
   assert.deepEqual(curve.special.map((s) => curves.CODIM2_KINDS[s.kind].label).sort(), ["CH", "R2", "R3", "R4"]);
+});
+
+test("the predator–prey map: the branch-point curve from a = 5/3 runs from ε = −6 to a = 16 through the fold-flip", async () => {
+  const sys = await compiled("predator-prey-map");
+  const ranges = [
+    [0, 16],
+    [-6, 3],
+  ];
+  const { curve } = await mockCurve(curveRequest(sys.systemId, [5 / 3, 1], ranges, { kind: "branchPoint", x: [0.4, 0], period: 1 }));
+  assert.equal(curve.kind, "branchPoint");
+  assert.ok(distance(curve, [3, 2], ranges) < 1e-4, `BP curve through the LPPD: ${distance(curve, [3, 2], ranges)}`);
+  assert.deepEqual(curve.special.map((s) => [curves.CODIM2_KINDS[s.kind].label, s.p, s.x]), [["LPPD", [3, 2], [0.66666667, 0]]]);
+  const ends = [0, curve.p1.length - 1].map((i) => [Number(curve.p1[i].toFixed(4)), Number(curve.p2[i].toFixed(4))]);
+  assert.deepEqual(ends, [
+    [1.1176, -6],
+    [16, 2.4333],
+  ], "from (19/17, −6) to (16, 73/30)");
+  assert.deepEqual(curve.end, { first: "range", last: "range" });
+  assert.equal(curve.neutral.includes(true), false);
+});
+
+test("the mock follower finds the predator–prey map's BP at a = 5/3 and NS at a = 5 on F3", async () => {
+  const sys = await compiled("predator-prey-map");
+  const res = await mockContinuation({
+    requestId: 1,
+    systemId: sys.systemId,
+    params: [5.3, 1],
+    param: 0,
+    range: [0, 16],
+    start: { kind: "point", x0: [0.4, 1.0173333], period: 1 },
+    direction: "both",
+    ds: 0.16,
+    dsMax: 0.32,
+    maxPoints: 500,
+  });
+  assert.deepEqual(
+    res.branch.special.map((s) => [s.kind, Number(s.p.toFixed(5)), s.x.map((v) => Number(v.toFixed(4)))]),
+    [
+      ["branchPoint", 1.66667, [0.4, 0]],
+      ["neimarkSacker", 5, [0.4, 0.9333]],
+    ],
+  );
 });
 
 test("the mock follower finds CO oxidation's H, LP, LP, H in k₂ at the template's defaults", async () => {

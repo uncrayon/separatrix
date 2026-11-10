@@ -11,11 +11,12 @@ use separatrix_project::ORBIT_TRANSIENT_MAX;
 use crate::ipc::{
     Arrow, AxisRef, BranchEndOut, BranchOut, BranchStop, CompileRequest, CompileResponse,
     ContinuationDirection, ContinuationRequest, ContinuationResponse, ContinuationStart,
-    ConvertRequest, ConvertResponse, ConvertedLineOut, CurveRequest, CurveResponse, Diagnostic,
-    DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest, LyapunovResponse, Method, NullclineOut,
-    OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo, PortraitRequest, PortraitResponse,
-    SectionSpec, SolverOptions, SpecialKindOut, SpecialPointOut, StateInfo, TrajectoryOut,
-    TrajectoryRequest, MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
+    ConvertRequest, ConvertResponse, ConvertedLineOut, CurveKindOut, CurveOut, CurveRequest,
+    CurveResponse, Diagnostic, DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest,
+    LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo,
+    PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, SpecialKindOut, SpecialPointOut,
+    StateInfo, TrajectoryOut, TrajectoryRequest, MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS,
+    MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -465,14 +466,58 @@ pub fn compute_continuation(
     })
 }
 
-/// A fold, Hopf, flip or Neimark–Sacker curve as two parameters vary. A
-/// stub: the interface's browser preview serves the curves, and the core
-/// follows them from M5 of the special-bifurcations plan.
-pub fn compute_curve(
-    _system: &CompiledSystem,
-    _req: &CurveRequest,
-) -> Result<CurveResponse, String> {
-    Err("Following a bifurcation in two parameters is not implemented yet.".into())
+/// A curve of folds, Hopf points, branch points, flips or Neimark–Sacker
+/// points as two parameters vary (see [`dyn_analysis::continue_curve`]).
+/// Its `special` is empty: the codimension-2 points are located from M6 of
+/// the special-bifurcations plan.
+pub fn compute_curve(system: &CompiledSystem, req: &CurveRequest) -> Result<CurveResponse, String> {
+    let started = Instant::now();
+    let f: &dyn VectorField = system;
+    validate_curve(f, req)?;
+    let seed = dyn_analysis::CurveSeed {
+        kind: curve_kind(req.seed.kind).0,
+        x: req.seed.x.clone(),
+        period: req.seed.period,
+    };
+    let follow = |sign: f64| {
+        let opts = dyn_analysis::CurveOptions {
+            free: req.free,
+            ranges: req.ranges,
+            ds: sign * req.ds,
+            ds_min: CONTINUATION_DS_MIN,
+            ds_max: req.ds_max,
+            max_points: req.max_points,
+            max_angle: CONTINUATION_MAX_ANGLE,
+        };
+        dyn_analysis::continue_curve(f, &req.params, &seed, &opts)
+            .map_err(|e| curve_refusal(system, req, e))
+    };
+    let closed = |c: &dyn_analysis::Curve| c.end == dyn_analysis::CurveEnd::Closed;
+    let (backward, forward) = match req.direction {
+        ContinuationDirection::Forward => (None, follow(1.0)?),
+        ContinuationDirection::Backward => (None, follow(-1.0)?),
+        ContinuationDirection::Both => {
+            let forward = follow(1.0)?;
+            if closed(&forward) {
+                (None, forward)
+            } else {
+                let mut backward = follow(-1.0)?;
+                // The halves take different steps, so the backward one can
+                // close where the forward one ran out of points first.
+                if closed(&backward) {
+                    backward.points.reverse();
+                    (None, backward)
+                } else {
+                    (Some(backward), forward)
+                }
+            }
+        }
+    };
+    Ok(CurveResponse {
+        request_id: req.request_id,
+        curve: join_curve(req.seed.kind, backward, forward),
+        elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
 }
 
 fn continuation_refusal(f: &dyn VectorField, e: dyn_analysis::ContinuationError) -> String {
@@ -661,6 +706,170 @@ fn validate_continuation(f: &dyn VectorField, req: &ContinuationRequest) -> Resu
     if !(2..=MAX_CONTINUATION_POINTS).contains(&req.max_points) {
         return Err(format!(
             "A branch needs 2 to {MAX_CONTINUATION_POINTS} points in each direction."
+        ));
+    }
+    Ok(())
+}
+
+/// Each kind of curve on the wire, in the engine, and as a noun in a
+/// sentence.
+const CURVE_KINDS: [(CurveKindOut, dyn_analysis::CurveKind, &str); 5] = [
+    (CurveKindOut::Fold, dyn_analysis::CurveKind::Fold, "fold"),
+    (
+        CurveKindOut::Hopf,
+        dyn_analysis::CurveKind::Hopf,
+        "Hopf point",
+    ),
+    (
+        CurveKindOut::BranchPoint,
+        dyn_analysis::CurveKind::BranchPoint,
+        "branch point",
+    ),
+    (CurveKindOut::Flip, dyn_analysis::CurveKind::Flip, "flip"),
+    (
+        CurveKindOut::NeimarkSacker,
+        dyn_analysis::CurveKind::NeimarkSacker,
+        "Neimark–Sacker point",
+    ),
+];
+
+fn curve_kind(kind: CurveKindOut) -> (dyn_analysis::CurveKind, &'static str) {
+    CURVE_KINDS
+        .iter()
+        .find(|k| k.0 == kind)
+        .map(|k| (k.1, k.2))
+        .expect("every kind")
+}
+
+const CURVE_UNSUPPORTED: &str = "Curves in two parameters follow folds, branch points and Hopf \
+     points of a flow, and folds, branch points, flips and Neimark–Sacker points of a map; Hopf \
+     and Neimark–Sacker points need two or more states.";
+
+fn curve_refusal(
+    system: &CompiledSystem,
+    req: &CurveRequest,
+    e: dyn_analysis::CurveError,
+) -> String {
+    let point = if system.info.kind == SystemKind::Map {
+        "a fixed point"
+    } else {
+        "an equilibrium"
+    };
+    let kind = curve_kind(req.seed.kind).1;
+    let up = &system.info.params[req.free.1].name;
+    match e {
+        dyn_analysis::CurveError::NotAutonomous => NOT_AUTONOMOUS.into(),
+        dyn_analysis::CurveError::Unsupported => CURVE_UNSUPPORTED.into(),
+        dyn_analysis::CurveError::NotABifurcation => format!(
+            "Newton's method found no {kind} of {point} near the seed with {up} held; start \
+             from the special point the Branch view found."
+        ),
+        dyn_analysis::CurveError::Singular => format!(
+            "The curve of {kind}s has no unique direction at the seed, so it can't be followed \
+             from there."
+        ),
+        dyn_analysis::CurveError::NoEffect => {
+            format!("{up} doesn't move this {kind}; choose another parameter to follow it in.")
+        }
+    }
+}
+
+/// One polyline: the backward half reversed and without its seed, then the
+/// forward half.
+fn join_curve(
+    kind: CurveKindOut,
+    backward: Option<dyn_analysis::Curve>,
+    forward: dyn_analysis::Curve,
+) -> CurveOut {
+    let stop = |end| match end {
+        dyn_analysis::CurveEnd::Range => BranchStop::Range,
+        dyn_analysis::CurveEnd::MaxPoints => BranchStop::MaxPoints,
+        dyn_analysis::CurveEnd::StepTooSmall => BranchStop::StepTooSmall,
+        dyn_analysis::CurveEnd::Closed => BranchStop::Closed,
+        dyn_analysis::CurveEnd::Unfolded => BranchStop::Unfolded,
+    };
+    let end = BranchEndOut {
+        first: backward.as_ref().map(|b| stop(b.end)),
+        last: stop(forward.end),
+    };
+    let period = forward.period;
+    let points: Vec<dyn_analysis::CurvePoint> = backward
+        .into_iter()
+        .flat_map(|b| b.points.into_iter().skip(1).rev())
+        .chain(forward.points)
+        .collect();
+    CurveOut {
+        kind,
+        period,
+        p1: points.iter().map(|pt| pt.p.0).collect(),
+        p2: points.iter().map(|pt| pt.p.1).collect(),
+        x: points.iter().flat_map(|pt| pt.x.iter().copied()).collect(),
+        neutral: points
+            .iter()
+            .map(|pt| matches!(pt.nature, dyn_analysis::Nature::Neutral))
+            .collect(),
+        special: Vec::new(),
+        end,
+    }
+}
+
+fn validate_curve(f: &dyn VectorField, req: &CurveRequest) -> Result<(), String> {
+    if !f.is_autonomous() {
+        return Err(NOT_AUTONOMOUS.into());
+    }
+    let n = f.n_params();
+    if req.params.len() != n {
+        return Err(format!(
+            "Expected {n} parameter value(s) but got {}.",
+            req.params.len()
+        ));
+    }
+    if n < 2 {
+        return Err(format!(
+            "A curve needs two parameters to follow; this system has {n}."
+        ));
+    }
+    if let Some(i) = [req.free.0, req.free.1].into_iter().find(|&i| i >= n) {
+        return Err(format!("Parameter {i} doesn't exist; the system has {n}."));
+    }
+    if req.free.0 == req.free.1 {
+        return Err("The two free parameters must be different.".into());
+    }
+    let (across, up) = req.ranges;
+    if ![across, up]
+        .iter()
+        .all(|&(lo, hi)| lo.is_finite() && hi.is_finite() && lo < hi)
+    {
+        return Err(
+            "Both parameter ranges must be finite, each with its start below its end.".into(),
+        );
+    }
+    let seed = &req.seed;
+    if seed.x.len() != f.dim() {
+        return Err(format!(
+            "The seed has {} coordinate(s) but the system has {}.",
+            seed.x.len(),
+            f.dim()
+        ));
+    }
+    if !seed.x.iter().chain(&req.params).all(|v| v.is_finite()) {
+        return Err("The seed and the parameters must be finite.".into());
+    }
+    if seed.period == 0 {
+        return Err("The period must be at least 1.".into());
+    }
+    if seed.period > 1 && f.kind() == SystemKind::Ode {
+        return Err("A flow's equilibria have no period; use period 1.".into());
+    }
+    if !(req.ds > 0.0 && req.ds.is_finite()) {
+        return Err("The step ds must be a positive number.".into());
+    }
+    if !(req.ds_max >= req.ds && req.ds_max.is_finite()) {
+        return Err("The largest step must be a number at least ds.".into());
+    }
+    if !(2..=MAX_CONTINUATION_POINTS).contains(&req.max_points) {
+        return Err(format!(
+            "A curve needs 2 to {MAX_CONTINUATION_POINTS} points in each direction."
         ));
     }
     Ok(())

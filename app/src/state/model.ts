@@ -1,5 +1,7 @@
 import type {
   AxisRef,
+  BranchEndOut,
+  BranchStop,
   CompileResponse,
   ContinuationDirection,
   ContinuationRequest,
@@ -858,6 +860,21 @@ export const SPECIAL_KINDS: Record<SpecialKindOut, SpecialKindInfo> = {
   neimarkSacker: { label: "NS", name: "Neimark–Sacker bifurcation", omega: "θ", switches: false },
 };
 
+/** How a row says where an end stopped, after "stopped". Only a curve closes or unfolds. */
+const STOPS: Record<BranchStop, string> = {
+  range: "at the range's end",
+  maxPoints: "at Max points",
+  stepTooSmall: "at a step too small to go on",
+  closed: "back at its start",
+  unfolded: "where the parameters no longer keep the branch point",
+};
+
+/** "stopped at the range's end and at Max points": each end of a branch or curve, once. */
+export function endText(end: BranchEndOut): string {
+  const stops = new Set([end.first, end.last].filter((e): e is BranchStop => e !== null));
+  return `stopped ${[...stops].map((e) => STOPS[e]).join(" and ")}`;
+}
+
 export const CONTINUATION_MAX_POINTS = 500;
 export { MAX_CONTINUATION_POINTS };
 
@@ -985,7 +1002,7 @@ export function specialRows(runs: readonly (BranchRun | undefined)[]): { at: Spe
 
 /**
  * The bifurcations the Branch view `branch` found that a curve can be
- * followed from (LP, H, PD, NS), each with every parameter's value there.
+ * followed from (LP, H, BP, PD, NS), each with every parameter's value there.
  */
 export function branchSeeds(
   sys: CompileResponse,

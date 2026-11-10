@@ -13,6 +13,7 @@ import { sx, sy, type Viewport } from "./viewport";
 export const CURVE_STYLES: Record<CurveKindOut, { token: string; dash: number[] }> = {
   fold: { token: "--curve-fold", dash: [] },
   hopf: { token: "--curve-hopf", dash: [8, 3] },
+  branchPoint: { token: "--curve-bp", dash: [8, 2.5, 1.5, 2.5, 1.5, 2.5] },
   flip: { token: "--curve-flip", dash: [3, 3] },
   neimarkSacker: { token: "--curve-ns", dash: [8, 3] },
 };
