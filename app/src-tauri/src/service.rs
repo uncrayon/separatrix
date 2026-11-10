@@ -1283,7 +1283,7 @@ mod tests {
     fn every_template_compiles_and_draws() {
         let store = SystemStore::new();
         let all = templates();
-        assert_eq!(all.len(), 31, "the gallery shows 31 templates");
+        assert_eq!(all.len(), 33, "the gallery shows 33 templates");
         for t in &all {
             let res = compile_ok(&store, t);
             let dim = res.states.len();

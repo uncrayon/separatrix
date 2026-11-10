@@ -20,8 +20,8 @@ works offline.
   3.564407 of the logistic map.
 - **Continuation** of equilibria and cycles, with folds, Hopf points, branch points, flips and
   Neimark–Sacker points marked. Sel'kov's Hopf points come out at b = 0.346410 and 0.848528.
-- **A gallery of 31 examples** from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), each
-  citing its section of the book.
+- **A gallery of 33 examples**: 31 from Strogatz's *Nonlinear Dynamics and Chaos* (2nd edition), each
+  citing its section of the book, and two reference systems of two-parameter continuation.
 - **Exports** to LaTeX (pgfplots figures, equations and tables), SVG, PNG and CSV, and project
   files you can email to a class.
 - **Projector mode**, a light theme with larger type for the lecture hall.
