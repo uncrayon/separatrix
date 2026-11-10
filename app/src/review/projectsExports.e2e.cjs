@@ -102,7 +102,7 @@ test("Export… opens the dialog on LaTeX; Copy LaTeX copies the packages commen
 
     // Ctrl+E opens it too, from the plot.
     await page.locator("canvas.plot-canvas").focus();
-    await page.keyboard.press("Control+e");
+    await page.keyboard.press("ControlOrMeta+e");
     await page.waitForSelector(".export-dialog[role=dialog]");
     await page.keyboard.press("Escape");
     await page.waitForSelector(".export-dialog", { state: "detached" });
@@ -181,7 +181,7 @@ test("Save, then Open…, gives back a modified system; the title follows the fi
 
     // Ctrl+S on a document without a file goes through Save as…
     await page.locator("canvas.plot-canvas").focus();
-    await page.keyboard.press("Control+s");
+    await page.keyboard.press("ControlOrMeta+s");
     await page.waitForFunction(() => window.__sepxMock.files.has("/mock/van-der-pol.sepx"));
     await page.waitForFunction(() => !document.querySelector(".topbar .doc-dirty"));
     const saved = JSON.parse(await fileText(page, "/mock/van-der-pol.sepx"));
@@ -214,7 +214,7 @@ test("Save, then Open…, gives back a modified system; the title follows the fi
     // Saving again writes to the same file, with no dialog.
     await setParam(page, "mu", "3");
     assert.equal(await dirtyDot(page), 1);
-    await page.keyboard.press("Control+s");
+    await page.keyboard.press("ControlOrMeta+s");
     await page.waitForFunction(() => !document.querySelector(".topbar .doc-dirty"));
     const again = JSON.parse(await fileText(page, "/mock/van-der-pol.sepx"));
     assert.equal(again.system.params.find((p) => p.id === "mu").value, 3);
@@ -473,7 +473,7 @@ test("Export from an equation field and Escape: focus lands somewhere, never on 
   try {
     await pick(page, "Rabbits vs sheep");
     await page.locator(".panel-left math-field").first().click();
-    await page.keyboard.press("Control+e");
+    await page.keyboard.press("ControlOrMeta+e");
     await page.waitForSelector(".export-dialog[role=dialog]");
     await page.keyboard.press("Escape");
     await page.waitForSelector(".export-dialog", { state: "detached" });

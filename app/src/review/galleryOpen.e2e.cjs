@@ -83,7 +83,7 @@ test("Mod+O works while the gallery is open", async () => {
   const { browser, page } = await open();
   try {
     await nextOpen(page, LORENZ);
-    await page.keyboard.press("Control+O");
+    await page.keyboard.press("ControlOrMeta+O");
     await page.waitForSelector(".gallery", { state: "detached" });
     await waitTitle(page, "lorenz-text-mode — Separatrix");
   } finally {
