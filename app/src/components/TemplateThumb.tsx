@@ -28,7 +28,8 @@ const THUMB_FIELD_GRID = 13;
 /** Graph samples of f for a cobweb thumbnail. */
 const THUMB_GRAPH_SAMPLES = 256;
 
-interface Thumb {
+/** What a thumbnail draws: a portrait response in its view, each trajectory's palette index in `icOf`. */
+export interface Thumb {
   kind: SystemKind;
   dim: number;
   view: PlotView;
@@ -118,7 +119,8 @@ function computeThumb(t: Template): Promise<Thumb | null> {
   return p;
 }
 
-function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
+/** A small portrait in `canvas`, sized to its client box: the Template gallery's thumbnails and the Parameter plane's inset. */
+export function drawThumb(canvas: HTMLCanvasElement, thumb: Thumb) {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   if (w === 0 || h === 0) return;
@@ -226,9 +228,10 @@ function draw(canvas: HTMLCanvasElement, thumb: Thumb) {
     }
   });
 
+  const coord = (axis: PlotView["xAxis"], x: number[], fallback: number) => (axis.kind === "state" ? x[axis.index] : x[fallback]);
   for (const fp of res.fixedPoints) {
-    const px = sx(vp, fp.x[0]);
-    const py = sy(vp, fp.x[1]);
+    const px = sx(vp, coord(view.xAxis, fp.x, 0));
+    const py = sy(vp, coord(view.yAxis, fp.x, 1));
     if (px < 0 || px > w || py < 0 || py > h) continue;
     drawThumbFixedPoint(ctx, px, py, fixedPointGlyph(fp.classification, fp.stable), th);
   }
@@ -357,7 +360,7 @@ export function TemplateThumb({ template }: { template: Template }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !thumb) return;
-    const redraw = () => draw(canvas, thumb);
+    const redraw = () => drawThumb(canvas, thumb);
     redraw();
     const mo = new MutationObserver(redraw);
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

@@ -10,8 +10,8 @@ use std::time::Instant;
 
 use separatrix_lib::ipc::{
     BranchOut, Codim2KindOut, CompileRequest, ContinuationDirection, ContinuationRequest,
-    ContinuationStart, CurveKindOut, CurveOut, CurveRequest, CurveSeed, InputFormat, Severity,
-    SpecialKindOut,
+    ContinuationStart, CurveKindOut, CurveOut, CurveRequest, CurveSeed, InputFormat, NormalFormOut,
+    Severity, SpecialKindOut,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -258,6 +258,23 @@ enum Measure {
     /// How many points of every run are not at their own vertex: a wrong
     /// `index` after the halves are joined.
     Misplaced,
+    /// A normal-form coefficient of the point of `kind` nearest `near`.
+    Coefficient {
+        run: &'static Run,
+        kind: Codim2KindOut,
+        near: (f64, f64),
+        which: Coefficient,
+    },
+}
+
+/// What of a normal form is compared: `a` and `b` flip with `q₀`, so only
+/// `|a|`, `|b|` and the sign of `ab` (brief §6). The cusp's `c` does not.
+#[derive(Clone, Copy)]
+enum Coefficient {
+    BtA,
+    BtB,
+    BtSignAb,
+    CuspC,
 }
 
 enum Expect {
@@ -276,6 +293,12 @@ struct Check {
 const REF_TOL: f64 = 1e-6;
 /// The cusp, the least well conditioned, to five.
 const CUSP_TOL: f64 = 1e-5;
+/// MatCont's coefficients come from finite differences: against the
+/// reference script's exact derivatives its Bogdanov–Takens `a` is 2e-8 off,
+/// its `b` 6e-7 and its cusp `c` 4e-6.
+const BT_A_TOL: f64 = 1e-7;
+const BT_B_TOL: f64 = 1e-6;
+const CUSP_C_TOL: f64 = 1e-5;
 /// One point found on two curves: each is within Newton's tolerance
 /// `1e-10 · (1 + |z|∞)` of it in the box's scale, and the boxes are at most
 /// 10 wide.
@@ -344,6 +367,59 @@ const fn on_neutral(
     }
 }
 
+/// `which` of the normal form of the point of `kind` at `at` on `run`.
+const fn coefficient(
+    text: &'static str,
+    run: &'static Run,
+    (kind, at): (Codim2KindOut, (f64, f64)),
+    which: Coefficient,
+    expect: Expect,
+) -> Check {
+    Check {
+        text,
+        measure: Measure::Coefficient {
+            run,
+            kind,
+            near: at,
+            which,
+        },
+        expect,
+    }
+}
+
+/// `|a|`, `|b|` and the sign of `ab` at a Bogdanov–Takens point, as MatCont
+/// prints them for CO oxidation.
+const fn bt_rows(
+    texts: [&'static str; 3],
+    run: &'static Run,
+    at: (f64, f64),
+    (a, b): (f64, f64),
+) -> [Check; 3] {
+    [
+        coefficient(
+            texts[0],
+            run,
+            (BogdanovTakens, at),
+            Coefficient::BtA,
+            near(a, BT_A_TOL),
+        ),
+        coefficient(
+            texts[1],
+            run,
+            (BogdanovTakens, at),
+            Coefficient::BtB,
+            near(b, BT_B_TOL),
+        ),
+        coefficient(
+            texts[2],
+            run,
+            (BogdanovTakens, at),
+            Coefficient::BtSignAb,
+            near(1.0, 0.0),
+        ),
+    ]
+}
+
 /// On how many of the predator–prey map's curves of kind `curve` the
 /// fold-flip lies.
 const fn lppd_on(text: &'static str, curve: CurveKindOut, count: usize) -> Check {
@@ -381,6 +457,65 @@ const CO_BT2: (f64, f64) = (1.16119871, 0.72233907);
 const CO_CP: (f64, f64) = (1.00640833, 0.35599127);
 const CO_GH1: (f64, f64) = (0.89131898, 0.23248735);
 const CO_GH2: (f64, f64) = (0.92425502, 0.30587927);
+/// `(|a|, |b|)` at the two BT points and the cusp's `c`, from MatCont
+/// Tutorial IV: `(a, b) = (−0.08378442, −2.136280)`, `(−0.04822563, −1.937632)`.
+const CO_BT1_AB: (f64, f64) = (0.08378442, 2.136280);
+const CO_BT2_AB: (f64, f64) = (0.04822563, 1.937632);
+const CO_CP_C: f64 = 0.3627844;
+
+const CO_BT1_FOLD: [Check; 3] = bt_rows(
+    [
+        "CO fold: BT₁ |a|",
+        "CO fold: BT₁ |b|",
+        "CO fold: BT₁ sign(ab)",
+    ],
+    &CO_FOLD,
+    CO_BT1,
+    CO_BT1_AB,
+);
+const CO_BT2_FOLD: [Check; 3] = bt_rows(
+    [
+        "CO fold: BT₂ |a|",
+        "CO fold: BT₂ |b|",
+        "CO fold: BT₂ sign(ab)",
+    ],
+    &CO_FOLD,
+    CO_BT2,
+    CO_BT2_AB,
+);
+const CO_BT1_HOPF: [Check; 3] = bt_rows(
+    [
+        "CO Hopf: BT₁ |a|",
+        "CO Hopf: BT₁ |b|",
+        "CO Hopf: BT₁ sign(ab)",
+    ],
+    &CO_HOPF,
+    CO_BT1,
+    CO_BT1_AB,
+);
+const CO_BT2_HOPF: [Check; 3] = bt_rows(
+    [
+        "CO Hopf: BT₂ |a|",
+        "CO Hopf: BT₂ |b|",
+        "CO Hopf: BT₂ sign(ab)",
+    ],
+    &CO_HOPF,
+    CO_BT2,
+    CO_BT2_AB,
+);
+const CO_COEFFICIENTS: &[&[Check]] = &[
+    &CO_BT1_FOLD,
+    &CO_BT2_FOLD,
+    &CO_BT1_HOPF,
+    &CO_BT2_HOPF,
+    &[coefficient(
+        "CO fold: CP c",
+        &CO_FOLD,
+        (Cusp, CO_CP),
+        Coefficient::CuspC,
+        near(CO_CP_C, CUSP_C_TOL),
+    )],
+];
 
 const LORENZ_BT: (f64, f64) = (1.4467167, 0.02094017);
 const LORENZ_BT_MIRROR: (f64, f64) = (1.4467167, -0.02094017);
@@ -729,6 +864,27 @@ const WRONG_CHECKS: &[Check] = &[
         1,
     ),
     count("wrong: CO fold has no cusp, 2 points", &CO_FOLD, 2),
+    coefficient(
+        "wrong: CO fold: BT₁ |b| = 2.137280 (1e−3 off)",
+        &CO_FOLD,
+        (BogdanovTakens, CO_BT1),
+        Coefficient::BtB,
+        near(CO_BT1_AB.1 + 1e-3, BT_B_TOL),
+    ),
+    coefficient(
+        "wrong: CO Hopf: BT₂ sign(ab) = −1",
+        &CO_HOPF,
+        (BogdanovTakens, CO_BT2),
+        Coefficient::BtSignAb,
+        near(-1.0, 0.0),
+    ),
+    coefficient(
+        "wrong: CO fold: CP c = 0.3628844 (1e−4 off)",
+        &CO_FOLD,
+        (Cusp, CO_CP),
+        Coefficient::CuspC,
+        near(CO_CP_C + 1e-4, CUSP_C_TOL),
+    ),
 ];
 
 #[derive(Deserialize)]
@@ -920,6 +1076,25 @@ fn nearest(run: &'static Run, kind: Codim2KindOut, near: (f64, f64)) -> Option<(
         .min_by(|p, q| d(*p).total_cmp(&d(*q)))
 }
 
+/// `which` of the normal form of the located point of `kind` nearest `near`.
+fn coefficient_of(
+    run: &'static Run,
+    kind: Codim2KindOut,
+    near: (f64, f64),
+    which: Coefficient,
+) -> Option<f64> {
+    let at = nearest(run, kind, near)?;
+    let c = curve(run);
+    let sp = c.curve.special.iter().find(|sp| sp.p == at)?;
+    match (which, sp.normal_form?) {
+        (Coefficient::BtA, NormalFormOut::BogdanovTakens { a, .. }) => Some(a.abs()),
+        (Coefficient::BtB, NormalFormOut::BogdanovTakens { b, .. }) => Some(b.abs()),
+        (Coefficient::BtSignAb, NormalFormOut::BogdanovTakens { a, b }) => Some((a * b).signum()),
+        (Coefficient::CuspC, NormalFormOut::Cusp { c }) => Some(c),
+        _ => None,
+    }
+}
+
 /// The point or a point beside it is a neutral saddle.
 fn on_a_neutral_stretch(c: &CurveOut, index: usize) -> bool {
     let to = (index + 1).min(c.neutral.len() - 1);
@@ -963,6 +1138,12 @@ fn measure(check: &Check) -> f64 {
                 })
             })
             .count() as f64,
+        Measure::Coefficient {
+            run,
+            kind,
+            near,
+            which,
+        } => coefficient_of(run, kind, near, which).unwrap_or(missing),
         Measure::Misplaced => RUNS
             .iter()
             .map(|run| {
@@ -1081,7 +1262,11 @@ fn print_runs() {
 #[test]
 fn codim2_claims_reproduce() {
     let started = Instant::now();
-    let rows: Vec<Row> = CHECKS.iter().map(evaluate).collect();
+    let rows: Vec<Row> = CHECKS
+        .iter()
+        .chain(CO_COEFFICIENTS.iter().flat_map(|c| c.iter()))
+        .map(evaluate)
+        .collect();
     print_runs();
     print_table(&rows);
     let widest = RUNS

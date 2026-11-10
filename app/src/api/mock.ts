@@ -35,6 +35,7 @@ import type {
   LyapunovExportRequest,
   LyapunovRequest,
   LyapunovResponse,
+  NormalFormOut,
   NullclineOut,
   OpenedProject,
   OrbitDiagramRequest,
@@ -51,6 +52,7 @@ import type {
   ProjectFile,
   ProjectReadRequest,
   ProjectWriteRequest,
+  ResonanceTickOut,
   SaveContinuationFigureRequest,
   SaveCsvFileRequest,
   SaveCsvRequest,
@@ -529,7 +531,15 @@ interface MockCurve {
   p2: number[];
   x: number[];
   neutral: boolean[];
-  special: { kind: Codim2KindOut; p: [number, number]; x: number[] }[];
+  special: {
+    kind: Codim2KindOut;
+    p: [number, number];
+    x: number[];
+    normalForm?: NormalFormOut | null;
+    angle?: number | null;
+    positiveToward?: [number, number] | null;
+  }[];
+  ticks?: ResonanceTickOut[];
   /** How a real follower ends on reaching the data's first and last point inside the box. */
   stops: [BranchStop, BranchStop];
 }
@@ -702,9 +712,30 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
     .flatMap((sp) => {
       const j = nearestVertex(sp.p);
       const index = pts.findIndex((v) => v.src === j);
-      return index < 0 ? [] : [{ kind: sp.kind, index, p: sp.p, x: sp.x, period: c.period, bracket: null }];
+      return index < 0
+        ? []
+        : [
+            {
+              kind: sp.kind,
+              index,
+              p: sp.p,
+              x: sp.x,
+              period: c.period,
+              bracket: null,
+              normalForm: sp.normalForm ?? null,
+              angle: sp.angle ?? null,
+              positiveToward: sp.positiveToward ?? null,
+            },
+          ];
     })
     .sort((a, b) => a.index - b.index);
+  const ticks: ResonanceTickOut[] = (c.ticks ?? [])
+    .flatMap((t) => {
+      const index = pts.findIndex((v) => v.src === nearestVertex(t.p));
+      return index < 0 ? [] : [{ index, t }];
+    })
+    .sort((a, b) => a.index - b.index)
+    .map(({ t }) => t);
 
   const res: CurveResponse = {
     requestId: req.requestId,
@@ -716,6 +747,7 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
       x: pts.flatMap((v) => v.x),
       neutral: pts.map((v) => v.neutral),
       special,
+      ticks,
       end: { first: back ? back.end : null, last: last.end },
     },
     elapsedMs: performance.now() - started,

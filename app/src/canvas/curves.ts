@@ -121,6 +121,7 @@ export function drawCurves(
   ctx.setLineDash(CURVE_STYLES.homoclinic.dash.map((d) => d * s));
   for (const h of homoclinic) path(h, 0, h.p1.length - 1);
   ctx.setLineDash([]);
+  const tickLabels = drawResonanceTicks(ctx, vp, curves, th, opts.colors.neimarkSacker);
 
   if (opts.crosshair) {
     const [x, y] = opts.crosshair.map((v, k) => Math.round(k === 0 ? sx(vp, v) : sy(vp, v)) + 0.5);
@@ -151,7 +152,7 @@ export function drawCurves(
   ctx.lineWidth = 3;
   ctx.strokeStyle = th.halo;
   ctx.fillStyle = th.fp;
-  const labels: Box[] = [];
+  const labels: Box[] = [...tickLabels];
   for (const gl of glyphs) {
     const label = CODIM2_KINDS[gl.pt.kind].label;
     const w = ctx.measureText(label).width;
@@ -176,4 +177,108 @@ export function drawCurves(
     ctx.fillText(label, box[0], box[3]);
   }
   ctx.restore();
+}
+
+/** Half the length of a resonance tick, across the curve, in units of the glyph scale. */
+const TICK_HALF = 7;
+
+/**
+ * The weak resonances 1:q of each Neimark–Sacker curve: a short stroke across
+ * the curve and its label `1:q` on the side below it. Returns the labels'
+ * boxes, which the special points' labels keep clear of.
+ */
+function drawResonanceTicks(ctx: DrawContext, vp: Viewport, curves: readonly CurveOut[], th: PlotTheme, color: string): Box[] {
+  const g = th.glyphScale;
+  const boxes: Box[] = [];
+  ctx.font = th.tickFont;
+  ctx.textBaseline = "middle";
+  for (const c of curves) {
+    for (const tick of c.ticks) {
+      const at = nearestSegment(vp, c, tick.p);
+      if (!at) continue;
+      const { x, y, nx, ny } = at;
+      const h = TICK_HALF * g;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = th.lineScale;
+      ctx.beginPath();
+      ctx.moveTo(x - nx * h, y - ny * h);
+      ctx.lineTo(x + nx * h, y + ny * h);
+      ctx.stroke();
+      const label = `1:${tick.q}`;
+      const w = ctx.measureText(label).width;
+      const lx = x + nx * (h + 3);
+      const ly = y + ny * (h + 3) + th.tickSize * 0.3;
+      const left = nx >= 0 ? lx : lx - w;
+      ctx.textAlign = "left";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = th.halo;
+      ctx.fillStyle = th.tick;
+      ctx.strokeText(label, left, ly);
+      ctx.fillText(label, left, ly);
+      boxes.push([left, ly - th.tickSize / 2, left + w, ly + th.tickSize / 2]);
+    }
+  }
+  return boxes;
+}
+
+/** The point of `c` nearest `p` on screen and the unit normal there, turned to point down the screen. */
+function nearestSegment(vp: Viewport, c: CurveOut, p: readonly [number, number]) {
+  const [tx, ty] = [sx(vp, p[0]), sy(vp, p[1])];
+  let best: { d: number; x: number; y: number; nx: number; ny: number } | null = null;
+  for (let i = 0; i + 1 < c.p1.length; i++) {
+    const [ax, ay, bx, by] = [sx(vp, c.p1[i]), sy(vp, c.p2[i]), sx(vp, c.p1[i + 1]), sy(vp, c.p2[i + 1])];
+    const [dx, dy] = [bx - ax, by - ay];
+    const len = Math.hypot(dx, dy);
+    if (!(len > 0)) continue;
+    const t = Math.min(1, Math.max(0, ((tx - ax) * dx + (ty - ay) * dy) / (len * len)));
+    const [x, y] = [ax + t * dx, ay + t * dy];
+    const d = Math.hypot(x - tx, y - ty);
+    if (best && d >= best.d) continue;
+    const flip = dx < 0 ? -1 : 1;
+    best = { d, x, y, nx: (-dy / len) * flip, ny: (dx / len) * flip };
+  }
+  return best;
+}
+
+export type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+/** Ties go in this order. */
+const CORNERS: Corner[] = ["bottom-right", "top-right", "bottom-left", "top-left"];
+
+export interface CornerBox {
+  corner: Corner;
+  box: Box;
+  /** The curve points it would cover. */
+  covers: number;
+}
+
+/** Where a `w` × `h` box would sit in each corner of the plot, and how many curve points it would cover. Top corners start at `top`, below the toolbar. */
+export function cornerBoxes(
+  vp: Viewport,
+  curves: readonly Pick<CurveOut, "p1" | "p2">[],
+  w: number,
+  h: number,
+  top: number,
+  margin: number,
+): CornerBox[] {
+  return CORNERS.map((corner) => {
+    const x0 = corner.endsWith("left") ? vp.left + margin : vp.left + vp.width - margin - w;
+    const y0 = corner.startsWith("top") ? top : vp.top + vp.height - margin - h;
+    const box: Box = [x0, y0, x0 + w, y0 + h];
+    let covers = 0;
+    for (const c of curves) for (let i = 0; i < c.p1.length; i++) if (inside(box, sx(vp, c.p1[i]), sy(vp, c.p2[i]))) covers++;
+    return { corner, box, covers };
+  });
+}
+
+const inside = (b: Box, x: number, y: number) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+
+/** The corner covering the fewest curve points, and never the crosshair at screen point `at` while another corner is clear of it. */
+export function emptiestCorner(boxes: readonly CornerBox[], at: readonly [number, number] | null): Corner {
+  let best: { corner: Corner; score: number } | null = null;
+  for (const b of boxes) {
+    const score = (at && inside(b.box, at[0], at[1]) ? Infinity : 0) + b.covers;
+    if (!best || score < best.score) best = { corner: b.corner, score };
+  }
+  return best?.corner ?? CORNERS[0];
 }

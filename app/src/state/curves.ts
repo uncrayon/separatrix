@@ -10,11 +10,13 @@ import type {
   CurveOut,
   CurveRequest,
   CurveResponse,
+  NormalFormOut,
   SpecialKindOut,
   SpecialPointOut,
   SystemKind,
 } from "../api/types";
 import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
+import { dec } from "../math/format.ts";
 import type { Job } from "../api/client";
 import type { HomoclinicSeed } from "./homoclinic.ts";
 import {
@@ -395,6 +397,12 @@ export interface PlanePointRow {
   on: CurveKindOut[];
   /** The widest of its bisection brackets on those curves, or null where none was bisected (the preview). */
   bracket: number | null;
+  /** Bogdanov–Takens `(a, b)` or the cusp's `c`, from the first curve that has them. */
+  normalForm: NormalFormOut | null;
+  /** On a Neimark–Sacker curve, the angle θ of the critical multipliers, in radians. */
+  angle: number | null;
+  /** Where its coefficient (ℓ₁, the Neimark–Sacker `d`, the flip `c`) is positive: a direction in (across, up). */
+  positiveToward: [number, number] | null;
 }
 
 /** The Special points list: each point once, with every curve kind it lies on; by kind, then across. */
@@ -414,8 +422,21 @@ export function planePointRows(curves: readonly CurveOut[], ranges: CurvesSettin
       if (same) {
         if (!same.on.includes(c.kind)) same.on.push(c.kind);
         if (sp.bracket !== null) same.bracket = Math.max(same.bracket ?? 0, sp.bracket);
+        same.normalForm ??= sp.normalForm;
+        same.angle ??= sp.angle;
+        same.positiveToward ??= sp.positiveToward;
       } else
-        rows.push({ kind: sp.kind, p: [sp.p[0], sp.p[1]], x: sp.x.slice(), period: sp.period, on: [c.kind], bracket: sp.bracket });
+        rows.push({
+          kind: sp.kind,
+          p: [sp.p[0], sp.p[1]],
+          x: sp.x.slice(),
+          period: sp.period,
+          on: [c.kind],
+          bracket: sp.bracket,
+          normalForm: sp.normalForm,
+          angle: sp.angle,
+          positiveToward: sp.positiveToward,
+        });
     }
   }
   for (const r of rows) r.on.sort((a, b) => CURVE_KIND_ORDER.indexOf(a) - CURVE_KIND_ORDER.indexOf(b));
@@ -430,6 +451,104 @@ export function onCurvesText(on: readonly CurveKindOut[]): string {
   const names = on.map((k) => CURVE_KINDS[k].on);
   const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names.join("");
   return `On the ${list} ${names.length > 1 ? "curves" : "curve"}`;
+}
+
+/** "a = 0.0482, b = 1.9376 · ab > 0" or "c = 0.3628": the row's normal-form coefficients, or null where it has none. */
+export function normalFormText(nf: NormalFormOut | null): string | null {
+  if (!nf) return null;
+  if (nf.kind === "cusp") return `c = ${dec(nf.c, 4)}`;
+  return `a = ${dec(nf.a, 4)}, b = ${dec(nf.b, 4)} · ab ${nf.a * nf.b < 0 ? "<" : ">"} 0`;
+}
+
+/** "θ = 90°", "θ = 35.8°". */
+export const angleText = (theta: number): string => `θ = ${Number(((theta * 180) / Math.PI).toFixed(1))}°`;
+
+type Side = "above" | "below" | "right" | "left";
+const OPPOSITE: Record<Side, Side> = { above: "below", below: "above", right: "left", left: "right" };
+
+/** The side of the plot a direction in (across, up) points to, each parameter as a fraction of `spans`. */
+export function sideOf(toward: readonly [number, number], spans: readonly [number, number]): Side {
+  const [dx, dy] = [toward[0] / spans[0], toward[1] / spans[1]];
+  if (Math.abs(dy) >= Math.abs(dx)) return dy >= 0 ? "above" : "below";
+  return dx >= 0 ? "right" : "left";
+}
+
+/**
+ * "The Hopf bifurcation changes from subcritical (above) to supercritical
+ * (below).": the side above or right of the point first. `positive` names
+ * what the coefficient's positive side is.
+ */
+function changeText(
+  positiveToward: PlanePointRow["positiveToward"],
+  spans: readonly [number, number],
+  subject: string,
+  positive: string,
+  negative: string,
+): string {
+  if (!positiveToward) return `${subject} changes between ${negative} and ${positive} here.`;
+  const pos = sideOf(positiveToward, spans);
+  const ends: [string, Side][] = [
+    [positive, pos],
+    [negative, OPPOSITE[pos]],
+  ];
+  if (pos === "below" || pos === "left") ends.reverse();
+  return `${subject} changes from ${ends[0][0]} (${ends[0][1]}) to ${ends[1][0]} (${ends[1][1]}).`;
+}
+
+/** " The Hopf and branch-point curves meet here.", or "" for a point found on one curve kind. */
+function meetText(on: readonly CurveKindOut[]): string {
+  if (on.length < 2) return "";
+  const names = on.map((k) => CURVE_KINDS[k].on);
+  return ` The ${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} curves meet here.`;
+}
+
+/** "A period-3 cycle", of the map `f` when the curve is one of `f^k`. */
+const cycleOf = (q: number, period: number) => `A period-${q * period} cycle`;
+
+const NEUTRAL_PAST = " Past it the Neimark–Sacker curve is a neutral saddle.";
+
+/**
+ * What each codimension-2 point means, in a sentence or two. Each sentence
+ * says only what holds wherever the point is found: a fold-flip found on a
+ * branch-point curve is no fold, and a resonance found only on a flip curve
+ * promises no Neimark–Sacker curve.
+ */
+const SENTENCES: Record<Codim2KindOut, (pt: PlanePointRow, spans: readonly [number, number]) => string> = {
+  bogdanovTakens: () => "A fold curve and a Hopf curve meet. A curve of homoclinic orbits starts here.",
+  cusp: (pt) =>
+    `Two fold curves meet. Inside the wedge there are three ${pt.period > 1 ? `cycles of period ${pt.period}` : "fixed points"}, outside one.`,
+  bautin: (pt, spans) => changeText(pt.positiveToward, spans, "The Hopf bifurcation", "subcritical", "supercritical"),
+  zeroHopf: (pt) => `An eigenvalue 0 and a pair ±iω together.${meetText(pt.on)}`,
+  hopfHopf: () => "Two pairs ±iω₁ and ±iω₂ together: two Hopf curves cross here.",
+  resonance1: (pt) => `Both multipliers are +1.${pt.on.includes("neimarkSacker") ? NEUTRAL_PAST : ""}`,
+  resonance2: (pt) =>
+    `Both multipliers are −1.${
+      pt.on.includes("neimarkSacker") ? (pt.on.includes("flip") ? " A flip curve crosses here." : "") + NEUTRAL_PAST : ""
+    }`,
+  resonance3: (pt) =>
+    `The multipliers are cube roots of unity. ${cycleOf(3, pt.period)} replaces the invariant circle.`,
+  resonance4: (pt) =>
+    `The multipliers are ±i, a 4th root of unity. ${cycleOf(4, pt.period)} can replace the invariant circle.`,
+  chenciner: (pt, spans) => changeText(pt.positiveToward, spans, "The Neimark–Sacker bifurcation", "subcritical", "supercritical"),
+  foldFlip: (pt) =>
+    "A multiplier +1 and a multiplier −1 together." +
+    (pt.on.includes("branchPoint")
+      ? " Here the +1 is a branch point, where another branch of fixed points crosses, so there is no fold."
+      : pt.on.includes("fold")
+        ? " A fold curve and a flip curve meet here."
+        : ""),
+  generalizedFlip: (pt, spans) => changeText(pt.positiveToward, spans, "The flip", "supercritical", "subcritical"),
+};
+
+/** The row's sentence; "above" and "right" read the plot whose spans across and up are `spans`. */
+export const pointSentence = (pt: PlanePointRow, spans: readonly [number, number]): string => SENTENCES[pt.kind](pt, spans);
+
+/** The legend's line for the weak-resonance ticks drawn, or "" for none: "Ticks 1:5 to 1:9 mark …". */
+export function ticksText(qs: readonly number[]): string {
+  if (!qs.length) return "";
+  const [lo, hi] = [Math.min(...qs), Math.max(...qs)];
+  const which = lo === hi ? `The tick 1:${lo} marks` : `Ticks 1:${lo} to 1:${hi} mark`;
+  return `${which} where the rotation is a rational turn: each is the tip of a resonance tongue.`;
 }
 
 /** The runs of consecutive neutral points, as [first, last] indices. */
@@ -462,8 +581,6 @@ export function neutralText(c: Pick<CurveOut, "neutral" | "special">): string {
   return runs.length > 1 ? `neutral past the ${label} points` : `neutral past ${label}`;
 }
 
-export const dec4 = (v: number) => v.toFixed(4).replace(/^-/, "−");
-
 /**
  * The warning of a curve that stopped because the step became too small,
  * or null: where, and the likely reason, which differs for a flow and a map.
@@ -475,7 +592,7 @@ export function stallText(c: Pick<CurveOut, "p1" | "p2" | "end">, names: readonl
     kind === "map"
       ? "The map may be singular there, or a special point may be near. Lower Δs."
       : "A cusp or Bogdanov–Takens point may be there. Lower Δs.";
-  return `The step became too small near ${names[0]} = ${dec4(c.p1[i])}, ${names[1]} = ${dec4(c.p2[i])}. ${hint}`;
+  return `The step became too small near ${names[0]} = ${dec(c.p1[i], 4)}, ${names[1]} = ${dec(c.p2[i], 4)}. ${hint}`;
 }
 
 export const retryStep = (ds: number): number => Number((ds / 2).toPrecision(6));

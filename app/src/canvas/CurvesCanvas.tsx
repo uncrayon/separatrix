@@ -11,6 +11,7 @@ import {
   NEUTRAL_LEGEND,
   drawnCurves,
   planePointRows,
+  ticksText,
 } from "../state/curves";
 import { drawnHomoclinic, HOMOCLINIC_LEGEND, HOMOCLINIC_NAME } from "../state/homoclinic";
 import { isCurves } from "../state/model";
@@ -19,13 +20,17 @@ import {
   CURVE_STYLES,
   CURVE_WIDTH,
   NEUTRAL_STYLE,
+  cornerBoxes,
   drawCurves,
+  emptiestCorner,
   readCurveColors,
   segmentRuns,
   type CurveStyleKey,
 } from "./curves";
+import { INSET_CAPTION_H, INSET_MARGIN, PlaneInset, insetWidth } from "./PlaneInset";
+import { INSET_ASPECT } from "../state/inset";
 import { usePanZoom, usePlotChrome } from "./usePlotChrome";
-import { makeViewport, toPlot } from "./viewport";
+import { makeViewport, sx, sy, toPlot } from "./viewport";
 
 interface Props {
   state: StudioState;
@@ -95,6 +100,15 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   );
   const avoid = useMemo(() => [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes], [toolbarBox, nameBoxes]);
   const empty = !!plane && plane.curves.seeds.length === 0 && plane.curves.homoclinic.length === 0;
+  const inset = state.inset;
+  const insetW = insetWidth(vp.width);
+  const insetTop = (toolbarBox ? toolbarBox[3] : vp.top) + 8;
+  const corners = useMemo(
+    () => cornerBoxes(vp, [...curves, ...homoclinic], insetW, insetW / INSET_ASPECT + INSET_CAPTION_H, insetTop, INSET_MARGIN),
+    [vp, curves, homoclinic, insetW, insetTop],
+  );
+  const corner = emptiestCorner(corners, crosshair && [sx(vp, crosshair[0]), sy(vp, crosshair[1])]);
+  const ticks = useMemo(() => ticksText(curves.flatMap((c) => c.ticks.map((t) => t.q))), [curves]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -188,6 +202,17 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
             </div>
           </>
         )}
+        {compiled && plane && !empty && inset && size.w > 0 && (
+          <PlaneInset
+            inset={inset}
+            names={[aName, uName]}
+            shown={[plane.across, plane.up]}
+            stale={inset.meta.params.some((v, i) => v !== state.params[i]?.value)}
+            corner={corner}
+            width={insetW}
+            top={insetTop}
+          />
+        )}
         {compiled && empty && (
           <div className="plot-empty" role="status">
             <IconFollow className="plot-empty-icon" />
@@ -239,6 +264,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
           </ul>
         )}
         <p className="legend-help caption">
+          {ticks && `${ticks} `}
           Click anywhere to set both parameters; the sliders and every view follow. Drag to pan, scroll to zoom,
           double-click to reset.
         </p>

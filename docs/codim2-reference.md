@@ -21,7 +21,11 @@ uv run --with numpy --with scipy --with sympy python scripts/reference/codim2_re
 It follows the CO oxidation fold and Hopf curves by pseudo-arclength continuation from the
 one-parameter points at `K = 0.4`, and samples the predator–prey map's curves from their closed
 forms. It fails if any point of the tables below that lies on a curve is more than `10⁻⁵` (in the
-scale of the plotted box) off it.
+scale of the plotted box) off it. Each point carries what the engine attaches to it: `normalForm`
+at BT and CP (`bt_ab`, `cusp_c`), `angle` on the Neimark–Sacker curve (`acos(tr/2)`), and
+`positiveToward` at the Bautin, Chenciner and generalized flip points (toward the curve point
+`10⁻³` in `ε`, or two vertices, away on the side where `ℓ₁`, `d` or the flip `c` is positive).
+The Neimark–Sacker curve carries the weak-resonance `ticks` of §3.
 
 In the tables, **published** means the number is printed in the source, and **derived** means it
 is not printed anywhere and comes from the script alone.
@@ -73,7 +77,17 @@ Two parameters:
 | Bautin | Hopf | (0.924255, 0.305879) | (0.92425502, 0.30587927) | (0.06431133, 0.21109514, 0.55487023) | ℓ₂ = −240.1234 |
 
 The cusp's state is the least well conditioned: MatCont prints `(0.035940, 0.352008, 0.451368)`.
-The coefficients `(a, b)`, `c` and `ℓ₂` are not recomputed.
+`ℓ₂` is not recomputed. The script's `bt_ab` and `cusp_c` evaluate `(a, b)` and `c` with exact
+derivatives at the recomputed points (formulas in the brief, §6). `a` and `b` both flip with `q₀`,
+so compare `|a|`, `|b|` and the sign of `ab`; the script turns `q₀` to `a ≥ 0`.
+
+| Point | Recomputed | MatCont, in absolute value | Difference |
+| --- | --- | --- | --- |
+| BT at (1.41762764, 0.97139757) | (a, b) = (0.0837844414, 2.1362799251), ab > 0 | (0.08378442, 2.136280), ab > 0 | 2.1e-8, 7.5e-8 |
+| BT at (1.16119871, 0.72233907) | (a, b) = (0.0482256452, 1.9376325696), ab > 0 | (0.04822563, 1.937632), ab > 0 | 1.5e-8, 5.7e-7 |
+| Cusp | c = 0.3627886569 | 0.3627844 | 4.3e-6 |
+
+MatCont takes finite differences, and evaluates the cusp at its less precise state.
 
 At `K = 2` the Hopf test changes sign twice on the equilibrium curve. Both points are neutral
 saddles, with real eigenvalues `±κ`, and must not be reported as Hopf points:
@@ -164,6 +178,20 @@ Codimension-2 points on the Neimark–Sacker curve (derived):
 
 - Going forward from `ε = 1` the tutorial finds 1:4, 1:3, then 1:2, and going backward the
   Chenciner point, the same order as here. Past the 1:2 point the curve is a neutral saddle.
+- The angle `θ = acos(tr/2)` of the multipliers is `π/2`, `2π/3` and `π` at the 1:4, 1:3 and 1:2
+  points.
+
+Weak resonances on the Neimark–Sacker curve (derived), where `cos θ = tr/2 = cos(2π/q)`, solved by
+`brentq` on the closed form. In the box `a ∈ [0, 16]`, `ε ∈ [−6, 3]` each of 1:5 to 1:9 appears
+once, between `ε = 1` and the Chenciner point; past `ε = 1`, `θ` grows to `π`:
+
+| q | ε | a |
+| --- | --- | --- |
+| 5 | 0.9787432867 | 4.8368810394 |
+| 6 | 0.7 | 3.5 |
+| 7 | 0.2771857493 | 2.6355713870 |
+| 8 | −0.4043039075 | 2.0502525317 |
+| 9 | −1.6363255747 | 1.6376888982 |
 - The Neimark–Sacker coefficient is `d = −11.2197` at `ε = 1`, `a = 5`, with MatContM's scaling.
   The same routine gives `−1.0` for the delayed logistic map below, the value MatContM prints.
 - On the branch-point curve F3 lies on F2 at `(1/(3.5 − ε), 0)`. Its multipliers are `1` and

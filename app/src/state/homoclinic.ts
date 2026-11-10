@@ -10,7 +10,8 @@ import type {
   HomoclinicStop,
 } from "../api/types";
 import type { Job } from "../api/client";
-import { CODIM2_KINDS, dec4, planeContext } from "./curves.ts";
+import { dec } from "../math/format.ts";
+import { CODIM2_KINDS, planeContext } from "./curves.ts";
 import type { View } from "./model.ts";
 
 /**
@@ -154,7 +155,7 @@ export function homoclinicRequestId(now: number = Date.now()): number {
 export function computingText(progress: Pick<HomoclinicProgress, "points" | "p"> | null, names: readonly [string, string]): string {
   if (!progress) return "Computing the homoclinic curve…";
   const n = progress.points;
-  return `Computing the homoclinic curve: ${n} ${n === 1 ? "point" : "points"}, at ${names[0]} = ${dec4(progress.p[0])}, ${names[1]} = ${dec4(progress.p[1])}`;
+  return `Computing the homoclinic curve: ${n} ${n === 1 ? "point" : "points"}, at ${names[0]} = ${dec(progress.p[0], 4)}, ${names[1]} = ${dec(progress.p[1], 4)}`;
 }
 
 const BT = CODIM2_KINDS.bogdanovTakens.label;
@@ -175,7 +176,7 @@ export function homoclinicEndText(end: { first: HomoclinicStop | null; last: Hom
 type Curve = Pick<HomoclinicResponse["curve"], "p1" | "p2" | "sigma" | "chaotic" | "reversed" | "end">;
 
 const at = (c: Pick<Curve, "p1" | "p2">, i: number, names: readonly [string, string]) =>
-  `${names[0]} = ${dec4(c.p1[i])}, ${names[1]} = ${dec4(c.p2[i])}`;
+  `${names[0]} = ${dec(c.p1[i], 4)}, ${names[1]} = ${dec(c.p2[i], 4)}`;
 
 /** Where σ crosses 0, each found by linear interpolation between the two points it falls between. */
 export function sigmaCrossings(c: Pick<Curve, "p1" | "p2" | "sigma">): [number, number][] {
@@ -202,7 +203,7 @@ export function sigmaText(c: Pick<Curve, "p1" | "p2" | "sigma">, names: readonly
     const s = c.sigma.find((v) => v !== 0);
     return s === undefined ? "σ is 0 along the curve" : `σ stays ${s > 0 ? "positive" : "negative"} along the curve`;
   }
-  const where = more(cross.map(([a, b]) => `${names[0]} = ${dec4(a)}, ${names[1]} = ${dec4(b)}`));
+  const where = more(cross.map(([a, b]) => `${names[0]} = ${dec(a, 4)}, ${names[1]} = ${dec(b, 4)}`));
   return `σ changes sign at ${joinAnd(where)}`;
 }
 

@@ -1,9 +1,14 @@
 //! The codimension-2 points of a curve: one row per kind of curve, kind of
 //! system and kind of point, with a test function that changes sign at the
-//! point and the points where it applies.
+//! point and the points where it applies. The weak resonances of a
+//! Neimark–Sacker curve are rows of the same table.
 
-use super::{critical_pair, shifted, Codim2Kind, CurveKind, CurvePoint, Defining, Nature};
-use crate::continuation::{diff, dist, dot, locate, norm2, OnCurve};
+use std::f64::consts::PI;
+
+use super::{
+    critical_pair, shifted, Codim2Kind, CurveKind, CurvePoint, Defining, Nature, NormalForm,
+};
+use crate::continuation::{cos, diff, dist, dot, locate, norm2, OnCurve};
 use crate::linalg::lu_det;
 use crate::normal_form::{self, first_lyapunov, Taylor};
 use Codim2Kind::{
@@ -46,11 +51,22 @@ impl OnCurve for Site {
 
 type Test = fn(&Defining, &Site) -> Option<f64>;
 
-/// One kind of codimension-2 point on one kind of curve.
+/// What a row locates.
+#[derive(Clone, Copy)]
+pub(super) enum Mark {
+    /// A codimension-2 point, inserted into the curve's points.
+    Point(Codim2Kind),
+    /// The weak resonance `1:q` of a Neimark–Sacker curve, marked on the
+    /// curve but not among its points.
+    Tick(usize),
+}
+
+/// One kind of codimension-2 point, or one weak resonance, on one kind of
+/// curve.
 struct Row {
     curve: CurveKind,
     map: bool,
-    kind: Codim2Kind,
+    mark: Mark,
     /// Zero at the point, continuous between accepted points.
     test: Test,
     /// Where the test is read; a sign change counts only between two points
@@ -63,6 +79,12 @@ impl Row {
         (self.applies)(&at.point)
             .then(|| (self.test)(sys, at))
             .flatten()
+    }
+
+    /// The test is a normal-form coefficient whose sign the point's
+    /// sentence reads.
+    fn signed(&self) -> bool {
+        matches!(self.mark, Mark::Point(Bautin | Chenciner | GeneralizedFlip))
     }
 }
 
@@ -91,9 +113,21 @@ const fn row(
     Row {
         curve,
         map,
-        kind,
+        mark: Mark::Point(kind),
         test,
         applies,
+    }
+}
+
+/// The weak resonance `1:Q`, where `cos θ = cos(2π/Q)` between two true
+/// Neimark–Sacker points.
+const fn tick<const Q: usize>() -> Row {
+    Row {
+        curve: NeimarkSacker,
+        map: MAP,
+        mark: Mark::Tick(Q),
+        test: weak::<Q>,
+        applies: critical,
     }
 }
 
@@ -131,6 +165,11 @@ const ROWS: &[Row] = &[
     row(NeimarkSacker, MAP, Resonance3, cosine_plus_half, critical),
     row(NeimarkSacker, MAP, Resonance4, cosine, critical),
     row(NeimarkSacker, MAP, Chenciner, ns_coefficient, critical),
+    tick::<5>(),
+    tick::<6>(),
+    tick::<7>(),
+    tick::<8>(),
+    tick::<9>(),
     row(BranchPoint, MAP, FoldFlip, det_plus_identity, anywhere),
 ];
 
@@ -147,11 +186,15 @@ const SHRINK: f64 = 1e-4;
 /// The rows of one curve.
 pub(super) struct Detectors(Vec<&'static Row>);
 
-/// A codimension-2 point located between two accepted points.
+/// A codimension-2 point or a weak resonance located between two accepted
+/// points.
 pub(super) struct Found {
-    pub(super) kind: Codim2Kind,
+    pub(super) mark: Mark,
     pub(super) site: Site,
     pub(super) bracket: f64,
+    /// For a test that is a coefficient, `(Δp₁, Δp₂)` from the point to the
+    /// end of the step where the test is positive.
+    pub(super) positive_toward: Option<(f64, f64)>,
 }
 
 impl Detectors {
@@ -198,8 +241,11 @@ impl Detectors {
                     |z, t| Site::new(z.to_vec(), sys.point(0.0, z, t)),
                 );
                 let shrank = bisection.test <= SHRINK * ta.abs().min(tb.abs());
-                (bisection.converged && shrank).then_some(Found {
-                    kind: row.kind,
+                let at = bisection.point.point.p;
+                let toward = |end: &Site| (end.point.p.0 - at.0, end.point.p.1 - at.1);
+                (bisection.converged && shrank).then(|| Found {
+                    mark: row.mark,
+                    positive_toward: row.signed().then(|| toward(if tb > 0.0 { b } else { a })),
                     site: bisection.point,
                     bracket: bisection.width,
                 })
@@ -208,6 +254,34 @@ impl Detectors {
         found.sort_by(|f, g| dist(&a.z, &f.site.z).total_cmp(&dist(&a.z, &g.site.z)));
         found
     }
+}
+
+/// The normal form of a point of `kind` located at `at`: Bogdanov–Takens on
+/// a fold or Hopf curve of a flow, the cusp on a fold curve.
+pub(super) fn normal_form(sys: &Defining, kind: Codim2Kind, at: &Site) -> Option<NormalForm> {
+    let p = sys.params_at(&at.z);
+    let taylor = Taylor::new(&sys.power, &at.point.x, &p);
+    match kind {
+        BogdanovTakens => {
+            let (a, b) = normal_form::bogdanov_takens(&taylor)?;
+            Some(NormalForm::BogdanovTakens { a, b })
+        }
+        Cusp => {
+            let (q, w) = null_vectors(sys, at)?;
+            let c = normal_form::cusp(&taylor, &q, &w)?;
+            Some(NormalForm::Cusp { c })
+        }
+        _ => None,
+    }
+}
+
+/// On a Neimark–Sacker curve, `θ = acos c` of the critical pair, with `c`
+/// clamped to `[−1, 1]`.
+pub(super) fn angle(sys: &Defining, at: &Site) -> Option<f64> {
+    if sys.kind != NeimarkSacker {
+        return None;
+    }
+    Some(cosine(sys, at)?.clamp(-1.0, 1.0).acos())
 }
 
 /// `A` at `at`.
@@ -324,10 +398,185 @@ fn cosine_plus_half(sys: &Defining, at: &Site) -> Option<f64> {
     Some(cosine(sys, at)? + 0.5)
 }
 
+/// `c − cos(2π/Q)`, zero at the weak resonance `1:Q`.
+fn weak<const Q: usize>(sys: &Defining, at: &Site) -> Option<f64> {
+    Some(cosine(sys, at)? - cos(2.0 * PI / Q as f64))
+}
+
 fn ns_coefficient(sys: &Defining, at: &Site) -> Option<f64> {
     let ev = at.eigenvalues();
     let (i, j) = critical_pair(NeimarkSacker, ev)?;
     let k = if ev[i].1 > 0.0 { i } else { j };
     let p = sys.params_at(&at.z);
     normal_form::neimark_sacker(&Taylor::new(&sys.power, &at.point.x, &p), ev, k)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{continue_curve, CurveOptions, CurveSeed};
+    use super::*;
+    use crate::continuation::{null_vector, Power};
+    use crate::normal_form::{first_lyapunov, flip, neimark_sacker};
+    use dyn_core::VectorField;
+    use dyn_expr::{compile, CompiledSystem, InputFormat};
+
+    fn system(source: &str) -> CompiledSystem {
+        compile(source, InputFormat::Text)
+            .system
+            .unwrap_or_else(|| panic!("{source} compiles"))
+    }
+
+    /// Every parameter, the two free ones by name.
+    fn params(sys: &CompiledSystem, free: [(&str, f64); 2]) -> (Vec<f64>, (usize, usize)) {
+        let index = |name: &str| {
+            sys.info
+                .params
+                .iter()
+                .position(|q| q.name == name)
+                .unwrap_or_else(|| panic!("{name}"))
+        };
+        let mut p = vec![0.0; sys.info.params.len()];
+        let (i, j) = (index(free[0].0), index(free[1].0));
+        (p[i], p[j]) = (free[0].1, free[1].1);
+        (p, (i, j))
+    }
+
+    /// The coefficient a point's sign is read from, at a point of the curve.
+    fn coefficient(sys: &CompiledSystem, kind: CurveKind, params: &[f64], pt: &CurvePoint) -> f64 {
+        let power = Power { f: sys, k: 1 };
+        let t = Taylor::new(&power, &pt.x, params);
+        let ev = &pt.eigenvalues;
+        let n = pt.x.len();
+        let value = match kind {
+            Hopf => {
+                let (i, j) = critical_pair(Hopf, ev).expect("a pair");
+                let lambda = if ev[i].1 > 0.0 { ev[i] } else { ev[j] };
+                first_lyapunov(&power, params, &pt.x, ev, lambda)
+            }
+            NeimarkSacker => {
+                let (i, j) = critical_pair(NeimarkSacker, ev).expect("a pair");
+                neimark_sacker(&t, ev, if ev[i].1 > 0.0 { i } else { j })
+            }
+            _ => {
+                let mut a = vec![0.0; n * n];
+                power.jacobian(0.0, &pt.x, params, &mut a);
+                let m = shifted(&a, n, 1.0);
+                let mt: Vec<f64> = (0..n * n).map(|k| m[k % n * n + k / n]).collect();
+                flip(
+                    &t,
+                    &null_vector(&m, n).expect("q"),
+                    &null_vector(&mt, n).expect("w"),
+                )
+            }
+        };
+        value.expect("a coefficient")
+    }
+
+    /// Both halves from `x`, and for each point of `kind` the curve's points
+    /// three steps to either side: the coefficient has opposite signs there,
+    /// and `positive_toward` points to the positive one.
+    fn check(
+        source: &str,
+        curve: CurveKind,
+        point: Codim2Kind,
+        free: [(&str, f64); 2],
+        x: &[f64],
+        ranges: ((f64, f64), (f64, f64)),
+        count: usize,
+    ) {
+        let sys = system(source);
+        let (base, free) = params(&sys, free);
+        let seed = CurveSeed {
+            kind: curve,
+            x: x.to_vec(),
+            period: 1,
+        };
+        let mut seen = 0;
+        for ds in [0.01, -0.01] {
+            let opts = CurveOptions {
+                free,
+                ranges,
+                ds,
+                ds_min: 1e-8,
+                ds_max: 0.05,
+                max_points: 3000,
+                max_angle: 0.3,
+            };
+            let c = continue_curve(&sys, &base, &seed, &opts).expect("the curve starts");
+            for sp in c.special.iter().filter(|sp| sp.kind == point) {
+                let toward = sp.positive_toward.expect("a direction");
+                let side = |i: usize| {
+                    let pt = &c.points[i];
+                    let mut p = base.clone();
+                    (p[free.0], p[free.1]) = pt.p;
+                    let v = coefficient(&sys, curve, &p, pt);
+                    let along = (pt.p.0 - sp.p.0) * toward.0 + (pt.p.1 - sp.p.1) * toward.1;
+                    (v, along)
+                };
+                let (before, after) = (side(sp.index - 3), side(sp.index + 3));
+                assert!(
+                    before.0 * after.0 < 0.0,
+                    "{point:?} at {:?}: {before:?}, {after:?}",
+                    sp.p
+                );
+                for (v, along) in [before, after] {
+                    assert_eq!(
+                        v > 0.0,
+                        along > 0.0,
+                        "{point:?} at {:?}: {v} at {along}",
+                        sp.p
+                    );
+                }
+                assert_eq!(sp.normal_form, None);
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, count, "{point:?}");
+    }
+
+    #[test]
+    fn co_oxidation_bautin_points_point_to_positive_l1() {
+        check(
+            "x' = 2*2.5*(1 - x - y - s)^2 - 2*x^2 - 10*x*y\n\
+             y' = k2*(1 - x - y - s) - 0.1*y - 10*x*y\n\
+             s' = 0.0675*((1 - x - y - s) - K*s)",
+            Hopf,
+            Bautin,
+            [("k2", 1.05155746), ("K", 0.4)],
+            &[0.01635754, 0.52397118, 0.32833662],
+            ((0.5, 2.0), (0.1, 2.0)),
+            2,
+        );
+    }
+
+    const PREDATOR_PREY: &str = "x_{n+1} = a*x_n*(1 - x_n) - 3*x_n*y_n/(1 + epsilon*x_n)\n\
+                                 y_{n+1} = 3.5*x_n*y_n/(1 + epsilon*x_n)";
+
+    #[test]
+    fn predator_prey_chenciner_point_points_to_positive_d() {
+        check(
+            PREDATOR_PREY,
+            NeimarkSacker,
+            Chenciner,
+            [("epsilon", 1.0), ("a", 5.0)],
+            &[0.4, 3.5 * (5.0 * 0.6 - 1.0) / 7.5],
+            ((-6.0, 1.45), (0.0, 45.0)),
+            1,
+        );
+    }
+
+    /// F2 = (x, 0) on its flip curve `ε = −3.5 − 1/x`, `a = 1/(1 − x)`.
+    #[test]
+    fn predator_prey_generalized_flip_points_to_positive_c() {
+        let x = -1.0 / 1.7;
+        check(
+            PREDATOR_PREY,
+            Flip,
+            GeneralizedFlip,
+            [("epsilon", -1.8), ("a", 1.0 / (1.0 - x))],
+            &[x, 0.0],
+            ((-2.0, -1.5), (0.5, 1.0)),
+            1,
+        );
+    }
 }

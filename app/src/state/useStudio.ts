@@ -24,6 +24,7 @@ import { sameAxis } from "../math/format";
 import { DEFAULT_METHOD, METHODS, methodFits } from "./methods";
 import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
+import { buildInsetJob, insetView, type InsetMeta, type InsetState } from "./inset";
 import {
   buildCurveJobs,
   curvesAvailability,
@@ -176,6 +177,8 @@ export interface StudioState extends StudioSnapshot {
   homoclinicProgress: HomoclinicProgressState | null;
   /** The homoclinic rows of the plane's Curves list; none in another view. */
   homoclinicRows: HomoclinicRow[];
+  /** The plane's live inset at the crosshair, or null outside the plane. */
+  inset: InsetState | null;
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -243,6 +246,7 @@ export function useStudio() {
   const [curveRuns, setCurveRuns] = useState<Record<string, CurveRun>>({});
   const [homoclinicRuns, setHomoclinicRuns] = useState<Record<string, HomoclinicRun>>({});
   const [homoclinicProgress, setHomoclinicProgress] = useState<HomoclinicProgressState | null>(null);
+  const [inset, setInset] = useState<InsetState | null>(null);
   const [sourceTemplateId, setSourceTemplateId] = useState<string | null>(null);
   const [computeError, setComputeError] = useState<string | null>(null);
   const [plotAspect, setPlotAspectState] = useState<number | null>(null);
@@ -290,6 +294,7 @@ export function useStudio() {
     homoclinicRuns,
     homoclinicProgress,
     homoclinicRows: homoclinicShown,
+    inset,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -379,6 +384,24 @@ export function useStudio() {
     [],
   );
   useEffect(() => () => orbitScheduler.dispose(), [orbitScheduler]);
+
+  const insetScheduler = useMemo(
+    () =>
+      new LatestRequestScheduler(
+        computePortrait,
+        () => {
+          const cur = latest.current;
+          if (!isCurves(cur.view) || !cur.compiled?.ok) return null;
+          const mem = viewMemory.current;
+          const phase = insetView(mem.shapeId === cur.shapeId ? mem.views.phase : undefined, cur.compiled);
+          return phase ? buildInsetJob(cur, phase) : null;
+        },
+        (res, meta: InsetMeta) => setInset({ res, meta }),
+        () => setInset(null),
+      ),
+    [],
+  );
+  useEffect(() => () => insetScheduler.dispose(), [insetScheduler]);
 
   const updateContinuation = useCallback((f: (v: ContinuationView) => ContinuationView) => {
     setViewState((v) => (isContinuation(v) ? f(v) : v));
@@ -530,6 +553,12 @@ export function useStudio() {
   useEffect(() => {
     scheduler.request();
   }, [scheduler, compiled, params, viewKey, baseState, fieldTime, ics, layers, solver, plotAspect]);
+
+  const onPlane = isCurves(view);
+  useEffect(() => {
+    if (onPlane) insetScheduler.request();
+    else setInset(null);
+  }, [insetScheduler, onPlane, compiled, params, baseState, ics, solver]);
 
   const lyapunovKey = buildLyapunovJob(state)?.meta.key ?? null;
   useEffect(() => {

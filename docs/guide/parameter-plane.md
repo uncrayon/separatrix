@@ -39,10 +39,33 @@ bifurcation at all (a neutral saddle). Points where curves meet or change charac
 | GPD | Generalized flip, where a flip changes from subcritical to supercritical |
 
 The crosshair is the current pair of parameter values, and the grey bar is the Branch view's range
-at the current value of the parameter up. Click anywhere to set both parameters; the sliders and
-every other view follow. Click a row in **Special points** to set both parameters there. In the
-desktop app each row also says how finely the point was located: "located to 1.5 × 10⁻¹³" is the
-width of the last bisection step along the curve, each parameter as a fraction of its range.
+at the value of the parameter up that its branches were computed at. Click anywhere to set both
+parameters; the sliders and every other view follow. Click a row in **Special points** to set both
+parameters there.
+
+Each row of **Special points** says in a sentence what happens at the point, using only what holds
+where it was found. A fold-flip found on a branch-point curve says there is no fold there, and a
+Bautin or Chenciner row names the side of the point where the bifurcation is subcritical, as the
+plot shows it: above, below, left or right. A Bogdanov–Takens row gives its normal-form
+coefficients `a` and `b` and the sign of `ab`, and a cusp row its coefficient `c`. Only the sign of
+`ab` is fixed: the row takes `a` positive. A row on a Neimark–Sacker curve gives the angle θ of the
+multipliers. In the desktop app each row also says how finely the point was located: "located to
+1.5 × 10⁻¹³" is the width of the last bisection step along the curve, each parameter as a fraction
+of its range.
+
+On a Neimark–Sacker curve, short ticks mark the weak resonances 1:5 to 1:9, where the multipliers
+turn by a fraction 1/q of a full turn. Each is the tip of a resonance tongue, where a period-q cycle
+appears.
+
+## The inset
+
+A small plot in the emptiest corner shows the system at the crosshair. For a flow it is the Phase
+view as you last left it: its two states, its range and its start points, or five starts spread
+over the view if it has none, with the fixed points. For a map it is the orbit from each start
+point after at least 1,000 iterates. The caption under it gives the two parameters and what is
+there: "3 fixed points in view: 2 stable, 1 saddle." For a map it adds how the orbits end: "The
+orbit settles on a period-4 cycle." or "The orbit does not repeat within 3,000 iterates." While a
+new inset is computing, the last one stays, faded. Systems with one state have no inset.
 
 ## Homoclinic curves
 

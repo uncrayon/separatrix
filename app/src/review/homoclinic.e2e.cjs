@@ -111,8 +111,14 @@ test("Follow homoclinic shows progress in place, Cancel leaves nothing, and foll
     assert.equal(await canvasPixels(page), before, "nothing drawn");
     assert.equal(await inspector(page).locator("[data-homoclinic-followed]").count(), 0);
 
-    await follow(page);
+    const bt = await follow(page);
     await page.waitForSelector("[data-homoclinic-status=done]", { timeout: 15000 });
+    assert.match(
+      await bt.locator(".ds-fp-detail").innerText(),
+      /^A fold curve and a Hopf curve meet\. A curve of homoclinic orbits starts here\.\nFollowed as a homoclinic curve \(Hom\)\nOn the fold and Hopf curves/,
+      "the BT row says once that the curve starts there, then that it is followed",
+    );
+    assert.equal(await bt.getByRole("button", { name: "Follow homoclinic" }).count(), 0);
     const text = await homoclinicRows(page).innerText();
     assert.match(text, /Homoclinic curve/);
     assert.match(text, /\d+ points · (one end|both ends|the end) /);

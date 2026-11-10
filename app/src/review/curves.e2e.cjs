@@ -218,8 +218,128 @@ test("the predator–prey map: a BP row offers Switch branch and Follow, and its
       ["flip", "failed"],
     ]);
     assert.match(await page.locator(".legend-bar").innerText(), /^Branch point \(BP\)\n/);
-    assert.match(await lppd.innerText(), /^LPPD Fold-flip\na = 3\.000000 {2}ε = 2\.000000\nx = 0\.6667, y = 0\.0000\nOn the branch-point curve$/);
+    assert.match(await lppd.innerText(), /^LPPD Fold-flip\na = 3\.000000 {2}ε = 2\.000000\nx = 0\.6667, y = 0\.0000\nA multiplier \+1 and a multiplier −1 together\. Here the \+1 is a branch point, where another branch of fixed points crosses, so there is no fold\.\nOn the branch-point curve$/);
   } finally {
     await browser.close();
   }
 });
+
+/** The template's Parameter plane after Search in two parameters has followed every curve. */
+async function searchPlane(page, title) {
+  await pick(page, title);
+  await viewRadio(page, "Continuation").click();
+  await branchSettled(page);
+  await inspector(page).getByRole("button", { name: "Search in two parameters" }).click();
+  await curvesSettled(page);
+}
+
+const rowOf = (page, kind) => inspector(page).locator(`[data-plane-point=${kind}]`);
+const sentence = (row) => row.locator("[data-plane-sentence]").innerText();
+const coefficients = (row) => row.locator("[data-plane-coefficients]").innerText();
+
+test("CO oxidation: each special point says what happens there, with its coefficients, and the inset shows the crosshair", async () => {
+  const { browser, page } = await open();
+  try {
+    await searchPlane(page, "CO oxidation");
+
+    const bt = rowOf(page, "bogdanovTakens");
+    assert.equal(await bt.count(), 2);
+    assert.equal(await sentence(bt.first()), "A fold curve and a Hopf curve meet. A curve of homoclinic orbits starts here.");
+    assert.equal(await coefficients(bt.first()), "a = 0.0482, b = 1.9376 · ab > 0", "MatCont: |a| = 0.04822563, |b| = 1.937632");
+    assert.equal(await coefficients(bt.last()), "a = 0.0838, b = 2.1363 · ab > 0", "MatCont: |a| = 0.08378442, |b| = 2.136280");
+    const cp = rowOf(page, "cusp");
+    assert.equal(await sentence(cp), "Two fold curves meet. Inside the wedge there are three fixed points, outside one.");
+    assert.equal(await coefficients(cp), "c = 0.3628", "MatCont: 0.3627844");
+    const gh = rowOf(page, "bautin");
+    assert.equal(await gh.locator("[data-plane-coefficients]").count(), 0, "ℓ₂ is not computed");
+    assert.deepEqual(
+      await gh.locator("[data-plane-sentence]").allInnerTexts(),
+      Array(2).fill("The Hopf bifurcation changes from subcritical (right) to supercritical (left)."),
+      "the Hopf points at K = 0.4, right of both, are subcritical",
+    );
+
+    const inset = page.locator("[data-plane-inset]");
+    assert.equal(await inset.getAttribute("aria-label"), "Live inset: phase portrait at the crosshair");
+    await page.waitForFunction(() => document.querySelector("[data-plane-inset]:not(.is-stale)"));
+    assert.match(await inset.locator("figcaption").innerText(), /^k₂ = 1\.050, K = 0\.400\n(One fixed point in view|\d fixed points in view|No fixed point in view)/);
+
+    await bt.first().getByRole("button", { name: /^Bogdanov–Takens: / }).click();
+    await page.waitForFunction(() => /K = 0\.722/.test(document.querySelector("[data-plane-inset]:not(.is-stale) figcaption")?.textContent ?? ""));
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the predator–prey map: weak-resonance ticks, the multipliers' angle, a fold-flip that promises no fold, and the orbit inset", async () => {
+  const { browser, page } = await open();
+  try {
+    await searchPlane(page, "Predator–prey map");
+
+    assert.match(await page.locator(".legend-help").innerText(), /^Ticks 1:5 to 1:9 mark where the rotation is a rational turn: each is the tip of a resonance tongue\./);
+    assert.match(await rowOf(page, "resonance4").innerText(), /x = 0\.4286, y = 1\.5000 · θ = 90°/);
+    assert.match(await rowOf(page, "resonance3").innerText(), /· θ = 120°/);
+    const lppd = rowOf(page, "foldFlip");
+    assert.equal(
+      await sentence(lppd),
+      "A multiplier +1 and a multiplier −1 together. Here the +1 is a branch point, where another branch of fixed points crosses, so there is no fold.",
+    );
+    assert.equal(
+      await sentence(rowOf(page, "chenciner")),
+      "The Neimark–Sacker bifurcation changes from supercritical (above) to subcritical (below).",
+      "the NS curve runs almost straight down through CH, and d > 0 below it",
+    );
+
+    const inset = page.locator("[data-plane-inset]");
+    assert.equal(await inset.getAttribute("aria-label"), "Live inset: orbit at the crosshair");
+    await page.waitForFunction(() => document.querySelector("[data-plane-inset]:not(.is-stale)"));
+    assert.match(await inset.locator("figcaption").innerText(), /^a = 5\.300, ε = 1\.000\n.*The orbits? (do|does) not repeat within 3,000 iterates\./s);
+  } finally {
+    await browser.close();
+  }
+});
+
+const captured = [];
+
+for (const [title, template, param, upName, key] of [
+  ["CO oxidation", "co-oxidation", "K", "K", "ArrowRight"],
+  ["Predator–prey map", "predator-prey-map", "varepsilon", "ε", "ArrowLeft"],
+]) {
+  test(`${title}: dragging a parameter coalesces the inset's requests and ends on the last value`, async () => {
+    const { browser, page } = await open();
+    try {
+      await searchPlane(page, title);
+      await page.waitForFunction(() => document.querySelector("[data-plane-inset]:not(.is-stale)"));
+      await page.evaluate(() => {
+        const mock = window.__sepxMock;
+        let last = mock.lastPortrait;
+        const log = (window.__insetLog = [{ request: last.req, elapsedMs: last.res.elapsedMs }]);
+        Object.defineProperty(mock, "lastPortrait", {
+          get: () => last,
+          set: (v) => {
+            last = v;
+            log.push({ request: v.req, elapsedMs: v.res.elapsedMs });
+          },
+        });
+      });
+      const slider = page.getByRole("slider", { name: `Parameter ${param}`, exact: true });
+      await slider.focus();
+      const presses = 40;
+      for (let i = 0; i < presses; i++) await slider.press(key);
+      const value = Number((await paramValue(page, param)).replace("−", "-"));
+      await page.waitForFunction(
+        (want) => (document.querySelector("[data-plane-inset]:not(.is-stale) figcaption")?.textContent ?? "").includes(want),
+        `${upName} = ${value.toFixed(3).replace(/^-/, "−")}`,
+        { timeout: 30000 },
+      );
+      const log = await page.evaluate(() => window.__insetLog);
+      assert.ok(log.length >= 2 && log.length <= presses, `${log.length - 1} inset requests for ${presses} moves`);
+      assert.equal(log[log.length - 1].request.params[1], value, "the last request is at the last value");
+      const ms = log.map((l) => l.elapsedMs).sort((a, b) => a - b);
+      console.log(`${title}, preview inset: ${log.length - 1} requests for ${presses} moves, median ${ms[ms.length >> 1].toFixed(1)} ms, max ${ms[ms.length - 1].toFixed(1)} ms`);
+      captured.push(...log.map((l) => ({ template, request: l.request })));
+      if (process.env.SEPX_INSET_REQUESTS) require("node:fs").writeFileSync(process.env.SEPX_INSET_REQUESTS, JSON.stringify(captured));
+    } finally {
+      await browser.close();
+    }
+  });
+}

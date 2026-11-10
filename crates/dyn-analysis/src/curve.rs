@@ -13,7 +13,7 @@ use crate::continuation::{
     tangent, Fail, Power, Underdetermined, FAST_NEWTON_ITERS, SLOW_NEWTON_ITERS, STEP_GROWTH, TOL,
 };
 use crate::linalg::{eigenvalues, lu_solve};
-use codim2::{Detectors, Site};
+use codim2::{Detectors, Mark, Site};
 
 /// The bifurcation a curve follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,6 +133,10 @@ pub struct Curve {
     pub points: Vec<CurvePoint>,
     /// The codimension-2 points in order of arclength.
     pub special: Vec<Codim2Point>,
+    /// On a Neimark–Sacker curve, the weak resonances 1:5 to 1:9 in order of
+    /// arclength, located as the codimension-2 points are but not among the
+    /// points; empty on other curves.
+    pub ticks: Vec<ResonanceTick>,
     /// Why the curve stopped.
     pub end: CurveEnd,
 }
@@ -183,6 +187,52 @@ pub struct Codim2Point {
     /// The width of the last bracket of the bisection that located it, in
     /// the arclength of [`CurvePoint::s`].
     pub bracket: f64,
+    /// Its normal form: Bogdanov–Takens on fold and Hopf curves of a flow,
+    /// the cusp on fold curves; `None` for other points.
+    pub normal_form: Option<NormalForm>,
+    /// On a Neimark–Sacker curve, `θ ∈ [0, π]` of the critical multipliers
+    /// `e^{±iθ}`: `0` at a 1:1 resonance, `π/2` at 1:4, `2π/3` at 1:3, `π`
+    /// at 1:2. `None` on other curves.
+    pub angle: Option<f64>,
+    /// For a Bautin, Chenciner or generalized flip point, `(Δp₁, Δp₂)` from
+    /// the point to the accepted point of the curve beside it where its
+    /// coefficient is positive: `ℓ₁` (a subcritical Hopf), the
+    /// Neimark–Sacker `d` (a subcritical Neimark–Sacker point) or the flip
+    /// `c` (a supercritical flip). In parameter units, not of unit length.
+    /// `None` for other points.
+    pub positive_toward: Option<(f64, f64)>,
+}
+
+/// The normal-form coefficients of a codimension-2 point (Yu. A. Kuznetsov,
+/// *Elements of Applied Bifurcation Theory*, 3rd ed., §8.2, §8.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NormalForm {
+    /// `ẇ₀ = w₁, ẇ₁ = β₁ + β₂w₀ + a w₀² + b w₀w₁`, with `‖q₀‖ = 1` and the
+    /// orientation of `q₀` that makes `a ≥ 0`; the sign of `b` is that of
+    /// `ab`, which decides on which side of the Hopf curve the cycles are.
+    BogdanovTakens {
+        /// The quadratic coefficient, `≥ 0`.
+        a: f64,
+        /// The mixed coefficient.
+        b: f64,
+    },
+    /// `ẇ = β₁ + β₂w + c w³`, with `‖q‖ = 1`: `c < 0` where the two folds
+    /// bound a region of three equilibria, one of them stable. It does not
+    /// depend on the orientation of `q`.
+    Cusp {
+        /// The cubic coefficient.
+        c: f64,
+    },
+}
+
+/// A weak resonance on a Neimark–Sacker curve, where the critical
+/// multipliers are `e^{±2πi/q}` and a tongue of `q`-cycles is rooted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResonanceTick {
+    /// `q`, from 5 to 9.
+    pub q: usize,
+    /// The parameters `(p₁, p₂)`.
+    pub p: (f64, f64),
 }
 
 /// Why no curve could start.
@@ -295,7 +345,7 @@ pub fn continue_curve(
     let tau: Vec<f64> = tau.iter().map(|t| sign * t).collect();
     let start = sys.point(0.0, &z, tau.clone());
     if !z[n..n + 2].iter().all(|u| (0.0..=1.0).contains(u)) {
-        return Ok(sys.curve(vec![start], Vec::new(), CurveEnd::Range));
+        return Ok(sys.curve(vec![start], Vec::new(), Vec::new(), CurveEnd::Range));
     }
     let h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
     Ok(sys.follow(start, z, tau, h, opts))
@@ -542,12 +592,19 @@ impl<'a> Defining<'a> {
         }
     }
 
-    fn curve(&self, points: Vec<CurvePoint>, special: Vec<Codim2Point>, end: CurveEnd) -> Curve {
+    fn curve(
+        &self,
+        points: Vec<CurvePoint>,
+        special: Vec<Codim2Point>,
+        ticks: Vec<ResonanceTick>,
+        end: CurveEnd,
+    ) -> Curve {
         Curve {
             kind: self.kind,
             period: self.power.k,
             points,
             special,
+            ticks,
             end,
         }
     }
@@ -572,6 +629,7 @@ impl<'a> Defining<'a> {
         let mut tests = detectors.tests(&self, &site);
         let mut points = vec![start];
         let mut special = Vec::new();
+        let mut ticks = Vec::new();
         let mut away = false;
         let end = loop {
             if points.len() >= opts.max_points {
@@ -607,17 +665,34 @@ impl<'a> Defining<'a> {
             let next = Site::new(z_new.clone(), self.point(last.s + len, &z_new, t_new));
             let next_tests = detectors.tests(&self, &next);
             let found = detectors.locate(&self, (&site, &tests), (&next, &next_tests));
-            if points.len() + 1 + found.len() > opts.max_points {
+            let inserted = found
+                .iter()
+                .filter(|f| matches!(f.mark, Mark::Point(_)))
+                .count();
+            if points.len() + 1 + inserted > opts.max_points {
                 break CurveEnd::MaxPoints;
             }
             let from = last.s;
             for f in found {
+                let kind = match f.mark {
+                    Mark::Point(kind) => kind,
+                    Mark::Tick(q) => {
+                        ticks.push(ResonanceTick {
+                            q,
+                            p: f.site.point.p,
+                        });
+                        continue;
+                    }
+                };
                 special.push(Codim2Point {
-                    kind: f.kind,
+                    kind,
                     index: points.len(),
                     p: f.site.point.p,
                     x: f.site.point.x.clone(),
                     bracket: f.bracket,
+                    normal_form: codim2::normal_form(&self, kind, &f.site),
+                    angle: codim2::angle(&self, &f.site),
+                    positive_toward: f.positive_toward,
                 });
                 points.push(CurvePoint {
                     s: from + dist(&z, &f.site.z),
@@ -650,7 +725,7 @@ impl<'a> Defining<'a> {
             }
             away |= back > h * h;
         };
-        self.curve(points, special, end)
+        self.curve(points, special, ticks, end)
     }
 }
 

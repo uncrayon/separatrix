@@ -19,9 +19,16 @@ All notable changes to this project are documented in this file.
   predator–prey map's F3 = F2 curve through its fold-flip at `(ε, a) = (2, 3)`. The Parameter
   plane draws them with their own colour and a dash-dot-dot pattern, and a BP row of the Branch
   view offers **Follow in two parameters…** beside **Switch branch**.
-- The codimension-2 gate, `bash scripts/codim2-gate.sh`: 61 claims on the points where curves meet
-  in CO oxidation, Lorenz-84 and the predator–prey map, against docs/codim2-reference.md, each
-  curve followed with the Parameter plane's own request.
+- Each row of the Parameter plane's Special points list says in a sentence what happens there,
+  such as "The Hopf bifurcation changes from subcritical (above) to supercritical (below).", and
+  Bogdanov–Takens and cusp rows give their normal-form coefficients. A live inset in the plane's
+  emptiest corner shows the system at the crosshair: the Phase view's two states with the fixed
+  points for a flow, the orbit for a map, and a one-line caption. Neimark–Sacker curves carry ticks
+  at the weak resonances 1:5 to 1:9.
+- The codimension-2 gate, `bash scripts/codim2-gate.sh`: 74 claims on the points where curves meet
+  in CO oxidation, Lorenz-84 and the predator–prey map, and on the normal-form coefficients of CO
+  oxidation's Bogdanov–Takens and cusp points, against docs/codim2-reference.md, each curve
+  followed with the Parameter plane's own request.
 - Homoclinic curves in the Parameter plane. **Follow homoclinic** on a Bogdanov–Takens row finds
   the homoclinic orbit beside it and follows the curve of them as both parameters change, drawn
   dash-dot as **Homoclinic (Hom)**. The row counts the points as they arrive, and **Cancel** stops

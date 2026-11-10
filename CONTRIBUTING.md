@@ -119,14 +119,15 @@ bash scripts/codim2-gate.sh
 - The **continuation gate** checks 27 bifurcation points derived in closed form. They cover folds,
   branch points, Hopf points with ω and ℓ₁, flips and a Neimark–Sacker point, and branch switching
   through the logistic cascade. The claims are in `app/src-tauri/tests/continuation.rs`.
-- The **codimension-2 gate** checks 61 claims about the points where curves in two parameters
+- The **codimension-2 gate** checks 74 claims about the points where curves in two parameters
   meet, on the reference systems of [docs/codim2-reference.md](docs/codim2-reference.md): the
   Bogdanov–Takens, cusp, Bautin, zero-Hopf, Hopf–Hopf, strong-resonance, Chenciner, fold-flip and
-  generalized-flip points of CO oxidation, Lorenz-84 and the predator–prey map. Each curve starts
-  from a Branch view point and is followed with the Parameter plane's own request. The gate also
-  checks that a point found on two curves is in the same place on both, that each curve has no
-  other point, and that only BT, ZH, R1 and R2 lie on a neutral stretch. The claims are in
-  `app/src-tauri/tests/codim2.rs`.
+  generalized-flip points of CO oxidation, Lorenz-84 and the predator–prey map, and the
+  Bogdanov–Takens `|a|`, `|b|`, sign of `ab` and cusp `c` of CO oxidation against MatCont. Each
+  curve starts from a Branch view point and is followed with the Parameter plane's own request.
+  The gate also checks that a point found on two curves is in the same place on both, that each
+  curve has no other point, and that only BT, ZH, R1 and R2 lie on a neutral stretch. The claims
+  are in `app/src-tauri/tests/codim2.rs`.
 
 Right after `cargo test --workspace --release`, each gate reuses the build. To time the evaluation
 workloads, run `cargo run --release -p dyn-analysis --example chaos_bench`.

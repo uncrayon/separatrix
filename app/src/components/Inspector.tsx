@@ -110,6 +110,7 @@ import { FollowHomoclinic, HomoclinicRowItems } from "./HomoclinicRows";
 import {
   CODIM2_KINDS,
   CURVE_KINDS,
+  angleText,
   buildCurveJobs,
   curveKindOf,
   curvesAvailability,
@@ -119,8 +120,10 @@ import {
   mergedText,
   neutralText,
   nextParam,
+  normalFormText,
   onCurvesText,
   planePointRows,
+  pointSentence,
   retryStep,
   stallText,
   type CurvesView,
@@ -1526,6 +1529,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
   const stateNames = sys.states.map((st) => plainSubscripted(st.latex));
   const rows = planePointRows(drawnCurves(state.planeRows), view.curves.ranges);
   const [a, u] = [names[view.across], names[view.up]];
+  const spans: [number, number] = [view.xRange[1] - view.xRange[0], view.yRange[1] - view.yRange[0]];
   return (
     <PanelSection title="Special points" count={rows.length} open={open} onToggle={onToggle}>
       {rows.length === 0 ? (
@@ -1537,8 +1541,10 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
           {rows.map((pt) => {
             const info = CODIM2_KINDS[pt.kind];
             const where = `${a} = ${dec(pt.p[0], 6)}  ${u} = ${dec(pt.p[1], 6)}`;
-            const at = stateNames.map((n, i) => `${n} = ${dec(pt.x[i], 4)}`).join(", ");
+            const at =
+              stateNames.map((n, i) => `${n} = ${dec(pt.x[i], 4)}`).join(", ") + (pt.angle === null ? "" : ` · ${angleText(pt.angle)}`);
             const located = locatedText(pt.bracket);
+            const coefficients = normalFormText(pt.normalForm);
             return (
               <li key={`${pt.kind}-${pt.p[0]}-${pt.p[1]}`} className="ds-fp-item" data-plane-point={pt.kind}>
                 <button
@@ -1555,11 +1561,23 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
                     </span>
                     <span className="ds-fp-eig numeric-sm inspector-special-text">{where}</span>
                     <span className="ds-fp-eig numeric-sm">{at}</span>
-                    {located && <span className="ds-fp-eig numeric-sm">{located}</span>}
-                    <span className="caption inspector-plane-on">{onCurvesText(pt.on)}</span>
                   </span>
                 </button>
-                <FollowHomoclinic state={state} actions={actions} point={pt} />
+                <div className="ds-fp-detail">
+                  <span className="caption inspector-plane-sentence" data-plane-sentence="">
+                    {pointSentence(pt, spans)}
+                  </span>
+                  <FollowHomoclinic state={state} actions={actions} point={pt} />
+                  <span className="caption inspector-plane-on">
+                    {onCurvesText(pt.on)}
+                    {located && ` · ${located}`}
+                  </span>
+                  {coefficients && (
+                    <span className="caption numeric-sm inspector-plane-coefficients" data-plane-coefficients="">
+                      {coefficients}
+                    </span>
+                  )}
+                </div>
               </li>
             );
           })}

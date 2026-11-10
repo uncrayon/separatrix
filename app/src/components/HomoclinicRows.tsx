@@ -1,6 +1,6 @@
 import { CurveSample } from "../canvas/CurvesCanvas";
-import { refusalText, plainSubscripted } from "../math/format";
-import { CODIM2_KINDS, dec4, type PlanePointRow } from "../state/curves";
+import { dec, refusalText, plainSubscripted } from "../math/format";
+import { CODIM2_KINDS, type PlanePointRow } from "../state/curves";
 import {
   HOMOCLINIC_LABEL,
   HOMOCLINIC_NAME,
@@ -31,7 +31,7 @@ export function HomoclinicRowItems({ state, actions }: Props) {
     <>
       {state.homoclinicRows.map((row) => {
         const seed = view.curves.homoclinic[row.job.meta.seed];
-        const from = `From ${BT} at ${names[0]} = ${dec4(seed.params[view.across])}, ${names[1]} = ${dec4(seed.params[view.up])}`;
+        const from = `From ${BT} at ${names[0]} = ${dec(seed.params[view.across], 4)}, ${names[1]} = ${dec(seed.params[view.up], 4)}`;
         const lines = row.status === "done" ? homoclinicLines(row.res.curve, names) : [];
         return (
           <li
@@ -88,24 +88,23 @@ export function HomoclinicRowItems({ state, actions }: Props) {
   );
 }
 
-/** "Follow homoclinic" on a Bogdanov–Takens row of a flow; nothing on any other row. */
+/**
+ * "Follow homoclinic" on a Bogdanov–Takens row of a flow, under the row's
+ * sentence that a homoclinic curve starts there; nothing on any other row.
+ */
 export function FollowHomoclinic({ state, actions, point }: Props & { point: PlanePointRow }) {
   const sys = state.compiled;
   const view = state.view;
   if (!sys || sys.kind === "map" || point.kind !== "bogdanovTakens" || !isCurves(view)) return null;
   const seed = homoclinicSeed(point.x, state.params.map((p) => p.value), [view.across, view.up], point.p);
   const followed = hasHomoclinicSeed(view.curves.homoclinic, seed);
-  return (
-    <div className="ds-fp-detail">
-      {followed ? (
-        <span className="caption" data-homoclinic-followed="">
-          Followed as a homoclinic curve ({HOMOCLINIC_LABEL})
-        </span>
-      ) : (
-        <Button size="sm" icon={<IconFollow />} onClick={() => actions.followHomoclinic(point.x, point.p)}>
-          Follow homoclinic
-        </Button>
-      )}
-    </div>
+  return followed ? (
+    <span className="caption" data-homoclinic-followed="">
+      Followed as a homoclinic curve ({HOMOCLINIC_LABEL})
+    </span>
+  ) : (
+    <Button size="sm" icon={<IconFollow />} onClick={() => actions.followHomoclinic(point.x, point.p)}>
+      Follow homoclinic
+    </Button>
   );
 }

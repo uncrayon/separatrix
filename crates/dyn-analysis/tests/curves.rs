@@ -2,7 +2,7 @@
 
 use dyn_analysis::{
     continue_branch, continue_curve, Codim2Kind, Codim2Point, ContinuationOptions, Curve, CurveEnd,
-    CurveError, CurveKind, CurveOptions, CurvePoint, CurveSeed, Nature, SpecialKind,
+    CurveError, CurveKind, CurveOptions, CurvePoint, CurveSeed, Nature, NormalForm, SpecialKind,
 };
 use dyn_expr::{compile, CompiledSystem, InputFormat};
 
@@ -1124,4 +1124,149 @@ fn predator_prey_flip_curve_of_f2_has_a_generalized_flip() {
         "{:?}",
         gpd.x
     );
+}
+
+/// `(|a|, |b|)` of CO oxidation's Bogdanov–Takens points as MatCont Tutorial
+/// IV prints them, `(−0.08378442, −2.136280)` and `(−0.04822563, −1.937632)`,
+/// so with `ab > 0`; and its cusp's `c`. MatCont takes finite differences:
+/// against the reference script's exact derivatives it is `2e-8` off in `a`,
+/// `6e-7` in `b` and `4e-6` in `c`.
+const CO_BT_AB_MATCONT: [(f64, f64); 2] = [(0.08378442, 2.136280), (0.04822563, 1.937632)];
+const CO_CP_C_MATCONT: f64 = 0.3627844;
+/// The reference script's `bt_ab` and `cusp_c`, with exact derivatives at
+/// the recomputed points (docs/codim2-reference.md), to its ten decimals.
+const CO_BT_AB: [(f64, f64); 2] = [(0.0837844414, 2.1362799251), (0.0482256452, 1.9376325696)];
+const CO_CP_C: f64 = 0.3627886569;
+
+/// `a` and `b` flip with `q₀`, so only `|a|`, `|b|` and the sign of `ab`
+/// compare (brief §6); the engine turns `q₀` to `a ≥ 0`.
+fn assert_bt(sp: &Codim2Point, want: (f64, f64), tol: (f64, f64)) {
+    let Some(NormalForm::BogdanovTakens { a, b }) = sp.normal_form else {
+        panic!("no (a, b) at {:?}: {:?}", sp.p, sp.normal_form);
+    };
+    assert!(a >= 0.0, "a = {a}");
+    assert!(a * b > 0.0, "ab = {}", a * b);
+    assert!(
+        (a.abs() - want.0).abs() <= tol.0 && (b.abs() - want.1).abs() <= tol.1,
+        "(a, b) = ({a}, {b}) vs ±{want:?} at {:?}",
+        sp.p
+    );
+}
+
+#[test]
+fn co_oxidation_bogdanov_takens_coefficients_match_matcont_from_both_curves() {
+    let co = co();
+    let fold = co.halves(SpecialKind::Fold, 1.042);
+    let hopf = co.halves(SpecialKind::Hopf, 1.0516);
+    for (k, bt) in CO_BT.iter().enumerate() {
+        for halves in [&fold, &hopf] {
+            let at = one(halves, Codim2Kind::BogdanovTakens, *bt);
+            assert_bt(at, CO_BT_AB_MATCONT[k], (1e-7, 1e-6));
+            assert_bt(at, CO_BT_AB[k], (1e-9, 1e-9));
+            assert_eq!(at.angle, None);
+            assert_eq!(at.positive_toward, None);
+        }
+    }
+    for sp in hopf.iter().flat_map(|c| kinds_at(c, Codim2Kind::Bautin)) {
+        assert_eq!(sp.normal_form, None, "{:?}", sp.p);
+    }
+}
+
+#[test]
+fn co_oxidation_cusp_coefficient_matches_matcont() {
+    let co = co();
+    let fold = co.halves(SpecialKind::Fold, 1.042);
+    let cusp = one(&fold, Codim2Kind::Cusp, (1.00640833, 0.35599127));
+    let Some(NormalForm::Cusp { c }) = cusp.normal_form else {
+        panic!("no c: {:?}", cusp.normal_form);
+    };
+    assert!((c - CO_CP_C_MATCONT).abs() <= 1e-5, "c = {c}");
+    assert!((c - CO_CP_C).abs() <= 1e-9, "c = {c}");
+}
+
+/// `θ = acos c`. At R4 and R3 `c` crosses `0` and `−½` with a nonzero slope,
+/// so `θ` is as good as the location. At R2 `c + 1` vanishes to the
+/// bisection's `1e-10 · (1 + |z|∞)` in `z`, and `π − θ ≈ √(2(c + 1))`
+/// leaves `θ` good to about `1e-4`. The Chenciner point's `θ` is the
+/// reference page's, to its eight digits.
+#[test]
+fn predator_prey_neimark_sacker_points_carry_their_angle() {
+    let ns: fn(f64) -> f64 = |e| (2.0 * e - 7.0) / (2.0 * e - 3.0);
+    let [forward, backward] = predator_prey(
+        CurveKind::NeimarkSacker,
+        1.0,
+        ns,
+        ((-5.0, 1.45), (0.0, 45.0)),
+    );
+    let pi = std::f64::consts::PI;
+    let want = [(pi / 2.0, 1e-9), (2.0 * pi / 3.0, 1e-9), (pi, 1e-4)];
+    for (sp, (theta, tol)) in forward.special.iter().zip(want) {
+        let got = sp.angle.expect("an angle");
+        assert!(
+            (got - theta).abs() <= tol,
+            "{:?}: θ = {got} vs {theta}",
+            sp.kind
+        );
+        assert_eq!(sp.normal_form, None);
+    }
+    let ch = &backward.special[0];
+    assert_eq!(ch.kind, Codim2Kind::Chenciner);
+    let got = ch.angle.expect("an angle");
+    assert!((got - 0.62560327).abs() <= 1e-8, "θ = {got}");
+    let flip: fn(f64) -> f64 = |e| (4.0 * e * e - 56.0 * e + 147.0) / (4.0 * e * e + 4.0 * e - 7.0);
+    for c in predator_prey(CurveKind::Flip, 1.5, flip, ((1.2, 2.5), (0.0, 30.0))) {
+        assert!(c.special.iter().all(|sp| sp.angle.is_none()));
+        assert!(c.ticks.is_empty());
+    }
+}
+
+/// `cos θ = tr/2` at F3 of the predator–prey map.
+fn half_trace(epsilon: f64, a: f64) -> f64 {
+    let [x, y] = f3(epsilon, a)[..] else {
+        unreachable!()
+    };
+    let d = 1.0 + epsilon * x;
+    (a * (1.0 - 2.0 * x) - 3.0 * y / (d * d) + 3.5 * x / d) / 2.0
+}
+
+/// The weak resonances on F3's Neimark–Sacker curve `a = (2ε − 7)/(2ε − 3)`,
+/// where `cos θ = tr/2 = cos(2π/q)`, in the preview's box `a ∈ [0, 16]`,
+/// `ε ∈ [−6, 3]`: from `ε = 1` back toward the Chenciner point, 1:5 to 1:9,
+/// at the reference script's `(a, ε)`. None lies past `ε = 1`, where `θ`
+/// grows from `1.39` to `π`.
+#[test]
+fn predator_prey_neimark_sacker_curve_has_the_weak_resonances_1_5_to_1_9() {
+    let ns: fn(f64) -> f64 = |e| (2.0 * e - 7.0) / (2.0 * e - 3.0);
+    let [forward, backward] = predator_prey(
+        CurveKind::NeimarkSacker,
+        1.0,
+        ns,
+        ((-6.0, 3.0), (0.0, 16.0)),
+    );
+    assert_eq!(forward.ticks, Vec::new());
+    let want = [
+        (5, (4.8368810394, 0.9787432867)),
+        (6, (3.5, 0.7)),
+        (7, (2.6355713870, 0.2771857493)),
+        (8, (2.0502525317, -0.4043039075)),
+        (9, (1.6376888982, -1.6363255747)),
+    ];
+    let got: Vec<usize> = backward.ticks.iter().map(|t| t.q).collect();
+    assert_eq!(got, [5, 6, 7, 8, 9]);
+    for (tick, (q, (a, epsilon))) in backward.ticks.iter().zip(want) {
+        let (e, a_got) = tick.p;
+        assert!(
+            (a_got - ns(e)).abs() <= 1e-8,
+            "1:{q} off the curve at {:?}",
+            tick.p
+        );
+        let c = (2.0 * std::f64::consts::PI / q as f64).cos();
+        assert!(
+            (half_trace(e, a_got) - c).abs() <= 1e-9,
+            "1:{q}: cos θ = {} vs {c}",
+            half_trace(e, a_got)
+        );
+        assert_near(tick.p, (epsilon, a), 1e-9);
+    }
+    assert!(backward.ticks.windows(2).all(|w| w[0].p.0 > w[1].p.0));
 }
