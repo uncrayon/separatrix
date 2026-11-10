@@ -20,7 +20,7 @@ import { makeViewport } from "../canvas/viewport";
 import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "../components/controls";
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
-import { axisLatex, classificationTitle, fmt, latexToPlain } from "../math/format";
+import { axisLatex, classificationTitle, fmt, latexToPlain, plural } from "../math/format";
 import {
   hasNullclineLayer,
   isCobweb,
@@ -369,7 +369,6 @@ function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): str
   return `${a}, ${b} and ${c}`;
 }
 
-const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
 const trajectories = (n: number) => plural(n, "trajectory", "trajectories");
 
 export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, settings, onSettingsChange, onClose }: Props) {

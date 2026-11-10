@@ -11,7 +11,7 @@
 
 use dyn_core::{SystemKind, VectorField};
 
-use crate::continuation::{dot, identity, matvec, norm2, norm_inf, Power};
+use crate::continuation::{dot, identity, matvec, norm2, norm_inf, null_vector, Power};
 use crate::eigvec::eigenvectors;
 use crate::linalg::lu_solve;
 
@@ -105,6 +105,50 @@ impl<'a> Taylor<'a> {
 pub(crate) fn fold(t: &Taylor, q: &[f64], w: &[f64]) -> Option<f64> {
     let (q, p) = adjoint_pair(q, w);
     finite(0.5 * dot(&p, &t.b(&q, &q)))
+}
+
+/// The Bogdanov–Takens coefficients `(a, b)` of the normal form
+/// `ẇ₀ = w₁, ẇ₁ = β₁ + β₂w₀ + a w₀² + b w₀w₁` at a double zero eigenvalue of
+/// a flow: `a = ½⟨p₁, B(q₀, q₀)⟩` and `b = ⟨p₀, B(q₀, q₀)⟩ + ⟨p₁, B(q₀, q₁)⟩`,
+/// with `A q₀ = 0`, `A q₁ = q₀`, `Aᵀp₁ = 0`, `Aᵀp₀ = p₁`, `‖q₀‖ = 1`,
+/// `⟨q₀, q₁⟩ = 0`, `⟨p₁, q₁⟩ = 1` and `⟨p₀, q₁⟩ = 0`. Both flip sign with
+/// `q₀`, so they are returned with `a ≥ 0`, Kuznetsov's normalization, and
+/// only the sign of `b` carries that of `ab`.
+pub(crate) fn bogdanov_takens(t: &Taylor) -> Option<(f64, f64)> {
+    let n = t.dim();
+    let at = transpose(&t.a, n);
+    let unit = |v: Vec<f64>| scaled(&v, 1.0 / norm2(&v));
+    let q0 = unit(null_vector(&t.a, n)?);
+    let p1 = unit(null_vector(&at, n)?);
+    let q1 = bordered(&t.a, &p1, &q0, &q0)?;
+    let p1 = scaled(&p1, 1.0 / dot(&p1, &q1));
+    let p0 = bordered(&at, &q0, &q1, &p1)?;
+    let b00 = t.b(&q0, &q0);
+    let a = 0.5 * dot(&p1, &b00);
+    let b = dot(&p0, &b00) + dot(&p1, &t.b(&q0, &q1));
+    let sign = if a < 0.0 { -1.0 } else { 1.0 };
+    Some((finite(sign * a)?, finite(sign * b)?))
+}
+
+/// The cusp's cubic coefficient `c = ⅙⟨p, C(q, q, q) + 3B(q, h₂)⟩`, where
+/// `M h₂ = 2a q − B(q, q)` and `⟨q, h₂⟩ = 0`, `a` the fold coefficient,
+/// with `‖q‖ = 1` and `⟨p, q⟩ = 1`, from null vectors `q` of `M` and `w` of
+/// `Mᵀ`, where `M = A` for a flow and `A − I` for a map. At a cusp, where
+/// `a = 0`, it is `c` of `ẇ = β₁ + β₂w + c w³`. It does not depend on the
+/// orientation of `q`.
+pub(crate) fn cusp(t: &Taylor, q: &[f64], w: &[f64]) -> Option<f64> {
+    let n = t.dim();
+    let (q, p) = adjoint_pair(q, w);
+    let m = if t.power.f.kind() == SystemKind::Map {
+        sum(&t.a, &scaled(&identity(n), -1.0))
+    } else {
+        t.a.clone()
+    };
+    let bqq = t.b(&q, &q);
+    let a = 0.5 * dot(&p, &bqq);
+    let h2 = bordered(&m, &p, &q, &sum(&scaled(&q, 2.0 * a), &scaled(&bqq, -1.0)))?;
+    let terms = sum(&matvec(&t.c(&q), &q, n), &scaled(&t.b(&q, &h2), 3.0));
+    finite(dot(&p, &terms) / 6.0)
 }
 
 /// The flip's cubic coefficient
@@ -256,8 +300,30 @@ fn eigenpair(
         let v = eigenvectors(kind, n, m, eigenvalues);
         Some(CVector::new(v.re[k].clone()?, v.im[k].clone()?))
     };
-    let transpose: Vec<f64> = (0..n * n).map(|i| a[i % n * n + i / n]).collect();
-    Some((vector(a)?, vector(&transpose)?))
+    Some((vector(a)?, vector(&transpose(a, n))?))
+}
+
+fn transpose(a: &[f64], n: usize) -> Vec<f64> {
+    (0..n * n).map(|i| a[i % n * n + i / n]).collect()
+}
+
+/// `v` with `M v + s·b = r` for some `s` and `⟨c, v⟩ = 0`, from the bordered
+/// matrix `[M b; cᵀ 0]`. Where `M` has a one-dimensional kernel and `r` is
+/// in its range, `s = 0`; the matrix is regular where `b` is outside that
+/// range and `c` is not orthogonal to the kernel.
+fn bordered(m: &[f64], b: &[f64], c: &[f64], r: &[f64]) -> Option<Vec<f64>> {
+    let n = r.len();
+    let k = n + 1;
+    let mut big = vec![0.0; k * k];
+    for i in 0..n {
+        big[i * k..i * k + n].copy_from_slice(&m[i * n..(i + 1) * n]);
+        big[i * k + n] = b[i];
+        big[n * k + i] = c[i];
+    }
+    let rhs: Vec<f64> = r.iter().copied().chain([0.0]).collect();
+    let mut v = lu_solve(&big, &rhs)?;
+    v.truncate(n);
+    Some(v)
 }
 
 /// `q / ‖q‖` and `w` scaled so that `⟨w, q⟩ = 1`.
@@ -376,6 +442,72 @@ mod tests {
         assert_near(fold(&t, &[1.0, 0.0], &[1.0, 1.0]), 2.0, 1e-12);
         assert_near(fold(&t, &[3.0, 0.0], &[2.0, 2.0]), 2.0, 1e-12);
         assert_near(fold(&t, &[-1.0, 0.0], &[1.0, 1.0]), -2.0, 1e-12);
+    }
+
+    fn at_origin(source: &str, dim: usize) -> (CompiledSystem, Vec<f64>, Vec<f64>) {
+        let sys = system(source);
+        let p = vec![0.0; sys.info.params.len()];
+        (sys, vec![0.0; dim], p)
+    }
+
+    fn with(sys: &CompiledSystem, mut p: Vec<f64>, values: &[(&str, f64)]) -> Vec<f64> {
+        for (name, v) in values {
+            let i = sys.info.params.iter().position(|q| q.name == *name);
+            p[i.unwrap_or_else(|| panic!("{name}"))] = *v;
+        }
+        p
+    }
+
+    fn bt(source: &str, values: &[(&str, f64)]) -> (f64, f64) {
+        let (sys, x, p) = at_origin(source, 2);
+        let p = with(&sys, p, values);
+        let power = Power { f: &sys, k: 1 };
+        bogdanov_takens(&Taylor::new(&power, &x, &p)).expect("(a, b)")
+    }
+
+    /// The Bogdanov–Takens normal form `ẋ = y, ẏ = β₁ + β₂x + ax² + bxy` at
+    /// `β = 0` is its own `(a, b)`, turned to `a ≥ 0` by flipping both. With
+    /// `ẋ = 2y` the scaling `y = w₁/2` gives `ẇ₁ = 2ax² + bxw₁`: `(2a, b)`.
+    #[test]
+    fn bogdanov_takens_coefficients_of_the_normal_form() {
+        let form = "x' = y\ny' = r + s*x + a*x^2 + b*x*y";
+        let near = |(a, b): (f64, f64), want: (f64, f64)| {
+            assert!(
+                (a - want.0).abs() <= 1e-12 && (b - want.1).abs() <= 1e-12,
+                "({a}, {b}) vs {want:?}"
+            );
+        };
+        near(bt(form, &[("a", 0.7), ("b", -1.3)]), (0.7, -1.3));
+        near(bt(form, &[("a", -0.7), ("b", -1.3)]), (0.7, 1.3));
+        near(bt(form, &[("a", 0.25), ("b", 2.0)]), (0.25, 2.0));
+        let scaled = "x' = 2*y\ny' = r + a*x^2 + b*x*y";
+        near(bt(scaled, &[("a", 0.7), ("b", -1.3)]), (1.4, -1.3));
+    }
+
+    /// `ẋ = r + 0.4x³ + xy, ẏ = −y + x²` at `r = 0`: on the centre manifold
+    /// `y = x² + …`, `ẋ = r + 1.4x³`, so `c = 1.4`; `a = 0` there.
+    #[test]
+    fn cusp_coefficient_reads_the_centre_manifold() {
+        let (sys, x, p) = at_origin("x' = r + 0.4*x^3 + x*y\ny' = -y + x^2", 2);
+        let power = Power { f: &sys, k: 1 };
+        let t = Taylor::new(&power, &x, &p);
+        assert_near(fold(&t, &[1.0, 0.0], &[1.0, 0.0]), 0.0, 1e-12);
+        assert_near(cusp(&t, &[1.0, 0.0], &[1.0, 0.0]), 1.4, 1e-9);
+        assert_near(cusp(&t, &[-2.0, 0.0], &[0.5, 0.0]), 1.4, 1e-9);
+    }
+
+    /// The map `x ↦ x + r + 0.4x³ + xy, y ↦ y/2 + x²` at `r = 0`: the
+    /// centre manifold `y = κx²` has `κ = κ/2 + 1`, so `κ = 2` and
+    /// `x ↦ x + r + 2.4x³`, `c = 2.4`, with `M = A − I`.
+    #[test]
+    fn cusp_coefficient_of_a_map() {
+        let (sys, x, p) = at_origin(
+            "x_{n+1} = x_n + r + 0.4*x_n^3 + x_n*y_n\ny_{n+1} = 0.5*y_n + x_n^2",
+            2,
+        );
+        let power = Power { f: &sys, k: 1 };
+        let t = Taylor::new(&power, &x, &p);
+        assert_near(cusp(&t, &[1.0, 0.0], &[1.0, 0.0]), 2.4, 1e-9);
     }
 
     /// The logistic map at `r = 3`, `x = 2/3`: `f″ = −6`, `f‴ = 0`, so

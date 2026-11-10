@@ -166,6 +166,12 @@
   flex-basis: 100%;
   margin: var(--space-2) 0 0;
 }
+.inspector .inspector-plane-sentence {
+  color: var(--ink);
+}
 .inspector .inspector-plane-on {
+  color: var(--ink-3);
+}
+.inspector .inspector-plane-coefficients {
   color: var(--ink-2);
 }

@@ -214,7 +214,7 @@ test("a point found on two curves is one row, with both curve kinds; rows by kin
 });
 
 test("the fold-flip found on a flip curve and on a branch-point curve is one row, on both, in kind order", () => {
-  const lppd = (index, bracket) => ({ kind: "foldFlip", index, p: [3, 2], x: [0.666667, 0], period: 1, bracket });
+  const lppd = (index, bracket) => ({ kind: "foldFlip", index, p: [3, 2], x: [0.666667, 0], period: 1, bracket, normalForm: null, angle: null, positiveToward: null });
   const rows = curves.planePointRows(
     [curveOut("flip", [3], [2], { special: [lppd(40, 1.5e-13)] }), curveOut("branchPoint", [3], [2], { special: [lppd(170, 7.3e-14)] })],
     [
@@ -222,7 +222,9 @@ test("the fold-flip found on a flip curve and on a branch-point curve is one row
       [-6, 3],
     ],
   );
-  assert.deepEqual(rows, [{ kind: "foldFlip", p: [3, 2], x: [0.666667, 0], period: 1, on: ["branchPoint", "flip"], bracket: 1.5e-13 }]);
+  assert.deepEqual(rows, [
+    { kind: "foldFlip", p: [3, 2], x: [0.666667, 0], period: 1, on: ["branchPoint", "flip"], bracket: 1.5e-13, normalForm: null, angle: null, positiveToward: null },
+  ]);
   assert.equal(curves.onCurvesText(rows[0].on), "On the branch-point and flip curves");
   assert.equal(curves.locatedText(rows[0].bracket), "located to 1.5 × 10⁻¹³");
 });

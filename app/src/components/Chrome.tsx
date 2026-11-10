@@ -3,7 +3,7 @@ import { isTauri } from "../api/client";
 import type { AxisRef, StateInfo, SystemKind } from "../api/types";
 import { insidePlot, plotViewport, toPlot, unitsPerPx } from "../canvas/viewport";
 import { useOrbitDrawMs } from "../canvas/OrbitCanvas";
-import { axisLabelLatex, fmt, viewAxisLabels } from "../math/format";
+import { axisLabelLatex, fmt, viewAxisLabels, plural } from "../math/format";
 import { Tex } from "../math/Tex";
 import { METHODS, STIFF_HINT } from "../state/methods";
 import {
@@ -62,7 +62,6 @@ export const tipDismiss = {
 
 const minus = (s: string) => s.replace(/-/g, "−");
 
-const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
 /** The open document as the top bar shows it (from useProjectDocument). */
 export interface TopBarDocument {

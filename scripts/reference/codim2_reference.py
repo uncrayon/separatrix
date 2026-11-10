@@ -56,6 +56,54 @@ def fold_a(m, u):
     return 0.5 * ((p / (p @ q)) @ B(q, q))
 
 
+def bordered(M, b, c, r):
+    """v with M v + s·b = r and c·v = 0: a solve with the singular M, bordered."""
+    n = len(r)
+    big = np.block([[M, np.reshape(b, (n, 1))], [np.reshape(c, (1, n)), np.zeros((1, 1))]])
+    return np.linalg.solve(big, [*r, 0])[:n]
+
+
+def bt_ab(m, u):
+    """(a, b) at a Bogdanov–Takens point of a flow (Kuznetsov, Elements, §8.4):
+    a = <p₁, B(q₀,q₀)>/2, b = <p₀, B(q₀,q₀)> + <p₁, B(q₀,q₁)>, with A q₀ = 0, A q₁ = q₀,
+    Aᵀp₁ = 0, Aᵀp₀ = p₁, |q₀| = 1, q₀·q₁ = 0, p₁·q₁ = 1, p₀·q₁ = 0. Both flip with q₀, so
+    they are returned with a ≥ 0."""
+    _, A, B, _ = parts(m, u)
+    U, _, Vt = np.linalg.svd(A)
+    q0, p1 = Vt[-1], U[:, -1]
+    q1 = bordered(A, p1, q0, q0)
+    p1 = p1 / (p1 @ q1)
+    p0 = bordered(A.T, q0, q1, p1)
+    a = 0.5 * p1 @ B(q0, q0)
+    b = p0 @ B(q0, q0) + p1 @ B(q0, q1)
+    return (a, b) if a >= 0 else (-a, -b)
+
+
+def cusp_c(m, u):
+    """Cusp coefficient c = <p, C(q,q,q) + 3B(q, h₂)>/6 with A h₂ = 2a q − B(q,q), q·h₂ = 0,
+    |q| = <p,q> = 1, a the fold coefficient (Kuznetsov, Elements, §8.2). It does not depend on
+    the orientation of q."""
+    _, A, B, C = parts(m, u)
+    U, _, Vt = np.linalg.svd(A)
+    q, p = Vt[-1], U[:, -1]
+    p = p / (p @ q)
+    a = 0.5 * p @ B(q, q)
+    h2 = bordered(A, p, q, 2 * a * q - B(q, q))
+    return p @ (C(q, q, q) + 3 * B(q, h2)) / 6
+
+
+def flip_c(m, u):
+    """Flip coefficient c = <p, C(q,q,q) + 3B(q, (I − A)⁻¹B(q,q))>/6 with (A + I)q = 0,
+    |q| = <p,q> = 1. It vanishes at a generalized flip."""
+    _, A, B, C = parts(m, u)
+    I = np.eye(m["n"])
+    U, _, Vt = np.linalg.svd(A + I)
+    q, p = Vt[-1], U[:, -1]
+    p = p / (p @ q)
+    h = np.linalg.solve(I - A, B(q, q))
+    return p @ (C(q, q, q) + 3 * B(q, h)) / 6
+
+
 def l1(m, u):
     """(l1, omega) at a Hopf point:
     l1 = Re<p, C(q,q,q̄) − 2B(q, A⁻¹B(q,q̄)) + B(q̄, (2iωI − A)⁻¹B(q,q))>/2ω
@@ -152,6 +200,13 @@ def bykov():
         [0.035940, 0.352008, 0.451368, 1.006408, 0.355991],
         "CP  (published 1.006408, 0.355991)",
     )
+    # MatCont prints (a, b) = (−0.08378442, −2.136280) and (−0.04822563, −1.937632): compare |a|, |b|
+    # and the sign of ab, as both flip with q₀; and c = 0.3627844, which does not.
+    for key, published in (("BT1", (-0.08378442, -2.136280)), ("BT2", (-0.04822563, -1.937632))):
+        a, b = bt_ab(m, pts[key])
+        print(f"{key} (a, b) = ({a:.10f}, {b:.10f}), sign(ab) = {np.sign(a * b):+.0f}; MatCont |a|, |b| = {abs(published[0])}, {abs(published[1])}, sign(ab) = +1; diff {abs(a) - abs(published[0]):.1e}, {abs(b) - abs(published[1]):.1e}")
+    c = cusp_c(m, pts["CP"])
+    print(f"CP c = {c:.10f}; MatCont 0.3627844; diff {c - 0.3627844:.1e}")
     for key, (lab, u0) in zip(("GH1", "GH2"), [
         ("GH  (published 0.891319, 0.232487)", [0.018022, 0.368238, 0.497968, 0.891319, 0.232487]),
         ("GH  (published 0.924255, 0.305879)", [0.064311, 0.211095, 0.554870, 0.924255, 0.305879]),
@@ -321,7 +376,7 @@ def predator_prey_map():
     (dv, mu), av, xv, yv = on_ns(ev)
     print(f"CH: eps = {ev:.10f}, a = {av:.10f}, F3 = ({xv:.10f}, {yv:.10f}), theta = {np.angle(mu):.8f}, d = {dv:.1e}")
     pts["CH"] = (ev, av)
-    return pts
+    return m, pts
 
 
 def delayed_logistic():
@@ -463,7 +518,16 @@ def distance_to(poly, q, box):
     return float(np.min(np.linalg.norm(a + t[:, None] * d - q, axis=1)))
 
 
-def curve_json(kind, p1, p2, x, neutral, special, box, stops=("range", "range")):
+def toward(p, ends, test):
+    """(Δp₁, Δp₂) from p to whichever of the two curve points `ends`, (p₁, p₂, state) on either
+    side of it, has test > 0: the side where the point's coefficient is positive."""
+    values = [test(u) for u in ends]
+    assert values[0] * values[1] < 0, f"the test does not change sign across {p}: {values}"
+    u = ends[0] if values[0] > 0 else ends[1]
+    return (u[0] - p[0], u[1] - p[1])
+
+
+def curve_json(kind, p1, p2, x, neutral, special, box, stops=("range", "range"), ticks=()):
     poly = np.column_stack([p1, p2])
     for sp_ in special:
         gap = distance_to(poly, sp_["p"], box)
@@ -477,7 +541,18 @@ def curve_json(kind, p1, p2, x, neutral, special, box, stops=("range", "range"))
         "p2": [r(v) for v in p2],
         "x": [r(v) for v in np.ravel(x)],
         "neutral": [bool(v) for v in neutral],
-        "special": [{"kind": q["kind"], "p": [r(v) for v in q["p"]], "x": [r(v) for v in q["x"]]} for q in special],
+        "special": [
+            {
+                "kind": q["kind"],
+                "p": [r(v) for v in q["p"]],
+                "x": [r(v) for v in q["x"]],
+                "normalForm": q.get("normalForm") and {k: v if k == "kind" else r(v) for k, v in q["normalForm"].items()},
+                "angle": None if q.get("angle") is None else r(q["angle"]),
+                "positiveToward": q.get("positiveToward") and [r(v) for v in q["positiveToward"]],
+            }
+            for q in special
+        ],
+        "ticks": [{"q": t["q"], "p": [r(v) for v in t["p"]]} for t in ticks],
         "stops": list(stops),
     }
 
@@ -500,7 +575,13 @@ def co_curves(m, hopf, pts):
 
     def point(kind, key):
         u = pts[key]
-        return {"kind": kind, "p": u[3:5], "x": u[:3]}
+        out = {"kind": kind, "p": u[3:5], "x": u[:3]}
+        if kind == "bogdanovTakens":
+            a, b = bt_ab(m, u)
+            out["normalForm"] = {"kind": kind, "a": a, "b": b}
+        elif kind == "cusp":
+            out["normalForm"] = {"kind": kind, "c": cusp_c(m, u)}
+        return out
 
     out = []
     for kind, seed, also, test, special in [
@@ -512,6 +593,14 @@ def co_curves(m, hopf, pts):
         # On the Hopf curve c₀ = c₁c₂ also holds at a neutral saddle λ = ±√(−c₁): there c₁ < 0.
         neutral = [kind == "hopf" and np.poly(np.array(m["J"](*u), float))[2] < 0 for u in U]
         poly = U[:, 3:5]
+        for sp_ in special:
+            if sp_["kind"] == "bautin":
+                # ℓ₁ two vertices to either side of the point; the engine's is its accepted points.
+                w = np.array([CO_BOX[0][1] - CO_BOX[0][0], CO_BOX[1][1] - CO_BOX[1][0]])
+                j = int(np.argmin(np.linalg.norm((poly - sp_["p"]) / w, axis=1)))
+                ends = [np.array([*U[i, 3:5], *U[i, :3]]) for i in (j - 2, j + 2)]
+                sp_["positiveToward"] = toward(sp_["p"], ends, lambda v: l1(m, [*v[2:], *v[:2]])[0])
+                print(f"  {kind:14s} bautin at {np.round(sp_['p'], 8)}: l1 > 0 toward {np.round(sp_['positiveToward'], 6)}")
         print(f"  {kind}: {len(U)} points, ends {np.round(poly[0], 4)} and {np.round(poly[-1], 4)}, x in [{U[:, 0].min():.4f}, {U[:, 0].max():.4f}]")
         gap = distance_to(poly, pts[also][3:5], CO_BOX)
         print(f"  {kind:14s} {also} (K = 0.4) is {gap:.1e} from the curve followed from {seed}")
@@ -520,7 +609,7 @@ def co_curves(m, hopf, pts):
     return {"free": [0, 1], "curves": out}
 
 
-def pp_curves(pts):
+def pp_curves(m, pts):
     print("\n===== Mock curves: predator–prey map, a across, ε up =====")
 
     def F3(a, e):
@@ -547,9 +636,14 @@ def pp_curves(pts):
         e, a = pts[key]
         return {"kind": kind, "p": (a, e), "x": F3(a, e)}
 
-    def on_f3(kind, a, e, neutral, sp_, stops=("range", "range")):
+    def on_ns(sp_):
+        """With θ, the argument of the critical multipliers, as acos(tr/2) on det = 1."""
+        a, e = sp_["p"]
+        return {**sp_, "angle": float(np.arccos(np.clip(half_trace(a, e, *F3(a, e)), -1, 1)))}
+
+    def on_f3(kind, a, e, neutral, sp_, stops=("range", "range"), ticks=()):
         x, y = F3(a, e)
-        return curve_json(kind, a, e, np.column_stack([x, y]), neutral, sp_, PP_BOX, stops)
+        return curve_json(kind, a, e, np.column_stack([x, y]), neutral, sp_, PP_BOX, stops, ticks)
 
     a_ns = lambda e: (2 * e - 7) / (2 * e - 3)
     a_pd = lambda e: (4 * e**2 - 56 * e + 147) / (4 * e**2 + 4 * e - 7)
@@ -559,7 +653,26 @@ def pp_curves(pts):
     a, e = piece(-6.05, 1.49, a_ns)
     # On det = 1 the multipliers are e^{±iθ} with cos θ = tr/2; past |tr/2| = 1 they are real, μ and 1/μ.
     neutral = np.abs(half_trace(a, e, *F3(a, e))) > 1
-    out.append(on_f3("neimarkSacker", a, e, neutral, [special("resonance4", "R4"), special("resonance3", "R3"), special("resonance2", "R2"), special("chenciner", "CH")]))
+    ch = special("chenciner", "CH")
+    ends = [(a_ns(v), v, *F3(a_ns(v), v)) for v in (ch["p"][1] - 1e-3, ch["p"][1] + 1e-3)]
+    ch["positiveToward"] = toward(ch["p"], ends, lambda u: ns_d(m, [*u[2:], *u[:2]])[0])
+    print(f"  neimarkSacker  chenciner at {np.round(ch['p'], 8)}: d > 0 toward {np.round(ch['positiveToward'], 6)}")
+    # Weak resonances: cos θ = tr/2 = cos(2π/q) on det = 1, where the multipliers are complex.
+    ticks = []
+    grid = np.linspace(-6.05, 1.49, 7541)
+    for q in range(5, 10):
+        g = lambda v: half_trace(a_ns(v), v, *F3(a_ns(v), v)) - np.cos(2 * np.pi / q)
+        for lo, hi in zip(grid, grid[1:]):
+            if g(lo) * g(hi) < 0:
+                v = brentq(g, lo, hi, xtol=1e-15, rtol=1e-15)
+                if inside(PP_BOX, a_ns(v), v) and abs(half_trace(a_ns(v), v, *F3(a_ns(v), v))) < 1:
+                    ticks.append({"q": q, "p": (a_ns(v), v)})
+                    print(f"  neimarkSacker  1:{q} at (a, eps) = ({a_ns(v):.10f}, {v:.10f})")
+    ticks.sort(key=lambda t: t["p"][1])
+    ns_points = [special("resonance4", "R4"), special("resonance3", "R3"), special("resonance2", "R2"), ch]
+    out.append(on_f3("neimarkSacker", a, e, neutral, [on_ns(sp_) for sp_ in ns_points], ticks=ticks))
+    for sp_ in out[-1]["special"]:
+        print(f"  neimarkSacker  {sp_['kind']:15s} theta = {sp_['angle']}")
     a, e = piece(pole[0] + 1e-6, 3.05, a_pd)
     out.append(on_f3("flip", a, e, np.zeros(len(a), bool), [special("resonance2", "R2"), lppd]))
     a, e = piece(-6.05, pole[1] - 1e-6, a_pd)
@@ -575,6 +688,9 @@ def pp_curves(pts):
     a_f2 = lambda e: (e + 3.5) / (e + 4.5)
     r2 = np.sqrt(2)
     gpd = {"kind": "generalizedFlip", "p": (1 - r2 / 4, 2 * r2 - 4.5), "x": (-(2 * r2 + 1) / 7, 0.0)}
+    ends = [(a_f2(v), v, 1 - 1 / a_f2(v), 0.0) for v in (gpd["p"][1] - 1e-3, gpd["p"][1] + 1e-3)]
+    gpd["positiveToward"] = toward(gpd["p"], ends, lambda u: flip_c(m, [*u[2:], *u[:2]]))
+    print(f"  flip           generalizedFlip at {np.round(gpd['p'], 8)}: c > 0 toward {np.round(gpd['positiveToward'], 6)}")
     r2_f2 = {"kind": "resonance2", "p": (3.0, -5.0), "x": (2 / 3, 0.0)}
     for e_lo, e_hi, stops, sp_ in [
         (-3.5 + 1e-4, 3.05, ("maxPoints", "range"), [gpd]),
@@ -603,7 +719,7 @@ if __name__ == "__main__":
     delayed_logistic()
     freire()
     if path:
-        data = {"co-oxidation": co_curves(*co), "predator-prey-map": pp_curves(pp)}
+        data = {"co-oxidation": co_curves(*co), "predator-prey-map": pp_curves(*pp)}
         with open(path, "w") as f:
             json.dump(data, f, separators=(",", ":"))
             f.write("\n")

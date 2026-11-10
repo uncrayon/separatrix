@@ -937,6 +937,11 @@ neutral: Array<boolean>,
  */
 special: Array<Codim2PointOut>, 
 /**
+ * On a Neimark–Sacker curve, the weak resonances 1:5 to 1:9 in
+ * arclength order; none on other curves.
+ */
+ticks: Array<ResonanceTickOut>, 
+/**
  * Why each end of the curve stopped.
  */
 end: BranchEndOut, };
@@ -968,7 +973,49 @@ period: number,
  * range, the state as it is); `null` where no bisection ran, as in the
  * browser preview.
  */
-bracket: number | null, };
+bracket: number | null, 
+/**
+ * Bogdanov–Takens `(a, b)` on fold and Hopf curves, the cusp's `c` on
+ * fold curves; `null` for other points.
+ */
+normalForm: NormalFormOut | null, 
+/**
+ * On a Neimark–Sacker curve, `θ ∈ [0, π]` of the critical multipliers
+ * `e^{±iθ}`; `null` on other curves.
+ */
+angle: number | null, 
+/**
+ * For a Bautin, Chenciner or generalized flip point, the direction
+ * `[Δacross, Δup]` in parameter units, not of unit length, from the
+ * point along the curve to where its coefficient is positive: `ℓ₁` and
+ * the Neimark–Sacker `d` (subcritical there), the flip `c`
+ * (supercritical there). `null` for other points.
+ */
+positiveToward: [number, number] | null, };
+
+export type NormalFormOut = { "kind": "bogdanovTakens", 
+/**
+ * The quadratic coefficient, `≥ 0`.
+ */
+a: number, 
+/**
+ * The mixed coefficient.
+ */
+b: number, } | { "kind": "cusp", 
+/**
+ * The cubic coefficient.
+ */
+c: number, };
+
+export type ResonanceTickOut = { 
+/**
+ * `q`, from 5 to 9.
+ */
+q: number, 
+/**
+ * The across and up parameters.
+ */
+p: [number, number], };
 
 export type Codim2KindOut = "bogdanovTakens" | "cusp" | "bautin" | "zeroHopf" | "hopfHopf" | "resonance1" | "resonance2" | "resonance3" | "resonance4" | "chenciner" | "foldFlip" | "generalizedFlip";
 

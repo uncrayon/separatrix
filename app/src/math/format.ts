@@ -2,6 +2,16 @@ import type { AxisRef, Classification, StateInfo, SystemKind } from "../api/type
 
 export const COMPUTED_ZERO = 1e-12;
 
+/** `v` with a fixed number of decimals, a typographic minus and no "−0.00". */
+export function dec(v: number, places: number): string {
+  if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
+  const s = v.toFixed(places);
+  return (Number(s) === 0 ? (0).toFixed(places) : s).replace(/^-/, "−");
+}
+
+/** "1 saddle", "2 saddles". */
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
 export function fmt(v: number, digits = 3, zeroBelow = 0): string {
   if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
   if (Math.abs(v) < zeroBelow || v === 0) return "0";

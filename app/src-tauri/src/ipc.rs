@@ -875,8 +875,23 @@ pub struct CurveOut {
     pub neutral: Vec<bool>,
     /// The located codimension-2 points in arclength order.
     pub special: Vec<Codim2PointOut>,
+    /// On a Neimark–Sacker curve, the weak resonances 1:5 to 1:9 in
+    /// arclength order; none on other curves.
+    pub ticks: Vec<ResonanceTickOut>,
     /// Why each end of the curve stopped.
     pub end: BranchEndOut,
+}
+
+/// A weak resonance on a Neimark–Sacker curve: the critical multipliers are
+/// `e^{±2πi/q}`, where a tongue of `q`-cycles is rooted.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ResonanceTickOut {
+    /// `q`, from 5 to 9.
+    pub q: usize,
+    /// The across and up parameters.
+    pub p: (f64, f64),
 }
 
 /// A located codimension-2 point on a curve.
@@ -899,6 +914,41 @@ pub struct Codim2PointOut {
     /// range, the state as it is); `null` where no bisection ran, as in the
     /// browser preview.
     pub bracket: Option<f64>,
+    /// Bogdanov–Takens `(a, b)` on fold and Hopf curves, the cusp's `c` on
+    /// fold curves; `null` for other points.
+    pub normal_form: Option<NormalFormOut>,
+    /// On a Neimark–Sacker curve, `θ ∈ [0, π]` of the critical multipliers
+    /// `e^{±iθ}`; `null` on other curves.
+    pub angle: Option<f64>,
+    /// For a Bautin, Chenciner or generalized flip point, the direction
+    /// `[Δacross, Δup]` in parameter units, not of unit length, from the
+    /// point along the curve to where its coefficient is positive: `ℓ₁` and
+    /// the Neimark–Sacker `d` (subcritical there), the flip `c`
+    /// (supercritical there). `null` for other points.
+    pub positive_toward: Option<(f64, f64)>,
+}
+
+/// The normal-form coefficients of a codimension-2 point.
+///
+/// On the wire: `{ "kind": "bogdanovTakens", "a": 0.08, "b": 2.1 }` or
+/// `{ "kind": "cusp", "c": 0.36 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum NormalFormOut {
+    /// `ẇ₀ = w₁, ẇ₁ = β₁ + β₂w₀ + a w₀² + b w₀w₁`, oriented so that
+    /// `a ≥ 0`: the sign of `b` is that of `ab`.
+    BogdanovTakens {
+        /// The quadratic coefficient, `≥ 0`.
+        a: f64,
+        /// The mixed coefficient.
+        b: f64,
+    },
+    /// `ẇ = β₁ + β₂w + c w³`.
+    Cusp {
+        /// The cubic coefficient.
+        c: f64,
+    },
 }
 
 /// The kinds of codimension-2 point; their labels are `BT`, `CP`, `GH`,
@@ -1637,6 +1687,8 @@ mod bindings {
             CurveResponse::decl(&cfg),
             CurveOut::decl(&cfg),
             Codim2PointOut::decl(&cfg),
+            NormalFormOut::decl(&cfg),
+            ResonanceTickOut::decl(&cfg),
             Codim2KindOut::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
