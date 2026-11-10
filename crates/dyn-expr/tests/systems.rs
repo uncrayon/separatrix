@@ -53,6 +53,34 @@ fn lorenz_latex_values_and_jacobian() {
 }
 
 #[test]
+fn jacobian_derivative_is_exact_for_equations() {
+    let sys = text("x' = a*x^2*y + sin(y)\ny' = b*x*y^2");
+    assert_eq!(
+        names(&sys),
+        (vec!["x".into(), "y".into()], vec!["a".into(), "b".into()])
+    );
+    let ([x, y], [a, b]): ([f64; 2], [f64; 2]) = ([0.7, -1.3], [1.9, -0.4]);
+    let ([dx, dy], [da, db]) = ([0.3, -1.1], [0.6, 2.5]);
+    let closed_form = [
+        2.0 * (da * x * y + a * dx * y + a * x * dy),
+        da * x * x + 2.0 * a * x * dx - y.sin() * dy,
+        db * y * y + 2.0 * b * y * dy,
+        2.0 * (db * x * y + b * dx * y + b * x * dy),
+    ];
+    let (exact, fd) = jac_derivative(&sys, &[x, y], &[a, b], &[dx, dy], &[da, db]);
+    assert_close(&exact, &closed_form, 1e-14);
+    assert_close(&fd, &closed_form, 1e-7);
+}
+
+#[test]
+fn jacobian_derivative_of_a_hamiltonian_pendulum() {
+    let sys = latex("H(q,p)=\\frac{p^2}{2}-\\cos q");
+    let (q, dq, dp) = (0.8_f64, 1.7, -0.6);
+    let (by_default, _) = jac_derivative(&sys, &[q, 0.4], &[], &[dq, dp], &[]);
+    assert_close(&by_default, &[0.0, 0.0, q.sin() * dq, 0.0], 1e-8);
+}
+
+#[test]
 fn lorenz_in_cases_environment_and_text_mode_agree() {
     let cases = "\\begin{cases}\\dot{x}&=\\sigma\\left(y-x\\right)\\\\\\dot{y}&=x\\left(\\rho-z\\right)-y\\\\\\dot{z}&=xy-\\beta z\\end{cases}";
     let a = latex(cases);

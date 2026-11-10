@@ -1,4 +1,4 @@
-use dyn_core::{SystemKind, VectorField};
+use dyn_core::{fd_jacobian_derivative, SystemKind, VectorField};
 
 use crate::ad::Dual;
 use crate::program::{Inst, Op, Program, Reads, Scratch};
@@ -165,25 +165,34 @@ impl CompiledSystem {
         })
     }
 
-    fn second_derivative(
+    /// One nested-dual run: the outer seed on state `a`, the inner one
+    /// along `(dx, dp)`. Each output's `.eps.eps` is then its second
+    /// derivative in `x_a` and along `(dx, dp)`.
+    fn run_dual2(
         &self,
         (t, x, p): (f64, &[f64], &[f64]),
         a: usize,
-        inner: Seed,
+        (dx, dp): (impl Fn(usize) -> f64, impl Fn(usize) -> f64),
         regs: &mut [D2],
-    ) -> f64 {
+    ) {
         let outer = Seed::State(a);
         self.program.run(
             regs,
             D2::constant(D1::constant(t)),
-            |i| {
-                D2::new(
-                    D1::new(x[i], inner.on_state(i)),
-                    D1::new(outer.on_state(i), 0.0),
-                )
-            },
-            |i| D2::constant(D1::new(p[i], inner.on_param(i))),
+            |i| D2::new(D1::new(x[i], dx(i)), D1::new(outer.on_state(i), 0.0)),
+            |i| D2::constant(D1::new(p[i], dp(i))),
         );
+    }
+
+    fn second_derivative(
+        &self,
+        txp: (f64, &[f64], &[f64]),
+        a: usize,
+        inner: Seed,
+        regs: &mut [D2],
+    ) -> f64 {
+        let along = (|i| inner.on_state(i), |k| inner.on_param(k));
+        self.run_dual2(txp, a, along, regs);
         regs[self.program.outputs[0] as usize].eps.eps
     }
 
@@ -274,6 +283,29 @@ impl VectorField for CompiledSystem {
                 Self::symplectic_rows(dof, 1, out);
             }
         }
+    }
+
+    fn jacobian_derivative(
+        &self,
+        t: f64,
+        x: &[f64],
+        p: &[f64],
+        dx: &[f64],
+        dp: &[f64],
+        out: &mut [f64],
+    ) {
+        let Layout::Direct = self.layout else {
+            return fd_jacobian_derivative(self, t, x, p, dx, dp, out);
+        };
+        let n = self.dim();
+        D2::with_regs(self.program.len(), |regs| {
+            for j in 0..n {
+                self.run_dual2((t, x, p), j, (|i| dx[i], |k| dp[k]), regs);
+                for (i, &r) in self.program.outputs.iter().enumerate() {
+                    out[i * n + j] = regs[r as usize].eps.eps;
+                }
+            }
+        });
     }
 
     fn is_autonomous(&self) -> bool {

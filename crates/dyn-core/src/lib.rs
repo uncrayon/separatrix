@@ -46,6 +46,21 @@ pub trait VectorField: Send + Sync {
         fd_param_jacobian(self, t, x, p, k, out);
     }
 
+    /// `out[i*dim + j] = d/dε ∂f_i/∂x_j (x + ε·dx, p + ε·dp)` at `ε = 0`,
+    /// with `dx.len() == dim()` and `dp.len() == n_params()`. Default:
+    /// central finite differences of [`VectorField::jacobian`].
+    fn jacobian_derivative(
+        &self,
+        t: f64,
+        x: &[f64],
+        p: &[f64],
+        dx: &[f64],
+        dp: &[f64],
+        out: &mut [f64],
+    ) {
+        fd_jacobian_derivative(self, t, x, p, dx, dp, out);
+    }
+
     /// `true` if `t` (or `n`) does not appear explicitly on the right-hand side.
     fn is_autonomous(&self) -> bool {
         true
@@ -95,6 +110,44 @@ pub fn fd_param_jacobian<F: VectorField + ?Sized>(
     f.eval(t, x, &pp, &mut fm);
     for i in 0..n {
         out[i] = (out[i] - fm[i]) / (2.0 * h);
+    }
+}
+
+/// Central-difference derivative of the Jacobian along `(dx, dp)`,
+/// row-major. The step scales the direction to unit length in its largest
+/// component, then moves each coordinate as [`fd_jacobian`] would move a
+/// coordinate of size `max |v_i · d_i| / max |d_i|`.
+pub fn fd_jacobian_derivative<F: VectorField + ?Sized>(
+    f: &F,
+    t: f64,
+    x: &[f64],
+    p: &[f64],
+    dx: &[f64],
+    dp: &[f64],
+    out: &mut [f64],
+) {
+    let n = f.dim();
+    debug_assert_eq!(out.len(), n * n);
+    debug_assert_eq!((dx.len(), dp.len()), (x.len(), p.len()));
+    let reach = dx.iter().chain(dp).fold(0.0_f64, |r, d| r.max(d.abs()));
+    if reach == 0.0 {
+        out.fill(0.0);
+        return;
+    }
+    let moved = x.iter().zip(dx).chain(p.iter().zip(dp));
+    let scale = moved.fold(0.0_f64, |s, (v, d)| s.max((v * d).abs())) / reach;
+    let h = fd_step(scale) / reach;
+    let shifted = |sign: f64, out: &mut [f64]| {
+        let along = |v: &[f64], d: &[f64]| -> Vec<f64> {
+            v.iter().zip(d).map(|(v, d)| v + sign * h * d).collect()
+        };
+        f.jacobian(t, &along(x, dx), &along(p, dp), out);
+    };
+    let mut minus = vec![0.0; n * n];
+    shifted(1.0, out);
+    shifted(-1.0, &mut minus);
+    for (o, m) in out.iter_mut().zip(&minus) {
+        *o = (*o - m) / (2.0 * h);
     }
 }
 
