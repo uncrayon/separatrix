@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+- The Parameter plane, a new view that follows a fold, Hopf, flip or Neimark–Sacker point as two
+  parameters change and marks where curves meet (Bogdanov–Takens, cusp, Bautin, strong
+  resonances, Chenciner, fold-flip). Reach it from the Branch view with **Follow in two
+  parameters…** on a row or **Search in two parameters**, or from the View control. Clicking the
+  plane sets both parameters. In this version only the browser preview draws the curves; the
+  desktop app says the computation is not implemented yet.
+- Two gallery templates for it: CO oxidation (Bykov, Yablonskii and Kim) and a predator–prey map
+  (MatContM), each credited in the title bar.
+
 ## [1.0.1] - 2026-11-09
 
 Separatrix 1.0.1 changes how the app reaches you, not what it does.
