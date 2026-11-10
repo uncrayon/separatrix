@@ -29,7 +29,9 @@
 //!   neutral saddle marked ([`Nature`]) and its located codimension-2
 //!   points ([`Codim2Point`]): Bogdanov–Takens, cusp, Bautin, zero-Hopf,
 //!   Hopf–Hopf, the strong resonances, Chenciner, fold-flip and
-//!   generalized flip;
+//!   generalized flip, with their normal forms ([`NormalForm`]) where
+//!   computed, and the weak resonances of a Neimark–Sacker curve
+//!   ([`ResonanceTick`]);
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -71,7 +73,7 @@ pub use continuation::{
 };
 pub use curve::{
     continue_curve, Codim2Kind, Codim2Point, Curve, CurveEnd, CurveError, CurveKind, CurveOptions,
-    CurvePoint, CurveSeed, Nature,
+    CurvePoint, CurveSeed, Nature, NormalForm, ResonanceTick,
 };
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
