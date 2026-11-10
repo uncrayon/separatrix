@@ -403,9 +403,11 @@ The gate of each milestone is in the plan. This adds the tasks and the exact tes
 ### M8 Homoclinic and Shilnikov
 
 - §7, and the cancellable job.
-- Tests: the Freire circuit at β = 0.6 gives ν = −0.72132 and at β = 0.4535645 gives
+- Tests: the Freire circuit at β = 0.6 gives ν = −0.72131 and at β = 0.4535645 gives
   ν = −0.72569, both to five digits; σ is −0.017 and +0.289 there; the curve ends at the BT
-  point.
+  point. (This list first said −0.72132 at β = 0.6. That came from a shooting check with an
+  absolute ball of 0.05; with a smaller ball it converges to AUTO's −0.7213093. See
+  [codim2-reference.md](../codim2-reference.md) §4.)
 
 ### M9 Release
 

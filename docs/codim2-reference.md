@@ -275,6 +275,14 @@ pair; the saddle quantity is `σ = λᵤ + Re λₛ`, and Shilnikov's chaos need
   twice the return time. The relative test does not reproduce it: for most `ν` below −0.7267 the
   first return misses the radius, and the split is undefined. Such subsidiary orbits are expected where
   `σ > 0`, and a first-return shooting does not find them reliably.
+- The engine (`crates/dyn-analysis/src/homoclinic.rs`) reads the return on an ellipsoid in the
+  saddle's own coordinates, long along the unstable eigenvector, and finds more. It locates the
+  orbits at `ν = −0.7213088` and `−0.7256928`, and the subsidiary orbit at `ν = −0.7269565` with a
+  return time of 52.8 against the primary orbit's 36.9, about 1.4 times, not twice. Its curve from
+  the Bogdanov–Takens point ends within `1e-7` of it.
+- AUTO's last points beside the Bogdanov–Takens point, `(−0.7746628, 0.7746453)` and the neutral
+  saddle `(−0.7746686, 0.7746147)`, are not homoclinic orbits of the shooting: at `β = 0.7746147` the
+  split stays near −0.47 and never changes sign. They read as an artefact of AUTO's coarse mesh.
 
 ## Not used
 

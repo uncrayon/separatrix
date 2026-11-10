@@ -44,6 +44,24 @@ every other view follow. Click a row in **Special points** to set both parameter
 desktop app each row also says how finely the point was located: "located to 1.5 × 10⁻¹³" is the
 width of the last bisection step along the curve, each parameter as a fraction of its range.
 
+## Homoclinic curves
+
+A homoclinic orbit leaves an equilibrium and comes back to it. In a flow, a curve of them starts
+at every Bogdanov–Takens point. **Follow homoclinic** on a BT row of **Special points** finds the
+orbit beside the point and follows the curve, drawn with a dash and a dot and listed as
+**Homoclinic (Hom)** in the legend. Each point is found by shooting along the saddle's
+one-dimensional unstable manifold (or its stable manifold, in reversed time), so a curve takes
+seconds, not milliseconds. Its row counts the points as they arrive, and **Cancel** stops the
+run and keeps nothing of it.
+
+The row says how the curve ends: one end shrinks onto the saddle at the BT point. It also says
+where the saddle quantity σ, the sum of the real parts of the leading unstable and stable
+eigenvalues, changes sign, and where the orbit is a Shilnikov orbit with chaos nearby: the saddle
+is a saddle-focus and its real eigenvalue outweighs the complex pair, `σ > 0` when the unstable
+manifold is the one-dimensional one.
+
+The browser preview has the homoclinic curves of the CO oxidation template only.
+
 ## Try it
 
 - **CO oxidation** (Bykov, Yablonskii and Kim; MatCont Tutorial IV): the Branch view over k₂ finds
@@ -56,6 +74,13 @@ width of the last bisection step along the curve, each parameter as a fraction o
   happens at a = 3 whatever ε is, so the plane does not follow it in ε: it says ε doesn't move it.
   Its other flip, at a = 9/11, followed in ε, passes a generalized flip at
   (a, ε) = (0.646447, −1.671573).
+- **Freire circuit** (AUTO-07p's HomCont demo `cir`): type
+  `x' = (-(beta + nu)*x + beta*y - 0.328578*x^3 + 0.933578*(y - x)^3)/0.6`,
+  `y' = beta*x - beta*y - z - 0.933578*(y - x)^3` and `z' = y`, open the Branch view over ν at
+  β = 0.7, and follow its Hopf point in β. The Hopf curve meets the branch-point curve at a
+  Bogdanov–Takens point, (ν, β) = (−0.774597, 0.774597). **Follow homoclinic** there draws the
+  curve of homoclinic orbits to the origin. σ changes sign near β = 0.5912: below it the orbit is
+  a Shilnikov orbit.
 
 ## Check the numbers
 
@@ -66,5 +91,8 @@ reference values. Two examples from its output:
   curve, and the Hopf curve finds the same point to within 2 × 10⁻¹³.
 - The predator–prey map's Neimark–Sacker curve passes the 1:4, 1:3 and 1:2 resonances at
   a = 7, 10.5 and 14, where ε = 7/6, 49/38 and 35/26, each to within 10⁻¹².
+- The Freire circuit's homoclinic orbit is at ν = −0.721309 for β = 0.6 and at ν = −0.725693
+  for β = 0.4535645, where AUTO-07p has −0.7213093 and −0.7256925. σ is −0.0170 at the first and
+  +0.2888 at the second, the Shilnikov case.
 
 The plane is not saved in project files yet: saving while it is shown saves the Branch view.

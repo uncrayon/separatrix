@@ -22,6 +22,12 @@ All notable changes to this project are documented in this file.
 - The codimension-2 gate, `bash scripts/codim2-gate.sh`: 61 claims on the points where curves meet
   in CO oxidation, Lorenz-84 and the predator–prey map, against docs/codim2-reference.md, each
   curve followed with the Parameter plane's own request.
+- Homoclinic curves in the Parameter plane. **Follow homoclinic** on a Bogdanov–Takens row finds
+  the homoclinic orbit beside it and follows the curve of them as both parameters change, drawn
+  dash-dot as **Homoclinic (Hom)**. The row counts the points as they arrive, and **Cancel** stops
+  the run without keeping any of it. The row says where the saddle quantity σ changes sign and
+  where the orbit is a Shilnikov orbit, with chaos nearby. The codimension-2 gate checks the
+  Freire circuit's orbits against AUTO-07p's.
 
 ## [1.0.1] - 2026-11-09
 
