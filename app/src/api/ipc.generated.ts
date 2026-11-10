@@ -1891,6 +1891,120 @@ figure: ContinuationFigureRequest,
  */
 suggestedName: string, };
 
+export type HomoclinicExport = { 
+/**
+ * The across parameter at each point.
+ */
+p1: Array<number>, 
+/**
+ * The up parameter at each point.
+ */
+p2: Array<number>, 
+/**
+ * `points · dim` values: the saddle at each point.
+ */
+x: Array<number>, };
+
+export type SliceExport = { 
+/**
+ * The Branch view's range of the across parameter.
+ */
+range: [number, number], 
+/**
+ * The up parameter's value.
+ */
+at: number, };
+
+export type CurvesExportRequest = { 
+/**
+ * Handle from `compile_system`.
+ */
+systemId: number, 
+/**
+ * The sliders' parameter values (each curve has its own free two).
+ */
+params: Array<number>, 
+/**
+ * The across and up parameters.
+ */
+free: [number, number], 
+/**
+ * The box the curves are followed in: across, then up.
+ */
+ranges: [[number, number], [number, number]], 
+/**
+ * The requests of the curves the view draws, in its order.
+ */
+curves: Array<CurveRequest>, 
+/**
+ * The homoclinic curves the view draws.
+ */
+homoclinic: Array<HomoclinicExport>, 
+/**
+ * The Branch view's range, when the view draws it.
+ */
+slice: SliceExport | null, 
+/**
+ * The system's title (caption, label, file names).
+ */
+title: string, 
+/**
+ * Where the system comes from.
+ */
+sourceRef?: string, 
+/**
+ * The lines as typed (comments, metadata).
+ */
+lines: Array<string>, 
+/**
+ * Their format.
+ */
+format: InputFormat, };
+
+export type CurvesFigureRequest = { 
+/**
+ * The curves and their names.
+ */
+curves: CurvesExportRequest, 
+/**
+ * The figure or the table.
+ */
+content: ContinuationLatex, 
+/**
+ * The view's across range.
+ */
+xRange: [number, number], 
+/**
+ * The view's up range.
+ */
+yRange: [number, number], 
+/**
+ * Plot width in cm.
+ */
+widthCm: number, 
+/**
+ * Plot height in cm.
+ */
+heightCm: number, 
+/**
+ * Palette.
+ */
+theme: ExportTheme, 
+/**
+ * Wrap in a `standalone` document.
+ */
+standalone: boolean, };
+
+export type SaveCurvesFigureRequest = { 
+/**
+ * The figure or table.
+ */
+figure: CurvesFigureRequest, 
+/**
+ * File name offered in the dialog.
+ */
+suggestedName: string, };
+
 export type SaveCsvFileRequest = { 
 /**
  * The file and its metadata.
@@ -1958,5 +2072,7 @@ export const ORBIT_MAX_TRANSIENT = 100000;
 export const ORBIT_MAX_KEPT = 976;
 
 export const SPACE_LATEX_REFUSAL = "LaTeX figures of the 3D view aren't available yet. Export PNG or SVG, or switch to a phase plane.";
+
+export const CURVES_EXPORT_EMPTY = "There are no curves to export yet. Follow a fold, Hopf, flip or Neimark–Sacker point of the Branch view in two parameters first.";
 
 export const DEFAULT_CAMERA = { yaw: -0.7853981633974483, pitch: 0.5235987755982988, zoom: 1.0 };
