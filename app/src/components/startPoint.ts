@@ -1,11 +1,6 @@
-import { withSubscript } from "../math/format";
+import { dec, withSubscript } from "../math/format";
 
-/** `v` with a fixed number of decimals, a typographic minus and no "−0.00". */
-export function dec(v: number, places: number): string {
-  if (!Number.isFinite(v)) return Number.isNaN(v) ? "NaN" : v > 0 ? "∞" : "−∞";
-  const s = v.toFixed(places);
-  return (Number(s) === 0 ? (0).toFixed(places) : s).replace(/^-/, "−");
-}
+export { dec };
 
 /**
  * A start point as "(x_0, y_0) =" (LaTeX) and "(1.00, 2.00)", with the start
