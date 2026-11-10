@@ -2,16 +2,9 @@
 // plane. Unlike an ordinary curve, one is a long job: it reports progress
 // while it runs and can be cancelled, and a cancelled job keeps nothing.
 
-import type {
-  CompileResponse,
-  HomoclinicProgress,
-  HomoclinicRequest,
-  HomoclinicResponse,
-  HomoclinicStop,
-} from "../api/types";
+import type { CompileResponse, HomoclinicRequest, HomoclinicResponse } from "../api/types";
 import type { Job } from "../api/client";
-import { dec } from "../math/format.ts";
-import { CODIM2_KINDS, planeContext } from "./curves.ts";
+import { SENTENCES, planeContext, runsOf } from "./curves.ts";
 import type { View } from "./model.ts";
 
 /**
@@ -32,10 +25,6 @@ export interface HomoclinicSeed {
  * reference systems and stays within `MAX_HOMOCLINIC_POINTS`.
  */
 export const HOMOCLINIC_MAX_POINTS = 500;
-
-export const HOMOCLINIC_NAME = "Homoclinic curve";
-export const HOMOCLINIC_LEGEND = "Homoclinic (Hom)";
-export const HOMOCLINIC_LABEL = "Hom";
 
 export function homoclinicSeed(x: readonly number[], values: readonly number[], free: readonly [number, number], at: readonly [number, number]): HomoclinicSeed {
   const params = values.slice();
@@ -151,32 +140,7 @@ export function homoclinicRequestId(now: number = Date.now()): number {
   return now * 1000 + idCounter;
 }
 
-/** "Computing the homoclinic curve: 37 points, at ν = −0.7213, β = 0.6000". */
-export function computingText(progress: Pick<HomoclinicProgress, "points" | "p"> | null, names: readonly [string, string]): string {
-  if (!progress) return "Computing the homoclinic curve…";
-  const n = progress.points;
-  return `Computing the homoclinic curve: ${n} ${n === 1 ? "point" : "points"}, at ${names[0]} = ${dec(progress.p[0], 4)}, ${names[1]} = ${dec(progress.p[1], 4)}`;
-}
-
-const BT = CODIM2_KINDS.bogdanovTakens.label;
-/** How an end stopped, for one end ("it …") and for both ("both ends …"). */
-const ENDS: Record<HomoclinicStop, [one: string, both: string]> = {
-  range: ["runs to the edge of the box", "run to the edge of the box"],
-  maxPoints: ["stops at Max points", "stop at Max points"],
-  stepTooSmall: ["stops at a step too small to go on", "stop at a step too small to go on"],
-  shrunk: [`shrinks onto the saddle at ${BT}`, `shrink onto the saddle at ${BT}`],
-};
-
-export function homoclinicEndText(end: { first: HomoclinicStop | null; last: HomoclinicStop }): string {
-  if (end.first === null) return `the end ${ENDS[end.last][0]}`;
-  if (end.first === end.last) return `both ends ${ENDS[end.last][1]}`;
-  return `one end ${ENDS[end.first][0]}, the other ${ENDS[end.last][0]}`;
-}
-
 type Curve = Pick<HomoclinicResponse["curve"], "p1" | "p2" | "sigma" | "chaotic" | "reversed" | "end">;
-
-const at = (c: Pick<Curve, "p1" | "p2">, i: number, names: readonly [string, string]) =>
-  `${names[0]} = ${dec(c.p1[i], 4)}, ${names[1]} = ${dec(c.p2[i], 4)}`;
 
 /** Where σ crosses 0, each found by linear interpolation between the two points it falls between. */
 export function sigmaCrossings(c: Pick<Curve, "p1" | "p2" | "sigma">): [number, number][] {
@@ -191,42 +155,15 @@ export function sigmaCrossings(c: Pick<Curve, "p1" | "p2" | "sigma">): [number, 
   return out;
 }
 
-const SHOWN = 3;
-const more = (list: readonly string[]) =>
-  list.length > SHOWN ? [...list.slice(0, SHOWN), `${list.length - SHOWN} more`] : list;
-const joinAnd = (list: readonly string[]) =>
-  list.length > 1 ? `${list.slice(0, -1).join("; ")} and ${list[list.length - 1]}` : list.join("");
-
-export function sigmaText(c: Pick<Curve, "p1" | "p2" | "sigma">, names: readonly [string, string]): string {
-  const cross = sigmaCrossings(c);
-  if (cross.length === 0) {
-    const s = c.sigma.find((v) => v !== 0);
-    return s === undefined ? "σ is 0 along the curve" : `σ stays ${s > 0 ? "positive" : "negative"} along the curve`;
-  }
-  const where = more(cross.map(([a, b]) => `${names[0]} = ${dec(a, 4)}, ${names[1]} = ${dec(b, 4)}`));
-  return `σ changes sign at ${joinAnd(where)}`;
-}
-
-export function chaosText(c: Pick<Curve, "p1" | "p2" | "chaotic">, names: readonly [string, string]): string {
-  const runs: [number, number][] = [];
-  c.chaotic.forEach((on, i) => {
-    if (!on) return;
-    const last = runs[runs.length - 1];
-    if (last && last[1] === i - 1) last[1] = i;
-    else runs.push([i, i]);
-  });
-  if (runs.length === 0) return "No Shilnikov chaos along it";
-  const where = more(runs.map(([a, b]) => (a === b ? `at ${at(c, a, names)}` : `from ${at(c, a, names)} to ${at(c, b, names)}`)));
-  return `Shilnikov chaos ${joinAnd(where)}`;
-}
-
 /** The lines under a done row: size and ends, σ, chaos, and the time direction when reversed. */
 export function homoclinicLines(c: Curve, names: readonly [string, string]): string[] {
-  const n = c.p1.length;
+  const say = SENTENCES.homoclinic;
+  const at = (i: number): [number, number] => [c.p1[i], c.p2[i]];
+  const chaos = runsOf(c.chaotic).map(([a, b]) => (a === b ? ([at(a)] as const) : ([at(a), at(b)] as const)));
   return [
-    `${n.toLocaleString("en-US")} points · ${homoclinicEndText(c.end)}`,
-    sigmaText(c, names),
-    chaosText(c, names),
-    ...(c.reversed ? ["Followed in reversed time"] : []),
+    say.extent(c.p1.length, c.end),
+    say.sigma(sigmaCrossings(c), Math.sign(c.sigma.find((v) => v !== 0) ?? 0), names),
+    say.chaos(chaos, names),
+    ...(c.reversed ? [say.reversed] : []),
   ];
 }

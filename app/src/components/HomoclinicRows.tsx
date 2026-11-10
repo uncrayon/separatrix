@@ -1,14 +1,7 @@
 import { CurveSample } from "../canvas/CurvesCanvas";
-import { dec, refusalText, plainSubscripted } from "../math/format";
-import { CODIM2_KINDS, type PlanePointRow } from "../state/curves";
-import {
-  HOMOCLINIC_LABEL,
-  HOMOCLINIC_NAME,
-  computingText,
-  homoclinicLines,
-  hasHomoclinicSeed,
-  homoclinicSeed,
-} from "../state/homoclinic";
+import { refusalText, plainSubscripted } from "../math/format";
+import { CODIM2_KINDS, HOMOCLINIC_NAME, SENTENCES, type PlanePointRow } from "../state/curves";
+import { homoclinicLines, hasHomoclinicSeed, homoclinicSeed } from "../state/homoclinic";
 import { isCurves } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
 import { Button, IconButton } from "./controls";
@@ -31,7 +24,7 @@ export function HomoclinicRowItems({ state, actions }: Props) {
     <>
       {state.homoclinicRows.map((row) => {
         const seed = view.curves.homoclinic[row.job.meta.seed];
-        const from = `From ${BT} at ${names[0]} = ${dec(seed.params[view.across], 4)}, ${names[1]} = ${dec(seed.params[view.up], 4)}`;
+        const from = SENTENCES.homoclinic.from([seed.params[view.across], seed.params[view.up]], names);
         const lines = row.status === "done" ? homoclinicLines(row.res.curve, names) : [];
         return (
           <li
@@ -50,7 +43,7 @@ export function HomoclinicRowItems({ state, actions }: Props) {
                 <span className="numeric-sm">{from}</span>
                 {row.status === "computing" && (
                   <span className="caption" role="status" data-homoclinic-progress="">
-                    {computingText(row.progress, names)}
+                    {SENTENCES.homoclinic.computing(row.progress, names)}
                   </span>
                 )}
                 {row.status === "failed" && <span className="caption inspector-branch-error">{refusalText(row.error)}</span>}
@@ -100,7 +93,7 @@ export function FollowHomoclinic({ state, actions, point }: Props & { point: Pla
   const followed = hasHomoclinicSeed(view.curves.homoclinic, seed);
   return followed ? (
     <span className="caption" data-homoclinic-followed="">
-      Followed as a homoclinic curve ({HOMOCLINIC_LABEL})
+      {SENTENCES.homoclinic.followed}
     </span>
   ) : (
     <Button size="sm" icon={<IconFollow />} onClick={() => actions.followHomoclinic(point.x, point.p)}>

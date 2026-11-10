@@ -10,13 +10,14 @@ import type {
   CurveOut,
   CurveRequest,
   CurveResponse,
+  HomoclinicStop,
   NormalFormOut,
   SpecialKindOut,
   SpecialPointOut,
   SystemKind,
 } from "../api/types";
 import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
-import { dec } from "../math/format.ts";
+import { dec, plural } from "../math/format.ts";
 import type { Job } from "../api/client";
 import type { HomoclinicSeed } from "./homoclinic.ts";
 import {
@@ -74,6 +75,10 @@ export const curveKindOf = (kind: SpecialKindOut): CurveKindOut | null =>
   CURVE_KIND_ORDER.find((k) => CURVE_KINDS[k].from === kind) ?? null;
 
 export const NEUTRAL_LEGEND = "No bifurcation (neutral saddle)";
+
+export const HOMOCLINIC_NAME = "Homoclinic curve";
+export const HOMOCLINIC_LEGEND = "Homoclinic (Hom)";
+export const HOMOCLINIC_LABEL = "Hom";
 
 /** Every codimension-2 point, in the order the Special points list uses. */
 export const CODIM2_KINDS: Record<Codim2KindOut, { label: string; name: string }> = {
@@ -507,13 +512,57 @@ const cycleOf = (q: number, period: number) => `A period-${q * period} cycle`;
 
 const NEUTRAL_PAST = " Past it the Neimark–Sacker curve is a neutral saddle.";
 
+type PlanePoint = readonly [number, number];
+type Names = readonly [string, string];
+
+/** The wording of a homoclinic curve: its row's lines, and its Bogdanov–Takens row once it is followed. */
+interface HomoclinicSentences {
+  /** "From BT at ν = −0.7746, β = 0.7746": the Bogdanov–Takens point it is followed from. */
+  from: (at: PlanePoint, names: Names) => string;
+  /** "Computing the homoclinic curve: 37 points, at ν = −0.7213, β = 0.6000", or no point before the first message. */
+  computing: (progress: { points: number; p: PlanePoint } | null, names: Names) => string;
+  /** "412 points · one end shrinks onto the saddle at BT, the other runs to the edge of the box". */
+  extent: (points: number, end: { first: HomoclinicStop | null; last: HomoclinicStop }) => string;
+  /** Where σ changes sign, or the sign it keeps: that of its first nonzero value, 0 when it is 0 throughout. */
+  sigma: (crossings: readonly PlanePoint[], sign: number, names: Names) => string;
+  /** The runs of points with Shilnikov chaos, a point alone or the first and last of a run. */
+  chaos: (runs: readonly (readonly [PlanePoint] | readonly [PlanePoint, PlanePoint])[], names: Names) => string;
+  reversed: string;
+  followed: string;
+}
+
+const atText = (p: PlanePoint, names: Names) => `${names[0]} = ${dec(p[0], 4)}, ${names[1]} = ${dec(p[1], 4)}`;
+
+const BT = CODIM2_KINDS.bogdanovTakens.label;
+/** How an end of a homoclinic curve stopped, for one end ("it …") and for both ("both ends …"). */
+const ENDS: Record<HomoclinicStop, [one: string, both: string]> = {
+  range: ["runs to the edge of the box", "run to the edge of the box"],
+  maxPoints: ["stops at Max points", "stop at Max points"],
+  stepTooSmall: ["stops at a step too small to go on", "stop at a step too small to go on"],
+  shrunk: [`shrinks onto the saddle at ${BT}`, `shrink onto the saddle at ${BT}`],
+};
+
+function endsText(end: { first: HomoclinicStop | null; last: HomoclinicStop }): string {
+  if (end.first === null) return `the end ${ENDS[end.last][0]}`;
+  if (end.first === end.last) return `both ends ${ENDS[end.last][1]}`;
+  return `one end ${ENDS[end.first][0]}, the other ${ENDS[end.last][0]}`;
+}
+
+const SHOWN = 3;
+const more = (list: readonly string[]) => (list.length > SHOWN ? [...list.slice(0, SHOWN), `${list.length - SHOWN} more`] : list);
+const joinAnd = (list: readonly string[]) =>
+  list.length > 1 ? `${list.slice(0, -1).join("; ")} and ${list[list.length - 1]}` : list.join("");
+
 /**
  * What each codimension-2 point means, in a sentence or two. Each sentence
  * says only what holds wherever the point is found: a fold-flip found on a
  * branch-point curve is no fold, and a resonance found only on a flip curve
- * promises no Neimark–Sacker curve.
+ * promises no Neimark–Sacker curve. `homoclinic` words the rows of the
+ * homoclinic curves that start at Bogdanov–Takens points.
  */
-const SENTENCES: Record<Codim2KindOut, (pt: PlanePointRow, spans: readonly [number, number]) => string> = {
+export const SENTENCES: Record<Codim2KindOut, (pt: PlanePointRow, spans: readonly [number, number]) => string> & {
+  homoclinic: HomoclinicSentences;
+} = {
   bogdanovTakens: () => "A fold curve and a Hopf curve meet. A curve of homoclinic orbits starts here.",
   cusp: (pt) =>
     `Two fold curves meet. Inside the wedge there are three ${pt.period > 1 ? `cycles of period ${pt.period}` : "fixed points"}, outside one.`,
@@ -538,6 +587,28 @@ const SENTENCES: Record<Codim2KindOut, (pt: PlanePointRow, spans: readonly [numb
         ? " A fold curve and a flip curve meet here."
         : ""),
   generalizedFlip: (pt, spans) => changeText(pt.positiveToward, spans, "The flip", "supercritical", "subcritical"),
+  homoclinic: {
+    from: (at, names) => `From ${BT} at ${atText(at, names)}`,
+    computing: (progress, names) =>
+      progress
+        ? `Computing the homoclinic curve: ${plural(progress.points, "point")}, at ${atText(progress.p, names)}`
+        : "Computing the homoclinic curve…",
+    extent: (points, end) => `${points.toLocaleString("en-US")} points · ${endsText(end)}`,
+    sigma: (crossings, sign, names) =>
+      crossings.length > 0
+        ? `σ changes sign at ${joinAnd(more(crossings.map((p) => atText(p, names))))}`
+        : sign === 0
+          ? "σ is 0 along the curve"
+          : `σ stays ${sign > 0 ? "positive" : "negative"} along the curve`,
+    chaos: (runs, names) =>
+      runs.length === 0
+        ? "No Shilnikov chaos along it"
+        : `Shilnikov chaos ${joinAnd(
+            more(runs.map(([a, b]) => (b ? `from ${atText(a, names)} to ${atText(b, names)}` : `at ${atText(a, names)}`))),
+          )}`,
+    reversed: "Followed in reversed time",
+    followed: `Followed as a homoclinic curve (${HOMOCLINIC_LABEL})`,
+  },
 };
 
 /** The row's sentence; "above" and "right" read the plot whose spans across and up are `spans`. */
@@ -551,10 +622,10 @@ export function ticksText(qs: readonly number[]): string {
   return `${which} where the rotation is a rational turn: each is the tip of a resonance tongue.`;
 }
 
-/** The runs of consecutive neutral points, as [first, last] indices. */
-function neutralRuns(neutral: readonly boolean[]): [number, number][] {
+/** The runs of consecutive true flags, as [first, last] indices. */
+export function runsOf(flags: readonly boolean[]): [number, number][] {
   const runs: [number, number][] = [];
-  neutral.forEach((n, i) => {
+  flags.forEach((n, i) => {
     if (!n) return;
     const last = runs[runs.length - 1];
     if (last && last[1] === i - 1) last[1] = i;
@@ -569,7 +640,7 @@ function neutralRuns(neutral: readonly boolean[]): [number, number][] {
  * else "neutral where dotted"; "" when it has none.
  */
 export function neutralText(c: Pick<CurveOut, "neutral" | "special">): string {
-  const runs = neutralRuns(c.neutral);
+  const runs = runsOf(c.neutral);
   if (!runs.length) return "";
   const near = (i: number) => c.special.find((sp) => Math.abs(sp.index - i) <= 1);
   const labels = runs.map(([a, b]) => {

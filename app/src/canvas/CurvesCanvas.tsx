@@ -8,12 +8,14 @@ import type { StudioActions, StudioState } from "../state/useStudio";
 import {
   CURVE_KINDS,
   CURVE_KIND_ORDER,
+  HOMOCLINIC_LEGEND,
+  HOMOCLINIC_NAME,
   NEUTRAL_LEGEND,
   drawnCurves,
   planePointRows,
   ticksText,
 } from "../state/curves";
-import { drawnHomoclinic, HOMOCLINIC_LEGEND, HOMOCLINIC_NAME } from "../state/homoclinic";
+import { drawnHomoclinic } from "../state/homoclinic";
 import { isCurves } from "../state/model";
 import { axisLines } from "./draw";
 import {

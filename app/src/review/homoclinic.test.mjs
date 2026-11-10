@@ -54,6 +54,7 @@ const sliders = [
   { name: "beta", latex: "beta", value: 0.5, min: 0, max: 1 },
 ];
 const names = ["ν", "β"];
+const say = curves.SENTENCES.homoclinic;
 
 const planeWith = (homoclinic, patch = {}) => {
   const base = curves.curvesView(sliders, 0, 1, null, model.defaultView(freire));
@@ -141,17 +142,18 @@ test("rows are computing with progress, done, or failed, each by its own key", (
 });
 
 test("the running sentence names the points and the parameters", () => {
-  assert.equal(hom.computingText(null, names), "Computing the homoclinic curve…");
-  assert.equal(hom.computingText({ points: 37, p: [-0.72131, 0.6] }, names), "Computing the homoclinic curve: 37 points, at ν = −0.7213, β = 0.6000");
-  assert.equal(hom.computingText({ points: 1, p: [0, 1] }, names), "Computing the homoclinic curve: 1 point, at ν = 0.0000, β = 1.0000");
+  assert.equal(say.from([-0.774597, 0.774597], names), "From BT at ν = −0.7746, β = 0.7746");
+  assert.equal(say.computing(null, names), "Computing the homoclinic curve…");
+  assert.equal(say.computing({ points: 37, p: [-0.72131, 0.6] }, names), "Computing the homoclinic curve: 37 points, at ν = −0.7213, β = 0.6000");
+  assert.equal(say.computing({ points: 1, p: [0, 1] }, names), "Computing the homoclinic curve: 1 point, at ν = 0.0000, β = 1.0000");
 });
 
 test("the end sentences say what each end did", () => {
-  const t = (first, last) => hom.homoclinicEndText({ first, last });
-  assert.equal(t("shrunk", "range"), "one end shrinks onto the saddle at BT, the other runs to the edge of the box");
-  assert.equal(t(null, "shrunk"), "the end shrinks onto the saddle at BT");
-  assert.equal(t("range", "range"), "both ends run to the edge of the box");
-  assert.equal(t("maxPoints", "stepTooSmall"), "one end stops at Max points, the other stops at a step too small to go on");
+  const t = (first, last) => say.extent(1234, { first, last });
+  assert.equal(t("shrunk", "range"), "1,234 points · one end shrinks onto the saddle at BT, the other runs to the edge of the box");
+  assert.equal(t(null, "shrunk"), "1,234 points · the end shrinks onto the saddle at BT");
+  assert.equal(t("range", "range"), "1,234 points · both ends run to the edge of the box");
+  assert.equal(t("maxPoints", "stepTooSmall"), "1,234 points · one end stops at Max points, the other stops at a step too small to go on");
 });
 
 const curve = (extra = {}) => ({
@@ -169,17 +171,21 @@ test("σ changes sign where the linear interpolation puts it", () => {
   const c = curve();
   const [[a, b]] = hom.sigmaCrossings(c);
   assert.ok(Math.abs(a - -0.775) < 1e-12 && Math.abs(b - 0.625) < 1e-12, `${a} ${b}`);
-  assert.equal(hom.sigmaText(c, names), "σ changes sign at ν = −0.7750, β = 0.6250");
-  assert.equal(hom.sigmaText(curve({ sigma: [0.1, 0.2, 0.3, 0.4] }), names), "σ stays positive along the curve");
-  assert.equal(hom.sigmaText(curve({ sigma: [-0.1, -0.2, -0.3, -0.4] }), names), "σ stays negative along the curve");
+  const sigma = (c) => hom.homoclinicLines(c, names)[1];
+  assert.equal(sigma(c), "σ changes sign at ν = −0.7750, β = 0.6250");
+  assert.equal(sigma(curve({ sigma: [0.1, 0.2, 0.3, 0.4] })), "σ stays positive along the curve");
+  assert.equal(sigma(curve({ sigma: [0, -0.2, -0.3, -0.4] })), "σ stays negative along the curve");
+  assert.equal(sigma(curve({ sigma: [0, 0, 0, 0] })), "σ is 0 along the curve");
   const twice = curve({ sigma: [-1, 1, 1, -1] });
   assert.equal(hom.sigmaCrossings(twice).length, 2);
 });
 
 test("Shilnikov chaos is told as the runs of points that have it", () => {
-  assert.equal(hom.chaosText(curve(), names), "Shilnikov chaos from ν = −0.7600, β = 0.6400 to ν = −0.7400, β = 0.6600");
-  assert.equal(hom.chaosText(curve({ chaotic: [false, true, false, false] }), names), "Shilnikov chaos at ν = −0.7800, β = 0.6200");
-  assert.equal(hom.chaosText(curve({ chaotic: [false, false, false, false] }), names), "No Shilnikov chaos along it");
+  const chaos = (c) => hom.homoclinicLines(c, names)[2];
+  assert.equal(chaos(curve()), "Shilnikov chaos from ν = −0.7600, β = 0.6400 to ν = −0.7400, β = 0.6600");
+  assert.equal(chaos(curve({ chaotic: [false, true, false, false] })), "Shilnikov chaos at ν = −0.7800, β = 0.6200");
+  assert.equal(chaos(curve({ chaotic: [true, false, true, false] })), "Shilnikov chaos at ν = −0.8000, β = 0.6000 and at ν = −0.7600, β = 0.6400");
+  assert.equal(chaos(curve({ chaotic: [false, false, false, false] })), "No Shilnikov chaos along it");
 });
 
 test("a done row reads in four lines, the last only when time is reversed", () => {
