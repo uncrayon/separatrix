@@ -559,6 +559,10 @@ pub struct OrbitDiagramResponse {
 /// direction.
 pub const MAX_CONTINUATION_POINTS: usize = 20_000;
 
+/// Most points one `compute_homoclinic` request may ask for in each
+/// direction: each costs a few integrations of the orbit.
+pub const MAX_HOMOCLINIC_POINTS: usize = 2_000;
+
 /// Request of the `compute_continuation` command: follow a branch of
 /// equilibria of a flow, or of fixed points of `f^period` of a map, as one
 /// parameter varies (`dyn_analysis::continue_branch`).
@@ -932,6 +936,128 @@ pub enum Codim2KindOut {
     FoldFlip,
     /// Generalized flip: the flip's normal-form coefficient is 0.
     GeneralizedFlip,
+}
+
+/// Request of the `compute_homoclinic` command: from a Bogdanov–Takens
+/// point, find the homoclinic orbit beside it and follow the curve of
+/// homoclinic orbits as two parameters vary. It runs as a job: progress
+/// arrives on the command's channel, and `cancel_job` with `request_id`
+/// stops it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicRequest {
+    /// Echoed back, and the job's handle for `cancel_job`.
+    pub request_id: u64,
+    /// Handle from `compile_system`.
+    pub system_id: u32,
+    /// Parameter values, in `CompileResponse::params` order, with
+    /// `(params[free.0], params[free.1])` at the Bogdanov–Takens point.
+    pub params: Vec<f64>,
+    /// The two free parameters: across, then up.
+    pub free: (usize, usize),
+    /// The box the curve stays in: the across range, then the up range,
+    /// each `lo < hi`.
+    pub ranges: ((f64, f64), (f64, f64)),
+    /// The equilibrium at the Bogdanov–Takens point (`dim` values).
+    pub x: Vec<f64>,
+    /// Which way to follow the curve from the homoclinic orbit found.
+    pub direction: ContinuationDirection,
+    /// First step in arclength, `> 0`.
+    pub ds: f64,
+    /// Largest step, `>= ds`.
+    pub ds_max: f64,
+    /// Most points in each direction, the first included,
+    /// `2..=MAX_HOMOCLINIC_POINTS`.
+    pub max_points: usize,
+}
+
+/// One message on the `compute_homoclinic` channel: the job has accepted
+/// another point.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicProgress {
+    /// The request's `request_id`.
+    pub request_id: u64,
+    /// Points accepted so far, both directions together.
+    pub points: usize,
+    /// The across and up parameters of the latest point.
+    pub p: (f64, f64),
+}
+
+/// Response of the `compute_homoclinic` command; `null` when the job was
+/// cancelled, which keeps nothing of what it had computed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicResponse {
+    /// Copied from the request.
+    pub request_id: u64,
+    /// The curve.
+    pub curve: HomoclinicOut,
+    /// Wall time spent in Rust, in milliseconds.
+    pub elapsed_ms: f64,
+}
+
+/// A curve of homoclinic orbits as one polyline in arclength order. With
+/// direction `both` the backward half comes first, reversed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicOut {
+    /// The across parameter at each point.
+    pub p1: Vec<f64>,
+    /// The up parameter at each point.
+    pub p2: Vec<f64>,
+    /// `points · dim` values: the saddle at each point.
+    pub x: Vec<f64>,
+    /// The saddle quantity `σ` at each point: the sum of the real parts of
+    /// the leading unstable and the leading stable eigenvalue.
+    pub sigma: Vec<f64>,
+    /// `true` where the saddle is a saddle-focus: the leading eigenvalues on
+    /// the side of the two-or-more-dimensional manifold are complex.
+    pub focus: Vec<bool>,
+    /// `true` where the orbit has Shilnikov's chaos nearby: a saddle-focus
+    /// whose complex leading pair is weaker than the real eigenvalue, `σ > 0`
+    /// when the unstable manifold is the one-dimensional one.
+    pub chaotic: Vec<bool>,
+    /// The time the orbit takes from `ε = 1e-6` off the saddle to its first
+    /// return, at each point.
+    pub return_time: Vec<f64>,
+    /// `true` when the stable manifold is the one-dimensional one, followed
+    /// in reversed time.
+    pub reversed: bool,
+    /// Why each end of the curve stopped.
+    pub end: HomoclinicEndOut,
+}
+
+/// Why each end of a homoclinic curve stopped.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct HomoclinicEndOut {
+    /// The first point's, with direction `both`; `null` when the first
+    /// point is the start.
+    pub first: Option<HomoclinicStop>,
+    /// The last point's.
+    pub last: HomoclinicStop,
+}
+
+/// Why a homoclinic curve stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub enum HomoclinicStop {
+    /// It reached an edge of the box.
+    Range,
+    /// It has `max_points` points.
+    MaxPoints,
+    /// A step failed with the step at its smallest.
+    StepTooSmall,
+    /// The orbit shrank onto the saddle, as it does at a Bogdanov–Takens
+    /// point: the saddle's one-dimensional eigenvalue went to zero.
+    Shrunk,
 }
 
 // ---------------------------------------------------------------------
@@ -1638,6 +1764,12 @@ mod bindings {
             CurveOut::decl(&cfg),
             Codim2PointOut::decl(&cfg),
             Codim2KindOut::decl(&cfg),
+            HomoclinicRequest::decl(&cfg),
+            HomoclinicProgress::decl(&cfg),
+            HomoclinicResponse::decl(&cfg),
+            HomoclinicOut::decl(&cfg),
+            HomoclinicEndOut::decl(&cfg),
+            HomoclinicStop::decl(&cfg),
             ProjectFile::decl(&cfg),
             ProjectSystem::decl(&cfg),
             ProjectParam::decl(&cfg),
@@ -1728,6 +1860,10 @@ mod bindings {
             (
                 "MAX_CONTINUATION_POINTS",
                 MAX_CONTINUATION_POINTS.to_string(),
+            ),
+            (
+                "MAX_HOMOCLINIC_POINTS",
+                MAX_HOMOCLINIC_POINTS.to_string(),
             ),
             (
                 "SAME_BIFURCATION_TOL",
