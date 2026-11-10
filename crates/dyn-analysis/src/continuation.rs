@@ -204,7 +204,7 @@ pub fn continue_branch(
     })?;
     let mut seed = vec![0.0; n + 1];
     seed[n] = if opts.ds < 0.0 { -1.0 } else { 1.0 };
-    let tau = g.tangent(&z, &seed).ok_or(ContinuationError::Singular)?;
+    let tau = tangent(&g, &z, &seed).ok_or(ContinuationError::Singular)?;
     let start = g.point(0.0, &z, tau.clone());
     if !in_range(opts, p0) {
         return Ok(g.branch(vec![start], Vec::new(), BranchEnd::Range));
@@ -285,14 +285,14 @@ pub fn switch_branch(
     let mut outside = false;
     for _ in 0..=SWITCH_HALVINGS {
         let pred: Vec<f64> = z_star.iter().zip(&d).map(|(z, c)| z + h * c).collect();
-        let found = g.correct_along(&pred, &d).ok().and_then(|(z1, _)| {
+        let found = correct_along(&g, &pred, &d).ok().and_then(|(z1, _)| {
             let w = diff(&z1, &z_star);
             let len = norm2(&w);
             if len > SWITCH_REACH * h || on_old(&z1) {
                 return None;
             }
             let dir: Vec<f64> = w.iter().map(|c| c / len).collect();
-            let t1 = g.tangent(&z1, &dir)?;
+            let t1 = tangent(&g, &z1, &dir)?;
             Some((z1, len, dir, t1))
         });
         outside = found
@@ -701,6 +701,30 @@ impl VectorField for Power<'_> {
     }
 }
 
+/// `N` equations `G(z) = 0` in `N + 1` unknowns, whose solutions form a
+/// curve: a branch `(x, p)` here, a curve in two parameters in a defining
+/// system. The corrector, the tangent and the bisection only use `linear`.
+trait Underdetermined {
+    /// `G(z)` and `DG(z)`, row-major `N × (N + 1)`.
+    fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>);
+}
+
+/// A point of such a curve as [`locate`] brackets it: its unknown `z` and
+/// unit tangent, with whatever else the test function reads.
+trait OnCurve: Clone {
+    fn z(&self) -> Vec<f64>;
+    fn tangent(&self) -> &[f64];
+}
+
+impl OnCurve for BranchPoint {
+    fn z(&self) -> Vec<f64> {
+        z_of(self)
+    }
+    fn tangent(&self) -> &[f64] {
+        &self.tangent
+    }
+}
+
 struct Residual<'a> {
     power: Power<'a>,
     map: bool,
@@ -790,10 +814,10 @@ impl<'a> Residual<'a> {
                     let guess: Vec<f64> = (0..n).map(|i| z[i] + along * dir[i]).collect();
                     g.correct_at_fixed_p(&guess, e)
                 }
-                None => g.correct_along(&pred, &dir),
+                None => correct_along(g, &pred, &dir),
             };
             let accepted = corrected.ok().and_then(|(z_new, iters)| {
-                let t = g.tangent(&z_new, &last.tangent)?;
+                let t = tangent(g, &z_new, &last.tangent)?;
                 (dot(&t, &last.tangent) >= cos_max).then_some((z_new, iters, t))
             });
             let Some((z_new, iters, t_new)) = accepted else {
@@ -826,7 +850,14 @@ impl<'a> Residual<'a> {
                 let index = if f.last == 0.0 {
                     points.len() - 1
                 } else {
-                    let mut at = g.locate(last, &next, &dir, f);
+                    let mut at = locate(
+                        g,
+                        (last, f.last),
+                        &next,
+                        &dir,
+                        |pt| f.detector.ranked(g, pt, f.rank),
+                        |z, t| g.point(0.0, z, t),
+                    );
                     at.s = last.s + dist(&z_of(last), &z_of(&at));
                     points.push(at);
                     points.len() - 1
@@ -872,27 +903,6 @@ impl<'a> Residual<'a> {
         params
     }
 
-    fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>) {
-        let n = z.len() - 1;
-        let (x, p) = (&z[..n], self.params_at(z[n]));
-        let mut g = vec![0.0; n];
-        let mut gx = vec![0.0; n * n];
-        let mut gp = vec![0.0; n];
-        self.power.eval(0.0, x, &p, &mut g);
-        self.power.jacobian(0.0, x, &p, &mut gx);
-        self.power.param_jacobian(0.0, x, &p, self.param, &mut gp);
-        if self.map {
-            for i in 0..n {
-                g[i] -= x[i];
-                gx[i * n + i] -= 1.0;
-            }
-        }
-        let a = (0..n)
-            .flat_map(|i| gx[i * n..(i + 1) * n].iter().copied().chain([gp[i]]))
-            .collect();
-        (g, a)
-    }
-
     fn correct_at_fixed_p(&self, x: &[f64], p: f64) -> Result<(Vec<f64>, usize), Fail> {
         let n = x.len();
         let (x, iters) = newton(x.to_vec(), |x| {
@@ -902,29 +912,6 @@ impl<'a> Residual<'a> {
             (g, gx.collect())
         })?;
         Ok((x.into_iter().chain([p]).collect(), iters))
-    }
-
-    fn correct_along(&self, pred: &[f64], dir: &[f64]) -> Result<(Vec<f64>, usize), Fail> {
-        newton(pred.to_vec(), |z| {
-            let (mut g, a) = self.linear(z);
-            g.push(
-                z.iter()
-                    .zip(pred)
-                    .zip(dir)
-                    .map(|((a, b), d)| d * (a - b))
-                    .sum(),
-            );
-            (g, bordered(a, dir))
-        })
-    }
-
-    fn tangent(&self, z: &[f64], border: &[f64]) -> Option<Vec<f64>> {
-        let (_, a) = self.linear(z);
-        let mut rhs = vec![0.0; z.len()];
-        rhs[z.len() - 1] = 1.0;
-        let t = lu_solve(&bordered(a, border), &rhs)?;
-        let len = norm2(&t);
-        len.is_finite().then(|| t.iter().map(|v| v / len).collect())
     }
 
     fn second_direction(&self, z: &[f64], tau: &[f64]) -> Option<Vec<f64>> {
@@ -953,70 +940,6 @@ impl<'a> Residual<'a> {
         let d: Vec<f64> = u.iter().zip(tau).map(|(c, t)| c - along * t).collect();
         let len = norm2(&d);
         (len.is_finite() && len > 0.0).then(|| d.iter().map(|c| c / len).collect())
-    }
-
-    fn locate(&self, a: &BranchPoint, b: &BranchPoint, dir: &[f64], fired: &Fired) -> BranchPoint {
-        let test = |pt: &BranchPoint| fired.detector.ranked(self, pt, fired.rank);
-        let test_a = fired.last;
-        let za = z_of(a);
-        let (mut lo, mut hi) = (
-            (0.0, a.clone()),
-            (dot(dir, &diff(&z_of(b), &za)), b.clone()),
-        );
-        let mut best_test = test(b).unwrap_or(f64::INFINITY).abs();
-        let mut best = b.clone();
-        if test_a.abs() < best_test {
-            (best, best_test) = (a.clone(), test_a.abs());
-        }
-        for _ in 0..MAX_BISECTION {
-            let (zl, zh) = (z_of(&lo.1), z_of(&hi.1));
-            let p_tol = 1e-13 * (1.0 + zl[zl.len() - 1].abs());
-            let z_tol = TOL * (1.0 + norm_inf(&zl));
-            if (zh[zh.len() - 1] - zl[zl.len() - 1]).abs() <= p_tol
-                && norm_inf(&diff(&zh, &zl)) <= z_tol
-            {
-                break;
-            }
-            let pred = predict_from_bracket_end(&lo.1, 0.5 * (hi.0 - lo.0));
-            let zm = match self.correct_along(&pred, &lo.1.tangent) {
-                Ok((zm, _)) => zm,
-                Err(Fail::Singular) if self.solves(&pred) => {
-                    return self.branch_point_at(&pred, &lo.1);
-                }
-                Err(_) => break,
-            };
-            let Some(tm) = self.tangent(&zm, &lo.1.tangent) else {
-                return self.branch_point_at(&zm, &lo.1);
-            };
-            let sigma = dot(dir, &diff(&zm, &za));
-            if !(sigma > lo.0 && sigma < hi.0) {
-                break;
-            }
-            let mid = self.point(0.0, &zm, tm);
-            let Some(v) = test(&mid) else {
-                break;
-            };
-            if v.abs() < best_test {
-                (best, best_test) = (mid.clone(), v.abs());
-            }
-            if v == 0.0 {
-                break;
-            }
-            if (v > 0.0) == (test_a > 0.0) {
-                lo = (sigma, mid);
-            } else {
-                hi = (sigma, mid);
-            }
-        }
-        best
-    }
-
-    fn solves(&self, z: &[f64]) -> bool {
-        norm_inf(&self.linear(z).0) <= TOL * (1.0 + norm_inf(z))
-    }
-
-    fn branch_point_at(&self, z: &[f64], bracket_end: &BranchPoint) -> BranchPoint {
-        self.point(0.0, z, bracket_end.tangent.clone())
     }
 
     fn power_jacobian(&self, x: &[f64], p: f64) -> Vec<f64> {
@@ -1053,6 +976,123 @@ impl<'a> Residual<'a> {
             eigenvalues,
         }
     }
+}
+
+impl Underdetermined for Residual<'_> {
+    fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>) {
+        let n = z.len() - 1;
+        let (x, p) = (&z[..n], self.params_at(z[n]));
+        let mut g = vec![0.0; n];
+        let mut gx = vec![0.0; n * n];
+        let mut gp = vec![0.0; n];
+        self.power.eval(0.0, x, &p, &mut g);
+        self.power.jacobian(0.0, x, &p, &mut gx);
+        self.power.param_jacobian(0.0, x, &p, self.param, &mut gp);
+        if self.map {
+            for i in 0..n {
+                g[i] -= x[i];
+                gx[i * n + i] -= 1.0;
+            }
+        }
+        let a = (0..n)
+            .flat_map(|i| gx[i * n..(i + 1) * n].iter().copied().chain([gp[i]]))
+            .collect();
+        (g, a)
+    }
+}
+
+fn correct_along(
+    g: &impl Underdetermined,
+    pred: &[f64],
+    dir: &[f64],
+) -> Result<(Vec<f64>, usize), Fail> {
+    newton(pred.to_vec(), |z| {
+        let (mut r, a) = g.linear(z);
+        r.push(
+            z.iter()
+                .zip(pred)
+                .zip(dir)
+                .map(|((a, b), d)| d * (a - b))
+                .sum(),
+        );
+        (r, bordered(a, dir))
+    })
+}
+
+fn tangent(g: &impl Underdetermined, z: &[f64], border: &[f64]) -> Option<Vec<f64>> {
+    let (_, a) = g.linear(z);
+    let mut rhs = vec![0.0; z.len()];
+    rhs[z.len() - 1] = 1.0;
+    let t = lu_solve(&bordered(a, border), &rhs)?;
+    let len = norm2(&t);
+    len.is_finite().then(|| t.iter().map(|v| v / len).collect())
+}
+
+fn solves(g: &impl Underdetermined, z: &[f64]) -> bool {
+    norm_inf(&g.linear(z).0) <= TOL * (1.0 + norm_inf(z))
+}
+
+/// The point between `a` and `b` where `test` changes sign, by bisection
+/// in arclength along `dir` with [`correct_along`]. `test_a` is the test at
+/// `a`; `point` builds a point from `z` and its tangent. Where the
+/// corrector or the tangent turns singular the point there is returned, a
+/// branch point.
+fn locate<P: OnCurve>(
+    g: &impl Underdetermined,
+    (a, test_a): (&P, f64),
+    b: &P,
+    dir: &[f64],
+    test: impl Fn(&P) -> Option<f64>,
+    point: impl Fn(&[f64], Vec<f64>) -> P,
+) -> P {
+    let za = a.z();
+    let (mut lo, mut hi) = ((0.0, a.clone()), (dot(dir, &diff(&b.z(), &za)), b.clone()));
+    let mut best_test = test(b).unwrap_or(f64::INFINITY).abs();
+    let mut best = b.clone();
+    if test_a.abs() < best_test {
+        (best, best_test) = (a.clone(), test_a.abs());
+    }
+    for _ in 0..MAX_BISECTION {
+        let (zl, zh) = (lo.1.z(), hi.1.z());
+        let p_tol = 1e-13 * (1.0 + zl[zl.len() - 1].abs());
+        let z_tol = TOL * (1.0 + norm_inf(&zl));
+        if (zh[zh.len() - 1] - zl[zl.len() - 1]).abs() <= p_tol
+            && norm_inf(&diff(&zh, &zl)) <= z_tol
+        {
+            break;
+        }
+        let pred = predict_from_bracket_end(&lo.1, 0.5 * (hi.0 - lo.0));
+        let zm = match correct_along(g, &pred, lo.1.tangent()) {
+            Ok((zm, _)) => zm,
+            Err(Fail::Singular) if solves(g, &pred) => {
+                return point(&pred, lo.1.tangent().to_vec());
+            }
+            Err(_) => break,
+        };
+        let Some(tm) = tangent(g, &zm, lo.1.tangent()) else {
+            return point(&zm, lo.1.tangent().to_vec());
+        };
+        let sigma = dot(dir, &diff(&zm, &za));
+        if !(sigma > lo.0 && sigma < hi.0) {
+            break;
+        }
+        let mid = point(&zm, tm);
+        let Some(v) = test(&mid) else {
+            break;
+        };
+        if v.abs() < best_test {
+            (best, best_test) = (mid.clone(), v.abs());
+        }
+        if v == 0.0 {
+            break;
+        }
+        if (v > 0.0) == (test_a > 0.0) {
+            lo = (sigma, mid);
+        } else {
+            hi = (sigma, mid);
+        }
+    }
+    best
 }
 
 fn newton(
@@ -1124,10 +1164,10 @@ fn norm2(a: &[f64]) -> f64 {
     dot(a, a).sqrt()
 }
 
-fn predict_from_bracket_end(end: &BranchPoint, h: f64) -> Vec<f64> {
-    z_of(end)
+fn predict_from_bracket_end(end: &impl OnCurve, h: f64) -> Vec<f64> {
+    end.z()
         .iter()
-        .zip(&end.tangent)
+        .zip(end.tangent())
         .map(|(z, t)| z + h * t)
         .collect()
 }
@@ -1159,6 +1199,66 @@ mod tests {
         let dr = fx * (1.0 - fx) + r * (1.0 - 2.0 * fx) * x * (1.0 - x);
         assert!((out[0] - dr).abs() < 1e-12, "{out:?} vs {dr}");
         assert_eq!(f2.cycle(&[x], &[r]), [x, fx]);
+    }
+
+    #[derive(Clone)]
+    struct Arc {
+        z: Vec<f64>,
+        t: Vec<f64>,
+    }
+
+    impl OnCurve for Arc {
+        fn z(&self) -> Vec<f64> {
+            self.z.clone()
+        }
+        fn tangent(&self) -> &[f64] {
+            &self.t
+        }
+    }
+
+    struct UnitCircle;
+
+    impl Underdetermined for UnitCircle {
+        fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>) {
+            (
+                vec![z[0] * z[0] + z[1] * z[1] - 1.0],
+                vec![2.0 * z[0], 2.0 * z[1]],
+            )
+        }
+    }
+
+    #[test]
+    fn corrector_tangent_and_bisection_on_a_unit_circle() {
+        let (z, _) = correct_along(&UnitCircle, &[1.0, 0.5], &[0.0, 1.0])
+            .ok()
+            .expect("converges");
+        assert!(
+            (z[0] - 0.75_f64.sqrt()).abs() < 1e-12 && z[1] == 0.5,
+            "{z:?}"
+        );
+        let t = tangent(&UnitCircle, &[0.6, 0.8], &[-1.0, 0.0]).expect("regular");
+        assert!(
+            (t[0] + 0.8).abs() < 1e-15 && (t[1] - 0.6).abs() < 1e-15,
+            "{t:?}"
+        );
+        let at = |angle: f64| {
+            let z = vec![angle.cos(), angle.sin()];
+            let t = tangent(&UnitCircle, &z, &[0.0, 1.0]).expect("regular");
+            Arc { z, t }
+        };
+        let (a, b) = (at(-0.5), at(0.4));
+        let chord = diff(&b.z, &a.z);
+        let dir: Vec<f64> = chord.iter().map(|c| c / norm2(&chord)).collect();
+        let crossing = locate(
+            &UnitCircle,
+            (&a, a.z[1]),
+            &b,
+            &dir,
+            |pt| Some(pt.z[1]),
+            |z, t| Arc { z: z.to_vec(), t },
+        );
+        assert!((crossing.z[0] - 1.0).abs() < 1e-12, "{:?}", crossing.z);
+        assert!(crossing.z[1].abs() < 1e-12, "{:?}", crossing.z);
     }
 
     #[test]
