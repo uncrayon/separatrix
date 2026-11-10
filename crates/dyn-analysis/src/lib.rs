@@ -30,6 +30,11 @@
 //!   points ([`Codim2Point`]): Bogdanov–Takens, cusp, Bautin, zero-Hopf,
 //!   Hopf–Hopf, the strong resonances, Chenciner, fold-flip and
 //!   generalized flip;
+//! - [`homoclinic_at`], [`homoclinic_from_bt`] and [`continue_homoclinic`]:
+//!   homoclinic orbits of a flow to a saddle with a one-dimensional
+//!   manifold, by shooting along it, at fixed parameters or next to a
+//!   Bogdanov–Takens point, and their curves in two parameters, with the
+//!   saddle quantity and Shilnikov's condition at each point ([`Saddle`]);
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -56,6 +61,7 @@ mod curve;
 mod eigvec;
 mod fixed;
 mod graph;
+mod homoclinic;
 mod linalg;
 mod lyapunov;
 mod normal_form;
@@ -76,6 +82,10 @@ pub use curve::{
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
 pub use graph::{map_graph, MAX_GRAPH_SAMPLES};
+pub use homoclinic::{
+    continue_homoclinic, homoclinic_at, homoclinic_from_bt, Half, Homoclinic, HomoclinicEnd,
+    HomoclinicError, HomoclinicOrbit, HomoclinicPoint, Saddle, BT_OFFSET, EPSILON, RHO, RHO_U,
+};
 pub use linalg::eigenvalues;
 pub use lyapunov::{lyapunov_spectrum, LyapunovOptions, LyapunovSpectrum};
 pub use nullcline::{nullclines, Nullcline, JUMP_FACTOR};
