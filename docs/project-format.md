@@ -331,9 +331,9 @@ it. Its computed curve is not saved: opening the file follows it again, which ta
 
 `branch` has the keys of a `"continuation"` view (`x_axis`, `y_axis`, `x_range`, `y_range` and
 `continuation`), and `params`, every parameter's value by name when the plane opened from it, which
-its branches were computed at. Its `continuation.range` is the slice the plane draws across, at
-the value of the parameter up in `params` (empty when the values are not known; then no slice is
-drawn). Choosing the Branch view after opening the file shows this view.
+its branches were computed at. When its parameter is the one across, its `continuation.range` is
+the slice the plane draws, at the value in `params` of the parameter up (`params` is empty when
+the values are not known, and then no slice is drawn). Choosing the Branch view after opening the file shows this view.
 
 The seeds are saved, never the computed curves or their special points, so the file stays small
 and opening it replays the same requests. Unknown keys inside `curves`, each seed and `branch` are
