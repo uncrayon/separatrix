@@ -2,9 +2,11 @@
 // which the screen typesets as HTML over the canvas. The same code draws the
 // export preview, the PNG and the SVG, through any DrawContext.
 
-import type { LyapunovResponse, OrbitDiagramResponse } from "../api/types";
+import type { CurveOut, HomoclinicOut, LyapunovResponse, OrbitDiagramResponse } from "../api/types";
+import type { PlanePointRow } from "../state/curves";
 import type { NormAxis, StateAxis } from "../state/model";
 import { drawBranch, type ShownBranch } from "./branch";
+import { drawCurves, type CurveStyleKey } from "./curves";
 import { axisLines, drawScene, type Box, type DrawContext, type Scene } from "./draw";
 import { drawLyapunov } from "./lyapunov";
 import { drawMath, layoutMath, mathRuns, type MathLayout } from "./mathText";
@@ -149,7 +151,15 @@ function drawNames(ctx: DrawContext, names: PlacedName[], th: PlotTheme): void {
 export type AnalysisFigure =
   | { kind: "lyapunov"; res: LyapunovResponse }
   | { kind: "orbit"; res: Pick<OrbitDiagramResponse, "r" | "x">; pixelRatio: number }
-  | { kind: "branch"; branches: readonly ShownBranch[]; dim: number; axis: StateAxis | NormAxis };
+  | { kind: "branch"; branches: readonly ShownBranch[]; dim: number; axis: StateAxis | NormAxis }
+  | {
+      kind: "curves";
+      curves: readonly CurveOut[];
+      homoclinic: readonly Pick<HomoclinicOut, "p1" | "p2">[];
+      points: readonly PlanePointRow[];
+      slice: { range: [number, number]; at: number } | null;
+      colors: Record<CurveStyleKey, string>;
+    };
 
 export function drawAnalysisFigure(
   ctx: RasterContext,
@@ -167,8 +177,21 @@ export function drawAnalysisFigure(
   }
   const names = placeNames(ctx, vp, opts);
   const avoid = names.map((n) => n.box);
-  if (fig.kind === "lyapunov") drawLyapunov(ctx, vp, fig.res, th, opts.fonts ?? DEFAULT_FIGURE_FONTS, avoid);
-  else if (fig.kind === "branch") drawBranch(ctx, vp, fig.branches, fig.dim, fig.axis, th, { avoid });
-  else drawOrbit(ctx, vp, fig.res, th, { pixelRatio: fig.pixelRatio, marker: null, avoid });
+  switch (fig.kind) {
+    case "lyapunov":
+      drawLyapunov(ctx, vp, fig.res, th, opts.fonts ?? DEFAULT_FIGURE_FONTS, avoid);
+      break;
+    case "branch":
+      drawBranch(ctx, vp, fig.branches, fig.dim, fig.axis, th, { avoid });
+      break;
+    case "curves":
+      drawCurves(ctx, vp, fig.curves, th, { colors: fig.colors, points: fig.points, crosshair: null, slice: fig.slice, avoid }, fig.homoclinic);
+      break;
+    case "orbit":
+      drawOrbit(ctx, vp, fig.res, th, { pixelRatio: fig.pixelRatio, marker: null, avoid });
+      break;
+    default:
+      fig satisfies never;
+  }
   drawNames(ctx, names, th);
 }

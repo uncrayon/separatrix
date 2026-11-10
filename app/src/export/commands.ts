@@ -11,6 +11,8 @@ import {
   mockExportContinuationCsv,
   mockExportContinuationLatex,
   mockExportCsv,
+  mockExportCurvesCsv,
+  mockExportCurvesLatex,
   mockExportFigureLatex,
   mockExportFixedPointsLatex,
   mockExportLyapunovCsv,
@@ -21,6 +23,7 @@ import {
   mockSaveCsv,
   mockSaveContinuationLatex,
   mockSaveCsvFile,
+  mockSaveCurvesLatex,
   mockSaveOrbitLatex,
   mockSaveFigureLatex,
   mockSavePngFile,
@@ -32,6 +35,8 @@ import type {
   CsvFileOut,
   CsvRequest,
   CsvResponse,
+  CurvesExportRequest,
+  CurvesFigureRequest,
   ExportPortraitRequest,
   FigureLatexRequest,
   FigureLatexResponse,
@@ -110,6 +115,19 @@ export function saveContinuationLatex(figure: ContinuationFigureRequest, suggest
 
 export function exportContinuationCsv(req: ContinuationExportRequest): Promise<CsvFileOut> {
   return isTauri() ? invoke<CsvFileOut>("export_continuation_csv", { req }) : mockExportContinuationCsv(req);
+}
+
+export function exportCurvesLatex(req: CurvesFigureRequest): Promise<FigureLatexResponse> {
+  return isTauri() ? invoke<FigureLatexResponse>("export_curves_latex", { req }) : mockExportCurvesLatex(req);
+}
+
+export function saveCurvesLatex(figure: CurvesFigureRequest, suggestedName: string): Promise<SavedFiles | null> {
+  const req = { figure, suggestedName };
+  return isTauri() ? invoke<SavedFiles | null>("save_curves_latex", { req }) : mockSaveCurvesLatex(req);
+}
+
+export function exportCurvesCsv(req: CurvesExportRequest): Promise<CsvFileOut> {
+  return isTauri() ? invoke<CsvFileOut>("export_curves_csv", { req }) : mockExportCurvesCsv(req);
 }
 
 export function saveCsvFile(file: CsvFileOut, title: string, suggestedName: string): Promise<SavedFiles | null> {

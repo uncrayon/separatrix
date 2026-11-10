@@ -244,6 +244,18 @@ export function withBranch(view: CurvesView, branch: ContinuationView | null, pa
   return { ...view, branch, branchParams: branch && known ? (values as number[]) : null };
 }
 
+/**
+ * The Branch view's range the plane draws, at the up parameter's value its
+ * branches were computed at; null when the Branch view's parameter is not
+ * the one across, or those values are unknown.
+ */
+export function planeSlice(view: CurvesView): { range: [number, number]; at: number } | null {
+  const branch = view.branch;
+  const at = view.branchParams?.[view.up];
+  if (!branch || branch.param !== view.across || at === undefined) return null;
+  return { range: [branch.continuation.range[0], branch.continuation.range[1]], at };
+}
+
 export function curvesSettingsError(
   s: Omit<CurvesSettings, "seeds" | "direction" | "homoclinic">,
 ): { field: "across" | "up" | "ds" | "maxPoints"; message: string } | null {

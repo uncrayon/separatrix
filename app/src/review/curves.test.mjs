@@ -198,6 +198,43 @@ test("a curve that repeats one already drawn is merged into it; the next seed is
   assert.deepEqual(curves.curvesSummary(rows, RANGES), { elapsedMs: 4, roundTripMs: 6, points: 7, curves: 2, special: 0 });
 });
 
+test("the plane exports the requests of the curves it draws, its homoclinic curves as drawn, and the slice", async () => {
+  const { analysisKind, axisNames, buildCurvesExport } = await import("../export/job.ts");
+  const hopfCurve = curveOut("hopf", [0.9, 1.0, 1.1, 1.2], [0.2, 0.35, 0.45, 0.7]);
+  const planeRows = curves.curveRows(
+    [
+      { job: job("hopf", 1.0, 0.35, 0), run: run(hopfCurve) },
+      { job: job("hopf", 1.15, 0.575, 1), run: run(hopfCurve) },
+      { job: job("fold", 1.05, 0.4, 2), run: { ok: false, error: "The preview has no curve through this point." } },
+    ],
+    RANGES,
+  );
+  const hom = { p1: [1.41, 1.3], p2: [0.96, 0.8], x: [0.1, 0.3, 0.2, 0.1, 0.3, 0.3], sigma: [], focus: [], chaotic: [], returnTime: [], reversed: false, end: { first: null, last: "range" } };
+  const homoclinicRows = [
+    { status: "done", job: {}, res: { requestId: 9, curve: hom, elapsedMs: 1 }, roundTripMs: 1 },
+    { status: "computing", job: {}, progress: null },
+  ];
+  const branch = model.continuationView(CO_SLIDERS, [0, 0.12], 0, []);
+  const view = curves.withBranch(curves.curvesView(CO_SLIDERS, 0, 1, branch, model.defaultView(co)), branch, CO_SLIDERS);
+  const s = { compiled: co, params: CO_SLIDERS, view, planeRows, homoclinicRows };
+  assert.equal(analysisKind(s), "curves");
+  assert.deepEqual(axisNames(s), { x: "k_2", y: "K" });
+  const source = { title: "CO oxidation", lines: ["\\dot{x}=…"], format: "latex" };
+  assert.deepEqual(buildCurvesExport(s, source), {
+    systemId: 7,
+    params: [1.05, 0.4],
+    free: [0, 1],
+    ranges: RANGES,
+    curves: [{ ...job("hopf", 1.0, 0.35).body, requestId: 0 }],
+    homoclinic: [{ p1: [1.41, 1.3], p2: [0.96, 0.8], x: [0.1, 0.3, 0.2, 0.1, 0.3, 0.3] }],
+    slice: { range: [0.5, 2.5], at: 0.4 },
+    ...source,
+  });
+  const across = { ...view, branch: { ...branch, param: 1 } };
+  assert.equal(buildCurvesExport({ ...s, view: across }, source).slice, null, "the Branch view's parameter is not across: no slice");
+  assert.equal(buildCurvesExport({ ...s, compiled: logistic }, source), null, "one parameter: no plane to export");
+});
+
 test("a point found on two curves is one row, with both curve kinds; rows by kind, then across", () => {
   const bt1 = { kind: "bogdanovTakens", index: 3, p: [1.16119871, 0.72233907], x: [0.0163, 0.6384, 0.2005], period: 1 };
   const bt2 = { ...bt1, p: [1.41762764, 0.97139757] };

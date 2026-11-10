@@ -162,8 +162,7 @@ export default function App() {
   const save = useCallback(() => void doc.save(), [doc.save]);
   const saveAs = useCallback(() => void doc.saveAs(), [doc.saveAs]);
 
-  // The export formats have no Parameter plane yet (M9 of the special-bifurcations plan).
-  const canExport = state.compiled !== null && !isCurves(state.view);
+  const canExport = state.compiled !== null;
   useShortcuts(
     {
       new: newSystem,
@@ -194,7 +193,6 @@ export default function App() {
           onSaveAs={saveAs}
           onExport={openExport}
           exportDisabled={!canExport}
-          exportReason={isCurves(state.view) ? "The Parameter plane can't be exported yet; another view can." : undefined}
         />
         <div className="workspace">
           <SystemPanel state={state} actions={actions} />
