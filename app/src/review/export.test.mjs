@@ -833,10 +833,17 @@ test("buildCsvRequest: the screen's runs, the CSV's own samples, the chosen init
 
 const headsPath = fileURLToPath(new URL("../../../crates/export/tests/vectors/heads.json", import.meta.url));
 
-/** A polyline in pixels as a flat list. */
+/** Grid the polyline points snap to, so heads.json is the same on every machine. */
+const PTS_GRID = 1024;
+
+/**
+ * A polyline in pixels as a flat list. The points are rounded to 1/PTS_GRID px
+ * because `Math.sin` and `Math.cos` differ in the last bit between arm64 and
+ * x86_64, and the points are written to heads.json.
+ */
 function poly(f, n) {
   const out = [];
-  for (let k = 0; k < n; k++) out.push(...f(k / (n - 1)));
+  for (let k = 0; k < n; k++) out.push(...f(k / (n - 1)).map((v) => Math.round(v * PTS_GRID) / PTS_GRID));
   return out;
 }
 
