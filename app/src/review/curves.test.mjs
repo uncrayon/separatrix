@@ -148,6 +148,11 @@ test("opening the plane searches from the Branch view's special points, across i
   const away = model.switchView("phase", { ...s, view: plane, params: movedK }, memory);
   const back = model.switchView("curves", { ...s, view: away, params: movedK }, memory);
   assert.deepEqual(back.branchParams, [1.05, 0.4], "moving K in the plane does not move the slice");
+  const onlyHom = { ...back, curves: { ...back.curves, seeds: [], homoclinic: [{ x: [0.1159, 0.3155, 0.2884], params: [1.417628, 0.971398] }] } };
+  const away2 = model.switchView("phase", { ...s, view: onlyHom }, memory);
+  const back2 = model.switchView("curves", { ...s, view: away2 }, memory);
+  assert.deepEqual(back2.curves.seeds, [], "a plane with only a homoclinic curve is kept, not searched again");
+  assert.equal(back2.curves.homoclinic.length, 1);
   const empty = model.switchView("curves", { ...s, branches: {} }, {});
   assert.deepEqual(empty.curves.seeds, [], "nothing to search from: the empty state");
   assert.equal(empty.branch, null);

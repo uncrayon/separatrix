@@ -1928,7 +1928,7 @@ export function switchView(
     const branch = memory.continuation && isContinuation(memory.continuation) ? memory.continuation : null;
     const home = branch ?? defaultView(sys, s.solver);
     const params = s.params ?? [];
-    if (kept?.curves.seeds.length) return { ...(kept.branch === branch ? kept : withBranch(kept, branch, params)), home };
+    if (kept && (kept.curves.seeds.length || kept.curves.homoclinic.length)) return { ...(kept.branch === branch ? kept : withBranch(kept, branch, params)), home };
     return openPlane(kept, branch, home, params, branchSeeds(sys, params, branch, s.branches ?? {}));
   }
   const kept = memory[choice];
