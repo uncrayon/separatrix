@@ -11,11 +11,11 @@ use separatrix_project::ORBIT_TRANSIENT_MAX;
 use crate::ipc::{
     Arrow, AxisRef, BranchEndOut, BranchOut, BranchStop, CompileRequest, CompileResponse,
     ContinuationDirection, ContinuationRequest, ContinuationResponse, ContinuationStart,
-    ConvertRequest, ConvertResponse, ConvertedLineOut, Diagnostic, DoublingOut, EnergyOut,
-    FixedPointOut, LyapunovRequest, LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest,
-    OrbitDiagramResponse, ParamInfo, PortraitRequest, PortraitResponse, SectionSpec, SolverOptions,
-    SpecialKindOut, SpecialPointOut, StateInfo, TrajectoryOut, TrajectoryRequest,
-    MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
+    ConvertRequest, ConvertResponse, ConvertedLineOut, CurveRequest, CurveResponse, Diagnostic,
+    DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest, LyapunovResponse, Method, NullclineOut,
+    OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo, PortraitRequest, PortraitResponse,
+    SectionSpec, SolverOptions, SpecialKindOut, SpecialPointOut, StateInfo, TrajectoryOut,
+    TrajectoryRequest, MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -463,6 +463,16 @@ pub fn compute_continuation(
         branch,
         elapsed_ms: started.elapsed().as_secs_f64() * 1e3,
     })
+}
+
+/// A fold, Hopf, flip or Neimark–Sacker curve as two parameters vary. A
+/// stub: the interface's browser preview serves the curves, and the core
+/// follows them from M5 of the special-bifurcations plan.
+pub fn compute_curve(
+    _system: &CompiledSystem,
+    _req: &CurveRequest,
+) -> Result<CurveResponse, String> {
+    Err("Following a bifurcation in two parameters is not implemented yet.".into())
 }
 
 fn continuation_refusal(f: &dyn VectorField, e: dyn_analysis::ContinuationError) -> String {

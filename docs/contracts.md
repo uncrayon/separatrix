@@ -590,6 +590,15 @@ gate (`scripts/continuation-gate.sh`, see the README) checks this command agains
 derived in closed form or published, among them the logistic cascade `r2 … r4` to 1e−6 by
 switching at each flip, and its agreement with `period_doublings` to 1e−9.
 
+`compute_curve` takes `CurveRequest { requestId, systemId, params, free: [across, up], ranges:
+[[lo, hi], [lo, hi]], seed: CurveSeed { kind, x, period, omega }, direction, ds, dsMax, maxPoints }`
+and returns `CurveResponse { requestId, curve, elapsedMs }` with `curve: CurveOut { kind, period,
+p1, p2, x, neutral, special, end }`: a fold, Hopf, flip or Neimark–Sacker curve (`kind: "fold" |
+"hopf" | "flip" | "neimarkSacker"`) followed in two parameters, `special` its codimension-2 points
+`Codim2PointOut { kind, index, p: [p1, p2], x, period }`. It is a stub until M5 of the
+special-bifurcations plan: it always answers "Following a bifurcation in two parameters is not
+implemented yet.", and only the browser preview (`mockCurve`) serves curves.
+
 The studio's Branch view (View control: Continuation) sends one request per seed of the view
 (`buildContinuationJobs` in state/model.ts), each request's JSON its key: `range`, `ds`,
 `dsMax = 2·ds` and `maxPoints` from the Continuation panel, every parameter but the swept one from
@@ -634,6 +643,7 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
 | `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 | `compute_continuation` | `ContinuationRequest` | `ContinuationResponse` (see Continuation above) |
+| `compute_curve` | `CurveRequest` | `CurveResponse`; a stub until M5 (see Continuation above) |
 | `recent_projects` | none | `RecentProject[]`, each `{ path, name, folder }` |
 | `check_for_update` | none | `UpdateCheck`: `{ kind: "off" }`, `{ kind: "upToDate", version }`, `{ kind: "available", version, notes, date }` or `{ kind: "failed", message }` |
 | `install_update` | none | `()`, after which the app restarts; or a sentence to show |
