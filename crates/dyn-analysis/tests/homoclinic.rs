@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use dyn_analysis::{
     continue_homoclinic, homoclinic_at, homoclinic_from_bt, CurveOptions, Half, Homoclinic,
-    HomoclinicEnd, HomoclinicError, HomoclinicOrbit,
+    HomoclinicEnd, HomoclinicError, HomoclinicOrbit, BT_OFFSET,
 };
 use dyn_expr::{compile, CompiledSystem, InputFormat};
 
@@ -82,6 +82,22 @@ impl Freire {
 
 fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
     (a.0 - b.0).hypot(a.1 - b.1)
+}
+
+/// A curve ends at its BT point when its last point is within this fraction
+/// of the box of it on both axes: a tenth of a pixel on a plot 1,000 pixels
+/// wide.
+const AT_BT: f64 = 1e-4;
+
+/// The larger of the two parameter differences, each over its box side.
+fn box_distance(
+    a: (f64, f64),
+    b: (f64, f64),
+    ((lo1, hi1), (lo2, hi2)): ((f64, f64), (f64, f64)),
+) -> f64 {
+    ((a.0 - b.0) / (hi1 - lo1))
+        .abs()
+        .max(((a.1 - b.1) / (hi2 - lo2)).abs())
 }
 
 /// The distance from `target` to the polyline through the points of `curve`.
@@ -171,10 +187,11 @@ fn freire_curve_from_bt_passes_both_points_and_shrinks_onto_bt() {
         .find(|c| c.end == HomoclinicEnd::Shrunk)
         .expect("one half ends at the BT point");
     let end = shrunk.points.last().expect("points").p;
-    // `l·v ≈ 0.686 √d` along this curve, measured from d = 5.6e-7 to 8.2e-6,
-    // so `l·v < 1e-3` holds within d = 2.12e-6 of the BT point.
-    let d = distance(end, BT);
-    assert!(d <= 2.2e-6, "ends {d} from the BT point at {end:?}");
+    let d = box_distance(end, BT, ((-1.2, -0.4), (0.1, 1.0)));
+    assert!(
+        d <= AT_BT,
+        "ends {d} of the box from the BT point at {end:?}"
+    );
 }
 
 #[test]
@@ -250,29 +267,109 @@ fn shrinks_from_generic_bt(
     (start, towards)
 }
 
+const CO_OXIDATION: &str = "x' = 2*2.5*(1 - x - y - s)^2 - 2*x^2 - 10*x*y\n\
+     y' = k2*(1 - x - y - s) - 0.1*y - 10*x*y\n\
+     s' = 0.0675*((1 - x - y - s) - K*s)";
+
+/// CO oxidation's BT points `(k₂, K)` and states, as the codimension-2 gate
+/// locates them.
+const CO_BT1: ((f64, f64), &[f64]) = (
+    (1.4176276376, 0.9713975735),
+    &[0.11590872, 0.31546728, 0.28843700],
+);
+const CO_BT2: ((f64, f64), &[f64]) = (
+    (1.1611987088, 0.7223390725),
+    &[0.01633704, 0.63840988, 0.20045593],
+);
+
+/// The box of the CO oxidation tests.
+const CO_BOX: ((f64, f64), (f64, f64)) = ((0.9, 1.8), (0.3, 1.5));
+
 #[test]
 fn co_oxidation_curve_from_its_first_bt_point_shrinks_onto_it() {
-    let bt = (1.41762764, 0.97139757);
-    let (start, curve) = shrinks_from_generic_bt(
-        "x' = 2*2.5*(1 - x - y - s)^2 - 2*x^2 - 10*x*y\n\
-         y' = k2*(1 - x - y - s) - 0.1*y - 10*x*y\n\
-         s' = 0.0675*((1 - x - y - s) - K*s)",
-        ["k2", "K"],
-        bt,
-        &[0.11590872, 0.31546728, 0.28843700],
-        ((0.9, 1.8), (0.3, 1.5)),
-    );
+    let bt = CO_BT1.0;
+    let (start, curve) = shrinks_from_generic_bt(CO_OXIDATION, ["k2", "K"], bt, CO_BT1.1, CO_BOX);
     assert!(!start.reversed);
     assert!(!start.saddle.focus);
-    // `Dmax ≥ 0.155·d` over the last points, so `RHO · Dmax < 1e-6` holds
-    // within d = 1.29e-4 of the BT point.
-    let d = distance(curve.points.last().expect("points").p, bt);
-    assert!(d <= 1.3e-4, "ends {d} from the BT point");
+    let d = box_distance(curve.points.last().expect("points").p, bt, CO_BOX);
+    assert!(d <= AT_BT, "ends {d} of the box from the BT point");
+}
+
+/// The box of side `scale` times [`CO_BOX`]'s, centred on `at`.
+fn co_box_around(at: (f64, f64), scale: f64) -> ((f64, f64), (f64, f64)) {
+    let ((lo1, hi1), (lo2, hi2)) = CO_BOX;
+    let (h1, h2) = (0.5 * scale * (hi1 - lo1), 0.5 * scale * (hi2 - lo2));
+    ((at.0 - h1, at.0 + h1), (at.1 - h2, at.1 + h2))
+}
+
+/// The start from the BT point `bt`, and from it moved by 1e-8 along either
+/// parameter, finds the same orbit in `ranges`: within [`BT_OFFSET`] of the
+/// box of the seed, with return time `return_time`. The plane locates BT
+/// points to about 1e-10, so the start must not depend on their last digits.
+fn co_starts_whatever_the_last_digits(
+    (bt, x): ((f64, f64), &[f64]),
+    ranges: ((f64, f64), (f64, f64)),
+    return_time: f64,
+) {
+    let sys = compile(CO_OXIDATION, InputFormat::Text)
+        .system
+        .expect("the system compiles");
+    let index = |name: &str| {
+        sys.info
+            .params
+            .iter()
+            .position(|p| p.name == name)
+            .unwrap_or_else(|| panic!("parameter {name}"))
+    };
+    let free = (index("k2"), index("K"));
+    let opts = CurveOptions {
+        free,
+        ranges,
+        ds: 0.01,
+        ds_min: 1e-8,
+        ds_max: 0.02,
+        max_points: 100,
+        max_angle: 0.3,
+    };
+    for (d1, d2) in [(0.0, 0.0), (-1e-8, 0.0), (0.0, 1e-8)] {
+        let seed = (bt.0 + d1, bt.1 + d2);
+        let mut params = vec![0.0; 2];
+        params[free.0] = seed.0;
+        params[free.1] = seed.1;
+        let start = homoclinic_from_bt(&sys, &params, x, &opts, &|| false)
+            .unwrap_or_else(|e| panic!("no start from {seed:?}: {e:?}"));
+        let p = (start.params[free.0], start.params[free.1]);
+        let d = box_distance(p, seed, ranges);
+        assert!(
+            d <= BT_OFFSET * (1.0 + 1e-9),
+            "the start from {seed:?} is {d} of the box from it"
+        );
+        assert!(
+            (start.return_time - return_time).abs() <= 1e-3 * return_time,
+            "the start from {seed:?} returns in {}",
+            start.return_time
+        );
+    }
+}
+
+#[test]
+fn co_oxidation_starts_from_bt1_whatever_its_last_digits() {
+    co_starts_whatever_the_last_digits(CO_BT1, CO_BOX, 2844.9);
+}
+
+#[test]
+fn co_oxidation_starts_from_bt1_in_a_half_size_box_whatever_its_last_digits() {
+    co_starts_whatever_the_last_digits(CO_BT1, co_box_around(CO_BT1.0, 0.5), 3800.8);
+}
+
+#[test]
+fn co_oxidation_starts_from_bt2_in_a_half_size_box_whatever_its_last_digits() {
+    co_starts_whatever_the_last_digits(CO_BT2, co_box_around(CO_BT2.0, 0.5), 4044.5);
 }
 
 #[test]
 fn lorenz_84_curve_from_its_bt_point_is_followed_in_reversed_time() {
-    let bt = (1.4467167, 0.02094017);
+    let bt = (1.4467167011, 0.0209401697);
     let (start, curve) = shrinks_from_generic_bt(
         "X' = -Y^2 - Z^2 - 0.25*X + 0.25*F - 0.987*U^2\n\
          Y' = X*Y - X*Z - Y + 0.25\n\
@@ -284,8 +381,10 @@ fn lorenz_84_curve_from_its_bt_point_is_followed_in_reversed_time() {
         ((1.0, 3.0), (-0.01, 0.06)),
     );
     assert!(start.reversed);
-    // `Dmax ≥ 3.09·d` over the last points, so `RHO · Dmax < 1e-6` holds
-    // within d = 6.5e-6 of the BT point.
-    let d = distance(curve.points.last().expect("points").p, bt);
-    assert!(d <= 6.5e-6, "ends {d} from the BT point");
+    let d = box_distance(
+        curve.points.last().expect("points").p,
+        bt,
+        ((1.0, 3.0), (-0.01, 0.06)),
+    );
+    assert!(d <= AT_BT, "ends {d} of the box from the BT point");
 }

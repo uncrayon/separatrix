@@ -59,18 +59,19 @@ const FREIRE: Run = Run {
     ranges: ((-1.2, -0.4), (0.1, 1.0)),
 };
 
-/// BT₁ of the codimension-2 gate, in the box of the plane's sliders.
+/// BT₁ as the codimension-2 gate locates it on the fold and Hopf curves, in
+/// the box of the plane's sliders.
 const CO: Run = Run {
     label: "CO BT₁",
     source: Source::Template("co-oxidation"),
     across: "k_2",
     up: "K",
-    bt: (1.41762764, 0.97139757),
+    bt: (1.4176276376, 0.9713975735),
     x: &[0.11590872, 0.31546728, 0.28843700],
     ranges: ((0.5, 2.5), (0.0, 2.0)),
 };
 
-/// The BT point of the codimension-2 gate, in its box.
+/// The BT point as the codimension-2 gate locates it, in its box.
 const LORENZ: Run = Run {
     label: "Lorenz-84 BT",
     source: Source::Text(
@@ -81,15 +82,21 @@ const LORENZ: Run = Run {
     ),
     across: "F",
     up: "T",
-    bt: (1.4467167, 0.02094017),
+    bt: (1.4467167011, 0.0209401697),
     x: &[1.2256405, -0.03632079, 0.19728832, -0.12339001],
     ranges: ((0.0, 10.0), (-0.1, 0.1)),
 };
 
 const RUNS: &[&Run] = &[&FREIRE, &CO, &LORENZ];
 
-/// AUTO's last point of the curve, beside the BT point.
-const AUTO_END: (f64, f64) = (-0.7746628, 0.7746453);
+/// CO's other BT point, as the codimension-2 gate locates it.
+const CO_BT2: (f64, f64) = (1.1611987088, 0.7223390725);
+
+/// A curve ends at a BT point when its `shrunk` end is within this fraction
+/// of the box of it on both axes: a tenth of a pixel on a plot 1,000 pixels
+/// wide. Where the `Shrunk` test stops depends on the system and on where
+/// the last step lands, so no tighter bound holds for every system.
+const AT_BT: f64 = 1e-4;
 
 /// `ν` scanned this far either side of the curve's `ν` at a given `β`, on
 /// 41 samples, the spacing of the engine's tests. The window holds the
@@ -116,11 +123,18 @@ enum Measure {
     SigmaPositive(f64),
     /// 1 if its saddle has Shilnikov's chaos.
     Chaotic(f64),
-    /// The distance from the curve's nearest `shrunk` end to `to`; missing
-    /// when neither end is.
+    /// The distance from the curve's nearest `shrunk` end to `to`, the
+    /// larger of the two parameters' over their box sides; missing when
+    /// neither end is.
     Shrunk { run: &'static Run, to: (f64, f64) },
+    /// How many of the curve's ends are `shrunk`.
+    ShrunkEnds(&'static Run),
     /// 1 if the curve is followed in reversed time.
     Reversed(&'static Run),
+    /// How far the drawn curve passes from the primary orbit at `β`: the
+    /// gap in `ν` between them over the chord's own bound there, the
+    /// sagitta `κℓ²/8` of the bracketing segment seen along `ν`.
+    CurveGap(f64),
 }
 
 enum Expect {
@@ -139,11 +153,11 @@ const fn near(value: f64, tol: f64) -> Expect {
     Expect::Near { value, tol }
 }
 
-const fn shrunk(text: &'static str, run: &'static Run, to: (f64, f64), bound: f64) -> Check {
+const fn shrunk(text: &'static str, run: &'static Run, to: (f64, f64)) -> Check {
     Check {
         text,
         measure: Measure::Shrunk { run, to },
-        expect: Expect::AtMost { bound },
+        expect: Expect::AtMost { bound: AT_BT },
     }
 }
 
@@ -181,6 +195,16 @@ const CHECKS: &[Check] = &[
         measure: Measure::Sigma(0.4535645),
         expect: near(0.28883, SIGMA_TOL),
     },
+    Check {
+        text: "Freire: curve at β = 0.6, gap over sagitta",
+        measure: Measure::CurveGap(0.6),
+        expect: Expect::AtMost { bound: 1.0 },
+    },
+    Check {
+        text: "Freire: curve at β = 0.4535645, gap over sagitta",
+        measure: Measure::CurveGap(0.4535645),
+        expect: Expect::AtMost { bound: 1.0 },
+    },
     exactly(
         "Freire: chaotic at β = 0.6 (1 = yes)",
         Measure::Chaotic(0.6),
@@ -191,33 +215,30 @@ const CHECKS: &[Check] = &[
         Measure::Chaotic(0.4535645),
         1,
     ),
-    // `l·v ≈ 0.686 √d` along this curve (crates/dyn-analysis/tests/
-    // homoclinic.rs), so `l·v < 1e-3` holds within d = 2.12e-6.
     shrunk(
-        "Freire: shrunk end's distance to BT",
+        "Freire: shrunk end to BT, fraction of box",
         &FREIRE,
         FREIRE.bt,
-        2.2e-6,
     ),
+    exactly("Freire: shrunk ends", Measure::ShrunkEnds(&FREIRE), 1),
     exactly(
         "Freire: reversed time (1 = yes)",
         Measure::Reversed(&FREIRE),
         0,
     ),
-    // `Dmax ≥ 3.09·d`, so `RHO · Dmax < 1e-6` holds within d = 6.5e-6.
     shrunk(
-        "Lorenz-84: shrunk end's distance to BT",
+        "Lorenz-84: shrunk end to BT, fraction of box",
         &LORENZ,
         LORENZ.bt,
-        6.5e-6,
     ),
+    // From BT to its mirror at −T, both inside the box.
+    exactly("Lorenz-84: shrunk ends", Measure::ShrunkEnds(&LORENZ), 2),
     exactly(
         "Lorenz-84: reversed time (1 = yes)",
         Measure::Reversed(&LORENZ),
         1,
     ),
-    // `Dmax ≥ 0.155·d`, so `RHO · Dmax < 1e-6` holds within d = 1.29e-4.
-    shrunk("CO: shrunk end's distance to BT₁", &CO, CO.bt, 1.3e-4),
+    shrunk("CO: shrunk end to BT₁, fraction of box", &CO, CO.bt),
 ];
 
 const WRONG_CHECKS: &[Check] = &[
@@ -241,11 +262,11 @@ const WRONG_CHECKS: &[Check] = &[
         Measure::Chaotic(0.6),
         1,
     ),
-    shrunk(
-        "wrong: Freire ends at AUTO's last point",
-        &FREIRE,
-        AUTO_END,
-        2.2e-6,
+    shrunk("wrong: CO's curve from BT₁ ends at BT₂", &CO, CO_BT2),
+    exactly(
+        "wrong: Freire shrinks at both ends",
+        Measure::ShrunkEnds(&FREIRE),
+        2,
     ),
 ];
 
@@ -354,25 +375,23 @@ fn orbits_at(beta: f64) -> Arc<Vec<HomoclinicOrbit>> {
     }
     let c = curve(&FREIRE);
     let (p1, p2) = (&c.curve.p1, &c.curve.p2);
-    let found = (0..p2.len() - 1)
-        .find(|&i| (p2[i] - beta) * (p2[i + 1] - beta) <= 0.0)
-        .map_or_else(Vec::new, |i| {
-            let t = (beta - p2[i]) / (p2[i + 1] - p2[i]);
-            let nu = p1[i] + t * (p1[i + 1] - p1[i]);
-            let mut params = c.req.params.clone();
-            params[c.req.free.0] = nu - NU_WINDOW;
-            params[c.req.free.1] = beta;
-            dyn_analysis::homoclinic_at(
-                &*c.system,
-                &params,
-                &c.curve.x[3 * i..3 * i + 3],
-                c.req.free.0,
-                (nu - NU_WINDOW, nu + NU_WINDOW),
-                NU_SAMPLES,
-                &|| false,
-            )
-            .expect("the scan runs")
-        });
+    let found = bracket(p2, beta).map_or_else(Vec::new, |i| {
+        let t = (beta - p2[i]) / (p2[i + 1] - p2[i]);
+        let nu = p1[i] + t * (p1[i + 1] - p1[i]);
+        let mut params = c.req.params.clone();
+        params[c.req.free.0] = nu - NU_WINDOW;
+        params[c.req.free.1] = beta;
+        dyn_analysis::homoclinic_at(
+            &*c.system,
+            &params,
+            &c.curve.x[3 * i..3 * i + 3],
+            c.req.free.0,
+            (nu - NU_WINDOW, nu + NU_WINDOW),
+            NU_SAMPLES,
+            &|| false,
+        )
+        .expect("the scan runs")
+    });
     let found = Arc::new(found);
     orbits.lock().unwrap().insert(beta.to_bits(), found.clone());
     found
@@ -407,12 +426,56 @@ fn measure(check: &Check) -> f64 {
             [(c.end.first, 0), (Some(c.end.last), n - 1)]
                 .into_iter()
                 .filter(|(stop, _)| *stop == Some(HomoclinicStop::Shrunk))
-                .map(|(_, i)| (c.p1[i] - to.0).hypot(c.p2[i] - to.1))
+                .map(|(_, i)| {
+                    let ((lo1, hi1), (lo2, hi2)) = run.ranges;
+                    ((c.p1[i] - to.0) / (hi1 - lo1))
+                        .abs()
+                        .max(((c.p2[i] - to.1) / (hi2 - lo2)).abs())
+                })
                 .reduce(f64::min)
                 .unwrap_or(missing)
         }
         Measure::Reversed(run) => flag(curve(run).curve.reversed),
+        Measure::ShrunkEnds(run) => {
+            let end = &curve(run).curve.end;
+            [end.first, Some(end.last)]
+                .iter()
+                .filter(|stop| **stop == Some(HomoclinicStop::Shrunk))
+                .count() as f64
+        }
+        Measure::CurveGap(beta) => {
+            let c = &curve(&FREIRE).curve;
+            match (bracket(&c.p2, beta), primary(beta)) {
+                (Some(i), Some(o)) if i > 0 && i + 2 < c.p1.len() => {
+                    let pt = |j: usize| (c.p1[j], c.p2[j]);
+                    let t = (beta - c.p2[i]) / (c.p2[i + 1] - c.p2[i]);
+                    let drawn = c.p1[i] + t * (c.p1[i + 1] - c.p1[i]);
+                    let kappa = curvature(pt(i - 1), pt(i), pt(i + 1)).max(curvature(
+                        pt(i),
+                        pt(i + 1),
+                        pt(i + 2),
+                    ));
+                    let (d1, d2) = (c.p1[i + 1] - c.p1[i], c.p2[i + 1] - c.p2[i]);
+                    let len = d1.hypot(d2);
+                    let sagitta = kappa * len * len / 8.0 * len / d2.abs();
+                    (drawn - o.params[nu]).abs() / sagitta
+                }
+                _ => missing,
+            }
+        }
     }
+}
+
+/// The first segment `i → i + 1` of `p2` whose ends bracket `at`.
+fn bracket(p2: &[f64], at: f64) -> Option<usize> {
+    (0..p2.len() - 1).find(|&i| (p2[i] - at) * (p2[i + 1] - at) <= 0.0)
+}
+
+/// The curvature of the circle through three points.
+fn curvature(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+    let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+    let side = |p: (f64, f64), q: (f64, f64)| (p.0 - q.0).hypot(p.1 - q.1);
+    2.0 * cross.abs() / (side(a, b) * side(b, c) * side(a, c))
 }
 
 struct Row {
