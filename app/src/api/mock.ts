@@ -783,6 +783,8 @@ class MockBranch {
     const tol = 1e-5;
     if (kind === "hopf") return p.eig.some(([re, im]) => im !== 0 && Math.abs(re) < tol * (1 + Math.abs(im)));
     if (kind === "neimarkSacker") return p.eig.some(([re, im]) => im !== 0 && Math.abs(Math.sqrt(re * re + im * im) - 1) < tol);
+    // A multiplier that passes through infinity (where the map is singular) also changes the flip test's sign.
+    if (kind === "flip") return p.eig.some(([re, im]) => im === 0 && Math.abs(re + 1) < 1e-3);
     return true;
   }
 
