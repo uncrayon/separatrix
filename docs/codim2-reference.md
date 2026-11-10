@@ -11,6 +11,18 @@ by continuation, so it does not depend on the code under test. To rerun:
 uv run --with numpy --with scipy --with sympy python scripts/reference/codim2_reference.py
 ```
 
+The browser preview draws the Parameter plane from curves the same script writes:
+
+```sh
+uv run --with numpy --with scipy --with sympy python scripts/reference/codim2_reference.py \
+  --mock-curves app/src/api/mockCurves.generated.json
+```
+
+It follows the CO oxidation fold and Hopf curves by pseudo-arclength continuation from the
+one-parameter points at `K = 0.4`, and samples the predator–prey map's curves from their closed
+forms. It fails if any point of the tables below that lies on a curve is more than `10⁻⁵` (in the
+scale of the plotted box) off it.
+
 In the tables, **published** means the number is printed in the source, and **derived** means it
 is not printed anywhere and comes from the script alone.
 
