@@ -10,10 +10,10 @@ use crate::eigvec::eigenvectors;
 use crate::linalg::{eigenvalues, lu_det, lu_solve};
 
 const MAX_NEWTON: usize = 10;
-const TOL: f64 = 1e-10;
-const FAST_NEWTON_ITERS: usize = 3;
-const SLOW_NEWTON_ITERS: usize = 6;
-const STEP_GROWTH: f64 = 1.5;
+pub(crate) const TOL: f64 = 1e-10;
+pub(crate) const FAST_NEWTON_ITERS: usize = 3;
+pub(crate) const SLOW_NEWTON_ITERS: usize = 6;
+pub(crate) const STEP_GROWTH: f64 = 1.5;
 const PROXIMITY: f64 = 1.5;
 const SWITCH_REACH: f64 = 2.0;
 const SWITCH_OLD_TOL: f64 = 1e-6;
@@ -614,13 +614,13 @@ fn complex_solve(m: &[f64], s: f64, r: &C) -> Option<C> {
     Some(C::new(z[..n].to_vec(), z[n..].to_vec()))
 }
 
-fn matvec(m: &[f64], v: &[f64], n: usize) -> Vec<f64> {
+pub(crate) fn matvec(m: &[f64], v: &[f64], n: usize) -> Vec<f64> {
     (0..n)
         .map(|r| (0..n).map(|c| m[r * n + c] * v[c]).sum())
         .collect()
 }
 
-fn diff(a: &[f64], b: &[f64]) -> Vec<f64> {
+pub(crate) fn diff(a: &[f64], b: &[f64]) -> Vec<f64> {
     a.iter().zip(b).map(|(u, v)| u - v).collect()
 }
 
@@ -628,7 +628,7 @@ fn z_of(pt: &BranchPoint) -> Vec<f64> {
     pt.x.iter().copied().chain([pt.p]).collect()
 }
 
-fn dist(a: &[f64], b: &[f64]) -> f64 {
+pub(crate) fn dist(a: &[f64], b: &[f64]) -> f64 {
     a.iter()
         .zip(b)
         .map(|(u, v)| (u - v) * (u - v))
@@ -741,7 +741,7 @@ impl VectorField for Power<'_> {
 /// `N` equations `G(z) = 0` in `N + 1` unknowns, whose solutions form a
 /// curve: a branch `(x, p)` here, a curve in two parameters in a defining
 /// system. The corrector, the tangent and the bisection only use `linear`.
-trait Underdetermined {
+pub(crate) trait Underdetermined {
     /// `G(z)` and `DG(z)`, row-major `N × (N + 1)`.
     fn linear(&self, z: &[f64]) -> (Vec<f64>, Vec<f64>);
 }
@@ -769,7 +769,7 @@ struct Residual<'a> {
     param: usize,
 }
 
-enum Fail {
+pub(crate) enum Fail {
     Singular,
     NoConvergence,
 }
@@ -953,26 +953,7 @@ impl<'a> Residual<'a> {
 
     fn second_direction(&self, z: &[f64], tau: &[f64]) -> Option<Vec<f64>> {
         let m = bordered(self.linear(z).1, tau);
-        let n1 = z.len();
-        let mut normal: Vec<f64> = (0..n1 * n1)
-            .map(|k| {
-                (0..n1)
-                    .map(|r| m[r * n1 + k / n1] * m[r * n1 + k % n1])
-                    .sum()
-            })
-            .collect();
-        let trace: f64 = (0..n1).map(|i| normal[i * n1 + i]).sum();
-        for i in 0..n1 {
-            normal[i * n1 + i] += INVERSE_ITERATION_SHIFT * (1.0 + trace);
-        }
-        let column = (0..n1)
-            .filter_map(|j| {
-                let mut e = vec![0.0; n1];
-                e[j] = 1.0;
-                lu_solve(&normal, &e)
-            })
-            .reduce(|a, b| if norm2(&b) > norm2(&a) { b } else { a })?;
-        let u = lu_solve(&normal, &column)?;
+        let u = null_vector(&m, z.len())?;
         let along = dot(&u, tau);
         let d: Vec<f64> = u.iter().zip(tau).map(|(c, t)| c - along * t).collect();
         let len = norm2(&d);
@@ -1038,7 +1019,7 @@ impl Underdetermined for Residual<'_> {
     }
 }
 
-fn correct_along(
+pub(crate) fn correct_along(
     g: &impl Underdetermined,
     pred: &[f64],
     dir: &[f64],
@@ -1056,7 +1037,7 @@ fn correct_along(
     })
 }
 
-fn tangent(g: &impl Underdetermined, z: &[f64], border: &[f64]) -> Option<Vec<f64>> {
+pub(crate) fn tangent(g: &impl Underdetermined, z: &[f64], border: &[f64]) -> Option<Vec<f64>> {
     let (_, a) = g.linear(z);
     let mut rhs = vec![0.0; z.len()];
     rhs[z.len() - 1] = 1.0;
@@ -1132,7 +1113,7 @@ fn locate<P: OnCurve>(
     best
 }
 
-fn newton(
+pub(crate) fn newton(
     mut z: Vec<f64>,
     mut system: impl FnMut(&[f64]) -> (Vec<f64>, Vec<f64>),
 ) -> Result<(Vec<f64>, usize), Fail> {
@@ -1162,6 +1143,28 @@ fn newton(
     Err(Fail::NoConvergence)
 }
 
+/// A vector close to the kernel of the square `n × n` matrix `m`, not
+/// normalized, without an SVD: two steps of inverse iteration on `mᵀm`
+/// shifted by [`INVERSE_ITERATION_SHIFT`], started from the column of the
+/// inverse with the largest norm.
+pub(crate) fn null_vector(m: &[f64], n: usize) -> Option<Vec<f64>> {
+    let mut normal: Vec<f64> = (0..n * n)
+        .map(|k| (0..n).map(|r| m[r * n + k / n] * m[r * n + k % n]).sum())
+        .collect();
+    let trace: f64 = (0..n).map(|i| normal[i * n + i]).sum();
+    for i in 0..n {
+        normal[i * n + i] += INVERSE_ITERATION_SHIFT * (1.0 + trace);
+    }
+    let column = (0..n)
+        .filter_map(|j| {
+            let mut e = vec![0.0; n];
+            e[j] = 1.0;
+            lu_solve(&normal, &e)
+        })
+        .reduce(|a, b| if norm2(&b) > norm2(&a) { b } else { a })?;
+    lu_solve(&normal, &column)
+}
+
 fn bordered(mut a: Vec<f64>, border: &[f64]) -> Vec<f64> {
     a.extend_from_slice(border);
     a
@@ -1170,7 +1173,7 @@ fn bordered(mut a: Vec<f64>, border: &[f64]) -> Vec<f64> {
 /// `cos θ` for `θ` clamped to `[0, π]` from its Taylor series. Only `+`, `×`
 /// and `÷`, so the angle limit keeps the same points on every platform,
 /// where a libm `cos` may differ in the last bit.
-fn cos(theta: f64) -> f64 {
+pub(crate) fn cos(theta: f64) -> f64 {
     let t2 = theta.clamp(0.0, PI).powi(2);
     let (mut term, mut sum, mut k) = (1.0_f64, 1.0, 0.0);
     while term.abs() > 1e-18 {
@@ -1181,7 +1184,7 @@ fn cos(theta: f64) -> f64 {
     sum
 }
 
-fn identity(n: usize) -> Vec<f64> {
+pub(crate) fn identity(n: usize) -> Vec<f64> {
     (0..n * n)
         .map(|i| if i / n == i % n { 1.0 } else { 0.0 })
         .collect()
@@ -1193,11 +1196,11 @@ fn matmul(a: &[f64], b: &[f64], n: usize) -> Vec<f64> {
         .collect()
 }
 
-fn dot(a: &[f64], b: &[f64]) -> f64 {
+pub(crate) fn dot(a: &[f64], b: &[f64]) -> f64 {
     a.iter().zip(b).map(|(u, v)| u * v).sum()
 }
 
-fn norm2(a: &[f64]) -> f64 {
+pub(crate) fn norm2(a: &[f64]) -> f64 {
     dot(a, a).sqrt()
 }
 
@@ -1209,7 +1212,7 @@ fn predict_from_bracket_end(end: &impl OnCurve, h: f64) -> Vec<f64> {
         .collect()
 }
 
-fn norm_inf(a: &[f64]) -> f64 {
+pub(crate) fn norm_inf(a: &[f64]) -> f64 {
     a.iter().fold(0.0, |m, v| m.max(v.abs()))
 }
 
