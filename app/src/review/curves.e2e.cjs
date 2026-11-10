@@ -90,7 +90,7 @@ test("CO oxidation: from an H row in the Branch view to a BT row of the Paramete
 
     const bt = points.first();
     assert.match(await bt.innerText(), /BT Bogdanov–Takens\s+k₂ = 1\.161199 {2}K = 0\.722339/);
-    await bt.getByRole("button").click();
+    await bt.getByRole("button").first().click();
     await page.waitForTimeout(200);
     assert.match(await paramValue(page, "k_2"), /^1\.161/);
     assert.match(await paramValue(page, "K"), /^0\.7223/);
