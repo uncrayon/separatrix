@@ -27,7 +27,7 @@ registerHooks({
 
 const model = await import("../state/model.ts");
 const curves = await import("../state/curves.ts");
-const { projectFromState } = await import("../project/serialize.ts");
+const { projectFromState, stateFromProject } = await import("../project/serialize.ts");
 const { mockCompile, mockContinuation, mockCurve } = await import("../api/mock.ts");
 const { TEMPLATES } = await import("../templates/index.ts");
 const { refusalText } = await import("../math/format.ts");
@@ -76,7 +76,7 @@ test("the Parameter plane is the last choice, offered with two parameters and no
 test("one job per seed: the free pair from the seed, the other sliders from now, keyed by the body", () => {
   const seed = curves.planeSeed(hopf, [1.05, 0.4], 0);
   assert.deepEqual(seed, { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, params: [1.051557, 0.4] });
-  const base = curves.curvesView(CO_SLIDERS, 0, 1, null, model.defaultView(co));
+  const base = curves.curvesView(CO_SLIDERS, 0, 1, null);
   const view = { ...base, curves: { ...base.curves, seeds: [seed] } };
   const [job] = curves.buildCurveJobs({ compiled: co, params: CO_SLIDERS, view });
   assert.deepEqual(job.body, {
@@ -143,7 +143,6 @@ test("opening the plane searches from the Branch view's special points, across i
   ]);
   assert.equal(plane.branch, branchView);
   assert.deepEqual(plane.branchParams, [1.05, 0.4], "the slice is drawn at the K the branches were computed at");
-  assert.equal(plane.home, branchView, "a project file saves the Branch view");
   const movedK = CO_SLIDERS.map((p, i) => (i === 1 ? { ...p, value: 0.7 } : p));
   const away = model.switchView("phase", { ...s, view: plane, params: movedK }, memory);
   const back = model.switchView("curves", { ...s, view: away, params: movedK }, memory);
@@ -279,24 +278,126 @@ test("a neutral stretch is named by the special point it starts at, else where i
   assert.equal(curves.neutralText({ neutral: [false, false], special: [] }), "");
 });
 
-test("saving while the plane is shown saves the Branch view it came from", () => {
-  const branchView = model.continuationView(CO_SLIDERS, [0, 0.12], 0, []);
-  const plane = curves.openPlane(null, branchView, branchView, CO_SLIDERS, []);
-  const doc = (view) => ({
-    format: "latex",
-    equations: [{ id: 1, source: "\\dot{x}=y" }],
-    compiled: co,
-    params: CO_SLIDERS,
-    view,
-    baseState: [0, 0, 0],
-    fieldTime: 0,
-    ics: [],
-    layers: model.DEFAULT_LAYERS,
-    solver: model.DEFAULT_SOLVER,
-    sourceTemplateId: "co-oxidation",
+const planeDoc = (view, sys = co, params = CO_SLIDERS) => ({
+  format: "latex",
+  equations: [{ id: 1, source: "\\dot{x}=y" }],
+  compiled: sys,
+  params,
+  view,
+  baseState: sys.states.map(() => 0),
+  fieldTime: 0,
+  ics: [],
+  layers: model.DEFAULT_LAYERS,
+  solver: model.DEFAULT_SOLVER,
+  sourceTemplateId: "co-oxidation",
+});
+const BT = { x: [0.1159, 0.3155, 0.2884], params: [1.417628, 0.971398] };
+function savedPlane() {
+  const branchView = model.continuationView(CO_SLIDERS, [0, 0.12], 0, [model.pointSeed([0.0646, 0.2683, 0.4765], 1.05, "both")]);
+  const opened = curves.openPlane(null, branchView, CO_SLIDERS, [hopf, fold].map((at) => curves.planeSeed(at, [1.05, 0.4], 0)));
+  const plane = { ...opened, curves: { ...opened.curves, homoclinic: [BT] } };
+  return { branchView, plane, file: projectFromState(planeDoc(plane)) };
+}
+const reopenPlane = (file, sys = co) => model.applyProjectLoad(stateFromProject(JSON.parse(JSON.stringify(file))), sys, () => 1);
+
+test("saving while the plane is shown saves the plane: its parameters, box, seeds by parameter name and the Branch view", () => {
+  const { file } = savedPlane();
+  const v = file.views[0];
+  assert.equal(v.kind, "curves");
+  assert.deepEqual([v.x_axis, v.y_axis], [
+    { kind: "param", name: "k_2" },
+    { kind: "param", name: "K" },
+  ]);
+  assert.deepEqual(v.curves, {
+    across_range: [0.5, 2.5],
+    up_range: [0, 2],
+    ds: 0.01,
+    max_points: 2000,
+    direction: "both",
+    seeds: [
+      { kind: "hopf", x: [0.0164, 0.524, 0.3283], period: 1, params: { k_2: 1.051557, K: 0.4 } },
+      { kind: "fold", x: [0.0247, 0.4503, 0.375], period: 1, params: { k_2: 1.042049, K: 0.4 } },
+    ],
+    homoclinic: [{ x: [0.1159, 0.3155, 0.2884], params: { k_2: 1.417628, K: 0.971398 } }],
+    branch: {
+      x_axis: { kind: "param", name: "k_2" },
+      y_axis: { kind: "state", name: "x" },
+      x_range: [0.42, 2.58],
+      y_range: [0, 0.12],
+      continuation: {
+        range: [0.5, 2.5],
+        ds: 0.02,
+        max_points: 500,
+        seeds: [{ from: "point", x: [0.0646, 0.2683, 0.4765], param: 1.05, period: 1, direction: "both" }],
+      },
+      params: { k_2: 1.05, K: 0.4 },
+    },
   });
-  assert.deepEqual(projectFromState(doc(plane)).views, projectFromState(doc(branchView)).views);
-  assert.equal(projectFromState(doc(plane)).views[0].kind, "continuation");
+});
+
+test("a saved plane reopens as the same plane, and the Branch view it came from comes back from it", () => {
+  const { branchView, plane, file } = savedPlane();
+  const applied = reopenPlane(file);
+  assert.deepEqual(applied.warnings, []);
+  assert.deepEqual(applied.view, plane);
+  assert.deepEqual(projectFromState(planeDoc(applied.view), { loaded: file }), file, "saving again changes nothing");
+  const s = { compiled: co, view: applied.view, solver: model.DEFAULT_SOLVER, params: CO_SLIDERS };
+  const memory = {};
+  const back = model.switchView("continuation", s, memory);
+  assert.deepEqual(back, branchView, "no Branch view was shown this session: the plane's own");
+  const again = model.switchView("curves", { ...s, view: back }, memory);
+  assert.deepEqual(again.branchParams, [1.05, 0.4], "the slice stays where the branches were computed");
+  assert.deepEqual(again.curves.seeds, plane.curves.seeds);
+});
+
+test("a seed that doesn't fit is left out with a sentence; one this version doesn't know is kept on save", () => {
+  const { file } = savedPlane();
+  const edited = (patch) => {
+    const f = structuredClone(file);
+    patch(f.views[0].curves);
+    return f;
+  };
+  const cases = [
+    ["two states for three", (c) => (c.seeds[0].x = [0.1, 0.2])],
+    ["a flip curve of a flow", (c) => (c.seeds[0].kind = "flip")],
+    ["no value of K, the parameter up", (c) => delete c.seeds[0].params.K],
+    ["a kind this version doesn't know", (c) => (c.seeds[0].kind = "limitCycleFold")],
+  ];
+  for (const [why, patch] of cases) {
+    const applied = reopenPlane(edited(patch));
+    assert.deepEqual(applied.warnings, ["The saved Parameter plane's curve 1 doesn't fit this system, so it was left out."], why);
+    assert.deepEqual(applied.view.curves.seeds.map((x) => x.kind), ["fold"], why);
+  }
+  const lacking = reopenPlane(edited((c) => delete c.homoclinic[0].params.k_2));
+  assert.deepEqual(lacking.warnings, ["The saved Parameter plane's homoclinic curve 1 doesn't fit this system, so it was left out."]);
+  assert.deepEqual(lacking.view.curves.homoclinic, []);
+  const unknown = edited((c) => (c.seeds[0].kind = "limitCycleFold"));
+  const resaved = projectFromState(planeDoc(reopenPlane(unknown).view), { loaded: unknown }).views[0].curves.seeds;
+  assert.deepEqual(resaved.map((x) => x.kind), ["fold", "limitCycleFold"], "kept, last");
+  const free = reopenPlane(edited((c) => (c.seeds[0].params = { k_2: 1.051557, K: 0.4 })));
+  assert.deepEqual(free.warnings, [], "the parameters that are not free may be missing: the sliders give them");
+});
+
+test("a plane that doesn't fit falls back to the Branch view it came from, else to the default view", () => {
+  const { branchView, file } = savedPlane();
+  const kl = system("ode", ["x", "y", "s"], ["k_2", "L"]);
+  const renamed = reopenPlane(file, kl);
+  assert.deepEqual(renamed.warnings, [
+    "The saved Parameter plane uses the parameter K, which the system doesn't have, so the Branch view it came from is shown.",
+  ]);
+  assert.deepEqual(renamed.view, branchView);
+  const unbranched = structuredClone(file);
+  delete unbranched.views[0].curves.branch;
+  const none = reopenPlane(unbranched, kl);
+  assert.deepEqual(none.warnings, ["The saved Parameter plane uses the parameter K, which the system doesn't have, so the default view is shown."]);
+  assert.equal(none.view.kind, undefined);
+  const backward = structuredClone(file);
+  backward.views[0].curves.direction = "sideways";
+  const odd = reopenPlane(backward);
+  assert.deepEqual(odd.warnings, ["The saved Parameter plane doesn't fit this system, so the Branch view it came from is shown."]);
+  assert.equal(odd.view.kind, "continuation");
+  backward.views[0].curves.branch.x_axis.name = "mu";
+  assert.deepEqual(reopenPlane(backward).warnings, ["The saved Parameter plane doesn't fit this system, so the default view is shown."]);
 });
 
 // The preview's curves pass through the reference points of docs/codim2-reference.md.

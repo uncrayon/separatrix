@@ -11,9 +11,13 @@ import type {
   InputFormat,
   Method,
   ProjectAxis,
+  ProjectBranch,
   ProjectCamera,
   ProjectContinuation,
+  ProjectCurveSeed,
+  ProjectCurves,
   ProjectFile,
+  ProjectHomoclinicSeed,
   ProjectInitialCondition,
   ProjectLyapunov,
   ProjectOrbit,
@@ -25,7 +29,9 @@ import type {
   SystemKind,
 } from "../api/types";
 import { DEFAULT_METHOD, METHODS } from "../state/methods.ts";
+import { CURVE_KIND_ORDER, type CurvesView } from "../state/curves.ts";
 import type {
+  ContinuationView,
   Camera,
   ContinuationSeed,
   ContinuationSettings,
@@ -76,6 +82,30 @@ export interface LoadedContinuation {
   seeds: LoadedSeed[];
 }
 
+/** A Parameter plane's seed as saved: every parameter's value by name. */
+export interface LoadedCurveSeed {
+  kind?: string;
+  x?: number[];
+  period?: number;
+  params: Record<string, number>;
+}
+
+/** The Branch view a Parameter plane came from, with every parameter's value when the plane opened from it. */
+export type LoadedBranch = Pick<LoadedView, "xAxis" | "yAxis" | "xRange" | "yRange" | "continuation"> & {
+  params: Record<string, number>;
+};
+
+export interface LoadedCurves {
+  acrossRange?: [number, number] | null;
+  upRange?: [number, number] | null;
+  ds?: number;
+  maxPoints?: number;
+  direction?: string;
+  seeds: LoadedCurveSeed[];
+  homoclinic: Omit<LoadedCurveSeed, "kind" | "period">[];
+  branch?: LoadedBranch;
+}
+
 /** The most transient iterates a file may ask for (validate.rs clamps to this too). */
 export const MAX_TRANSIENT = 1_000_000;
 
@@ -104,6 +134,7 @@ export interface LoadedView {
   lyapunov?: Partial<LyapunovSettings>;
   orbit?: Partial<OrbitSettings>;
   continuation?: LoadedContinuation;
+  curves?: LoadedCurves;
   /** Slice values by state name. */
   slice: Record<string, number>;
   t: number;
@@ -257,6 +288,69 @@ function continuationOut(prev: ProjectContinuation | undefined, c: ContinuationS
   };
 }
 
+const byName = (names: readonly string[], values: readonly number[]): Record<string, number> =>
+  Object.fromEntries(names.map((name, i) => [name, values[i]]));
+
+function paramAxisOut(prev: ProjectAxis | undefined, name: string | undefined): ProjectAxis {
+  const fresh: ProjectAxis = name === undefined ? { kind: "param" } : { kind: "param", name };
+  return prev?.kind === "param" ? { ...prev, ...fresh } : fresh;
+}
+
+const normAxisOut = (prev: ProjectAxis | undefined): ProjectAxis => ({ ...(prev?.kind === "norm" ? prev : {}), kind: "norm" });
+
+function branchOut(
+  prev: ProjectBranch | undefined,
+  b: ContinuationView,
+  values: readonly number[] | null,
+  names: readonly string[],
+  states: readonly string[],
+): ProjectBranch {
+  return {
+    ...prev,
+    x_axis: paramAxisOut(prev?.x_axis, names[b.param]),
+    y_axis: b.yAxis.kind === "norm" ? normAxisOut(prev?.y_axis) : axisOut(prev?.y_axis, b.yAxis, states),
+    x_range: [b.xRange[0], b.xRange[1]],
+    y_range: [b.yRange[0], b.yRange[1]],
+    continuation: continuationOut(prev?.continuation, b.continuation),
+    params: values ? byName(names, values) : {},
+  };
+}
+
+const CURVE_KINDS: readonly string[] = CURVE_KIND_ORDER;
+
+function curvesOut(prev: ProjectCurves | undefined, v: CurvesView, names: readonly string[], states: readonly string[]): ProjectCurves {
+  const old: Partial<ProjectCurves> = isObj(prev) ? prev : {};
+  const c = v.curves;
+  const saved = Array.isArray(old.seeds) ? old.seeds : [];
+  const known = saved.filter((p) => isObj(p) && CURVE_KINDS.includes(String(p.kind)));
+  const unknown = saved.filter((p) => !known.includes(p));
+  const seeds = c.seeds.map((seed, i): ProjectCurveSeed => {
+    const fresh: ProjectCurveSeed = { kind: seed.kind, x: [...seed.x], period: seed.period, params: byName(names, seed.params) };
+    return known[i]?.kind === fresh.kind ? { ...known[i], ...fresh } : fresh;
+  });
+  const savedHomoclinic = Array.isArray(old.homoclinic) ? old.homoclinic : [];
+  const homoclinic = c.homoclinic.map(
+    (seed, i): ProjectHomoclinicSeed => ({
+      ...(isObj(savedHomoclinic[i]) ? savedHomoclinic[i] : {}),
+      x: [...seed.x],
+      params: byName(names, seed.params),
+    }),
+  );
+  const out: ProjectCurves = {
+    ...old,
+    across_range: [c.ranges[0][0], c.ranges[0][1]],
+    up_range: [c.ranges[1][0], c.ranges[1][1]],
+    ds: c.ds,
+    max_points: c.maxPoints,
+    direction: c.direction,
+    seeds: [...seeds, ...unknown],
+    homoclinic,
+  };
+  if (v.branch) out.branch = branchOut(isObj(old.branch) ? old.branch : undefined, v.branch, v.branchParams, names, states);
+  else delete out.branch;
+  return out;
+}
+
 function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<unknown, T> {
   const out = new Map<unknown, T>();
   for (const t of list ?? []) if (isObj(t) && !out.has(key(t))) out.set(key(t), t);
@@ -268,9 +362,7 @@ function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<u
  * from the state, every other key as it was read. Rust checks it and stamps
  * the version fields when it writes.
  */
-export function projectFromState(doc: DocumentState, opts: SerializeOptions = {}): ProjectFile {
-  // The file format has no Parameter plane yet: it saves the view the plane came from.
-  const s = doc.view.kind === "curves" ? { ...doc, view: doc.view.home } : doc;
+export function projectFromState(s: DocumentState, opts: SerializeOptions = {}): ProjectFile {
   const loaded = opts.loaded ?? null;
   const pending = !!opts.pending && !!loaded;
   const lsys = loaded?.system;
@@ -319,17 +411,15 @@ export function projectFromState(doc: DocumentState, opts: SerializeOptions = {}
     const lyapunov = s.view.kind === "lyapunov" ? s.view.lyapunov : null;
     const orbit = s.view.kind === "orbit" ? s.view : null;
     const continuation = s.view.kind === "continuation" ? s.view : null;
+    const plane = s.view.kind === "curves" ? s.view : null;
+    const names = s.params.map((p) => p.name);
     const swept = orbit ?? continuation;
     const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
     const exponent: ProjectAxis = { kind: "exponent" };
-    const paramAxis = (name: string | undefined): ProjectAxis => {
-      const fresh: ProjectAxis = name === undefined ? { kind: "param" } : { kind: "param", name };
-      return lv?.x_axis?.kind === "param" ? { ...lv.x_axis, ...fresh } : fresh;
-    };
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section || space || lyapunov || swept ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space || lyapunov || swept || plane ? { kind: s.view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       ...(lyapunov
         ? {
@@ -352,14 +442,21 @@ export function projectFromState(doc: DocumentState, opts: SerializeOptions = {}
           }
         : {}),
       ...(continuation ? { continuation: continuationOut(lv?.continuation, continuation.continuation) } : {}),
-      x_axis: swept ? paramAxis(s.params[swept.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
-      y_axis: lyapunov
-        ? lv?.y_axis?.kind === "exponent"
-          ? { ...lv.y_axis, ...exponent }
-          : exponent
-        : s.view.yAxis.kind === "norm"
-          ? { ...(lv?.y_axis?.kind === "norm" ? lv.y_axis : {}), kind: "norm" }
-          : axisOut(lv?.y_axis, s.view.yAxis, states, next),
+      ...(plane ? { curves: curvesOut(lv?.curves, plane, names, states) } : {}),
+      x_axis: swept
+        ? paramAxisOut(lv?.x_axis, names[swept.param])
+        : plane
+          ? paramAxisOut(lv?.x_axis, names[plane.across])
+          : axisOut(lv?.x_axis, s.view.xAxis, states),
+      y_axis: plane
+        ? paramAxisOut(lv?.y_axis, names[plane.up])
+        : lyapunov
+          ? lv?.y_axis?.kind === "exponent"
+            ? { ...lv.y_axis, ...exponent }
+            : exponent
+          : s.view.yAxis.kind === "norm"
+            ? normAxisOut(lv?.y_axis)
+            : axisOut(lv?.y_axis, s.view.yAxis, states, next),
       ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
       x_range: [s.view.xRange[0], s.view.xRange[1]],
       y_range: [s.view.yRange[0], s.view.yRange[1]],
@@ -383,11 +480,12 @@ export function projectFromState(doc: DocumentState, opts: SerializeOptions = {}
         backward: s.layers.backward,
       },
     };
-    if (!cobweb && !section && !space && !lyapunov && !swept) delete primary.kind;
+    if (!cobweb && !section && !space && !lyapunov && !swept && !plane) delete primary.kind;
     if (!section) delete primary.section;
     if (!lyapunov) delete primary.lyapunov;
     if (!orbit) delete primary.orbit;
     if (!continuation) delete primary.continuation;
+    if (!plane) delete primary.curves;
     if (!space) {
       delete primary.z_axis;
       delete primary.z_range;
@@ -504,6 +602,47 @@ function loadContinuation(c: Obj): LoadedContinuation {
   };
 }
 
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+/** An object of numbers by name, its other entries left out. */
+function numberMap(v: unknown): Record<string, number> {
+  if (!isObj(v)) return {};
+  return Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => num(e[1]) !== undefined));
+}
+
+function loadCurves(c: Obj): LoadedCurves {
+  const b = c.branch;
+  return {
+    ...definedOnly({
+      acrossRange: c.across_range !== undefined ? loadRange(c.across_range) : undefined,
+      upRange: c.up_range !== undefined ? loadRange(c.up_range) : undefined,
+      ds: num(c.ds),
+      maxPoints: num(c.max_points),
+      direction: str(c.direction),
+    }),
+    seeds: list(c.seeds).map((seed) =>
+      isObj(seed)
+        ? { ...definedOnly({ kind: str(seed.kind), x: numbers(seed.x), period: num(seed.period) }), params: numberMap(seed.params) }
+        : { params: {} },
+    ),
+    homoclinic: list(c.homoclinic).map((seed) =>
+      isObj(seed) ? { ...definedOnly({ x: numbers(seed.x) }), params: numberMap(seed.params) } : { params: {} },
+    ),
+    ...(isObj(b)
+      ? {
+          branch: {
+            xAxis: loadAxis(b.x_axis),
+            yAxis: loadAxis(b.y_axis),
+            xRange: loadRange(b.x_range),
+            yRange: loadRange(b.y_range),
+            ...(isObj(b.continuation) ? { continuation: loadContinuation(b.continuation) } : {}),
+            params: numberMap(b.params),
+          },
+        }
+      : {}),
+  };
+}
+
 function definedOnly<T extends Obj>(o: T): Partial<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
 }
@@ -580,6 +719,7 @@ export function stateFromProject(doc: ProjectFile): ProjectLoad {
         : {}),
       ...(isObj(v.orbit) ? { orbit: definedOnly({ transient: num(orb.transient), kept: num(orb.kept) }) } : {}),
       ...(isObj(v.continuation) ? { continuation: loadContinuation(v.continuation) } : {}),
+      ...(isObj(v.curves) ? { curves: loadCurves(v.curves) } : {}),
       slice,
       t: (isObj(v.slice) ? num(v.slice.t) : undefined) ?? 0,
       layers: definedOnly({

@@ -46,7 +46,15 @@ import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedSeed, LoadedView, ProjectLoad } from "../project/serialize";
-import { curvesAvailability, openPlane, planeSeed, withBranch, type CurvesView, type PlaneSeed } from "./curves.ts";
+import {
+  curvesAvailability,
+  loadCurvesView,
+  openPlane,
+  planeSeed,
+  withBranch,
+  type CurvesView,
+  type PlaneSeed,
+} from "./curves.ts";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -1584,10 +1592,9 @@ export function adaptView(
 ): View | null {
   if (isLyapunov(view)) return view;
   if (isCurves(view)) {
-    // The seeds, homoclinic ones too, are states of the old system; the view a project file saves follows like any other.
-    const home = adaptView(view.home, oldStates, newStates, next);
-    if (!home || isCurves(home)) return null;
-    return { ...view, branch: isContinuation(home) ? home : null, home, curves: { ...view.curves, seeds: [], homoclinic: [] } };
+    // The seeds, homoclinic ones too, are states of the old system; the Branch view it came from follows like any other.
+    const branch = view.branch && adaptView(view.branch, oldStates, newStates, next);
+    return { ...view, branch: branch && isContinuation(branch) ? branch : null, curves: { ...view.curves, seeds: [], homoclinic: [] } };
   }
   if (isContinuation(view)) {
     const y = view.yAxis;
@@ -1925,13 +1932,13 @@ export function switchView(
   memory[from] = v;
   if (choice === "curves") {
     const kept = memory.curves && isCurves(memory.curves) ? memory.curves : null;
-    const branch = memory.continuation && isContinuation(memory.continuation) ? memory.continuation : null;
-    const home = branch ?? defaultView(sys, s.solver);
+    // A plane opened from a project file has its Branch view, but none was shown this session.
+    const branch = memory.continuation && isContinuation(memory.continuation) ? memory.continuation : (kept?.branch ?? null);
     const params = s.params ?? [];
-    if (kept && (kept.curves.seeds.length || kept.curves.homoclinic.length)) return { ...(kept.branch === branch ? kept : withBranch(kept, branch, params)), home };
-    return openPlane(kept, branch, home, params, branchSeeds(sys, params, branch, s.branches ?? {}));
+    if (kept && (kept.curves.seeds.length || kept.curves.homoclinic.length)) return kept.branch === branch ? kept : withBranch(kept, branch, params);
+    return openPlane(kept, branch, params, branchSeeds(sys, params, branch, s.branches ?? {}));
   }
-  const kept = memory[choice];
+  const kept = memory[choice] ?? (choice === "continuation" && isCurves(v) ? v.branch : null);
   if (kept) return kept;
   const dim = sys.states.length;
   const shownRange = (i: number): [number, number] | null => {
@@ -2038,7 +2045,15 @@ export const COBWEB_VIEW_WARNING = "The saved cobweb view doesn't fit this syste
  */
 function savedCobwebFits(load: ProjectLoad, sys: CompileResponse): boolean | null {
   const v = load.view;
-  if (!v || v.kind === "section" || v.kind === "space" || v.kind === "lyapunov" || v.kind === "orbit" || v.kind === "continuation")
+  if (
+    !v ||
+    v.kind === "section" ||
+    v.kind === "space" ||
+    v.kind === "lyapunov" ||
+    v.kind === "orbit" ||
+    v.kind === "continuation" ||
+    v.kind === "curves"
+  )
     return null;
   const next = v.xAxis.kind === "next" || v.yAxis.kind === "next";
   if ((v.kind === undefined || v.kind === "plane") && !next) return null;
@@ -2149,7 +2164,10 @@ function loadedSeed(seed: LoadedSeed, sys: CompileResponse): ContinuationSeed | 
   return { from: "switch", at: { kind, p: param, x, period, tangent: seed.tangent }, direction: dir };
 }
 
-function loadContinuationView(v: LoadedView, sys: CompileResponse): { view: ContinuationView; warnings: string[] } | string {
+export function loadContinuationView(
+  v: Pick<LoadedView, "xAxis" | "yAxis" | "xRange" | "yRange" | "continuation">,
+  sys: CompileResponse,
+): { view: ContinuationView; warnings: string[] } | string {
   const c = v.continuation;
   const x = v.xAxis;
   const y = v.yAxis;
@@ -2180,6 +2198,10 @@ function loadContinuationView(v: LoadedView, sys: CompileResponse): { view: Cont
 /** The view a project saved for `sys`, or null when it does not fit (an axis it can't show, a bad range). */
 export function projectView(load: ProjectLoad, sys: CompileResponse): View | null {
   const v = load.view;
+  if (v?.kind === "curves") {
+    const fit = loadCurvesView(v, sys, load.params);
+    return typeof fit === "string" ? null : fit.view;
+  }
   if (v?.kind === "continuation") {
     const fit = loadContinuationView(v, sys);
     return typeof fit === "string" ? null : fit.view;
@@ -2258,9 +2280,15 @@ export function applyProjectLoad(load: ProjectLoad, sys: CompileResponse, newIcI
     else if (load.view?.kind === "lyapunov") warnings.push(loadLyapunovView(load.view, sys) as string);
     else if (load.view?.kind === "orbit") warnings.push(loadOrbitView(load.view, sys) as string);
     else if (load.view?.kind === "continuation") warnings.push(CONTINUATION_MISFIT);
+    else if (load.view?.kind === "curves") warnings.push(loadCurvesView(load.view, sys, load.params) as string);
     else if (load.view) warnings.push(savedCobwebFits(load, sys) === false ? COBWEB_VIEW_WARNING : VIEW_WARNING);
   }
-  const fit = isContinuation(view) && load.view ? loadContinuationView(load.view, sys) : null;
+  const fit =
+    load.view?.kind === "curves"
+      ? loadCurvesView(load.view, sys, load.params)
+      : isContinuation(view) && load.view
+        ? loadContinuationView(load.view, sys)
+        : null;
   if (fit && typeof fit !== "string") warnings.push(...fit.warnings);
   const slice = load.view?.slice ?? {};
   const baseState = sys.states.map((s) => (Number.isFinite(slice[s.name]) ? slice[s.name] : 0));
