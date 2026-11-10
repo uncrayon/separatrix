@@ -12,9 +12,16 @@ and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and the five Apple secrets of
 [Sign and notarize the Mac app](macos-signing.md). A build signed with any other key can't update
 a 1.0.x install.
 
-1. [ ] **Check `main`.** Pull `main` and run `bash scripts/release-check.sh`, with the gates.
+1. [ ] **Check `main`.** Pull `main` and run `bash scripts/release-check.sh`, with the gates. Then,
+   on a computer with a TeX distribution, compile every LaTeX golden, the Parameter plane's new
+   figures and tables among them. CI has no TeX, and they have never been compiled:
 
-   **Done when** every row reads `PASS`, the four gates among them.
+   ```sh
+   REQUIRE_PDFLATEX=1 cargo test -p separatrix-export --test latex_compiles
+   ```
+
+   **Done when** every row of the release check reads `PASS`, the four gates among them, and the
+   `latex_compiles` test passes with no file skipped.
 
 2. [ ] **Set the version to 1.1.0.** Change `version` to `1.1.0` in `[workspace.package]` of
    `Cargo.toml` and in `app/package.json`, then run `npm install` in `app/` so that
