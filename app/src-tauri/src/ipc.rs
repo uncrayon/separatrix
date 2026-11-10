@@ -718,6 +718,13 @@ pub enum BranchStop {
     MaxPoints,
     /// A step failed at the smallest step size.
     StepTooSmall,
+    /// A curve came back to its start: the last point repeats the first.
+    /// Never on a branch, and never the first end of a curve.
+    Closed,
+    /// A branch-point curve reached parameters that no longer keep the
+    /// branch point (a second parameter breaks the invariance that makes
+    /// it). Never on a branch.
+    Unfolded,
 }
 
 /// A located bifurcation on a branch.
@@ -767,8 +774,8 @@ pub enum SpecialKindOut {
     NeimarkSacker,
 }
 
-/// Request of the `compute_curve` command: follow a fold, Hopf, flip or
-/// Neimark–Sacker bifurcation as two parameters vary.
+/// Request of the `compute_curve` command: follow a fold, Hopf, branch
+/// point, flip or Neimark–Sacker bifurcation as two parameters vary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -809,12 +816,10 @@ pub struct CurveSeed {
     pub x: Vec<f64>,
     /// `k` of `f^k` for a map, 1 for a flow.
     pub period: usize,
-    /// Hopf: the frequency `ω`. Neimark–Sacker: the angle `θ`. A starting
-    /// guess; `null` otherwise.
-    pub omega: Option<f64>,
 }
 
-/// The kinds of bifurcation curve; their labels are `LP`, `H`, `PD`, `NS`.
+/// The kinds of bifurcation curve; their labels are `LP`, `H`, `BP`, `PD`,
+/// `NS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -824,6 +829,9 @@ pub enum CurveKindOut {
     Fold,
     /// Hopf points of a flow.
     Hopf,
+    /// Branch points: another branch of equilibria or fixed points crosses
+    /// (transcritical, pitchfork), as on an invariant line.
+    BranchPoint,
     /// Flips (period doublings) of a map.
     Flip,
     /// Neimark–Sacker points of a map.

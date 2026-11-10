@@ -37,6 +37,14 @@ interface CurveKindInfo {
 export const CURVE_KINDS: Record<CurveKindOut, CurveKindInfo> = {
   fold: { label: "LP", name: "Fold curve", legend: "Fold (LP)", on: "fold", point: "fold", from: "fold" },
   hopf: { label: "H", name: "Hopf curve", legend: "Hopf (H)", on: "Hopf", point: "Hopf point", from: "hopf" },
+  branchPoint: {
+    label: "BP",
+    name: "Branch-point curve",
+    legend: "Branch point (BP)",
+    on: "branch-point",
+    point: "branch point",
+    from: "branchPoint",
+  },
   flip: { label: "PD", name: "Flip curve", legend: "Flip (PD)", on: "flip", point: "flip", from: "flip" },
   neimarkSacker: {
     label: "NS",
@@ -49,7 +57,7 @@ export const CURVE_KINDS: Record<CurveKindOut, CurveKindInfo> = {
 };
 export const CURVE_KIND_ORDER = Object.keys(CURVE_KINDS) as CurveKindOut[];
 
-/** The curve a special point of the Branch view is followed along, or null when it has none (BP). */
+/** The curve a special point of the Branch view is followed along, or null when no curve kind starts from it. */
 export const curveKindOf = (kind: SpecialKindOut): CurveKindOut | null =>
   CURVE_KIND_ORDER.find((k) => CURVE_KINDS[k].from === kind) ?? null;
 
@@ -80,8 +88,6 @@ export interface PlaneSeed {
   kind: CurveKindOut;
   x: number[];
   period: number;
-  /** Hopf: ω. Neimark–Sacker: θ. A starting guess; null otherwise. */
-  omega: number | null;
   params: number[];
 }
 
@@ -175,7 +181,7 @@ export function planeSeed(at: SpecialPointOut, values: readonly number[], param:
   if (!kind) return null;
   const params = values.slice();
   params[param] = at.p;
-  return { kind, x: at.x.slice(), period: at.period, omega: at.omega, params };
+  return { kind, x: at.x.slice(), period: at.period, params };
 }
 
 function withPlaneSeeds(seeds: readonly PlaneSeed[], add: readonly PlaneSeed[]): PlaneSeed[] {
@@ -263,7 +269,7 @@ export function buildCurveJobs(s: {
         [c.ranges[0][0], c.ranges[0][1]],
         [c.ranges[1][0], c.ranges[1][1]],
       ],
-      seed: { kind: seed.kind, x: seed.x.slice(), period: seed.period, omega: seed.omega },
+      seed: { kind: seed.kind, x: seed.x.slice(), period: seed.period },
       direction: c.direction,
       ds: c.ds,
       dsMax: 2 * c.ds,

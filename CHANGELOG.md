@@ -5,18 +5,19 @@ All notable changes to this project are documented in this file.
 ## [Unreleased]
 
 ### Added
-- The Parameter plane, a new view that follows a fold, Hopf, flip or Neimark–Sacker point as two
-  parameters change and marks where curves meet (Bogdanov–Takens, cusp, Bautin, strong
-  resonances, Chenciner, fold-flip). Reach it from the Branch view with **Follow in two
-  parameters…** on a row or **Search in two parameters**, or from the View control. Clicking the
-  plane sets both parameters. In this version only the browser preview draws the curves; the
-  desktop app says the computation is not implemented yet.
+- The Parameter plane, a new view that follows a fold, Hopf, branch point, flip or
+  Neimark–Sacker point as two parameters change and marks where curves meet (Bogdanov–Takens,
+  cusp, Bautin, strong resonances, Chenciner, fold-flip). Reach it from the Branch view with
+  **Follow in two parameters…** on a row or **Search in two parameters**, or from the View
+  control. Clicking the plane sets both parameters. The desktop app follows the curves; in this
+  version only the browser preview finds the points where they meet.
 - Two gallery templates for it: CO oxidation (Bykov, Yablonskii and Kim) and a predator–prey map
   (MatContM), each credited in the title bar.
 - Curves of branch points in two parameters, where another branch crosses (transcritical,
   pitchfork) and a fold curve cannot be followed, as on an invariant line. The engine follows the
   predator–prey map's F3 = F2 curve through its fold-flip at `(ε, a) = (2, 3)`. The Parameter
-  plane does not draw these curves yet.
+  plane draws them with their own colour and a dash-dot-dot pattern, and a BP row of the Branch
+  view offers **Follow in two parameters…** beside **Switch branch**.
 
 ## [1.0.1] - 2026-11-09
 

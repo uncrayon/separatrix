@@ -590,15 +590,6 @@ gate (`scripts/continuation-gate.sh`, see the README) checks this command agains
 derived in closed form or published, among them the logistic cascade `r2 … r4` to 1e−6 by
 switching at each flip, and its agreement with `period_doublings` to 1e−9.
 
-`compute_curve` takes `CurveRequest { requestId, systemId, params, free: [across, up], ranges:
-[[lo, hi], [lo, hi]], seed: CurveSeed { kind, x, period, omega }, direction, ds, dsMax, maxPoints }`
-and returns `CurveResponse { requestId, curve, elapsedMs }` with `curve: CurveOut { kind, period,
-p1, p2, x, neutral, special, end }`: a fold, Hopf, flip or Neimark–Sacker curve (`kind: "fold" |
-"hopf" | "flip" | "neimarkSacker"`) followed in two parameters, `special` its codimension-2 points
-`Codim2PointOut { kind, index, p: [p1, p2], x, period }`. It is a stub until M5 of the
-special-bifurcations plan: it always answers "Following a bifurcation in two parameters is not
-implemented yet.", and only the browser preview (`mockCurve`) serves curves.
-
 The studio's Branch view (View control: Continuation) sends one request per seed of the view
 (`buildContinuationJobs` in state/model.ts), each request's JSON its key: `range`, `ds`,
 `dsMax = 2·ds` and `maxPoints` from the Continuation panel, every parameter but the swept one from
@@ -617,6 +608,71 @@ switched cycle, and two branches that cross, report the same one), for example `
 near a branch vertex, sets the swept slider to that `p` exactly. The view asks for no portrait.
 The browser preview's stand-in (`mockContinuation` in api/mock.ts) follows dimension ≤ 3 with
 finite-difference Jacobians and no eigenvalue-count check or `ℓ₁`.
+
+### Two-parameter curves
+
+```rust
+pub enum CurveKind { Fold, Hopf, BranchPoint, Flip, NeimarkSacker }
+pub struct CurveSeed { pub kind: CurveKind, pub x: Vec<f64>, pub period: usize }
+pub struct CurveOptions { pub free: (usize, usize), pub ranges: ((f64, f64), (f64, f64)),
+                          pub ds: f64, pub ds_min: f64, pub ds_max: f64,
+                          pub max_points: usize, pub max_angle: f64 }
+pub fn continue_curve(f: &dyn VectorField, params: &[f64], seed: &CurveSeed,
+                      opts: &CurveOptions) -> Result<Curve, CurveError>;
+pub struct Curve { pub kind: CurveKind, pub period: usize, pub points: Vec<CurvePoint>,
+                   pub end: CurveEnd /* Range | MaxPoints | StepTooSmall | Closed | Unfolded */ }
+pub struct CurvePoint { pub s: f64, pub p: (f64, f64), pub x: Vec<f64>, pub tangent: Vec<f64>,
+                        pub eigenvalues: Vec<(f64, f64)>, pub nature: Nature }
+pub enum Nature { Bifurcation { omega: Option<f64> }, Neutral }
+pub enum CurveError { NotAutonomous, Unsupported, NotABifurcation, Singular, NoEffect }
+```
+
+`continue_curve` follows the curve of `seed.kind` bifurcations through `seed` as
+`p₁ = params[free.0]` (drawn across) and `p₂ = params[free.1]` (drawn up) vary, by
+pseudo-arclength continuation of a minimally extended defining system (W. Govaerts, *Numerical
+Methods for Bifurcations of Dynamical Equilibria*, SIAM 2000, the systems MatCont follows). The
+unknown is `z = (x, u₁, u₂)` with `u = (p − lo)/(hi − lo)` on each side of the box `ranges`, so
+`ds`, `ds_min` and `ds_max` are fractions of the box (the state as it is) whatever the
+parameters' scales, and `ds`'s sign picks the direction. The equations are `g(x, p) = 0` (`f` for
+a flow, `f^k − x` for a map, `k = period`) and `ψ = 0`, where `ψ` is the `s` of
+`[M w₀; v₀ᵀ 0][q; s] = [0; 1]` and `M` is singular on the curve: `g_x` for a fold, `D f^k + I`
+for a flip, `2A ⊙ I` for Hopf and `A ⊙ A − I` for Neimark–Sacker, bialternate products of
+`A = J` or `D f^k`. A branch point is the rank defect of the wider `M = [g_x | g_{u₁}]`: two
+conditions `ψ = (ψ₁, ψ₂)`, and `z` gains an unknown `β` with `g + β w₀ = 0`. On the curve
+`β = 0`, so `p₁` must be the parameter the branch point was found along. The borders `v₀`, `w₀`
+are renewed at every accepted point. Fold and BranchPoint curves exist for flows and maps, Hopf
+curves for flows, and Flip and NeimarkSacker curves for maps, Hopf and NeimarkSacker in two or
+more dimensions only; any other kind, or `free.0 == free.1`, is `Unsupported`.
+
+The seed is first corrected by Newton's method with `p₂` held: `NotABifurcation` when that does
+not converge, or converges on a branch-point curve only to `|β| > 1e−10 (1 + |z|∞)`, Newton's
+tolerance; `Singular` when the defining system is singular there. `NoEffect` when `p₂` does not
+move the bifurcation: the first-order move of the other unknowns that `g_{u₂}` and `ψ_{u₂}` cause
+over the whole height of the box is within Newton's tolerance, so the curve cannot be told from
+the vertical line through the seed (the move is exactly zero when `p₂` does not enter the
+field). `ds > 0` then follows the curve the way `p₁` increases at the seed (the way `p₂` increases
+where the tangent has no `u₁` component), `ds < 0` the other way. A corrected seed outside the
+box is the curve alone, ending with `Range`. The step loop is `continue_branch`'s without
+detection: a predictor that leaves `[0, 1]²` in `(u₁, u₂)` is corrected with that `u` held on the
+edge, so the last point lies on it (`Range`); `MaxPoints` and `StepTooSmall` are as for a branch.
+A curve that has left the seed and comes back within one step of it, its tangent pointing the
+same way, gets the seed appended again and ends `Closed`, so its last point repeats its first. A
+corrected point of a branch-point curve that needs `β ≠ 0` beyond Newton's tolerance is dropped
+and the curve ends `Unfolded` at its last branch point.
+
+Each `CurvePoint` carries `s` (arclength in `z`), `p = (p₁, p₂)`, the state `x` (for a map the
+cycle's first point), the unit tangent `ż` oriented along the curve (`dim + 2` values, or
+`dim + 3` with `β̇` on a branch-point curve), the eigenvalues of `J` or `D f^k`, and its `nature`.
+`Bifurcation { omega }` carries `ω` on a Hopf curve and `θ = arg μ` of the critical multiplier
+with `Im μ ≥ 0` on a Neimark–Sacker curve, `None` otherwise. `Neutral` marks a neutral saddle,
+where the defining system holds without a bifurcation: on a Hopf curve the pair with the smallest
+`|λᵢ + λⱼ|` has `Re(λᵢλⱼ) ≤ 0` (real `±κ`), and on a Neimark–Sacker curve the pair with the
+smallest `|μᵢμⱼ − 1|` has `|Re(μᵢ + μⱼ)/2| ≥ 1` (real `μ`, `1/μ`). No codimension-2 point is
+located yet. `crates/dyn-analysis/tests/curves.rs` checks the CO oxidation fold and Hopf curves
+through docs/codim2-reference.md's points at `K = 0.4` to 1e−8, the predator–prey map's
+Neimark–Sacker, flip and branch-point curves and Hénon's fold curve against closed forms, a
+neutral stretch past each Bogdanov–Takens point, a closed fold curve, `NoEffect` and an
+unfolding branch point.
 
 ## IPC (Tauri commands)
 
@@ -643,7 +699,7 @@ when to show the first-order form as `\frac{d\theta}{dt} = \dot{\theta}`.
 | `compute_lyapunov` | `LyapunovRequest` | `LyapunovResponse` |
 | `compute_orbit_diagram` | `OrbitDiagramRequest` | `OrbitDiagramResponse` |
 | `compute_continuation` | `ContinuationRequest` | `ContinuationResponse` (see Continuation above) |
-| `compute_curve` | `CurveRequest` | `CurveResponse`; a stub until M5 (see Continuation above) |
+| `compute_curve` | `CurveRequest` | `CurveResponse` (see Curves in two parameters below) |
 | `recent_projects` | none | `RecentProject[]`, each `{ path, name, folder }` |
 | `check_for_update` | none | `UpdateCheck`: `{ kind: "off" }`, `{ kind: "upToDate", version }`, `{ kind: "available", version, notes, date }` or `{ kind: "failed", message }` |
 | `install_update` | none | `()`, after which the app restarts; or a sentence to show |
@@ -726,6 +782,53 @@ transfer (52–60 ms) and 4 ms to draw (3–5 ms): about 57 ms in all, under the
 binary `f32` response would be worth its second encoding. The transfer grows with the points: the
 widest plot (4,096 columns, 5.3 times as many) would take about 0.2 s by that measure (an
 estimate, not measured).
+
+### Curves in two parameters
+
+`compute_curve` takes `CurveRequest { requestId, systemId, params, free: [across, up], ranges:
+[[lo, hi], [lo, hi]], seed: CurveSeed { kind, x, period }, direction, ds, dsMax, maxPoints }` and
+returns `CurveResponse { requestId, curve, elapsedMs }` with `curve: CurveOut { kind, period, p1,
+p2, x, neutral, special, end }`. That is `continue_curve` (above) with `free` and `ranges` as
+given, `ds_min = 1e−8`, `max_angle = 0.3`, and `ds` signed by the direction: `forward` follows
+the curve the way the across parameter increases at the seed, `backward` the other way. Unlike a
+branch's, `ds` and `dsMax` are fractions of the box (each parameter scaled by its range, the
+state as it is). `kind` is `"fold" | "hopf" | "branchPoint" | "flip" | "neimarkSacker"`, labelled
+LP, H, BP, PD and NS, and one table (`CURVE_KINDS` in service.rs) maps it to `CurveKind`. The
+Parameter plane seeds a curve from a special point of the Branch view: its `kind`, `x` and
+`period`, with `params[across]` its `p`. The engine finds `ω` or `θ` from the eigenvalues, so the
+seed carries neither. The seed's parameters need not lie in the box: a seed outside it is that
+point alone, with `end.last = "range"`.
+
+`both` runs forward first. A forward half that ends `closed` is the whole curve, and no backward
+half runs. Otherwise the backward half runs; when it ends `closed` it is the whole curve,
+reversed so that it runs the forward way (the halves take different steps, so the backward one
+can close where the forward one ran out of points first). Otherwise the two are joined into one
+polyline: the backward half reversed and without its seed, then the forward half, so the seed is
+in the middle. The arrays are flat, as in `BranchOut`: `p1`, `p2` and `neutral` have one entry
+per point, and `x` has `dim` values per point (for a map the cycle's first point). `neutral` is
+`true` at a neutral saddle (`Nature::Neutral`). The tangents are not sent. `special` is always
+empty: the codimension-2 points (`Codim2PointOut`) are located from M6 of the
+special-bifurcations plan. `end.last` says why the last point stopped (`"range"`, `"maxPoints"`,
+`"stepTooSmall"`, `"closed"` or `"unfolded"`), and `end.first` why the first did, with direction
+`both`, or `null` when the first point is the seed, as on a closed curve, whose last point
+repeats its first. `maxPoints` bounds each direction, in `2..=MAX_CONTINUATION_POINTS = 20000`,
+the branch's limit, so a `both` curve has at most `2·maxPoints − 1` points.
+
+The command refuses a system that depends on `t` or `n` (with the branch's sentence); a
+parameter count that doesn't fit, a system with fewer than two parameters, a free index outside
+it, or the same parameter freed twice; ranges that are not finite with `lo < hi`; a seed of the
+wrong dimension or a non-finite seed or parameter; `period = 0`, or `period > 1` for a flow; `ds`
+that is not a positive number, `dsMax < ds`; and `maxPoints` outside `2..=20000`. The engine's
+refusals come back as sentences that name an equilibrium (flow) or a fixed point (map), the
+kind, and the up parameter by its name: `Unsupported` lists the kinds a flow and a map have,
+`NotABifurcation` says Newton's method found no such point near the seed with the up parameter
+held and to start from the special point the Branch view found, `Singular` that the curve has no
+unique direction at the seed, and `NoEffect` that the up parameter doesn't move the bifurcation
+and to choose another. It runs on a blocking worker thread. `app/src-tauri/tests/curves.rs`
+checks it on the CO oxidation model and the predator–prey map, seeded as the Parameter plane
+seeds it, and checks every curve of the browser preview's stand-in (`mockCurve` in api/mock.ts,
+which walks the precomputed curves of `mockCurves.generated.json`, written by
+`scripts/reference/codim2_reference.py`) against it.
 
 ### Cobweb plots and transients
 

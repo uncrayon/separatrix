@@ -155,7 +155,7 @@ test("the plane opened with nothing to search from shows its empty state, and a 
   }
 });
 
-test("the predator–prey map: F2's flip line stalls at the map's singularity, and Retry halves Δs", async () => {
+test("the predator–prey map: Search follows the NS and branch-point curves, and the flip of F2 has none", async () => {
   const { browser, page } = await open();
   try {
     await pick(page, "Predator–prey map");
@@ -163,19 +163,62 @@ test("the predator–prey map: F2's flip line stalls at the map's singularity, a
     await branchSettled(page);
     await inspector(page).getByRole("button", { name: "Search in two parameters" }).click();
     await curvesSettled(page);
-    const stall = inspector(page).locator(".inspector-stall");
-    assert.equal(await stall.count(), 1);
-    assert.match(
-      await stall.innerText(),
-      /The step became too small near a = 3\.0000, ε = −1\.4990\. The map may be singular there, or a special point may be near\. Lower Δs\./,
-    );
-    await stall.getByRole("button", { name: "Retry with Δs = 0.005" }).click();
-    await curvesSettled(page);
-    assert.equal(await inspector(page).getByLabel("First step in arclength").inputValue(), "0.005");
+    const rows = inspector(page).locator("[data-curves] > li");
+    assert.deepEqual(await rows.evaluateAll((els) => els.map((el) => [el.dataset.curveKind, el.dataset.curveStatus])), [
+      ["branchPoint", "failed"],
+      ["flip", "done"],
+      ["branchPoint", "failed"],
+      ["branchPoint", "done"],
+      ["flip", "failed"],
+      ["neimarkSacker", "done"],
+    ]);
+    assert.match(await rows.nth(1).innerText(), /From PD at a = 0\.8182, ε = 1\n147 points · stopped at Max points and at the range's end$/);
+    assert.match(await rows.nth(4).innerText(), /From PD at a = 3\.0000, ε = 1\nThe preview has no curve through this point\.$/);
+    assert.equal(await inspector(page).locator(".inspector-stall").count(), 0);
     const kinds = await inspector(page)
       .locator("[data-plane-points] [data-plane-point]")
-      .evaluateAll((rows) => rows.map((r) => r.dataset.planePoint));
+      .evaluateAll((els) => els.map((el) => el.dataset.planePoint));
     assert.deepEqual(kinds, ["resonance2", "resonance3", "resonance4", "chenciner", "foldFlip"]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the predator–prey map: a BP row offers Switch branch and Follow, and its curve passes the fold-flip", async () => {
+  const { browser, page } = await open();
+  try {
+    await pick(page, "Predator–prey map");
+    await viewRadio(page, "Continuation").click();
+    await branchSettled(page);
+    const bp = inspector(page).locator("[data-special-kind=branchPoint]", { hasText: "a = 1.666667" });
+    assert.equal(await bp.getByRole("button", { name: "Switch branch" }).count(), 1);
+    await bp.getByRole("button", { name: "Follow in two parameters…" }).click();
+    const panel = bp.getByRole("group", { name: "Follow this branch point in two parameters" });
+    assert.equal(await panel.locator("[data-follow-note]").innerText(), "Opens the Parameter plane with a across and ε up, from −6 to 3.");
+    await panel.getByRole("button", { name: "Follow", exact: true }).click();
+
+    assert.equal(await viewRadio(page, "Parameter plane").getAttribute("aria-checked"), "true");
+    await curvesSettled(page);
+    const curveRows = inspector(page).locator("[data-curves] > li");
+    assert.equal(await curveRows.count(), 1);
+    assert.match(await curveRows.innerText(), /Branch-point curve[\s\S]*From BP at a = 1\.6667, ε = 1[\s\S]*350 points · stopped at the range's end/);
+    assert.match(await page.locator(".legend-bar").innerText(), /^Branch point \(BP\)\n/);
+    const lppd = inspector(page).locator("[data-plane-points] [data-plane-point]");
+    assert.deepEqual(await lppd.evaluateAll((rows) => rows.map((r) => r.dataset.planePoint)), ["foldFlip"]);
+    assert.match(await lppd.innerText(), /On the branch-point curve$/);
+
+    await viewRadio(page, "Continuation").click();
+    await branchSettled(page);
+    const pd = inspector(page).locator("[data-special-kind=flip]", { hasText: "a = 3.000000" });
+    await pd.getByRole("button", { name: "Follow in two parameters…" }).click();
+    await pd.getByRole("group", { name: "Follow this flip in two parameters" }).getByRole("button", { name: "Follow", exact: true }).click();
+    await curvesSettled(page);
+    assert.deepEqual(await curveRows.evaluateAll((els) => els.map((el) => [el.dataset.curveKind, el.dataset.curveStatus])), [
+      ["branchPoint", "done"],
+      ["flip", "failed"],
+    ]);
+    assert.match(await page.locator(".legend-bar").innerText(), /^Branch point \(BP\)\n/);
+    assert.match(await lppd.innerText(), /^LPPD Fold-flip\na = 3\.000000 {2}ε = 2\.000000\nx = 0\.6667, y = 0\.0000\nOn the branch-point curve$/);
   } finally {
     await browser.close();
   }

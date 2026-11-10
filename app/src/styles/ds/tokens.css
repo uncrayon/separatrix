@@ -46,6 +46,7 @@
   --curve-hopf: #56b4e9;
   --curve-flip: #22b98d;
   --curve-ns: #d58bb6;
+  --curve-bp: #f0e442;
   --curve-hom: #b9a3ff;
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-modal: 0 24px 72px rgba(0, 0, 0, 0.55);
@@ -97,6 +98,7 @@
   --curve-hopf: #0072b2;
   --curve-flip: #00845f;
   --curve-ns: #a3367a;
+  --curve-bp: #7a6a00;
   --curve-hom: #6a3fc8;
   --shadow-pop: 0 8px 24px rgba(14, 22, 25, 0.14);
   --shadow-modal: 0 24px 72px rgba(14, 22, 25, 0.22);

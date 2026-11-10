@@ -500,20 +500,21 @@ def pp_curves(pts):
     out.append(on_f3("flip", a, e, np.zeros(len(a), bool), [special("resonance2", "R2"), lppd]))
     a, e = piece(-6.05, pole[1] - 1e-6, a_pd)
     out.append(on_f3("flip", a, e, np.zeros(len(a), bool), []))
-    # F2 = ((a − 1)/a, 0) has the multiplier 2 − a, so its flip line is a = 3. The map is
-    # singular where 1 + εx = 0, at ε = −3/2 on the line, which a follower can't pass.
-    e = np.linspace(-1.499, 3.05, 2001)
-    k = resample(np.full_like(e, 3.0), e, PP_BOX)
-    e = e[k]
-    x = np.column_stack([np.full_like(e, 2 / 3), np.zeros_like(e)])
-    out.append(curve_json("flip", np.full_like(e, 3.0), e, x, np.zeros(len(e), bool), [lppd], PP_BOX, ("stepTooSmall", "range")))
+    # F2 = ((a − 1)/a, 0) has the multiplier 2 − a, so it flips on the line a = 3 whatever ε is.
+    # The engine refuses that seed (ε doesn't move the flip), so the preview has no curve there.
     # F2's other multiplier, 3.5x/(1 + εx), is −1 where x = −1/(ε + 7/2), so a = (ε + 7/2)/(ε + 9/2).
-    # For ε > −7/2 that F2 has x < 0 and a → 0 as ε → −7/2, the corner of the box.
+    # For ε > −7/2 that F2 has x < 0 and a → 0 as ε → −7/2, the corner of the box, only as
+    # x → −∞: a follower runs out of points there before it reaches the box's edge.
     a_f2 = lambda e: (e + 3.5) / (e + 4.5)
-    for e_lo, e_hi in [(-3.5 + 1e-4, 3.05), (-6.05, -4.5 - 1e-6)]:
+    for e_lo, e_hi, stops in [(-3.5 + 1e-4, 3.05, ("maxPoints", "range")), (-6.05, -4.5 - 1e-6, ("range", "range"))]:
         a, e = piece(e_lo, e_hi, a_f2)
         x = np.column_stack([1 - 1 / a, np.zeros_like(a)])
-        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), [], PP_BOX))
+        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), [], PP_BOX, stops))
+    # F3 = F2 where F3's y is 0, at a = (2ε − 7)/(2ε − 5): a curve of branch points. It is never
+    # neutral, and past its pole at ε = 5/2 it has a < 0.
+    a, e = piece(-6.05, 2.5 - 1e-6, lambda e: (2 * e - 7) / (2 * e - 5))
+    x = np.column_stack([1 / (3.5 - e), np.zeros_like(e)])
+    out.append(curve_json("branchPoint", a, e, x, np.zeros(len(a), bool), [lppd], PP_BOX))
     for c in out:
         print(f"  {c['kind']}: {len(c['p1'])} points")
     return {"free": [0, 1], "curves": out}

@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   AxisRef,
-  BranchStop,
   ContinuationDirection,
   Direction,
   FixedPointOut,
@@ -12,6 +11,7 @@ import type {
   TrajectoryOut,
 } from "../api/types";
 import { MAX_SECTION_POINTS } from "../api/ipc.generated";
+import { isTauri } from "../api/client";
 import { Tex } from "../math/Tex";
 import { MathProse } from "../math/MathProse";
 import {
@@ -53,6 +53,7 @@ import {
   VIEW_CHOICE_SHORT,
   countText,
   doublingRows,
+  endText,
   findsDoublings,
   isCobweb,
   isLyapunov,
@@ -952,12 +953,6 @@ const DIRECTIONS: SegmentOption<ContinuationDirection>[] = [
   { value: "both", label: "Both", title: "Both ways from the start, joined into one branch" },
 ];
 
-const BRANCH_STOPS: Record<BranchStop, string> = {
-  range: "the range's end",
-  maxPoints: "Max points",
-  stepTooSmall: "a step too small to go on",
-};
-
 function stateText(names: readonly string[], x: readonly number[]): string {
   return names.length === 1 ? `${names[0]} = ${dec(x[0], 4)}` : `(${names.join(", ")}) = (${x.map((v) => dec(v, 4)).join(", ")})`;
 }
@@ -1129,12 +1124,11 @@ function ContinuationSection({
           {shown.map(({ job, run }, k) => {
             const seed = c.seeds[job.meta.seed];
             const b = run?.ok ? run.res.branch : null;
-            const ends = b ? [b.end.first, b.end.last].filter((e): e is BranchStop => e !== null) : [];
             const status = !run
               ? "Computing…"
               : !run.ok
                 ? run.error
-                : `Period ${b!.period} · ${whole(b!.p.length)} points · stopped at ${[...new Set(ends.map((e) => BRANCH_STOPS[e]))].join(" and ")}`;
+                : `Period ${b!.period} · ${whole(b!.p.length)} points · ${endText(b!.end)}`;
             return (
               <li
                 key={job.meta.key}
@@ -1170,7 +1164,7 @@ function ContinuationSection({
             variant="ghost"
             icon={<IconSearch />}
             disabled={!followable}
-            data-tooltip="Follow every fold, Hopf, flip and Neimark–Sacker point here in two parameters"
+            data-tooltip="Follow every fold, Hopf, branch point, flip and Neimark–Sacker point here in two parameters"
             onClick={actions.searchInPlane}
           >
             Search in two parameters
@@ -1449,7 +1443,6 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
             const [pa, pu] = [seed.params[view.across], seed.params[view.up]];
             const from = `From ${info.label} at ${names[view.across]} = ${dec(pa, 4)}, ${names[view.up]} = ${short(pu)}`;
             const curve = row.status === "done" || row.status === "merged" ? row.res.curve : null;
-            const ends = curve ? [curve.end.first, curve.end.last].filter((e): e is BranchStop => e !== null) : [];
             const neutral = curve ? neutralText(curve) : "";
             const status =
               row.status === "computing"
@@ -1458,7 +1451,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
                   ? row.error
                   : row.status === "merged"
                     ? mergedText(row.into)
-                    : `${whole(curve!.p1.length)} points · stopped at ${[...new Set(ends.map((e) => BRANCH_STOPS[e]))].join(" and ")}${neutral ? ` · ${neutral}` : ""}`;
+                    : `${whole(curve!.p1.length)} points · ${endText(curve!.end)}${neutral ? ` · ${neutral}` : ""}`;
             const stall = row.status === "done" ? stallText(row.res.curve, [names[view.across], names[view.up]], sys.kind) : null;
             const retry = retryStep(c.ds);
             return (
@@ -1534,7 +1527,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
     <PanelSection title="Special points" count={rows.length} open={open} onToggle={onToggle}>
       {rows.length === 0 ? (
         <p className="ds-panel-section-hint caption" data-plane-points="">
-          None on these curves.
+          {isTauri() ? "The desktop app does not mark the points where curves meet yet." : "None on these curves."}
         </p>
       ) : (
         <ul className="ds-fp-list" aria-label="Special points" data-plane-points="">
