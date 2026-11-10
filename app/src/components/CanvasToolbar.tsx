@@ -11,7 +11,9 @@ import {
   fitBranchRanges,
   fitOrbitRange,
   hasNullclineLayer,
+  isAnalysis,
   isContinuation,
+  isCurves,
   isParameterView,
   shownBranches,
   isCobweb,
@@ -32,7 +34,7 @@ import {
   type ViewChoice,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
-import { buildCurveJobs, curveRows, drawnCurves, fitCurveRanges, isCurves } from "../state/curves";
+import { drawnCurves, fitCurveRanges } from "../state/curves";
 import { Select } from "./controls";
 import { systemNameOf } from "./systemName";
 import {
@@ -124,7 +126,7 @@ export function CanvasToolbar({ state, actions }: Props) {
   const orbit = isOrbit(state.view);
   const branch = isContinuation(state.view);
   const plane = isCurves(state.view);
-  const analysis = lyapunov || orbit || branch || plane;
+  const analysis = isAnalysis(state.view);
 
   const zoomToFit = () => {
     const v = state.view;
@@ -141,14 +143,7 @@ export function CanvasToolbar({ state, actions }: Props) {
                 v.yAxis,
               )
             : isCurves(v)
-              ? fitCurveRanges(
-                  drawnCurves(
-                    curveRows(
-                      buildCurveJobs(state).map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
-                      v.curves.ranges,
-                    ),
-                  ),
-                )
+              ? fitCurveRanges(drawnCurves(state.planeRows))
               : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();

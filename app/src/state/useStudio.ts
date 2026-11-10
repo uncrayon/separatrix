@@ -24,16 +24,18 @@ import { BLANK_TEMPLATE, templateById, type Template } from "../templates";
 import type { ProjectLoad } from "../project/serialize";
 import {
   buildCurveJobs,
-  curveRows,
   curvesAvailability,
   drawnCurves,
   fitCurveRanges,
   followPlaneParams,
-  isCurves,
   openPlane,
   planeSeed,
+  shownCurves,
+  sliderRange,
+  type CurveRow,
   type CurveRun,
   type CurvesSettings,
+  type PlaneSeed,
   type CurvesView,
 } from "./curves";
 import {
@@ -60,6 +62,7 @@ import {
   followOrbitParam,
   isCobweb,
   isContinuation,
+  isCurves,
   isLyapunov,
   isParameterView,
   isOrbit,
@@ -152,6 +155,8 @@ export interface StudioState extends StudioSnapshot {
   branches: Record<string, BranchRun>;
   /** The Parameter plane's curves, by request key (see `buildCurveJobs`). */
   curveRuns: Record<string, CurveRun>;
+  /** The rows of the plane's Curves list; none in another view. */
+  planeRows: CurveRow[];
   sourceTemplateId: string | null;
   computeError: string | null;
   /**
@@ -227,6 +232,11 @@ export function useStudio() {
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [methodNote, setMethodNote] = useState<string | null>(null);
 
+  const planeRows = useMemo(
+    () => (isCurves(view) ? shownCurves({ compiled, params, view, curveRuns }) : []),
+    [compiled, view, params, curveRuns],
+  );
+
   const state: StudioState = {
     format,
     equations,
@@ -250,6 +260,7 @@ export function useStudio() {
     orbitColumns,
     branches,
     curveRuns,
+    planeRows,
     sourceTemplateId,
     computeError,
     plotAspect,
@@ -402,10 +413,8 @@ export function useStudio() {
         const cache = latest.current.curveRuns;
         const job = buildCurveJobs(latest.current).find((j) => !(j.meta.key in cache));
         if (!job) {
-          const v = latest.current.view;
-          if (refitCurves.current && isCurves(v)) {
-            const shown = buildCurveJobs(latest.current).map((j) => ({ job: j, run: latest.current.curveRuns[j.meta.key] }));
-            const fit = fitCurveRanges(drawnCurves(curveRows(shown, v.curves.ranges)));
+          if (refitCurves.current && isCurves(latest.current.view)) {
+            const fit = fitCurveRanges(drawnCurves(shownCurves(latest.current)));
             if (fit) updateCurves((w) => ({ ...w, ...fit }));
           }
           refitCurves.current = false;
@@ -1016,20 +1025,18 @@ export function useStudio() {
   const setCurvesParam = useCallback(
     (which: "across" | "up", index: number) => {
       const params = latest.current.params;
-      const range = (i: number): [number, number] => {
-        const p = params[i];
-        return p && p.min < p.max ? [p.min, p.max] : [0, 1];
-      };
       refitCurves.current = true;
       updateCurves((v) => {
         if (v[which] === index || !params[index]) return v;
-        const other = which === "across" ? "up" : "across";
-        const across = which === "across" ? index : v.across === index ? v.up : v.across;
-        const up = which === "up" ? index : v.up === index ? v.across : v.up;
-        const swapped = v[other] === index;
-        const ranges: CurvesSettings["ranges"] = swapped
-          ? [v.curves.ranges[1], v.curves.ranges[0]]
-          : [across === v.across ? v.curves.ranges[0] : range(across), up === v.up ? v.curves.ranges[1] : range(up)];
+        const swap = v[which === "across" ? "up" : "across"] === index;
+        const across = swap ? v.up : which === "across" ? index : v.across;
+        const up = swap ? v.across : which === "up" ? index : v.up;
+        const [r0, r1] = v.curves.ranges;
+        const ranges: CurvesSettings["ranges"] = swap
+          ? [r1, r0]
+          : which === "across"
+            ? [sliderRange(params[index]), r1]
+            : [r0, sliderRange(params[index])];
         return { ...v, across, up, curves: { ...v.curves, ranges } };
       });
     },
@@ -1056,7 +1063,7 @@ export function useStudio() {
    * Opens the Parameter plane from the Branch view with `seeds` added, up
    * being `up` (else the remembered plane's, else the next parameter).
    */
-  const openPlaneFromBranch = useCallback((seeds: ReturnType<typeof planeSeed>[], up?: number) => {
+  const openPlaneFromBranch = useCallback((seeds: PlaneSeed[], up?: number) => {
     const cur = latest.current;
     const sys = cur.compiled;
     if (!sys || !isContinuation(cur.view) || !curvesAvailability(sys).ok) return;
@@ -1070,7 +1077,7 @@ export function useStudio() {
       cur.view,
       cur.view,
       cur.params,
-      seeds.flatMap((s) => (s ? [s] : [])),
+      seeds,
       up,
     );
     refitCurves.current = true;
@@ -1082,7 +1089,8 @@ export function useStudio() {
     (at: SpecialPointOut, up: number) => {
       const cur = latest.current;
       if (!isContinuation(cur.view)) return;
-      openPlaneFromBranch([planeSeed(at, cur.params.map((p) => p.value), cur.view.param)], up);
+      const seed = planeSeed(at, cur.params.map((p) => p.value), cur.view.param);
+      openPlaneFromBranch(seed ? [seed] : [], up);
     },
     [openPlaneFromBranch],
   );

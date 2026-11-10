@@ -1,6 +1,6 @@
 // The Parameter plane: bifurcation curves followed in two parameters. The
 // types and pure functions here sit beside the Branch view's in model.ts,
-// which imports them; this module imports only types from it.
+// which imports them.
 
 import type {
   CompileResponse,
@@ -16,9 +16,9 @@ import type {
 } from "../api/types";
 import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
 import type { Job } from "../api/client";
-import type { Availability, ContinuationView, ParamState, TimeAxis, View } from "./model";
+import { followParamIndex, isCurves, type Availability, type ContinuationView, type ParamState, type TimeAxis, type View } from "./model.ts";
 
-export interface CurveKindInfo {
+interface CurveKindInfo {
   /** The one-parameter bifurcation's label, as in the Branch view. */
   label: string;
   /** The row title. */
@@ -113,10 +113,8 @@ export type CurvesView = {
   home: Exclude<View, CurvesView>;
 };
 
-export const isCurves = (v: Pick<View, "kind">): v is CurvesView => v.kind === "curves";
-
-export const CURVES_DS = 0.01;
-export const CURVES_MAX_POINTS = 2000;
+const CURVES_DS = 0.01;
+const CURVES_MAX_POINTS = 2000;
 
 export function curvesAvailability(
   sys: Pick<CompileResponse, "autonomous" | "kind"> & Partial<Pick<CompileResponse, "params">> | null | undefined,
@@ -132,10 +130,10 @@ export function curvesAvailability(
   return { ok: true };
 }
 
-const sliderRange = (p: Pick<ParamState, "min" | "max"> | undefined): [number, number] =>
+export const sliderRange = (p: Pick<ParamState, "min" | "max"> | undefined): [number, number] =>
   p && p.min < p.max ? [p.min, p.max] : [0, 1];
 
-export function padRange([lo, hi]: readonly [number, number], f = 0.04): [number, number] {
+function padRange([lo, hi]: readonly [number, number], f = 0.04): [number, number] {
   const pad = f * (hi - lo || Math.max(1, Math.abs(lo)));
   return [lo - pad, hi + pad];
 }
@@ -174,11 +172,14 @@ export function planeSeed(at: SpecialPointOut, values: readonly number[], param:
   return { kind, x: at.x.slice(), period: at.period, omega: at.omega, params };
 }
 
-export function withPlaneSeeds(seeds: readonly PlaneSeed[], add: readonly PlaneSeed[]): PlaneSeed[] {
+function withPlaneSeeds(seeds: readonly PlaneSeed[], add: readonly PlaneSeed[]): PlaneSeed[] {
   const out = seeds.slice();
+  const keys = new Set(out.map((s) => JSON.stringify(s)));
   for (const seed of add) {
     const key = JSON.stringify(seed);
-    if (!out.some((s) => JSON.stringify(s) === key)) out.push(seed);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push(seed);
   }
   return out;
 }
@@ -215,12 +216,12 @@ export function curvesSettingsError(
   return null;
 }
 
-export interface CurveMeta {
+interface CurveMeta {
   key: string;
   seed: number;
 }
 
-export type CurveJob = Job<Omit<CurveRequest, "requestId">, CurveMeta>;
+type CurveJob = Job<Omit<CurveRequest, "requestId">, CurveMeta>;
 
 export type CurveRun = { ok: true; res: CurveResponse; roundTripMs: number } | { ok: false; error: string };
 
@@ -258,9 +259,9 @@ export function buildCurveJobs(s: {
 }
 
 /** A seed whose curve repeats one already drawn lies on it within this fraction of the box. */
-export const SAME_CURVE_TOL = 1e-3;
+const SAME_CURVE_TOL = 1e-3;
 /** Two codimension-2 points within this fraction of the box are one. */
-export const SAME_POINT_TOL = 1e-6;
+const SAME_POINT_TOL = 1e-6;
 
 /** Distance from (a, b) to the polyline of `c`, each parameter scaled by its range. */
 function distanceToCurve(c: Pick<CurveOut, "p1" | "p2">, a: number, b: number, w1: number, w2: number): number {
@@ -325,6 +326,20 @@ export function curveRows(
   return rows;
 }
 
+/** The rows of the plane's Curves list, or none when the view is not the plane. */
+export function shownCurves(s: {
+  compiled: CompileResponse | null;
+  params: readonly Pick<ParamState, "value">[];
+  view: View;
+  curveRuns: Readonly<Record<string, CurveRun>>;
+}): CurveRow[] {
+  if (!isCurves(s.view)) return [];
+  return curveRows(
+    buildCurveJobs(s).map((job) => ({ job, run: s.curveRuns[job.meta.key] })),
+    s.view.curves.ranges,
+  );
+}
+
 export const drawnCurves = (rows: readonly CurveRow[]) =>
   rows.flatMap((r) => (r.status === "done" ? [r.res.curve] : []));
 
@@ -368,7 +383,7 @@ export function onCurvesText(on: readonly CurveKindOut[]): string {
 }
 
 /** The runs of consecutive neutral points, as [first, last] indices. */
-export function neutralRuns(neutral: readonly boolean[]): [number, number][] {
+function neutralRuns(neutral: readonly boolean[]): [number, number][] {
   const runs: [number, number][] = [];
   neutral.forEach((n, i) => {
     if (!n) return;
@@ -459,12 +474,8 @@ export function followPlaneParams(
   oldParams: readonly { name: string }[],
   newParams: readonly { name: string }[],
 ): CurvesView | null {
-  const follow = (i: number) => {
-    const k = newParams.findIndex((p) => p.name === oldParams[i]?.name);
-    return k >= 0 ? k : oldParams.length === newParams.length && i < newParams.length ? i : -1;
-  };
-  const across = follow(view.across);
-  const up = follow(view.up);
+  const across = followParamIndex(oldParams, newParams, view.across);
+  const up = followParamIndex(oldParams, newParams, view.up);
   if (across < 0 || up < 0 || across === up) return null;
   return across === view.across && up === view.up ? view : { ...view, across, up };
 }

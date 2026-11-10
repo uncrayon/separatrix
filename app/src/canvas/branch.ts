@@ -58,12 +58,12 @@ export function nearestBranchVertex(
   return best;
 }
 
-function frameOnly(avoid: Box[]): Scene {
+export function frameOnly(avoid: Box[], yAxis: Scene["yAxis"] = { kind: "state", index: 0 }): Scene {
   return {
     kind: "ode",
     dim: 0,
     xAxis: { kind: "time" },
-    yAxis: { kind: "state", index: 0 },
+    yAxis,
     arrows: [],
     fieldGrid: 0,
     nullclines: [],

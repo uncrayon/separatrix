@@ -1,6 +1,7 @@
 import type { CurveKindOut, CurveOut } from "../api/types";
 import { CODIM2_KINDS, CURVE_KIND_ORDER, type PlanePointRow } from "../state/curves";
-import { FP_HALO_R, drawFixedPoint, drawScene, tickLabelBoxes, type Box, type DrawContext, type Scene } from "./draw";
+import { frameOnly } from "./branch";
+import { FP_HALO_R, clampPx, drawFixedPoint, drawScene, overlaps, tickLabelBoxes, type Box, type DrawContext } from "./draw";
 import type { PlotTheme } from "./theme";
 import { sx, sy, type Viewport } from "./viewport";
 
@@ -25,32 +26,6 @@ export function readCurveColors(): Record<CurveKindOut, string> {
   return Object.fromEntries(
     CURVE_KIND_ORDER.map((k) => [k, css.getPropertyValue(CURVE_STYLES[k].token).trim() || "#888"]),
   ) as Record<CurveKindOut, string>;
-}
-
-const CLAMP = 1e5;
-const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
-const overlaps = (a: Box, b: Box) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
-
-function frameOnly(avoid: Box[]): Scene {
-  return {
-    kind: "ode",
-    dim: 0,
-    xAxis: { kind: "time" },
-    yAxis: { kind: "time" },
-    arrows: [],
-    fieldGrid: 0,
-    nullclines: [],
-    fixedPoints: [],
-    trajectories: [],
-    ics: [],
-    selectedIc: null,
-    selectedFp: null,
-    hoverIc: null,
-    hoverFp: null,
-    eigenvectors: false,
-    stale: false,
-    avoid: { labels: avoid, field: [] },
-  };
 }
 
 /** The runs of segments `i → i+1` that are neutral (both ends neutral) or not, as [from, to, neutral]. */
@@ -82,7 +57,7 @@ export function drawCurves(
   th: PlotTheme,
   opts: CurvesDrawOptions,
 ): void {
-  const frame = frameOnly(opts.avoid ?? []);
+  const frame = frameOnly(opts.avoid ?? [], { kind: "time" });
   drawScene(ctx, vp.left + vp.width, vp.top + vp.height, vp, frame, th, { background: false });
   const s = th.lineScale;
   const g = th.glyphScale;

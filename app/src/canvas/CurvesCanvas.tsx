@@ -9,12 +9,10 @@ import {
   CURVE_KINDS,
   CURVE_KIND_ORDER,
   NEUTRAL_LEGEND,
-  buildCurveJobs,
-  curveRows,
   drawnCurves,
-  isCurves,
   planePointRows,
 } from "../state/curves";
+import { isCurves } from "../state/model";
 import { axisLines } from "./draw";
 import { CURVE_STYLES, CURVE_WIDTH, NEUTRAL_STYLE, drawCurves, readCurveColors, segmentRuns } from "./curves";
 import { usePanZoom, usePlotChrome } from "./usePlotChrome";
@@ -52,6 +50,11 @@ const SliceSample = () => (
   </svg>
 );
 
+const FALLBACK_RANGES: [[number, number], [number, number]] = [
+  [0, 1],
+  [0, 1],
+];
+
 export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const { wrapRef, canvasRef, probeRef, size, th, toolbarBox, nameBoxes } = usePlotChrome();
   const { compiled, view } = state;
@@ -64,16 +67,22 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const [colors, setColors] = useState<Record<CurveKindOut, string> | null>(null);
   useEffect(() => setColors(readCurveColors()), [th]);
 
-  const ranges = plane?.curves.ranges ?? [
-    [0, 1],
-    [0, 1],
-  ];
-  const curves = drawnCurves(curveRows(buildCurveJobs(state).map((job) => ({ job, run: state.curveRuns[job.meta.key] })), ranges));
-  const points = planePointRows(curves, ranges);
+  const ranges = plane?.curves.ranges ?? FALLBACK_RANGES;
+  const curves = useMemo(() => drawnCurves(state.planeRows), [state.planeRows]);
+  const points = useMemo(() => planePointRows(curves, ranges), [curves, ranges]);
   const branch = plane?.branch ?? null;
   const sliceOn = !!plane && !!branch && branch.param === plane.across;
-  const slice = sliceOn && up ? { range: branch!.continuation.range, at: up.value } : null;
-  const crosshair: [number, number] | null = across && up ? [across.value, up.value] : null;
+  const upValue = up?.value;
+  const slice = useMemo(
+    () => (sliceOn && upValue !== undefined ? { range: branch!.continuation.range, at: upValue } : null),
+    [sliceOn, branch, upValue],
+  );
+  const acrossValue = across?.value;
+  const crosshair = useMemo<[number, number] | null>(
+    () => (acrossValue !== undefined && upValue !== undefined ? [acrossValue, upValue] : null),
+    [acrossValue, upValue],
+  );
+  const avoid = useMemo(() => [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes], [toolbarBox, nameBoxes]);
   const empty = !!plane && plane.curves.seeds.length === 0;
 
   useEffect(() => {
@@ -97,9 +106,9 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
       points,
       crosshair,
       slice: slice && { range: [slice.range[0], slice.range[1]], at: slice.at },
-      avoid: [...(toolbarBox ? [toolbarBox] : []), ...nameBoxes],
+      avoid,
     });
-  });
+  }, [canvasRef, th, colors, size.w, size.h, plane, empty, vp, curves, points, crosshair, slice, avoid]);
 
   const upY = useRef(0);
   const setAt = (clientX: number) => {

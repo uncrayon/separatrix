@@ -11,6 +11,8 @@ import {
   countText,
   isContinuation,
   isParameterView,
+  isAnalysis,
+  isCurves,
   isLyapunov,
   isOrbit,
   isReturnMap,
@@ -26,7 +28,7 @@ import {
   type SolverSettings,
 } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { buildCurveJobs, curveRows, curvesSummary, isCurves } from "../state/curves";
+import { buildCurveJobs, curvesSummary } from "../state/curves";
 import { templateRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
 import {
@@ -388,12 +390,11 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
   const branch = isContinuation(state.view) ? state.view : null;
   const plane = isCurves(state.view) ? state.view : null;
   const plot = isParameterView(state.view) ? null : state.view;
-  const p = lyapunov || orbit || branch || plane ? null : state.portrait;
+  const p = isAnalysis(state.view) ? null : state.portrait;
   const branches = branch ? shownBranches(state) : [];
   const branchRuns = branches.map((b) => b.run);
   const curveJobs = plane ? buildCurveJobs(state) : [];
   const curvesDone = curveJobs.filter((j) => j.meta.key in state.curveRuns).length;
-  const planeRows = plane ? curveRows(curveJobs.map((job) => ({ job, run: state.curveRuns[job.meta.key] })), plane.curves.ranges) : [];
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
@@ -409,10 +410,10 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
   const run = lyapunov && current ? state.lyapunov : null;
   const diagram = orbit && current ? state.orbit : null;
   const followed = branch && current ? continuationSummary(branchRuns) : null;
-  const traced = plane && current ? curvesSummary(planeRows, plane.curves.ranges) : null;
+  const traced = plane && current ? curvesSummary(state.planeRows, plane.curves.ranges) : null;
   const drawMs = useOrbitDrawMs();
   const nFp =
-    state.layers.fixedPoints && !lyapunov && !orbit && !branch && !plane ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+    state.layers.fixedPoints && !isAnalysis(state.view) ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
   const crossings =
     p && current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
@@ -474,7 +475,7 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
       : branch
         ? branchSummary(continuationSummary(branchRuns), branches.length)
         : plane
-          ? curvesStatus(curvesSummary(planeRows, plane.curves.ranges))
+          ? curvesStatus(curvesSummary(state.planeRows, plane.curves.ranges))
           : solverSummary(state.solver, kind);
   const settingsId = orbit ? "orbit-settings" : branch ? "continuation-settings" : plane ? "curves-settings" : "solver-settings";
   const settingsTip = orbit

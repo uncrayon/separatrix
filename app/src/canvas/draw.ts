@@ -96,7 +96,7 @@ export function fixedPointGlyph(c: Classification, stable: boolean): FixedPointG
 }
 
 const CLAMP = 1e5;
-const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
+export const clampPx = (v: number) => (v > CLAMP ? CLAMP : v < -CLAMP ? -CLAMP : v);
 const TAU = Math.PI * 2;
 
 export function fixedPointPx(vp: Viewport, scene: SceneAxes, fp: FixedPointOut): [number, number] {
@@ -317,7 +317,7 @@ function drawAxes(
   ctx.stroke();
 }
 
-const overlaps = (a: Box, b: Box) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+export const overlaps = (a: Box, b: Box) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 
 function layoutLabels(
   ctx: DrawContext,

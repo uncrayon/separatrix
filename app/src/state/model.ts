@@ -44,7 +44,7 @@ import { DEFAULT_METHOD, METHODS } from "./methods.ts";
 import type { Job, PortraitJob } from "../api/client";
 import type { Template } from "../templates";
 import type { LoadedAxis, LoadedSeed, LoadedView, ProjectLoad } from "../project/serialize";
-import { curvesAvailability, isCurves, openPlane, planeSeed, type CurvesView, type PlaneSeed } from "./curves.ts";
+import { curvesAvailability, openPlane, planeSeed, type CurvesView, type PlaneSeed } from "./curves.ts";
 
 /** One equation line, exactly as the user typed it, in the system's input format. */
 export interface EquationLine {
@@ -191,11 +191,11 @@ export const isSpace = (v: View): v is SpaceView => v.kind === "space";
 export const isLyapunov = (v: View): v is LyapunovView => v.kind === "lyapunov";
 export const isOrbit = (v: View): v is OrbitView => v.kind === "orbit";
 export const isContinuation = (v: View): v is ContinuationView => v.kind === "continuation";
+export const isCurves = (v: Pick<View, "kind">): v is CurvesView => v.kind === "curves";
 export const isAnalysis = (v: View): v is LyapunovView | OrbitView | ContinuationView | CurvesView =>
   isLyapunov(v) || isOrbit(v) || isContinuation(v) || isCurves(v);
 /** The Branch view and the Parameter plane: parameters on the axes, no portrait and no start points. */
 export const isParameterView = (v: View): v is ContinuationView | CurvesView => isContinuation(v) || isCurves(v);
-export { isCurves };
 export const isReturnMap = (v: View): v is SectionView =>
   v.kind === "section" && v.xAxis.kind === "state" && v.yAxis.kind === "state" && v.xAxis.index === v.yAxis.index;
 
@@ -1614,13 +1614,22 @@ export function adaptView(
   return { ...view, xAxis, yAxis };
 }
 
+/** Where parameter `i` went after a recompile: by name, else by position when the count is unchanged; -1 when gone. */
+export function followParamIndex(
+  oldParams: readonly Pick<ParamInfo, "name">[],
+  newParams: readonly Pick<ParamInfo, "name">[],
+  i: number,
+): number {
+  const k = newParams.findIndex((p) => p.name === oldParams[i]?.name);
+  return k >= 0 ? k : oldParams.length === newParams.length && i < newParams.length ? i : -1;
+}
+
 export function followOrbitParam<V extends OrbitView | ContinuationView>(
   view: V,
   oldParams: readonly Pick<ParamInfo, "name">[],
   newParams: readonly Pick<ParamInfo, "name">[],
 ): V | null {
-  const k = newParams.findIndex((p) => p.name === oldParams[view.param]?.name);
-  const index = k >= 0 ? k : oldParams.length === newParams.length && view.param < newParams.length ? view.param : -1;
+  const index = followParamIndex(oldParams, newParams, view.param);
   if (index < 0) return null;
   return index === view.param ? view : { ...view, param: index };
 }

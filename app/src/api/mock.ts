@@ -66,7 +66,6 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
-import mockCurvesJson from "./mockCurves.generated.json";
 import { BLOW_UP_THRESHOLD, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
 import { METHODS } from "../state/methods";
 import { roundWithUncertainty } from "../state/model";
@@ -530,8 +529,9 @@ interface MockCurve {
   stops: [BranchStop, BranchStop];
 }
 
-/** By template id; written by `scripts/reference/codim2_reference.py --mock-curves`. */
-const MOCK_CURVES = mockCurvesJson as unknown as Record<string, { free: [number, number]; curves: MockCurve[] }>;
+/** By template id; written by `scripts/reference/codim2_reference.py --mock-curves`. Loaded on first use, so the desktop bundle doesn't carry it. */
+const loadMockCurves = async () =>
+  (await import("./mockCurves.generated.json")).default as unknown as Record<string, { free: [number, number]; curves: MockCurve[] }>;
 
 /** Seeds farther than this from every curve, in the request's box scale plus the state, have no curve. */
 const MOCK_CURVE_SEED_TOL = 0.03;
@@ -553,7 +553,7 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
   const started = performance.now();
   const sys = byId.get(req.systemId);
   if (!sys) throw new Error("Unknown system; compile it first.");
-  const data = MOCK_CURVES[MOCK_TEMPLATES[req.systemId - 1].id];
+  const data = (await loadMockCurves())[MOCK_TEMPLATES[req.systemId - 1].id];
   if (!data)
     throw new Error(
       "This browser preview has no curves in two parameters for this system. Open the desktop app to follow them.",
@@ -576,13 +576,15 @@ export async function mockCurve(req: CurveRequest): Promise<CurveResponse> {
   let best: { c: MockCurve; k: number; d: number } | null = null;
   for (const c of data.curves) {
     if (c.kind !== req.seed.kind || c.period !== req.seed.period) continue;
+    let a = scaled(c, 0);
     for (let i = 0; i + 1 < c.p1.length; i++) {
-      const a = scaled(c, i);
-      const ab = scaled(c, i + 1).map((v, j) => v - a[j]);
+      const b = scaled(c, i + 1);
+      const ab = b.map((v, j) => v - a[j]);
       const len2 = ab.reduce((acc, v) => acc + v * v, 0);
       const t = len2 > 0 ? Math.min(1, Math.max(0, ab.reduce((acc, v, j) => acc + v * (target[j] - a[j]), 0) / len2)) : 0;
       const d = Math.sqrt(a.reduce((acc, v, j) => acc + (v + t * ab[j] - target[j]) ** 2, 0));
       if (!best || d < best.d) best = { c, k: t < 0.5 ? i : i + 1, d };
+      a = b;
     }
   }
   if (!best || best.d > MOCK_CURVE_SEED_TOL) throw new Error("The preview has no curve through this point.");

@@ -110,7 +110,6 @@ import {
   CURVE_KINDS,
   buildCurveJobs,
   curveKindOf,
-  curveRows,
   curvesAvailability,
   curvesSettingsError,
   drawnCurves,
@@ -1328,10 +1327,7 @@ function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
   const names = sys.params.map((q) => plainSubscripted(q.latex));
   const latex = sys.params.map((q) => q.latex);
   const jobs = buildCurveJobs(state);
-  const rows = curveRows(
-    jobs.map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
-    c.ranges,
-  );
+  const rows = state.planeRows;
   const done = jobs.filter((j) => j.meta.key in state.curveRuns).length;
   const searching = done < jobs.length;
   const soFar = planePointRows(drawnCurves(rows), c.ranges).length;
@@ -1532,15 +1528,7 @@ function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
   if (!isCurves(view)) return null;
   const names = sys.params.map((q) => plainSubscripted(q.latex));
   const stateNames = sys.states.map((st) => plainSubscripted(st.latex));
-  const rows = planePointRows(
-    drawnCurves(
-      curveRows(
-        buildCurveJobs(state).map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
-        view.curves.ranges,
-      ),
-    ),
-    view.curves.ranges,
-  );
+  const rows = planePointRows(drawnCurves(state.planeRows), view.curves.ranges);
   const [a, u] = [names[view.across], names[view.up]];
   return (
     <PanelSection title="Special points" count={rows.length} open={open} onToggle={onToggle}>
