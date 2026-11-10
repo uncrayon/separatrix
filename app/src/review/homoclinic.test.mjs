@@ -57,7 +57,7 @@ const names = ["ν", "β"];
 const say = curves.SENTENCES.homoclinic;
 
 const planeWith = (homoclinic, patch = {}) => {
-  const base = curves.curvesView(sliders, 0, 1, null, model.defaultView(freire));
+  const base = curves.curvesView(sliders, 0, 1, null);
   return { ...base, curves: { ...base.curves, homoclinic, ...patch } };
 };
 const BT = hom.homoclinicSeed([0, 0, 0], [-0.7745967, 0.7745967], [0, 1], [-0.7745967, 0.7745967]);
@@ -105,7 +105,7 @@ test("the request changes, and so does the key, with the box and the step", () =
 
 test("a third slider does not move the seed: every parameter is the seed's own", () => {
   const three = system("ode", ["x"], ["a", "b", "c"]);
-  const v3 = curves.curvesView([{ min: 0, max: 1 }, { min: 0, max: 1 }, { min: 0, max: 1 }], 0, 1, null, model.defaultView(three));
+  const v3 = curves.curvesView([{ min: 0, max: 1 }, { min: 0, max: 1 }, { min: 0, max: 1 }], 0, 1, null);
   const view3 = { ...v3, curves: { ...v3.curves, homoclinic: [{ x: [0], params: [0.1, 0.2, 0.3] }] } };
   const [job] = hom.buildHomoclinicJobs({ compiled: three, view: view3 });
   assert.deepEqual(job.body.params, [0.1, 0.2, 0.3]);

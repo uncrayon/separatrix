@@ -16,13 +16,15 @@ import type {
   SpecialPointOut,
   SystemKind,
 } from "../api/types";
-import { MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
+import { CURVES_MISFIT, CURVES_MISFIT_BRANCH, MAX_CONTINUATION_POINTS } from "../api/ipc.generated.ts";
 import { dec, plural } from "../math/format.ts";
 import type { Job } from "../api/client";
 import type { HomoclinicSeed } from "./homoclinic.ts";
+import type { LoadedParam, LoadedView } from "../project/serialize";
 import {
   followParamIndex,
   isCurves,
+  loadContinuationView,
   scientificText,
   type Availability,
   type ContinuationView,
@@ -136,11 +138,6 @@ export type CurvesView = {
    * its branches were computed at: the slice is drawn at the up parameter's.
    */
   branchParams: number[] | null;
-  /**
-   * What a project file saves while the plane is shown, as the file format
-   * has no plane yet: the Branch view, else the default view.
-   */
-  home: Exclude<View, CurvesView>;
 };
 
 const CURVES_DS = 0.01;
@@ -174,7 +171,6 @@ export function curvesView(
   across: number,
   up: number,
   branch: ContinuationView | null,
-  home: CurvesView["home"],
 ): CurvesView {
   const ranges: CurvesSettings["ranges"] = [sliderRange(params[across]), sliderRange(params[up])];
   return {
@@ -188,7 +184,6 @@ export function curvesView(
     curves: { ranges, ds: CURVES_DS, maxPoints: CURVES_MAX_POINTS, direction: "both", seeds: [], homoclinic: [] },
     branch,
     branchParams: null,
-    home,
   };
 }
 
@@ -224,15 +219,14 @@ function withPlaneSeeds(seeds: readonly PlaneSeed[], add: readonly PlaneSeed[]):
 export function openPlane(
   kept: CurvesView | null,
   branch: ContinuationView | null,
-  home: CurvesView["home"],
   params: readonly PlaneParam[],
   seeds: readonly PlaneSeed[],
   up?: number,
 ): CurvesView {
   const across = branch?.param ?? kept?.across ?? 0;
   const u = up ?? (kept && kept.across === across ? kept.up : nextParam(across, params.length));
-  const base = kept && kept.across === across && kept.up === u ? kept : curvesView(params, across, u, branch, home);
-  return { ...withBranch(base, branch, params), home, curves: { ...base.curves, seeds: withPlaneSeeds(base.curves.seeds, seeds) } };
+  const base = kept && kept.across === across && kept.up === u ? kept : curvesView(params, across, u, branch);
+  return { ...withBranch(base, branch, params), curves: { ...base.curves, seeds: withPlaneSeeds(base.curves.seeds, seeds) } };
 }
 
 type PlaneParam = Pick<ParamState, "min" | "max"> & Partial<Pick<ParamState, "value">>;
@@ -254,6 +248,107 @@ export function planeSlice(view: CurvesView): { range: [number, number]; at: num
   const at = view.branchParams?.[view.up];
   if (!branch || branch.param !== view.across || at === undefined) return null;
   return { range: [branch.continuation.range[0], branch.continuation.range[1]], at };
+}
+
+/** The sentence for a saved plane that can't be shown, naming a parameter the system lacks if that is why. */
+export function curvesMisfit(missing: string | undefined, toBranch: boolean): string {
+  if (missing === undefined) return toBranch ? CURVES_MISFIT_BRANCH : CURVES_MISFIT;
+  const shown = toBranch ? "the Branch view it came from is shown" : "the default view is shown";
+  return `The saved Parameter plane uses the parameter ${missing}, which the system doesn't have, so ${shown}.`;
+}
+
+export const curveSeedMisfit = (n: number) => `The saved Parameter plane's curve ${n} doesn't fit this system, so it was left out.`;
+export const homoclinicSeedMisfit = (n: number) =>
+  `The saved Parameter plane's homoclinic curve ${n} doesn't fit this system, so it was left out.`;
+
+const DIRECTIONS: readonly string[] = ["forward", "backward", "both"] satisfies ContinuationDirection[];
+
+/** Whether `sys` has curves of `kind`: no Hopf curve of a map, no flip or Neimark–Sacker curve of a flow, neither in one dimension. */
+function hasCurveKind(kind: CurveKindOut, sys: CompileResponse): boolean {
+  const map = sys.kind === "map";
+  const dim = sys.states.length;
+  if (kind === "hopf") return !map && dim >= 2;
+  if (kind === "flip") return map;
+  if (kind === "neimarkSacker") return map && dim >= 2;
+  return true;
+}
+
+/**
+ * The Parameter plane a project saved for `sys`, its parameters by name:
+ * the seeds that don't fit are left out, each with a sentence. When the
+ * plane can't be shown, the Branch view it came from if that fits (with the
+ * sentence), else the sentence alone. `saved` gives a seed's value of a
+ * parameter it lacks that is not free; the request takes the slider's.
+ */
+export function loadCurvesView(
+  v: LoadedView,
+  sys: CompileResponse,
+  saved: readonly LoadedParam[],
+): { view: View; warnings: string[] } | string {
+  const c = v.curves;
+  const names = sys.params.map((p) => p.name);
+  const fit = c?.branch ? loadContinuationView(c.branch, sys) : null;
+  const branch = fit && typeof fit !== "string" ? fit : null;
+  const index = (a: LoadedView["xAxis"]) => (a.kind === "param" ? names.indexOf(a.name) : -1);
+  const across = index(v.xAxis);
+  const up = index(v.yAxis);
+  const missing = [v.xAxis, v.yAxis].flatMap((a) => (a.kind === "param" && !names.includes(a.name) ? [a.name] : []))[0];
+  const ranges: CurvesSettings["ranges"] | null = c?.acrossRange && c.upRange ? [[...c.acrossRange], [...c.upRange]] : null;
+  const settings = ranges && c?.ds !== undefined && c.maxPoints !== undefined ? { ranges, ds: c.ds, maxPoints: c.maxPoints } : null;
+  if (
+    !c ||
+    !settings ||
+    !v.xRange ||
+    !v.yRange ||
+    missing !== undefined ||
+    across < 0 ||
+    up < 0 ||
+    across === up ||
+    !curvesAvailability(sys).ok ||
+    curvesSettingsError(settings) ||
+    !DIRECTIONS.includes(c.direction ?? "")
+  ) {
+    const sentence = curvesMisfit(missing, !!branch);
+    return branch ? { view: branch.view, warnings: [sentence, ...branch.warnings] } : sentence;
+  }
+  const warnings = branch ? [...branch.warnings] : [];
+  const has = (params: Record<string, number>, name: string) => Object.hasOwn(params, name);
+  const value = (params: Record<string, number>, j: number) =>
+    has(params, names[j]) ? params[names[j]] : (saved.find((q) => q.name === names[j])?.value ?? sys.params[j].default);
+  const dim = sys.states.length;
+  const seeds = c.seeds.flatMap((raw, i): PlaneSeed[] => {
+    const kind = CURVE_KIND_ORDER.find((k) => k === raw.kind);
+    const period = raw.period ?? 1;
+    const fits =
+      !!kind &&
+      hasCurveKind(kind, sys) &&
+      raw.x?.length === dim &&
+      Number.isInteger(period) &&
+      period >= 1 &&
+      has(raw.params, names[across]) &&
+      has(raw.params, names[up]);
+    if (!fits) warnings.push(curveSeedMisfit(i + 1));
+    return fits ? [{ kind, x: raw.x!, period, params: names.map((_, j) => value(raw.params, j)) }] : [];
+  });
+  const homoclinic = c.homoclinic.flatMap((raw, i): HomoclinicSeed[] => {
+    const fits = sys.kind !== "map" && raw.x?.length === dim && names.every((n) => has(raw.params, n));
+    if (!fits) warnings.push(homoclinicSeedMisfit(i + 1));
+    return fits ? [{ x: raw.x!, params: names.map((n) => raw.params[n]) }] : [];
+  });
+  const at = c.branch?.params ?? {};
+  const view: CurvesView = {
+    kind: "curves",
+    xAxis: { kind: "time" },
+    yAxis: { kind: "time" },
+    xRange: [v.xRange[0], v.xRange[1]],
+    yRange: [v.yRange[0], v.yRange[1]],
+    across,
+    up,
+    curves: { ...settings, direction: c.direction as ContinuationDirection, seeds, homoclinic },
+    branch: branch?.view ?? null,
+    branchParams: branch && names.every((n) => has(at, n)) ? names.map((n) => at[n]) : null,
+  };
+  return { view, warnings };
 }
 
 export function curvesSettingsError(

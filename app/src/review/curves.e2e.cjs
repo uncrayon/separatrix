@@ -2,6 +2,8 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { chromium } = require("playwright");
 
 const BASE = process.env.UI_URL || "http://localhost:5613/";
@@ -426,3 +428,97 @@ for (const [title, template, param, upName, key] of [
     }
   });
 }
+
+test("CO oxidation: the plane saved after Search and Follow homoclinic opens again as the same plane, and its Branch view comes back", async () => {
+  const { browser, page } = await open();
+  try {
+    await searchPlane(page, "CO oxidation");
+    await rowOf(page, "bogdanovTakens").first().getByRole("button", { name: "Follow homoclinic" }).click();
+    await page.waitForSelector("[data-homoclinic-status=done]", { timeout: 30000 });
+    const shown = () =>
+      page.evaluate(() => {
+        const texts = (sel) => [...document.querySelectorAll(sel)].map((el) => el.innerText);
+        return {
+          curves: texts(".panel-right [data-curves] > li"),
+          points: texts(".panel-right [data-plane-points] [data-plane-point]"),
+          homoclinic: texts(".panel-right [data-homoclinic-status]"),
+          legend: document.querySelector(".legend-bar")?.innerText,
+        };
+      });
+    const before = await shown();
+    assert.equal(before.curves.length, 5, "four curves, two merged, and the homoclinic curve");
+    assert.equal(before.points.length, 5);
+    assert.equal(before.homoclinic.length, 1);
+    assert.match(before.legend, /Homoclinic \(Hom\)[\s\S]*Branch view’s range, K = 0\.4/);
+    const params = async () => [await paramValue(page, "k_2"), await paramValue(page, "K")];
+    const values = await params();
+
+    await page.locator("canvas.plot-canvas").focus();
+    await page.keyboard.press("ControlOrMeta+s");
+    await page.waitForFunction(() => window.__sepxMock.files.has("/mock/co-oxidation.sepx"));
+    const saved = JSON.parse(await page.evaluate(() => window.__sepxMock.files.get("/mock/co-oxidation.sepx")));
+    assert.equal(saved.views[0].kind, "curves");
+    assert.deepEqual([saved.views[0].x_axis.name, saved.views[0].y_axis.name], ["k_2", "K"]);
+    assert.deepEqual(saved.views[0].curves.seeds.map((s) => s.kind), ["hopf", "fold", "hopf", "fold"]);
+    assert.equal(saved.views[0].curves.homoclinic.length, 1);
+
+    await page.locator(".topbar").getByRole("button", { name: "Templates…", exact: true }).click();
+    await page.waitForSelector(".gallery");
+    await pick(page, "Lorenz");
+    await page.locator(".topbar").getByRole("button", { name: "Open…", exact: true }).click();
+    await page.waitForFunction(() => document.title === "co-oxidation — Separatrix");
+    assert.equal(await viewRadio(page, "Parameter plane").getAttribute("aria-checked"), "true");
+    await curvesSettled(page);
+    await page.waitForSelector("[data-homoclinic-status=done]", { timeout: 30000 });
+    assert.deepEqual(await shown(), before, "the same curves, special points, homoclinic curve and slice");
+    assert.deepEqual(await params(), values);
+    assert.equal(await page.locator(".project-banner").count(), 0, "nothing to report");
+    assert.equal(await page.locator(".topbar .doc-dirty").count(), 0, "clean after opening");
+
+    await viewRadio(page, "Continuation").click();
+    await branchSettled(page);
+    const kinds = await inspector(page)
+      .locator("[data-special-points] [data-special-kind]")
+      .evaluateAll((rows) => rows.map((r) => r.dataset.specialKind));
+    assert.deepEqual(kinds, ["hopf", "fold", "hopf", "fold"], "the Branch view the plane came from");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the guide's example project opens CO oxidation in the Parameter plane after Search in two parameters, with K up", async () => {
+  const text = fs.readFileSync(path.join(__dirname, "../../../docs/guide/examples/parameter-plane.sepx"), "utf8");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.addInitScript((text) => {
+      window.__sepxMock = { files: new Map([["/mock/parameter-plane.sepx", text]]), launchFiles: [], saved: [] };
+    }, text);
+    await page.goto(BASE);
+    await page.waitForSelector(".gallery");
+    await page.evaluate(() =>
+      window.dispatchEvent(new CustomEvent("sepx:project-open-requested", { detail: { path: "/mock/parameter-plane.sepx" } })),
+    );
+    await page.waitForFunction(() => document.title === "parameter-plane — Separatrix");
+    assert.equal(await viewRadio(page, "Parameter plane").getAttribute("aria-checked"), "true");
+    await curvesSettled(page);
+    const rows = await inspector(page)
+      .locator("[data-curves] > li")
+      .evaluateAll((els) => els.map((el) => [el.dataset.curveKind, el.dataset.curveStatus]));
+    assert.deepEqual(rows, [
+      ["hopf", "done"],
+      ["fold", "done"],
+      ["hopf", "merged"],
+      ["fold", "merged"],
+    ]);
+    assert.deepEqual(
+      await inspector(page).locator("[data-plane-points] [data-plane-point]").evaluateAll((els) => els.map((el) => el.dataset.planePoint)),
+      ["bogdanovTakens", "bogdanovTakens", "cusp", "bautin", "bautin"],
+    );
+    assert.match(await page.locator(".legend-bar").innerText(), /Branch view’s range, K = 0\.4/);
+    assert.deepEqual([await paramValue(page, "k_2"), await paramValue(page, "K")], ["1.05", "0.4"]);
+    assert.equal(await page.locator(".project-banner").count(), 0);
+  } finally {
+    await browser.close();
+  }
+});

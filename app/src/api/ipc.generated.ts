@@ -1231,8 +1231,10 @@ id: string,
  * (see `lyapunov`); `"orbit"` for the orbit diagram of a map (`x_axis`
  * is `{ "kind": "param", "name": p }`, `y_axis` a state; see `orbit`);
  * `"continuation"` for a branch plot of fixed points against a
- * parameter (see `continuation`); absent for the phase plane and the
- * time series, which the axes tell apart.
+ * parameter (see `continuation`); `"curves"` for the Parameter plane,
+ * bifurcation curves in two parameters (`x_axis` and `y_axis` are
+ * `{ "kind": "param", "name": p }`; see `curves`); absent for the phase
+ * plane and the time series, which the axes tell apart.
  */
 kind?: string, 
 /**
@@ -1274,7 +1276,12 @@ orbit?: ProjectOrbit,
  * `{ "kind": "param", "name": p }`, `y_axis` a state or
  * `{ "kind": "norm" }`).
  */
-continuation?: ProjectContinuation, slice: ProjectSlice, layers: ProjectLayers, };
+continuation?: ProjectContinuation, 
+/**
+ * The requests of a `"curves"` view (the Parameter plane: `x_axis` is
+ * the parameter across, `y_axis` the one up).
+ */
+curves?: ProjectCurves, slice: ProjectSlice, layers: ProjectLayers, };
 
 export type ProjectSection = { kind: string, 
 /**
@@ -1303,6 +1310,31 @@ x: Array<number>,
  * The value of the view's parameter.
  */
 param: number, period: number, direction: string, kind?: string, tangent?: Array<number>, };
+
+export type ProjectCurves = { across_range?: [number, number], up_range?: [number, number], ds?: number, max_points?: number, 
+/**
+ * `"forward"`, `"backward"` or `"both"`.
+ */
+direction?: string, seeds: Array<ProjectCurveSeed>, homoclinic: Array<ProjectHomoclinicSeed>, 
+/**
+ * The Branch view the plane came from: its range is the slice drawn
+ * across the plane, and the Branch view shows it again.
+ */
+branch?: ProjectBranch, };
+
+export type ProjectCurveSeed = { kind: string, 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, period: number, params: { [key in string]: number }, };
+
+export type ProjectHomoclinicSeed = { 
+/**
+ * One value per entry of `system.states`, in that order.
+ */
+x: Array<number>, params: { [key in string]: number }, };
+
+export type ProjectBranch = { x_axis: ProjectAxis, y_axis: ProjectAxis, x_range: [number, number], y_range: [number, number], continuation?: ProjectContinuation, params: { [key in string]: number }, };
 
 export type ProjectAxis = { kind: string, name?: string, };
 
@@ -2066,6 +2098,10 @@ export const SPACE_MISFIT = "The saved 3D view doesn't fit this system, so the d
 export const LYAPUNOV_MISFIT = "The saved Lyapunov view can't be run as saved, so the default view is shown.";
 
 export const ORBIT_MISFIT = "The saved orbit diagram doesn't fit this system, so the default view is shown.";
+
+export const CURVES_MISFIT = "The saved Parameter plane doesn't fit this system, so the default view is shown.";
+
+export const CURVES_MISFIT_BRANCH = "The saved Parameter plane doesn't fit this system, so the Branch view it came from is shown.";
 
 export const ORBIT_MAX_TRANSIENT = 100000;
 

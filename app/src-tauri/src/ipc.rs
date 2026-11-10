@@ -1117,9 +1117,10 @@ pub enum HomoclinicStop {
 // ---------------------------------------------------------------------
 
 pub use separatrix_project::{
-    ProjectAxis, ProjectCamera, ProjectContinuation, ProjectFile, ProjectInitialCondition,
-    ProjectLayers, ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed,
-    ProjectSlice, ProjectSolver, ProjectSystem, ProjectView,
+    ProjectAxis, ProjectBranch, ProjectCamera, ProjectContinuation, ProjectCurveSeed,
+    ProjectCurves, ProjectFile, ProjectHomoclinicSeed, ProjectInitialCondition, ProjectLayers,
+    ProjectLyapunov, ProjectOrbit, ProjectParam, ProjectSection, ProjectSeed, ProjectSlice,
+    ProjectSolver, ProjectSystem, ProjectView,
 };
 
 /// Request of `project_read`.
@@ -1933,6 +1934,10 @@ mod bindings {
             ProjectOrbit::decl(&cfg),
             ProjectContinuation::decl(&cfg),
             ProjectSeed::decl(&cfg),
+            ProjectCurves::decl(&cfg),
+            ProjectCurveSeed::decl(&cfg),
+            ProjectHomoclinicSeed::decl(&cfg),
+            ProjectBranch::decl(&cfg),
             ProjectAxis::decl(&cfg),
             ProjectSlice::decl(&cfg),
             ProjectLayers::decl(&cfg),
@@ -2027,6 +2032,11 @@ mod bindings {
             ("SPACE_MISFIT", text(separatrix_project::SPACE_MISFIT)),
             ("LYAPUNOV_MISFIT", text(separatrix_project::LYAPUNOV_MISFIT)),
             ("ORBIT_MISFIT", text(separatrix_project::ORBIT_MISFIT)),
+            ("CURVES_MISFIT", text(separatrix_project::CURVES_MISFIT)),
+            (
+                "CURVES_MISFIT_BRANCH",
+                text(separatrix_project::CURVES_MISFIT_BRANCH),
+            ),
             (
                 "ORBIT_MAX_TRANSIENT",
                 separatrix_project::ORBIT_TRANSIENT_MAX.to_string(),

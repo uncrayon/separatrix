@@ -1,0 +1,228 @@
+{
+  "format": "separatrix",
+  "format_version": 1,
+  "min_reader_version": 1,
+  "app_version": "0.2.0",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=5\\left(1-x-y-s\\right)^2-2x^2-10xy",
+      "\\dot{y}=k_2\\left(1-x-y-s\\right)-0.1y-10xy",
+      "\\dot{s}=0.0675\\left(1-x-y-s-Ks\\right)"
+    ],
+    "states": [
+      "x",
+      "y",
+      "s"
+    ],
+    "params": [
+      {
+        "id": "k_2",
+        "value": 1.05,
+        "min": 0.5,
+        "max": 2.5
+      },
+      {
+        "id": "K",
+        "value": 0.4,
+        "min": 0.0,
+        "max": 2.0
+      }
+    ],
+    "template": "co-oxidation"
+  },
+  "initial_conditions": [
+    {
+      "id": "ic-1",
+      "x0": [
+        0.02,
+        0.5,
+        0.33
+      ],
+      "t0": 0.0,
+      "color": 0,
+      "hidden": false
+    }
+  ],
+  "views": [
+    {
+      "id": "main",
+      "kind": "curves",
+      "x_axis": {
+        "kind": "param",
+        "name": "k_2"
+      },
+      "y_axis": {
+        "kind": "param",
+        "name": "K"
+      },
+      "x_range": [
+        0.6605993315005815,
+        1.7046002101563948
+      ],
+      "y_range": [
+        0.05432962459999999,
+        2.1101322854
+      ],
+      "curves": {
+        "across_range": [
+          0.5,
+          2.5
+        ],
+        "up_range": [
+          0.0,
+          2.0
+        ],
+        "ds": 0.01,
+        "max_points": 2000,
+        "direction": "both",
+        "seeds": [
+          {
+            "kind": "hopf",
+            "x": [
+              0.07792777059959122,
+              0.2330649301279717,
+              0.4921480709088836
+            ],
+            "period": 1,
+            "params": {
+              "K": 0.4,
+              "k_2": 1.040991569531932
+            }
+          },
+          {
+            "kind": "fold",
+            "x": [
+              0.02471644491393918,
+              0.4502600371369444,
+              0.37501679853508313
+            ],
+            "period": 1,
+            "params": {
+              "K": 0.4,
+              "k_2": 1.0420485053785267
+            }
+          },
+          {
+            "kind": "hopf",
+            "x": [
+              0.01635754303972115,
+              0.5239711845949969,
+              0.3283366231180585
+            ],
+            "period": 1,
+            "params": {
+              "K": 0.4,
+              "k_2": 1.051557462459076
+            }
+          },
+          {
+            "kind": "fold",
+            "x": [
+              0.054029415067062464,
+              0.3022414400548956,
+              0.4598065320557443
+            ],
+            "period": 1,
+            "params": {
+              "K": 0.4,
+              "k_2": 1.0522002878699546
+            }
+          }
+        ],
+        "homoclinic": [],
+        "branch": {
+          "x_axis": {
+            "kind": "param",
+            "name": "k_2"
+          },
+          "y_axis": {
+            "kind": "state",
+            "name": "x"
+          },
+          "x_range": [
+            0.42,
+            2.58
+          ],
+          "y_range": [
+            -0.49148179322098895,
+            0.6806655329038447
+          ],
+          "continuation": {
+            "range": [
+              0.5,
+              2.5
+            ],
+            "ds": 0.02,
+            "max_points": 500,
+            "seeds": [
+              {
+                "from": "point",
+                "x": [
+                  0.06458336939630184,
+                  0.2683265903565625,
+                  0.47649288589081124
+                ],
+                "param": 1.05,
+                "period": 1,
+                "direction": "both"
+              },
+              {
+                "from": "point",
+                "x": [
+                  0.01689596611376347,
+                  0.5183692804796863,
+                  0.3319533952903929
+                ],
+                "param": 1.05,
+                "period": 1,
+                "direction": "both"
+              },
+              {
+                "from": "point",
+                "x": [
+                  0.04316421127220243,
+                  0.34516137678358005,
+                  0.43691029424586963
+                ],
+                "param": 1.05,
+                "period": 1,
+                "direction": "both"
+              }
+            ]
+          },
+          "params": {
+            "K": 0.4,
+            "k_2": 1.05
+          }
+        }
+      },
+      "slice": {
+        "states": {
+          "s": 0.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "t": 0.0
+      },
+      "layers": {
+        "field": true,
+        "field_grid": 21,
+        "nullclines": false,
+        "fixed_points": true,
+        "backward": false
+      }
+    }
+  ],
+  "analyses": [],
+  "solver": {
+    "method": "dopri5",
+    "rtol": 1e-6,
+    "atol": 1e-9,
+    "h": 0.0,
+    "max_steps": 200000,
+    "t_end": 400.0,
+    "samples": 0
+  }
+}
