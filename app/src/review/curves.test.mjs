@@ -30,6 +30,7 @@ const curves = await import("../state/curves.ts");
 const { projectFromState } = await import("../project/serialize.ts");
 const { mockCompile, mockContinuation, mockCurve } = await import("../api/mock.ts");
 const { TEMPLATES } = await import("../templates/index.ts");
+const { refusalText } = await import("../math/format.ts");
 
 const st = (name) => ({ name, latex: name, derived: false });
 const system = (kind, states, params, extra = {}) => ({
@@ -213,16 +214,28 @@ test("a point found on two curves is one row, with both curve kinds; rows by kin
 });
 
 test("the fold-flip found on a flip curve and on a branch-point curve is one row, on both, in kind order", () => {
-  const lppd = (index) => ({ kind: "foldFlip", index, p: [3, 2], x: [0.666667, 0], period: 1 });
+  const lppd = (index, bracket) => ({ kind: "foldFlip", index, p: [3, 2], x: [0.666667, 0], period: 1, bracket });
   const rows = curves.planePointRows(
-    [curveOut("flip", [3], [2], { special: [lppd(40)] }), curveOut("branchPoint", [3], [2], { special: [lppd(170)] })],
+    [curveOut("flip", [3], [2], { special: [lppd(40, 1.5e-13)] }), curveOut("branchPoint", [3], [2], { special: [lppd(170, 7.3e-14)] })],
     [
       [0, 16],
       [-6, 3],
     ],
   );
-  assert.deepEqual(rows, [{ kind: "foldFlip", p: [3, 2], x: [0.666667, 0], period: 1, on: ["branchPoint", "flip"] }]);
+  assert.deepEqual(rows, [{ kind: "foldFlip", p: [3, 2], x: [0.666667, 0], period: 1, on: ["branchPoint", "flip"], bracket: 1.5e-13 }]);
   assert.equal(curves.onCurvesText(rows[0].on), "On the branch-point and flip curves");
+  assert.equal(curves.locatedText(rows[0].bracket), "located to 1.5 × 10⁻¹³");
+});
+
+test("a point the preview found without a bisection says nothing about how finely it was located", () => {
+  const r2 = { kind: "resonance2", index: 9, p: [14, 35 / 26], x: [0.464286, 3.520833], period: 1, bracket: null };
+  const [row] = curves.planePointRows([curveOut("neimarkSacker", [14], [35 / 26], { special: [r2] })], [
+    [0, 16],
+    [-6, 3],
+  ]);
+  assert.equal(row.bracket, null);
+  assert.equal(curves.locatedText(row.bracket), null);
+  assert.equal(curves.locatedText(2.9e-13), "located to 2.9 × 10⁻¹³");
 });
 
 test("a row says where each end stopped, a closed curve and an unfolded branch point included", () => {
@@ -355,6 +368,37 @@ test("the predator–prey map: the NS curve from a = 5 passes R4, R3, R2 and CH"
   ])
     assert.ok(distance(curve, p, ranges) < 1e-4, `NS curve through ${p}: ${distance(curve, p, ranges)}`);
   assert.deepEqual(curve.special.map((s) => curves.CODIM2_KINDS[s.kind].label).sort(), ["CH", "R2", "R3", "R4"]);
+  assert.deepEqual(curve.special.map((s) => s.bracket), [null, null, null, null]);
+});
+
+test("the predator–prey map: F2's flip curve from a = 9/11 passes the generalized flip, and its other one the 1:2 resonance at a = 3", async () => {
+  const sys = await compiled("predator-prey-map");
+  const ranges = [
+    [0, 16],
+    [-6, 3],
+  ];
+  const label = (c) => c.special.map((s) => [curves.CODIM2_KINDS[s.kind].label, s.p, s.x]);
+  const { curve: upper } = await mockCurve(
+    curveRequest(sys.systemId, [9 / 11, 1], ranges, { kind: "flip", x: [-2 / 9, 0], period: 1 }),
+  );
+  assert.deepEqual(label(upper), [["GPD", [0.64644661, -1.6715729], [-0.54691816, 0]]]);
+  const { curve: lower } = await mockCurve(curveRequest(sys.systemId, [2, -5.5], ranges, { kind: "flip", x: [0.5, 0], period: 1 }));
+  assert.deepEqual(label(lower), [["R2", [3, -5], [0.66666667, 0]]]);
+});
+
+test("a refusal names a parameter as the lists do, from the preview and from the Rust core alike", async () => {
+  const sys = await compiled("co-oxidation");
+  const req = curveRequest(sys.systemId, [1.042049, 0.4], [[0.5, 2.5], [0, 2]], { kind: "fold", x: [0.0247, 0.4503, 0.375], period: 1 });
+  const refused = await mockCurve({ ...req, free: [1, 0] }).then(
+    () => null,
+    (err) => err.message,
+  );
+  assert.equal(refusalText(refused), "This browser preview follows this system's curves with k₂ across and K up only.");
+  // compute_curve's NoEffect sentence for the predator–prey map's flip at a = 3 (app/src-tauri/tests/curves.rs).
+  assert.equal(
+    refusalText("\\varepsilon doesn't move this flip; choose another parameter to follow it in."),
+    "ε doesn't move this flip; choose another parameter to follow it in.",
+  );
 });
 
 test("the predator–prey map: the branch-point curve from a = 5/3 runs from ε = −6 to a = 16 through the fold-flip", async () => {

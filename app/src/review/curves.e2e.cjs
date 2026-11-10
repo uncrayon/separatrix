@@ -178,7 +178,7 @@ test("the predator–prey map: Search follows the NS and branch-point curves, an
     const kinds = await inspector(page)
       .locator("[data-plane-points] [data-plane-point]")
       .evaluateAll((els) => els.map((el) => el.dataset.planePoint));
-    assert.deepEqual(kinds, ["resonance2", "resonance3", "resonance4", "chenciner", "foldFlip"]);
+    assert.deepEqual(kinds, ["resonance2", "resonance3", "resonance4", "chenciner", "foldFlip", "generalizedFlip"]);
   } finally {
     await browser.close();
   }

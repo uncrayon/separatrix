@@ -7,10 +7,11 @@ All notable changes to this project are documented in this file.
 ### Added
 - The Parameter plane, a new view that follows a fold, Hopf, branch point, flip or
   Neimark–Sacker point as two parameters change and marks where curves meet (Bogdanov–Takens,
-  cusp, Bautin, strong resonances, Chenciner, fold-flip). Reach it from the Branch view with
-  **Follow in two parameters…** on a row or **Search in two parameters**, or from the View
-  control. Clicking the plane sets both parameters. The desktop app follows the curves; in this
-  version only the browser preview finds the points where they meet.
+  cusp, Bautin, zero-Hopf, Hopf–Hopf, strong resonances, Chenciner, fold-flip, generalized
+  flip). Reach it from the Branch view with **Follow in two parameters…** on a row or **Search in
+  two parameters**, or from the View control. Clicking the plane sets both parameters. The desktop
+  app follows the curves and locates the points where they meet, and each row of the Special
+  points list says how finely.
 - Two gallery templates for it: CO oxidation (Bykov, Yablonskii and Kim) and a predator–prey map
   (MatContM), each credited in the title bar.
 - Curves of branch points in two parameters, where another branch crosses (transcritical,
@@ -18,6 +19,9 @@ All notable changes to this project are documented in this file.
   predator–prey map's F3 = F2 curve through its fold-flip at `(ε, a) = (2, 3)`. The Parameter
   plane draws them with their own colour and a dash-dot-dot pattern, and a BP row of the Branch
   view offers **Follow in two parameters…** beside **Switch branch**.
+- The codimension-2 gate, `bash scripts/codim2-gate.sh`: 61 claims on the points where curves meet
+  in CO oxidation, Lorenz-84 and the predator–prey map, against docs/codim2-reference.md, each
+  curve followed with the Parameter plane's own request.
 
 ## [1.0.1] - 2026-11-09
 

@@ -6,9 +6,8 @@ Neimark–Sacker point found in the Branch view becomes a curve. Choose **Parame
 **View** panel. It is offered for a system with two parameters or more whose equations don't
 contain `t` or `n`.
 
-The desktop app follows the curves of any such system, but it does not mark the points where
-curves meet yet. The browser preview draws the curves of the two gallery templates below only, and
-marks those points on them.
+The desktop app follows the curves of any such system and marks the points where they meet. The
+browser preview draws the curves of the two gallery templates below only.
 
 ## Reach it
 
@@ -32,13 +31,18 @@ bifurcation at all (a neutral saddle). Points where curves meet or change charac
 | BT | Bogdanov–Takens, where a fold curve and a Hopf curve meet |
 | CP | Cusp, where two fold curves meet |
 | GH | Bautin, where a Hopf point changes from subcritical to supercritical |
-| R1 to R4 | Strong resonances on a Neimark–Sacker curve |
+| ZH | Zero-Hopf, an eigenvalue 0 beside a pair ±iω, where a fold curve crosses a Hopf curve |
+| HH | Hopf–Hopf, two pairs ±iω₁ and ±iω₂, where two Hopf curves cross |
+| R1 to R4 | Strong resonances on a Neimark–Sacker curve, R1 and R2 also on fold and flip curves |
 | CH | Chenciner, where a Neimark–Sacker point changes criticality |
 | LPPD | Fold-flip, where a flip curve meets a fold or branch-point curve |
+| GPD | Generalized flip, where a flip changes from subcritical to supercritical |
 
 The crosshair is the current pair of parameter values, and the grey bar is the Branch view's range
 at the current value of the parameter up. Click anywhere to set both parameters; the sliders and
-every other view follow. Click a row in **Special points** to set both parameters there.
+every other view follow. Click a row in **Special points** to set both parameters there. In the
+desktop app each row also says how finely the point was located: "located to 1.5 × 10⁻¹³" is the
+width of the last bisection step along the curve, each parameter as a fraction of its range.
 
 ## Try it
 
@@ -50,5 +54,17 @@ every other view follow. Click a row in **Special points** to set both parameter
   where the coexistence fixed point meets the one without predators. Followed in ε, its curve
   passes a fold-flip at (a, ε) = (3, 2), where the predator-free fixed point flips. That flip
   happens at a = 3 whatever ε is, so the plane does not follow it in ε: it says ε doesn't move it.
+  Its other flip, at a = 9/11, followed in ε, passes a generalized flip at
+  (a, ε) = (0.646447, −1.671573).
+
+## Check the numbers
+
+The codimension-2 gate follows these curves as the plane does and checks every point against the
+reference values. Two examples from its output:
+
+- CO oxidation's first Bogdanov–Takens point is at (k₂, K) = (1.417628, 0.971398) on the fold
+  curve, and the Hopf curve finds the same point to within 2 × 10⁻¹³.
+- The predator–prey map's Neimark–Sacker curve passes the 1:4, 1:3 and 1:2 resonances at
+  a = 7, 10.5 and 14, where ε = 7/6, 49/38 and 35/26, each to within 10⁻¹².
 
 The plane is not saved in project files yet: saving while it is shown saves the Branch view.

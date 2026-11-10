@@ -9,14 +9,14 @@ use dyn_solve::Sampling;
 use separatrix_project::ORBIT_TRANSIENT_MAX;
 
 use crate::ipc::{
-    Arrow, AxisRef, BranchEndOut, BranchOut, BranchStop, CompileRequest, CompileResponse,
-    ContinuationDirection, ContinuationRequest, ContinuationResponse, ContinuationStart,
-    ConvertRequest, ConvertResponse, ConvertedLineOut, CurveKindOut, CurveOut, CurveRequest,
-    CurveResponse, Diagnostic, DoublingOut, EnergyOut, FixedPointOut, LyapunovRequest,
-    LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest, OrbitDiagramResponse, ParamInfo,
-    PortraitRequest, PortraitResponse, SectionSpec, SolverOptions, SpecialKindOut, SpecialPointOut,
-    StateInfo, TrajectoryOut, TrajectoryRequest, MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS,
-    MAX_ORBIT_POINTS,
+    Arrow, AxisRef, BranchEndOut, BranchOut, BranchStop, Codim2KindOut, Codim2PointOut,
+    CompileRequest, CompileResponse, ContinuationDirection, ContinuationRequest,
+    ContinuationResponse, ContinuationStart, ConvertRequest, ConvertResponse, ConvertedLineOut,
+    CurveKindOut, CurveOut, CurveRequest, CurveResponse, Diagnostic, DoublingOut, EnergyOut,
+    FixedPointOut, LyapunovRequest, LyapunovResponse, Method, NullclineOut, OrbitDiagramRequest,
+    OrbitDiagramResponse, ParamInfo, PortraitRequest, PortraitResponse, SectionSpec, SolverOptions,
+    SpecialKindOut, SpecialPointOut, StateInfo, TrajectoryOut, TrajectoryRequest,
+    MAX_CONTINUATION_POINTS, MAX_ORBIT_COLUMNS, MAX_ORBIT_POINTS,
 };
 
 pub const RETAINED_SYSTEMS_FOR_IN_FLIGHT_REQUESTS: usize = 32;
@@ -467,9 +467,8 @@ pub fn compute_continuation(
 }
 
 /// A curve of folds, Hopf points, branch points, flips or Neimark–Sacker
-/// points as two parameters vary (see [`dyn_analysis::continue_curve`]).
-/// Its `special` is empty: the codimension-2 points are located from M6 of
-/// the special-bifurcations plan.
+/// points as two parameters vary (see [`dyn_analysis::continue_curve`]),
+/// with the codimension-2 points the engine located on it.
 pub fn compute_curve(system: &CompiledSystem, req: &CurveRequest) -> Result<CurveResponse, String> {
     let started = Instant::now();
     let f: &dyn VectorField = system;
@@ -501,12 +500,11 @@ pub fn compute_curve(system: &CompiledSystem, req: &CurveRequest) -> Result<Curv
             if closed(&forward) {
                 (None, forward)
             } else {
-                let mut backward = follow(-1.0)?;
+                let backward = follow(-1.0)?;
                 // The halves take different steps, so the backward one can
                 // close where the forward one ran out of points first.
                 if closed(&backward) {
-                    backward.points.reverse();
-                    (None, backward)
+                    (None, reversed(backward))
                 } else {
                     (Some(backward), forward)
                 }
@@ -745,6 +743,9 @@ const CURVE_UNSUPPORTED: &str = "Curves in two parameters follow folds, branch p
      points of a flow, and folds, branch points, flips and Neimark–Sacker points of a map; Hopf \
      and Neimark–Sacker points need two or more states.";
 
+/// The engine's refusal as a sentence. It names the up parameter by its
+/// LaTeX, `\varepsilon` or `k_{2}`, which the interface spells out as its
+/// lists do (`refusalText` in app/src/math/format.ts).
 fn curve_refusal(
     system: &CompiledSystem,
     req: &CurveRequest,
@@ -756,7 +757,7 @@ fn curve_refusal(
         "an equilibrium"
     };
     let kind = curve_kind(req.seed.kind).1;
-    let up = &system.info.params[req.free.1].name;
+    let up = &system.info.params[req.free.1].latex;
     match e {
         dyn_analysis::CurveError::NotAutonomous => NOT_AUTONOMOUS.into(),
         dyn_analysis::CurveError::Unsupported => CURVE_UNSUPPORTED.into(),
@@ -793,11 +794,30 @@ fn join_curve(
         last: stop(forward.end),
     };
     let period = forward.period;
-    let points: Vec<dyn_analysis::CurvePoint> = backward
-        .into_iter()
-        .flat_map(|b| b.points.into_iter().skip(1).rev())
-        .chain(forward.points)
-        .collect();
+    let special_out = |sp: dyn_analysis::Codim2Point, offset: usize| Codim2PointOut {
+        kind: codim2_kind(sp.kind),
+        index: offset + sp.index,
+        p: sp.p,
+        x: sp.x,
+        period,
+        bracket: Some(sp.bracket),
+    };
+    let mut points = Vec::new();
+    let mut special = Vec::new();
+    if let Some(b) = backward.map(reversed) {
+        points.extend(b.points);
+        // The seed, which the forward half starts with.
+        points.pop();
+        special.extend(b.special.into_iter().map(|sp| special_out(sp, 0)));
+    }
+    let offset = points.len();
+    points.extend(forward.points);
+    special.extend(
+        forward
+            .special
+            .into_iter()
+            .map(|sp| special_out(sp, offset)),
+    );
     CurveOut {
         kind,
         period,
@@ -808,8 +828,38 @@ fn join_curve(
             .iter()
             .map(|pt| matches!(pt.nature, dyn_analysis::Nature::Neutral))
             .collect(),
-        special: Vec::new(),
+        special,
         end,
+    }
+}
+
+/// `c` run the other way, its seed last, with the special points' indices
+/// and order to match.
+fn reversed(mut c: dyn_analysis::Curve) -> dyn_analysis::Curve {
+    let last = c.points.len() - 1;
+    c.points.reverse();
+    c.special.reverse();
+    for sp in &mut c.special {
+        sp.index = last - sp.index;
+    }
+    c
+}
+
+fn codim2_kind(kind: dyn_analysis::Codim2Kind) -> Codim2KindOut {
+    use dyn_analysis::Codim2Kind as K;
+    match kind {
+        K::BogdanovTakens => Codim2KindOut::BogdanovTakens,
+        K::Cusp => Codim2KindOut::Cusp,
+        K::Bautin => Codim2KindOut::Bautin,
+        K::ZeroHopf => Codim2KindOut::ZeroHopf,
+        K::HopfHopf => Codim2KindOut::HopfHopf,
+        K::Resonance1 => Codim2KindOut::Resonance1,
+        K::Resonance2 => Codim2KindOut::Resonance2,
+        K::Resonance3 => Codim2KindOut::Resonance3,
+        K::Resonance4 => Codim2KindOut::Resonance4,
+        K::Chenciner => Codim2KindOut::Chenciner,
+        K::FoldFlip => Codim2KindOut::FoldFlip,
+        K::GeneralizedFlip => Codim2KindOut::GeneralizedFlip,
     }
 }
 

@@ -894,6 +894,11 @@ pub struct Codim2PointOut {
     pub x: Vec<f64>,
     /// `k` of `f^k`, as `CurveOut::period`.
     pub period: usize,
+    /// The width of the last bracket of the bisection that located it, in
+    /// the curve's scaled arclength (each parameter as a fraction of its
+    /// range, the state as it is); `null` where no bisection ran, as in the
+    /// browser preview.
+    pub bracket: Option<f64>,
 }
 
 /// The kinds of codimension-2 point; their labels are `BT`, `CP`, `GH`,

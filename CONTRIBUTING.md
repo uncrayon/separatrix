@@ -98,7 +98,7 @@ Read the diff of a rewritten file before you commit it.
 
 ## Run the numerical gates
 
-Three scripts check Separatrix's numbers against published values. Each prints one row per claim,
+Four scripts check Separatrix's numbers against published values. Each prints one row per claim,
 with the reference, the measured value, the tolerance and PASS or FAIL, and exits non-zero if any
 row fails. Each also hands itself wrong claims and requires them to fail.
 
@@ -106,6 +106,7 @@ row fails. Each also hands itself wrong claims and requires them to fail.
 bash scripts/strogatz-gate.sh
 bash scripts/chaos-gate.sh
 bash scripts/continuation-gate.sh
+bash scripts/codim2-gate.sh
 ```
 
 - The **Strogatz gate** checks every gallery example from chapters 2 to 8 against the book:
@@ -118,6 +119,14 @@ bash scripts/continuation-gate.sh
 - The **continuation gate** checks 27 bifurcation points derived in closed form. They cover folds,
   branch points, Hopf points with ω and ℓ₁, flips and a Neimark–Sacker point, and branch switching
   through the logistic cascade. The claims are in `app/src-tauri/tests/continuation.rs`.
+- The **codimension-2 gate** checks 61 claims about the points where curves in two parameters
+  meet, on the reference systems of [docs/codim2-reference.md](docs/codim2-reference.md): the
+  Bogdanov–Takens, cusp, Bautin, zero-Hopf, Hopf–Hopf, strong-resonance, Chenciner, fold-flip and
+  generalized-flip points of CO oxidation, Lorenz-84 and the predator–prey map. Each curve starts
+  from a Branch view point and is followed with the Parameter plane's own request. The gate also
+  checks that a point found on two curves is in the same place on both, that each curve has no
+  other point, and that only BT, ZH, R1 and R2 lie on a neutral stretch. The claims are in
+  `app/src-tauri/tests/codim2.rs`.
 
 Right after `cargo test --workspace --release`, each gate reuses the build. To time the evaluation
 workloads, run `cargo run --release -p dyn-analysis --example chaos_bench`.
@@ -129,7 +138,7 @@ workloads, run `cargo run --release -p dyn-analysis --example chaos_bench`.
 bash scripts/release-check.sh
 ```
 
-prints PASS or FAIL for each release requirement, including the three gates, and exits with the
+prints PASS or FAIL for each release requirement, including the four gates, and exits with the
 number of FAIL rows. `--skip-gates` skips the gates for a quick run. The owner's remaining steps
 are in [docs/release-checklist.md](docs/release-checklist.md).
 

@@ -569,11 +569,20 @@ def pp_curves(pts):
     # F2's other multiplier, 3.5x/(1 + εx), is −1 where x = −1/(ε + 7/2), so a = (ε + 7/2)/(ε + 9/2).
     # For ε > −7/2 that F2 has x < 0 and a → 0 as ε → −7/2, the corner of the box, only as
     # x → −∞: a follower runs out of points there before it reaches the box's edge.
+    # Its flip coefficient vanishes at x = −(2√2 + 1)/7, a generalized flip (derived in
+    # crates/dyn-analysis/tests/curves.rs). Where it crosses a = 3, at ε = −5, both multipliers
+    # are −1 and D f = [[−1, 6/7], [0, −1]] is a Jordan block: a 1:2 resonance.
     a_f2 = lambda e: (e + 3.5) / (e + 4.5)
-    for e_lo, e_hi, stops in [(-3.5 + 1e-4, 3.05, ("maxPoints", "range")), (-6.05, -4.5 - 1e-6, ("range", "range"))]:
+    r2 = np.sqrt(2)
+    gpd = {"kind": "generalizedFlip", "p": (1 - r2 / 4, 2 * r2 - 4.5), "x": (-(2 * r2 + 1) / 7, 0.0)}
+    r2_f2 = {"kind": "resonance2", "p": (3.0, -5.0), "x": (2 / 3, 0.0)}
+    for e_lo, e_hi, stops, sp_ in [
+        (-3.5 + 1e-4, 3.05, ("maxPoints", "range"), [gpd]),
+        (-6.05, -4.5 - 1e-6, ("range", "range"), [r2_f2]),
+    ]:
         a, e = piece(e_lo, e_hi, a_f2)
         x = np.column_stack([1 - 1 / a, np.zeros_like(a)])
-        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), [], PP_BOX, stops))
+        out.append(curve_json("flip", a, e, x, np.zeros(len(a), bool), sp_, PP_BOX, stops))
     # F3 = F2 where F3's y is 0, at a = (2ε − 7)/(2ε − 5): a curve of branch points. It is never
     # neutral, and past its pole at ε = 5/2 it has a < 0.
     a, e = piece(-6.05, 2.5 - 1e-6, lambda e: (2 * e - 7) / (2 * e - 5))
