@@ -19,9 +19,10 @@ All notable changes to this project are documented in this file.
   predator–prey map's F3 = F2 curve through its fold-flip at `(ε, a) = (2, 3)`. The Parameter
   plane draws them with their own colour and a dash-dot-dot pattern, and a BP row of the Branch
   view offers **Follow in two parameters…** beside **Switch branch**.
-- The codimension-2 gate, `bash scripts/codim2-gate.sh`: 61 claims on the points where curves meet
-  in CO oxidation, Lorenz-84 and the predator–prey map, against docs/codim2-reference.md, each
-  curve followed with the Parameter plane's own request.
+- The codimension-2 gate, `bash scripts/codim2-gate.sh`: 74 claims on the points where curves meet
+  in CO oxidation, Lorenz-84 and the predator–prey map, and on the normal-form coefficients of CO
+  oxidation's Bogdanov–Takens and cusp points, against docs/codim2-reference.md, each curve
+  followed with the Parameter plane's own request.
 
 ## [1.0.1] - 2026-11-09
 

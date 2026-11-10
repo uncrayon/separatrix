@@ -8,9 +8,10 @@ use std::sync::{Arc, OnceLock};
 
 use dyn_expr::CompiledSystem;
 use separatrix_lib::ipc::{
-    BranchEndOut, BranchOut, BranchStop, Codim2KindOut, CompileRequest, ContinuationDirection,
-    ContinuationRequest, ContinuationStart, CurveKindOut, CurveOut, CurveRequest, CurveSeed,
-    InputFormat, Severity, SpecialKindOut, SpecialPointOut, MAX_CONTINUATION_POINTS,
+    BranchEndOut, BranchOut, BranchStop, Codim2KindOut, Codim2PointOut, CompileRequest,
+    ContinuationDirection, ContinuationRequest, ContinuationStart, CurveKindOut, CurveOut,
+    CurveRequest, CurveSeed, InputFormat, NormalFormOut, Severity, SpecialKindOut, SpecialPointOut,
+    MAX_CONTINUATION_POINTS,
 };
 use separatrix_lib::service::{self, SystemStore};
 use serde::Deserialize;
@@ -672,15 +673,34 @@ struct MockCurve {
     x: Vec<f64>,
     neutral: Vec<bool>,
     special: Vec<MockPoint>,
+    ticks: Vec<MockTick>,
     stops: [String; 2],
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MockPoint {
     /// As `Codim2KindOut` serializes it.
     kind: String,
     p: (f64, f64),
     x: Vec<f64>,
+    normal_form: Option<MockForm>,
+    angle: Option<f64>,
+    positive_toward: Option<(f64, f64)>,
+}
+
+/// As `NormalFormOut` serializes it.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum MockForm {
+    BogdanovTakens { a: f64, b: f64 },
+    Cusp { c: f64 },
+}
+
+#[derive(Deserialize)]
+struct MockTick {
+    q: usize,
+    p: (f64, f64),
 }
 
 /// A polyline in the coordinates both followers measure arclength in: each
@@ -950,6 +970,64 @@ fn parity(sys: &System, free: (usize, usize), mock: &MockCurve) -> (String, Vec<
     if points.ratio > 1.0 {
         problems.push(format!("a codimension-2 point is {points} from its match"));
     }
+    for sp in &mock.special {
+        let q = point(sp.p, &sp.x);
+        let matched = c
+            .special
+            .iter()
+            .filter(|e| kind_name(e.kind) == sp.kind)
+            .min_by(|a, b| {
+                let d = |e: &Codim2PointOut| norm(&sub(&point(e.p, &e.x), &q));
+                d(a).total_cmp(&d(b))
+            });
+        if let Some(e) = matched {
+            problems.extend(
+                what_points_say(sp, e)
+                    .into_iter()
+                    .map(|p| format!("{} at {:?}: {p}", sp.kind, sp.p)),
+            );
+        }
+    }
+
+    // The weak resonances, as the points but in the parameters alone.
+    let tick = |p: (f64, f64)| vec![p.0 / (hi1 - lo1), p.1 / (hi2 - lo2)];
+    let engine_ticks: Vec<(usize, Vec<f64>)> = c.ticks.iter().map(|t| (t.q, tick(t.p))).collect();
+    let mock_ticks: Vec<(usize, Vec<f64>)> = mock.ticks.iter().map(|t| (t.q, tick(t.p))).collect();
+    let mut ticks = Worst::default();
+    for (from, to, which) in [
+        (&mock_ticks, &engine_ticks, "the engine"),
+        (&engine_ticks, &mock_ticks, "the mock"),
+    ] {
+        for (q, v) in from {
+            let at = (v[0] * (hi1 - lo1), v[1] * (hi2 - lo2));
+            match to
+                .iter()
+                .filter(|(k, _)| k == q)
+                .map(|(_, w)| norm(&sub(w, v)))
+                .min_by(f64::total_cmp)
+            {
+                Some(d) => ticks.add(d, rounding(v) + TICK_TOL, at),
+                None => problems.push(format!(
+                    "{which} has no 1:{q} tick; the other has one at {at:?}"
+                )),
+            }
+        }
+    }
+    if ticks.ratio > 1.0 {
+        problems.push(format!("a weak-resonance tick is {ticks} from its match"));
+    }
+    // In curve order, which may run the other way along the mock.
+    let order = |t: &[(usize, Vec<f64>)]| t.iter().map(|(q, _)| *q).collect::<Vec<_>>();
+    let (engine_order, mut mock_order) = (order(&engine_ticks), order(&mock_ticks));
+    if engine_order != mock_order {
+        mock_order.reverse();
+        if engine_order != mock_order {
+            problems.push(format!(
+                "the ticks come in the order {engine_order:?}, the mock's {:?}",
+                order(&mock_ticks)
+            ));
+        }
+    }
 
     let at = |i: usize| format!("({:.6}, {:.6})", c.p1[i], c.p2[i]);
     let kinds = |pts: &[(String, Vec<f64>)]| {
@@ -960,13 +1038,15 @@ fn parity(sys: &System, free: (usize, usize), mock: &MockCurve) -> (String, Vec<
     };
     let row = format!(
         "engine → mock {to_mock} ({:.2}); mock → engine {to_engine} ({:.2}); κ = {kappa:.1}; \
-         points: mock [{}], engine [{}], worst {points} ({:.2}); \
-         mock stops {:?}; engine {n} points from {} ({:?}) to {} ({:?})",
+         points: mock [{}], engine [{}], worst {points} ({:.2}); ticks: engine {:?}, worst \
+         {ticks} ({:.2}); mock stops {:?}; engine {n} points from {} ({:?}) to {} ({:?})",
         to_mock.ratio,
         to_engine.ratio,
         kinds(&mock_points),
         kinds(&engine_points),
         points.ratio,
+        engine_order,
+        ticks.ratio,
         mock.stops,
         at(0),
         c.end.first,
@@ -974,6 +1054,64 @@ fn parity(sys: &System, free: (usize, usize), mock: &MockCurve) -> (String, Vec<
         c.end.last
     );
     (row, problems)
+}
+
+/// The engine's coefficients against the reference script's: crates/dyn-analysis/tests/curves.rs
+/// finds them within 1e-9 of each other at the reference points.
+const COEFFICIENT_TOL: f64 = 1e-9;
+
+/// A tick is bisected as a codimension-2 point is, to Newton's tolerance
+/// `1e-10 · (1 + |z|∞)` with `|z|∞ < 9` on the predator–prey map's curves.
+const TICK_TOL: f64 = 1e-9;
+
+/// Where the mock's normal form, angle and side of `positiveToward` differ
+/// from the engine's, for one point. The mock rounds to 8 significant
+/// digits. `a` and `b` flip with `q₀`, so `|a|`, `|b|` and the sign of `ab`
+/// are compared; the angle through `cos θ`, which the engine bisects, as
+/// `θ` itself is ill-conditioned at a 1:2 resonance.
+fn what_points_say(mock: &MockPoint, engine: &Codim2PointOut) -> Vec<String> {
+    let close = |m: f64, e: f64| (m - e).abs() <= 5e-8 * m.abs() + COEFFICIENT_TOL;
+    let mut differ = Vec::new();
+    let form = match (&mock.normal_form, &engine.normal_form) {
+        (None, None) => true,
+        (
+            Some(MockForm::BogdanovTakens { a, b }),
+            Some(NormalFormOut::BogdanovTakens { a: ea, b: eb }),
+        ) => {
+            close(a.abs(), ea.abs()) && close(b.abs(), eb.abs()) && (a * b > 0.0) == (ea * eb > 0.0)
+        }
+        (Some(MockForm::Cusp { c }), Some(NormalFormOut::Cusp { c: ec })) => close(*c, *ec),
+        _ => false,
+    };
+    if !form {
+        differ.push(format!(
+            "normal form {:?} in the engine",
+            engine.normal_form
+        ));
+    }
+    let angle = match (mock.angle, engine.angle) {
+        (None, None) => true,
+        (Some(m), Some(e)) => (m.cos() - e.cos()).abs() <= 5e-8 * m + COEFFICIENT_TOL,
+        _ => false,
+    };
+    if !angle {
+        differ.push(format!(
+            "angle {:?} vs the engine's {:?}",
+            mock.angle, engine.angle
+        ));
+    }
+    let side = match (mock.positive_toward, engine.positive_toward) {
+        (None, None) => true,
+        (Some(m), Some(e)) => m.0 * e.0 + m.1 * e.1 > 0.0,
+        _ => false,
+    };
+    if !side {
+        differ.push(format!(
+            "positiveToward {:?} vs the engine's {:?}",
+            mock.positive_toward, engine.positive_toward
+        ));
+    }
+    differ
 }
 
 fn kind_name(kind: Codim2KindOut) -> String {
