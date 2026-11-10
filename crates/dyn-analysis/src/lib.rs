@@ -23,6 +23,10 @@
 //!   stability of each point and its located folds, Hopf, branch, flip and
 //!   Neimark–Sacker points ([`SpecialPoint`]), and [`switch_branch`]: the
 //!   second branch through a branch point, or the `2k`-cycle born at a flip;
+//! - [`continue_curve`]: a curve of folds, Hopf points, flips or
+//!   Neimark–Sacker points followed as two parameters vary, with the
+//!   stretches where a Hopf or Neimark–Sacker condition holds at a neutral
+//!   saddle marked ([`Nature`]);
 //! - [`classify`] / [`classify_jacobian`]: the type of a fixed point from
 //!   its linearisation, following Strogatz, *Nonlinear Dynamics and Chaos*.
 //!
@@ -45,6 +49,7 @@
 
 mod classify;
 mod continuation;
+mod curve;
 mod eigvec;
 mod fixed;
 mod graph;
@@ -59,6 +64,10 @@ pub use classify::{classify, classify_jacobian, Classification, ABS_TOL, REL_TOL
 pub use continuation::{
     continue_branch, switch_branch, Branch, BranchEnd, BranchPoint, ContinuationError,
     ContinuationOptions, SpecialKind, SpecialPoint,
+};
+pub use curve::{
+    continue_curve, Curve, CurveEnd, CurveError, CurveKind, CurveOptions, CurvePoint, CurveSeed,
+    Nature,
 };
 pub use eigvec::{eigenvectors, Eigenvectors};
 pub use fixed::{fixed_points, fixed_points_with_budget, seed_count, FixedPoint, MAX_SEEDS};
