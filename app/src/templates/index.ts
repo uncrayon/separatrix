@@ -14,6 +14,8 @@ export interface Template {
   title: string;
   chapter: string;
   section?: string;
+  /** The source of a template that reproduces no book section. */
+  credit?: string;
   description: string;
   format: "latex";
   /** The equations as authored, in LaTeX. */
@@ -117,7 +119,7 @@ export function templateChapters(templates: readonly Template[]): TemplateChapte
     .sort((a, b) => a.number - b.number);
 }
 
-/** The book section a template reproduces; a template with none is grouped by chapter but not cited. */
-export function strogatzRef(t: Template): string {
-  return t.section ? `Strogatz §${t.section}` : "";
+/** Where a template comes from: the book section it reproduces, else its credit, else "". */
+export function templateRef(t: Template): string {
+  return t.section ? `Strogatz §${t.section}` : (t.credit ?? "");
 }

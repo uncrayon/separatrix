@@ -25,7 +25,7 @@ import {
   type SolverSettings,
 } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
-import { strogatzRef, templateById } from "../templates";
+import { templateRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
 import {
   IconCheck,
@@ -133,7 +133,7 @@ export function TopBar({
           </>
         )}
         {!doc.hasFile && title.edited && <span className="ds-template-card-tag doc-edited">Edited</span>}
-        {tpl && strogatzRef(tpl) && <span className="caption doc-chapter">{strogatzRef(tpl)}</span>}
+        {tpl && templateRef(tpl) && <span className="caption doc-chapter">{templateRef(tpl)}</span>}
       </div>
       <div className="topbar-actions">
         <div className="topbar-file" role="group" aria-label="File">

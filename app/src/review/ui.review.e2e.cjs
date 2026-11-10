@@ -49,12 +49,12 @@ const thumbsDrawn = (page, selector) =>
     canvases.map((c) => c.width > 0 && c.height > 0 && c.getContext("2d").getImageData(1, 1, 1, 1).data[3] > 0),
   );
 
-test("gallery: 31 templates under Strogatz's chapters in book order, thumbnails drawn as they scroll into view", async () => {
+test("gallery: 33 templates under Strogatz's chapters in book order, thumbnails drawn as they scroll into view", async () => {
   const { browser, page } = await open();
   try {
     const heads = await page.$$eval(".gallery-chapter-head", (hs) => hs.map((h) => h.firstChild.textContent));
     assert.deepEqual(heads, [2, 3, 4, 5, 6, 7, 8, 9, 10, 12].map((n) => `Chapter ${n}`).concat("Your own system"));
-    assert.equal(await page.locator(".gallery .card:not(.blank)").count(), 31);
+    assert.equal(await page.locator(".gallery .card:not(.blank)").count(), 33);
     const refs = await page.$$eval(".gallery .ds-template-card-ref", (r) => r.map((x) => x.textContent));
     const order = refs.filter((r) => r.startsWith("Strogatz §")).map((r) => r.slice(10).split(".").map(Number));
     const sorted = [...order].sort((a, b) => a[0] - b[0] || a[1] - b[1]);

@@ -460,5 +460,41 @@
     "tEnd": 12000,
     "transient": 20,
     "backward": false
+  },
+  {
+    "id": "co-oxidation",
+    "title": "CO oxidation",
+    "chapter": "Ch. 8",
+    "credit": "Bykov, Yablonskii and Kim · MatCont Tutorial IV",
+    "description": "Carbon monoxide burning on a catalyst. Near k₂ = 1.05 three equilibria coexist and the rates oscillate; the Branch view finds two folds and two Hopf points to follow in k₂ and K.",
+    "format": "latex",
+    "equations": [
+      "\\dot{x}=5\\left(1-x-y-s\\right)^2-2x^2-10xy",
+      "\\dot{y}=k_2\\left(1-x-y-s\\right)-0.1y-10xy",
+      "\\dot{s}=0.0675\\left(1-x-y-s-Ks\\right)"
+    ],
+    "params": { "k_2": 1.05, "K": 0.4 },
+    "paramRanges": { "k_2": [0.5, 2.5], "K": [0, 2] },
+    "view": { "x": "s", "y": "y", "xRange": [0.25, 0.55], "yRange": [0.1, 0.6] },
+    "initialConditions": [[0.02, 0.5, 0.33]],
+    "tEnd": 400,
+    "backward": false
+  },
+  {
+    "id": "predator-prey-map",
+    "title": "Predator–prey map",
+    "chapter": "Ch. 8",
+    "credit": "MatContM Tutorial M-II",
+    "description": "Prey x and predators y counted once a season. Past a = 5 the coexistence fixed point loses stability in a Neimark–Sacker bifurcation and the orbit settles on a closed curve around it.",
+    "format": "latex",
+    "equations": [
+      "x_{n+1}=ax_n\\left(1-x_n\\right)-\\frac{3x_ny_n}{1+\\varepsilon x_n}",
+      "y_{n+1}=\\frac{3.5x_ny_n}{1+\\varepsilon x_n}"
+    ],
+    "params": { "a": 5.3, "varepsilon": 1 },
+    "paramRanges": { "a": [0, 16], "varepsilon": [-6, 3] },
+    "view": { "x": "x", "y": "y", "xRange": [0, 1], "yRange": [-0.1, 1.5] },
+    "initialConditions": [[0.4, 1], [0.45, 0.75]],
+    "tEnd": 3000
   }
 ]
