@@ -4,6 +4,8 @@
 //! Bifurcations of Dynamical Equilibria*, SIAM 2000, the systems MatCont
 //! follows).
 
+mod codim2;
+
 use dyn_core::{SystemKind, VectorField};
 
 use crate::continuation::{
@@ -11,6 +13,7 @@ use crate::continuation::{
     tangent, Fail, Power, Underdetermined, FAST_NEWTON_ITERS, SLOW_NEWTON_ITERS, STEP_GROWTH, TOL,
 };
 use crate::linalg::{eigenvalues, lu_solve};
+use codim2::{Detectors, Site};
 
 /// The bifurcation a curve follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,7 +60,8 @@ pub struct CurveOptions {
     pub ds_min: f64,
     /// Largest step.
     pub ds_max: f64,
-    /// Most points on the curve, the seed included.
+    /// Most points on the curve, the seed and the codimension-2 points
+    /// included.
     pub max_points: usize,
     /// Largest angle in radians between successive unit tangents.
     pub max_angle: f64,
@@ -124,10 +128,61 @@ pub struct Curve {
     pub kind: CurveKind,
     /// `k` of `f^k` for a map, 1 for a flow.
     pub period: usize,
-    /// The points in order of arclength, the corrected seed first.
+    /// The points in order of arclength, the corrected seed first. Each
+    /// codimension-2 point is one of them.
     pub points: Vec<CurvePoint>,
+    /// The codimension-2 points in order of arclength.
+    pub special: Vec<Codim2Point>,
     /// Why the curve stopped.
     pub end: CurveEnd,
+}
+
+/// The codimension-2 bifurcations located on a curve, where its
+/// bifurcation degenerates or meets another (Yu. A. Kuznetsov, *Elements of
+/// Applied Bifurcation Theory*, 3rd ed., chapters 8 and 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Codim2Kind {
+    /// Bogdanov–Takens: a double eigenvalue `0`, where a fold curve and a
+    /// Hopf curve meet.
+    BogdanovTakens,
+    /// Cusp: the fold's quadratic coefficient is `0`; two fold curves meet.
+    Cusp,
+    /// Bautin (generalized Hopf): the first Lyapunov coefficient is `0`.
+    Bautin,
+    /// Zero-Hopf: an eigenvalue `0` and a pair `±iω`.
+    ZeroHopf,
+    /// Hopf–Hopf: two pairs `±iω₁` and `±iω₂`.
+    HopfHopf,
+    /// 1:1 resonance: a double multiplier `+1`.
+    Resonance1,
+    /// 1:2 resonance: a double multiplier `−1`.
+    Resonance2,
+    /// 1:3 resonance: multipliers `e^{±2πi/3}`.
+    Resonance3,
+    /// 1:4 resonance: multipliers `±i`.
+    Resonance4,
+    /// Chenciner: the Neimark–Sacker coefficient is `0`.
+    Chenciner,
+    /// Fold-flip: multipliers `+1` and `−1`.
+    FoldFlip,
+    /// Generalized flip: the flip's cubic coefficient is `0`.
+    GeneralizedFlip,
+}
+
+/// A located codimension-2 point on a curve.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Codim2Point {
+    /// What it is.
+    pub kind: Codim2Kind,
+    /// Its own entry in [`Curve::points`].
+    pub index: usize,
+    /// The parameters `(p₁, p₂)`.
+    pub p: (f64, f64),
+    /// The state; for a map, the first point of the cycle.
+    pub x: Vec<f64>,
+    /// The width of the last bracket of the bisection that located it, in
+    /// the arclength of [`CurvePoint::s`].
+    pub bracket: f64,
 }
 
 /// Why no curve could start.
@@ -175,6 +230,15 @@ pub enum CurveError {
 /// where the tangent has no `u₁` component; `ds < 0` goes the other way. A
 /// corrected seed outside the box is the curve alone, ending with
 /// [`CurveEnd::Range`].
+///
+/// At every accepted point each test function of the curve's kind is
+/// evaluated (see the table in `curve/codim2.rs`); where one changes sign
+/// between two points it is bisected in arclength, and the point it
+/// vanishes at is inserted into [`Curve::points`] and listed in
+/// [`Curve::special`]. A sign change through a pole, where the test grows
+/// instead of shrinking, is dropped. The points do not change the steps,
+/// so two zeros of one test within one step cancel and neither is found:
+/// `ds_max` below the distance between two such points finds both.
 ///
 /// [`CurveError::NoEffect`] needs `g_{p₂}` and `ψ_{p₂}` to vanish at the
 /// seed. They count as zero when the first-order move of the other unknowns
@@ -231,7 +295,7 @@ pub fn continue_curve(
     let tau: Vec<f64> = tau.iter().map(|t| sign * t).collect();
     let start = sys.point(0.0, &z, tau.clone());
     if !z[n..n + 2].iter().all(|u| (0.0..=1.0).contains(u)) {
-        return Ok(sys.curve(vec![start], CurveEnd::Range));
+        return Ok(sys.curve(vec![start], Vec::new(), CurveEnd::Range));
     }
     let h = opts.ds.abs().min(opts.ds_max).max(opts.ds_min);
     Ok(sys.follow(start, z, tau, h, opts))
@@ -478,17 +542,20 @@ impl<'a> Defining<'a> {
         }
     }
 
-    fn curve(&self, points: Vec<CurvePoint>, end: CurveEnd) -> Curve {
+    fn curve(&self, points: Vec<CurvePoint>, special: Vec<Codim2Point>, end: CurveEnd) -> Curve {
         Curve {
             kind: self.kind,
             period: self.power.k,
             points,
+            special,
             end,
         }
     }
 
-    /// The step loop of a branch, without detection, in the box `[0, 1]²`
-    /// of `(u₁, u₂)`, which also stops where the curve closes.
+    /// The step loop of a branch in the box `[0, 1]²` of `(u₁, u₂)`, which
+    /// also stops where the curve closes. The codimension-2 points between
+    /// two accepted points are located with the borders of the first, and
+    /// they do not change the steps.
     fn follow(
         mut self,
         start: CurvePoint,
@@ -500,7 +567,11 @@ impl<'a> Defining<'a> {
         let n = self.dim();
         let cos_max = cos(opts.max_angle);
         let z0 = z.clone();
+        let detectors = Detectors::of(&self);
+        let mut site = Site::new(z.clone(), start.clone());
+        let mut tests = detectors.tests(&self, &site);
         let mut points = vec![start];
+        let mut special = Vec::new();
         let mut away = false;
         let end = loop {
             if points.len() >= opts.max_points {
@@ -533,9 +604,29 @@ impl<'a> Defining<'a> {
                 break CurveEnd::Unfolded;
             }
             let len = dist(&z, &z_new);
-            let next = self.point(last.s + len, &z_new, t_new);
+            let next = Site::new(z_new.clone(), self.point(last.s + len, &z_new, t_new));
+            let next_tests = detectors.tests(&self, &next);
+            let found = detectors.locate(&self, (&site, &tests), (&next, &next_tests));
+            if points.len() + 1 + found.len() > opts.max_points {
+                break CurveEnd::MaxPoints;
+            }
+            let from = last.s;
+            for f in found {
+                special.push(Codim2Point {
+                    kind: f.kind,
+                    index: points.len(),
+                    p: f.site.point.p,
+                    x: f.site.point.x.clone(),
+                    bracket: f.bracket,
+                });
+                points.push(CurvePoint {
+                    s: from + dist(&z, &f.site.z),
+                    ..f.site.point
+                });
+            }
             self.renew_borders(&z_new);
-            points.push(next);
+            points.push(next.point.clone());
+            (site, tests) = (next, next_tests);
             if edge.is_some() {
                 break CurveEnd::Range;
             }
@@ -559,7 +650,7 @@ impl<'a> Defining<'a> {
             }
             away |= back > h * h;
         };
-        self.curve(points, end)
+        self.curve(points, special, end)
     }
 }
 
@@ -710,41 +801,41 @@ fn first_edge(z: &[f64], pred: &[f64], dir: &[f64], n: usize) -> Option<(usize, 
         .map(|(k, e, _)| (k, e))
 }
 
-/// A bifurcation or a neutral saddle, from the pair of eigenvalues that
-/// meets the curve's condition best. Hopf: the pair with the smallest
-/// `|λᵢ + λⱼ|` is a Hopf pair with `ω = √κ` where `κ = Re(λᵢλⱼ) > 0`.
-/// Neimark–Sacker: the pair with the smallest `|μᵢμⱼ − 1|` is critical
-/// where `c = Re(μᵢ + μⱼ)/2` has `|c| < 1`.
+/// The pair `(i, j)`, `i < j`, of eigenvalues that meets the curve's
+/// condition best: the smallest `|λᵢ + λⱼ|` on a Hopf curve, the smallest
+/// `|μᵢμⱼ − 1|` on a Neimark–Sacker curve. `None` on other curves and with
+/// fewer than two eigenvalues.
+fn critical_pair(kind: CurveKind, eigenvalues: &[(f64, f64)]) -> Option<(usize, usize)> {
+    let distance: fn((f64, f64), (f64, f64)) -> f64 = match kind {
+        CurveKind::Fold | CurveKind::BranchPoint | CurveKind::Flip => return None,
+        CurveKind::Hopf => |a, b| (a.0 + b.0) * (a.0 + b.0) + (a.1 + b.1) * (a.1 + b.1),
+        CurveKind::NeimarkSacker => |a, b| {
+            let (re, im) = (a.0 * b.0 - a.1 * b.1 - 1.0, a.0 * b.1 + a.1 * b.0);
+            re * re + im * im
+        },
+    };
+    let len = eigenvalues.len();
+    let d = |(i, j): (usize, usize)| distance(eigenvalues[i], eigenvalues[j]);
+    (0..len)
+        .flat_map(|i| (i + 1..len).map(move |j| (i, j)))
+        .min_by(|&a, &b| d(a).total_cmp(&d(b)))
+}
+
+/// A bifurcation or a neutral saddle, from the [`critical_pair`]. Hopf: it
+/// is a Hopf pair with `ω = √κ` where `κ = Re(λᵢλⱼ) > 0`. Neimark–Sacker:
+/// it is critical where `c = Re(μᵢ + μⱼ)/2` has `|c| < 1`.
 fn nature(kind: CurveKind, eigenvalues: &[(f64, f64)]) -> Nature {
-    let closest = |distance: fn((f64, f64), (f64, f64)) -> f64| {
-        let len = eigenvalues.len();
-        (0..len)
-            .flat_map(|i| (i + 1..len).map(move |j| (eigenvalues[i], eigenvalues[j])))
-            .min_by(|a, b| distance(a.0, a.1).total_cmp(&distance(b.0, b.1)))
+    let Some((i, j)) = critical_pair(kind, eigenvalues) else {
+        return Nature::Bifurcation { omega: None };
     };
-    let omega = match kind {
-        CurveKind::Fold | CurveKind::BranchPoint | CurveKind::Flip => None,
-        CurveKind::Hopf => {
-            let pair = closest(|a, b| (a.0 + b.0) * (a.0 + b.0) + (a.1 + b.1) * (a.1 + b.1));
-            match pair.map(|(a, b)| a.0 * b.0 - a.1 * b.1) {
-                Some(kappa) if kappa > 0.0 => Some(kappa.sqrt()),
-                Some(_) => return Nature::Neutral,
-                None => None,
-            }
-        }
-        CurveKind::NeimarkSacker => {
-            let pair = closest(|a, b| {
-                let (re, im) = (a.0 * b.0 - a.1 * b.1 - 1.0, a.0 * b.1 + a.1 * b.0);
-                re * re + im * im
-            });
-            match pair {
-                Some((a, b)) if ((a.0 + b.0) / 2.0).abs() < 1.0 => Some(a.1.abs().atan2(a.0)),
-                Some(_) => return Nature::Neutral,
-                None => None,
-            }
-        }
+    let (a, b) = (eigenvalues[i], eigenvalues[j]);
+    let omega = if kind == CurveKind::Hopf {
+        let kappa = a.0 * b.0 - a.1 * b.1;
+        (kappa > 0.0).then(|| kappa.sqrt())
+    } else {
+        (((a.0 + b.0) / 2.0).abs() < 1.0).then(|| a.1.abs().atan2(a.0))
     };
-    Nature::Bifurcation { omega }
+    omega.map_or(Nature::Neutral, |w| Nature::Bifurcation { omega: Some(w) })
 }
 
 /// `[(p, q), (r, s)] ↦ a_pr·b_qs − a_ps·b_qr` over the pairs `p > q`,
