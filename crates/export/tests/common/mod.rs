@@ -3,6 +3,8 @@
 //! gallery templates.
 #![allow(dead_code)]
 
+pub mod plane;
+
 use std::collections::HashMap;
 
 use dyn_analysis::{Axis as PlaneAxis, Plane};

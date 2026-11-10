@@ -7,7 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use dyn_analysis::{Classification, LyapunovSpectrum, OrbitDiagram, SpecialKind};
+pub use dyn_analysis::{
+    Classification, Codim2Kind, LyapunovSpectrum, NormalForm, OrbitDiagram, ResonanceTick,
+    SpecialKind,
+};
 pub use dyn_core::SystemKind;
 pub use dyn_expr::InputFormat;
 pub use dyn_solve::{Direction, Method, SolverOptions, Status};
@@ -516,6 +519,215 @@ impl ContinuationRun {
     }
 }
 
+/// What a curve of the parameter plane follows. The order is the legend's
+/// and the drawing's (`CURVE_KIND_ORDER` in `app/src/state/curves.ts`, the
+/// homoclinic curves last).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlaneCurveKind {
+    /// Folds (limit points).
+    Fold,
+    /// Hopf points of a flow.
+    Hopf,
+    /// Branch points: another branch crosses.
+    BranchPoint,
+    /// Flips of a map.
+    Flip,
+    /// Neimark–Sacker points of a map.
+    NeimarkSacker,
+    /// Homoclinic orbits of a flow, from a Bogdanov–Takens point.
+    Homoclinic,
+}
+
+impl PlaneCurveKind {
+    /// The standard abbreviation: `LP`, `H`, `BP`, `PD`, `NS`, `Hom`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fold => "LP",
+            Self::Hopf => "H",
+            Self::BranchPoint => "BP",
+            Self::Flip => "PD",
+            Self::NeimarkSacker => "NS",
+            Self::Homoclinic => "Hom",
+        }
+    }
+}
+
+/// The standard abbreviation of a codimension-2 point: `BT`, `CP`, `GH`,
+/// `ZH`, `HH`, `R1` to `R4`, `CH`, `LPPD`, `GPD`.
+pub fn codim2_label(kind: Codim2Kind) -> &'static str {
+    match kind {
+        Codim2Kind::BogdanovTakens => "BT",
+        Codim2Kind::Cusp => "CP",
+        Codim2Kind::Bautin => "GH",
+        Codim2Kind::ZeroHopf => "ZH",
+        Codim2Kind::HopfHopf => "HH",
+        Codim2Kind::Resonance1 => "R1",
+        Codim2Kind::Resonance2 => "R2",
+        Codim2Kind::Resonance3 => "R3",
+        Codim2Kind::Resonance4 => "R4",
+        Codim2Kind::Chenciner => "CH",
+        Codim2Kind::FoldFlip => "LPPD",
+        Codim2Kind::GeneralizedFlip => "GPD",
+    }
+}
+
+/// A located codimension-2 point on a curve of the parameter plane.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanePoint {
+    /// What it is.
+    pub kind: Codim2Kind,
+    /// Its own vertex in [`PlaneCurve::p1`].
+    pub index: usize,
+    /// The across and up parameters.
+    pub p: (f64, f64),
+    /// The state (the cycle's first point for a map).
+    pub x: Vec<f64>,
+    /// Bogdanov–Takens `(a, b)` or the cusp's `c`.
+    pub normal_form: Option<NormalForm>,
+    /// On a Neimark–Sacker curve, `θ` of the critical multipliers `e^{±iθ}`.
+    pub angle: Option<f64>,
+}
+
+/// One curve of the parameter plane as one polyline in arclength order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaneCurve {
+    /// What it follows.
+    pub kind: PlaneCurveKind,
+    /// `k` of `f^k` for a map, 1 for a flow.
+    pub period: usize,
+    /// The across parameter at each point.
+    pub p1: Vec<f64>,
+    /// The up parameter at each point.
+    pub p2: Vec<f64>,
+    /// `points · dim` values: the state at each point.
+    pub x: Vec<f64>,
+    /// `true` where the curve is a neutral saddle, no bifurcation.
+    pub neutral: Vec<bool>,
+    /// The codimension-2 points in arclength order.
+    pub special: Vec<PlanePoint>,
+    /// On a Neimark–Sacker curve, the weak resonances 1:5 to 1:9.
+    pub ticks: Vec<ResonanceTick>,
+}
+
+impl PlaneCurve {
+    /// Number of points.
+    pub fn len(&self) -> usize {
+        self.p1.len().min(self.p2.len())
+    }
+
+    /// No points.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The runs of segments `i → i+1` as `(from, to, neutral)`: a segment is
+    /// neutral when both its ends are, as `segmentRuns` splits the screen's
+    /// curve (`app/src/canvas/curves.ts`).
+    pub fn segment_runs(&self) -> Vec<(usize, usize, bool)> {
+        let n = self.len();
+        let neutral = |i: usize| self.neutral.get(i).copied().unwrap_or(false);
+        let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+        for i in 0..n.saturating_sub(1) {
+            let v = neutral(i) && neutral(i + 1);
+            match runs.last_mut() {
+                Some(last) if last.2 == v => last.1 = i + 1,
+                _ => runs.push((i, i + 1, v)),
+            }
+        }
+        runs
+    }
+}
+
+/// The Branch view's range drawn across the plane at the up parameter's
+/// value its branches were computed at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaneSlice {
+    /// The Branch view's range of the across parameter.
+    pub range: (f64, f64),
+    /// The up parameter's value.
+    pub at: f64,
+}
+
+/// The parameter plane: its curves and what it shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaneRun {
+    /// Indices of the across and up parameters in [`Labels::params`].
+    pub free: (usize, usize),
+    /// The box the curves were followed in: across, then up.
+    pub ranges: ((f64, f64), (f64, f64)),
+    /// The curves: the bifurcation curves in the view's order, then the
+    /// homoclinic curves.
+    pub curves: Vec<PlaneCurve>,
+    /// The Branch view's range, when the plane draws it.
+    pub slice: Option<PlaneSlice>,
+}
+
+/// Two codimension-2 points of the same kind and period are one when each
+/// parameter is within `SAME_POINT_TOL` of its range of the other's.
+pub const SAME_POINT_TOL: f64 = 1e-6;
+
+/// A codimension-2 point once, with every curve it was found on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanePointRow<'a> {
+    /// The first curve's report of it.
+    pub point: &'a PlanePoint,
+    /// `k` of `f^k`.
+    pub period: usize,
+    /// The kinds of the curves it lies on, in kind order.
+    pub on: Vec<PlaneCurveKind>,
+    /// From the first curve that has one.
+    pub normal_form: Option<NormalForm>,
+    /// From the first curve that has one.
+    pub angle: Option<f64>,
+}
+
+impl PlaneRun {
+    /// Every codimension-2 point once, by kind and then across, as the
+    /// inspector's Special points list has them (`planePointRows` in
+    /// `app/src/state/curves.ts`): a point found on two curves (a BT on the
+    /// fold and the Hopf curve) is one row naming both.
+    pub fn special_points(&self) -> Vec<PlanePointRow<'_>> {
+        let (r1, r2) = self.ranges;
+        let (w1, w2) = (r1.1 - r1.0, r2.1 - r2.0);
+        let mut rows: Vec<PlanePointRow> = Vec::new();
+        for c in &self.curves {
+            for sp in &c.special {
+                let same = rows.iter_mut().find(|r| {
+                    r.point.kind == sp.kind
+                        && r.period == c.period
+                        && (r.point.p.0 - sp.p.0).abs() <= SAME_POINT_TOL * w1
+                        && (r.point.p.1 - sp.p.1).abs() <= SAME_POINT_TOL * w2
+                });
+                match same {
+                    Some(r) => {
+                        if !r.on.contains(&c.kind) {
+                            r.on.push(c.kind);
+                        }
+                        r.normal_form = r.normal_form.or(sp.normal_form);
+                        r.angle = r.angle.or(sp.angle);
+                    }
+                    None => rows.push(PlanePointRow {
+                        point: sp,
+                        period: c.period,
+                        on: vec![c.kind],
+                        normal_form: sp.normal_form,
+                        angle: sp.angle,
+                    }),
+                }
+            }
+        }
+        for r in &mut rows {
+            r.on.sort();
+        }
+        rows.sort_by(|a, b| {
+            (a.point.kind as usize)
+                .cmp(&(b.point.kind as usize))
+                .then(a.point.p.0.total_cmp(&b.point.p.0))
+        });
+        rows
+    }
+}
+
 /// The export's color theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -547,9 +759,19 @@ pub struct Palette {
     pub traj: Vec<String>,
     /// `null-1` … `null-4`.
     pub nullcline: Vec<String>,
+    /// The parameter plane's curves, by [`PlaneCurveKind`]: `curve-fold`,
+    /// `curve-hopf`, `curve-bp`, `curve-flip`, `curve-ns`, `curve-hom`.
+    pub curves: Vec<String>,
 }
 
 impl Palette {
+    /// The color of a curve kind of the parameter plane.
+    pub fn curve(&self, kind: PlaneCurveKind) -> &str {
+        self.curves
+            .get(kind as usize)
+            .map_or(self.fp.as_str(), String::as_str)
+    }
+
     /// The palette of `theme` from the design system's `tokens.json`
     /// (`app/src/styles/ds/tokens.json`, which the app embeds).
     pub fn from_tokens(tokens_json: &str, theme: Theme) -> Result<Palette, String> {
@@ -589,6 +811,10 @@ impl Palette {
                 .collect::<Result<_, _>>()?,
             nullcline: (1..=4)
                 .map(|i| get(&format!("null-{i}")))
+                .collect::<Result<_, _>>()?,
+            curves: ["fold", "hopf", "bp", "flip", "ns", "hom"]
+                .iter()
+                .map(|k| get(&format!("curve-{k}")))
                 .collect::<Result<_, _>>()?,
         })
     }

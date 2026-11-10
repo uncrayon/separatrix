@@ -1,0 +1,99 @@
+{
+  "format": "separatrix-curves",
+  "format_version": 1,
+  "app_version": "0.2.0",
+  "title": "CO oxidation",
+  "csv": "co-oxidation-curves.csv",
+  "special_csv": "co-oxidation-curves-special.csv",
+  "system": {
+    "kind": "ode",
+    "input_format": "latex",
+    "lines": [
+      "\\dot{x}=5\\left(1-x-y-s\\right)^2-2x^2-10xy",
+      "\\dot{y}=k_2\\left(1-x-y-s\\right)-0.1y-10xy",
+      "\\dot{s}=0.0675\\left(1-x-y-s-Ks\\right)"
+    ]
+  },
+  "params": [
+    {
+      "name": "k_2",
+      "value": 1.05
+    },
+    {
+      "name": "K",
+      "value": 0.4
+    }
+  ],
+  "columns": [
+    "curve",
+    "kind",
+    "period",
+    "point",
+    "k_2",
+    "K",
+    "x",
+    "y",
+    "s",
+    "neutral"
+  ],
+  "special_columns": [
+    "curve",
+    "point",
+    "type",
+    "period",
+    "k_2",
+    "K",
+    "x",
+    "y",
+    "s",
+    "a",
+    "b",
+    "c",
+    "theta"
+  ],
+  "across": "k_2",
+  "up": "K",
+  "ranges": [
+    [
+      0.5,
+      2.5
+    ],
+    [
+      0.0,
+      2.0
+    ]
+  ],
+  "curves": [
+    {
+      "curve": 1,
+      "kind": "LP",
+      "period": 1,
+      "points": 19,
+      "special": 3,
+      "ticks": []
+    },
+    {
+      "curve": 2,
+      "kind": "H",
+      "period": 1,
+      "points": 23,
+      "special": 4,
+      "ticks": []
+    },
+    {
+      "curve": 3,
+      "kind": "Hom",
+      "period": 1,
+      "points": 11,
+      "special": 0,
+      "ticks": []
+    }
+  ],
+  "notes": [
+    "One row per point of each curve in arclength order, point counted from 0; kind is LP (fold), H (Hopf), BP (branch point), PD (flip), NS (Neimark-Sacker) or Hom (homoclinic); a map's state is the cycle's first point.",
+    "neutral: the point is a neutral saddle, where the curve's equations hold without a bifurcation (real eigenvalues +-kappa on a Hopf curve, real multipliers mu and 1/mu on a Neimark-Sacker curve).",
+    "The special CSV names each codimension-2 point by curve and point; a and b are the Bogdanov-Takens coefficients (oriented so that a >= 0), c the cusp's cubic coefficient, theta the angle of the critical multipliers on a Neimark-Sacker curve.",
+    "ticks are the weak resonances 1:q on a Neimark-Sacker curve, p the across and up parameters there.",
+    "The across and up parameters' values in params are the sliders'; each curve has its own."
+  ]
+}
