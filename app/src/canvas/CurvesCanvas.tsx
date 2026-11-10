@@ -13,6 +13,7 @@ import {
   NEUTRAL_LEGEND,
   drawnCurves,
   planePointRows,
+  planeSlice,
   ticksText,
 } from "../state/curves";
 import { drawnHomoclinic } from "../state/homoclinic";
@@ -87,13 +88,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
   const curves = useMemo(() => drawnCurves(state.planeRows), [state.planeRows]);
   const homoclinic = useMemo(() => drawnHomoclinic(state.homoclinicRows), [state.homoclinicRows]);
   const points = useMemo(() => planePointRows(curves, ranges), [curves, ranges]);
-  const branch = plane?.branch ?? null;
-  const sliceOn = !!plane && !!branch && branch.param === plane.across;
-  const sliceAt = plane?.branchParams?.[plane.up];
-  const slice = useMemo(
-    () => (sliceOn && sliceAt !== undefined ? { range: branch!.continuation.range, at: sliceAt } : null),
-    [sliceOn, branch, sliceAt],
-  );
+  const slice = useMemo(() => (plane ? planeSlice(plane) : null), [plane]);
   const acrossValue = across?.value;
   const upValue = up?.value;
   const crosshair = useMemo<[number, number] | null>(
@@ -137,7 +132,7 @@ export function CurvesCanvas({ state, actions, toolbar }: Props) {
         colors,
         points,
         crosshair,
-        slice: slice && { range: [slice.range[0], slice.range[1]], at: slice.at },
+        slice,
         avoid,
       },
       homoclinic,

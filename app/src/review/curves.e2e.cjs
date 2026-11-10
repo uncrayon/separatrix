@@ -127,7 +127,90 @@ test("Search in two parameters fills the list curve by curve and merges the repe
     const status = await page.locator(".statusbar").innerText();
     assert.match(status, /Curves \d/);
     assert.match(status, /2 curves · 960 points · 5 special/);
-    assert.equal(await page.getByRole("button", { name: "Export…" }).isDisabled(), true, "the plane has no export yet");
+    assert.equal(await page.getByRole("button", { name: "Export…" }).isDisabled(), false, "the plane exports");
+  } finally {
+    await browser.close();
+  }
+});
+
+test("Export the plane: the figure, the codimension-2 points table, CSV with its special file, SVG and PNG", async () => {
+  const { browser, page } = await open();
+  const saved = (n) => page.waitForFunction((k) => window.__sepxMock.saved.length === k, n);
+  const snippet = () => page.locator(".ds-export-snippet").innerText();
+  const primary = () => page.locator(".export-dialog .ds-export-actions .ds-button--primary");
+  try {
+    await pick(page, "CO oxidation");
+    await viewRadio(page, "Continuation").click();
+    await branchSettled(page);
+    await inspector(page).getByRole("button", { name: "Search in two parameters" }).click();
+    await curvesSettled(page);
+    await page.getByRole("button", { name: "Export…" }).click();
+    await page.waitForSelector(".export-dialog[role=dialog]");
+    const d = page.locator(".export-dialog");
+    assert.equal(await page.locator(".ds-export-sub").innerText(), "CO oxidation, parameter plane of K against k₂, as you see it now");
+    const content = d.locator("[role=radiogroup][aria-label=Content]");
+    assert.equal(await content.getByRole("radio", { name: "Figure" }).getAttribute("aria-checked"), "true");
+    assert.match(await content.getByRole("radio", { name: "Fixed points" }).getAttribute("data-tooltip"), /the parameter plane shows no fixed points/);
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("% Separatrix parameter plane: CO oxidation"));
+    const tex = await snippet();
+    assert.match(tex, /% Curve 1: H\n[\s\S]*% Curve 2: LP\n/, "the curves the plane draws, the merged ones left out");
+    assert.doesNotMatch(tex, /% Curve 3/);
+    assert.equal(
+      await page.locator(".ds-export-preview-well canvas").getAttribute("aria-label"),
+      "Preview: CO oxidation with 2 curves and 5 special points",
+    );
+    await primary().click();
+    await page.waitForFunction(() => /^% Separatrix parameter plane/.test(window.__sepxMock.clipboardText ?? ""));
+    await d.getByRole("button", { name: "Save…" }).click();
+    await saved(1);
+    assert.equal(await page.evaluate(() => window.__sepxMock.saved[0].name), "co-oxidation.tex");
+
+    await content.getByRole("radio", { name: "Special points" }).click();
+    await page.waitForFunction(() => document.querySelector(".ds-export-snippet")?.textContent.includes("\\toprule"));
+    assert.match(await snippet(), /BT & \\num\{1\.161199\} & \\num\{0\.722339\} & LP, H \\\\/);
+    assert.equal(await page.locator(".ds-export-sub").innerText(), "CO oxidation, the special points of the curves");
+    const rows = d.locator(".export-fp-table tbody tr");
+    assert.equal(await rows.count(), 5, "each point once, as the inspector lists them");
+    assert.match(await rows.first().innerText(), /^BT\s+1\.161199\s+0\.722339\s+\(.*\)\s+LP, H\s+a = 0\.0482, b = 1\.9376 · ab > 0$/);
+    assert.match(await page.locator(".ds-export-foot-note").innerText(), /Save… writes co-oxidation-plane-points\.tex/);
+    await d.getByRole("button", { name: "Save…" }).click();
+    await saved(2);
+    assert.equal(await page.evaluate(() => window.__sepxMock.saved[1].name), "co-oxidation-plane-points.tex");
+
+    await d.getByRole("radio", { name: "CSV", exact: true }).click();
+    await page.waitForFunction(() => /^curve,kind,period,point,k_2,K,x,y,s,neutral\n1,H,1,0,/.test(document.querySelector(".ds-export-snippet")?.textContent ?? ""));
+    assert.match(await page.locator(".ds-export-foot-note").innerText(), /co-oxidation-curves\.csv, its \.meta\.json and co-oxidation-curves-special\.csv/);
+    await primary().click();
+    await saved(5);
+    assert.deepEqual(await page.evaluate(() => window.__sepxMock.saved.slice(2).map((s) => s.name)), [
+      "co-oxidation-curves.csv",
+      "co-oxidation-curves-special.csv",
+      "co-oxidation-curves.meta.json",
+    ]);
+    const special = await page.evaluate(() => window.__sepxMock.saved[3].contents);
+    assert.equal(special.split("\n")[0], "curve,point,type,period,k_2,K,x,y,s,a,b,c,theta");
+    assert.equal(special.split("\n").filter((l) => l.includes(",BT,")).length, 4, "as each curve reports them");
+
+    await d.getByRole("radio", { name: "SVG", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".export-dialog .ds-export-actions .ds-button--primary")?.disabled);
+    await primary().click();
+    await saved(6);
+    const svg = await page.evaluate(() => {
+      const f = window.__sepxMock.saved[5];
+      const doc = new DOMParser().parseFromString(f.contents, "image/svg+xml");
+      return { name: f.name, error: doc.querySelector("parsererror")?.textContent ?? null, desc: doc.querySelector("svg > desc")?.textContent ?? null, text: doc.documentElement.textContent };
+    });
+    assert.equal(svg.name, "co-oxidation.svg");
+    assert.equal(svg.error, null);
+    assert.equal(svg.desc, "CO oxidation with 2 curves and 5 special points");
+    assert.match(svg.text, /BT[\s\S]*CP/, "the special points' labels are text");
+    assert.match(await page.evaluate(() => window.__sepxMock.saved[5].contents), /stroke="#0072b2"[^>]*stroke-dasharray="8 3"|stroke-dasharray="8 3"[^>]*stroke="#0072b2"/, "the Hopf curve in its projector colour and dashes");
+
+    await d.getByRole("radio", { name: "PNG", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".export-dialog .ds-export-actions .ds-button--primary")?.disabled);
+    await primary().click();
+    await saved(7);
+    assert.equal(await page.evaluate(() => window.__sepxMock.saved[6].name), "co-oxidation.png");
   } finally {
     await browser.close();
   }

@@ -1,0 +1,21 @@
+% Separatrix codimension-2 points: CO oxidation (MatCont Tutorial IV)
+%   x' = 5*(1 - x - y - s)^2 - 2*x^2 - 10*x*y
+%   y' = k_2*(1 - x - y - s) - 0.1*y - 10*x*y
+%   s' = 0.0675*(1 - x - y - s - K*s)
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{CO oxidation: codimension-two points of the bifurcation curves in the $(k_{2}, K)$ plane. BT: Bogdanov--Takens; CP: cusp; GH: Bautin (generalized Hopf). Curves names the curves each point was found on (LP fold, H Hopf). $a$ and $b$ are the Bogdanov--Takens coefficients of $\dot w_0 = w_1$, $\dot w_1 = \beta_1 + \beta_2 w_0 + a w_0^2 + b w_0 w_1$, oriented so that $a \ge 0$: the sign of $b$ is that of $ab$. $c$ is the cusp's coefficient in $\dot w = \beta_1 + \beta_2 w + c w^3$, with $\lVert q \rVert = 1$.}
+\label{tab:co-oxidation-plane-points}
+\begin{tabular}{@{}llllllll@{}}
+\toprule
+Type & $k_{2}$ & $K$ & $(x, y, s)$ & Curves & $a$ & $b$ & $c$ \\
+\midrule
+BT & \num{1.161199} & \num{0.722339} & $(\num{0.016337}, \num{0.63841}, \num{0.200456})$ & LP, H & \num{0.0482256} & \num{1.93763} & -- \\
+BT & \num{1.417628} & \num{0.971398} & $(\num{0.115909}, \num{0.315467}, \num{0.288437})$ & LP, H & \num{0.0837844} & \num{2.13628} & -- \\
+CP & \num{1.006408} & \num{0.355991} & $(\num{0.0359406}, \num{0.352005}, \num{0.45137})$ & LP & -- & -- & \num{0.362789} \\
+GH & \num{0.891319} & \num{0.232487} & $(\num{0.0180224}, \num{0.368238}, \num{0.497968})$ & H & -- & -- & -- \\
+GH & \num{0.924255} & \num{0.305879} & $(\num{0.0643113}, \num{0.211095}, \num{0.55487})$ & H & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}

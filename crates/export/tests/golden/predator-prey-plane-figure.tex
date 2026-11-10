@@ -1,0 +1,129 @@
+% Separatrix parameter plane: Predator–prey map (MatContM Tutorial M-II)
+%   x_{n+1} = a*x_n*(1 - x_n) - 3*x_n*y_n/(1 + varepsilon*x_n)
+%   y_{n+1} = 3.5*x_n*y_n/(1 + varepsilon*x_n)
+% Needs: \usepackage{amsmath} \usepackage{pgfplots} \pgfplotsset{compat=1.18} \usetikzlibrary{calc,plotmarks}
+% Parameter plane: varepsilon against a, followed in a from 0 to 16 and varepsilon from -6 to 3; 3 curves, 5 codimension-2 points.
+% Legend: BP branch-point (dash-dot-dotted); PD flip (short dashes); NS Neimark–Sacker (dashed); dotted where a curve is a neutral saddle, no bifurcation.
+\definecolor{sepxbg}{HTML}{FFFFFF}%
+\definecolor{sepxgrid}{HTML}{EDF0F0}%
+\definecolor{sepxaxis}{HTML}{7D888B}%
+\definecolor{sepxtick}{HTML}{3A4649}%
+\definecolor{sepxfp}{HTML}{0B1214}%
+\definecolor{sepxhalo}{HTML}{FFFFFF}%
+\definecolor{sepxbp}{HTML}{7A6A00}%
+\definecolor{sepxflip}{HTML}{00845F}%
+\definecolor{sepxns}{HTML}{A3367A}%
+\begin{tikzpicture}[sepxlabel/.style={inner sep=1.125bp, outer sep=-1.125bp, fill=sepxhalo, fill opacity=0.8, text opacity=1, text=sepxtick}]
+\begin{axis}[
+  width=226.7717bp, height=170.0787bp, scale only axis,
+  xmin=-0.5, xmax=16.5, ymin=-6.3, ymax=3.3,
+  enlargelimits=false, scaled ticks=false, clip marker paths=true, unbounded coords=jump, filter discard warning=false,
+  xtick={0,10}, ytick={-5,0}, xticklabels={}, yticklabels={},
+  minor xtick={5,15}, minor ytick={-2.5,2.5},
+  grid=both, every major grid/.style={sepxgrid, line width=0.75bp}, every minor grid/.style={sepxgrid, line width=0.75bp}, major tick length=0pt, minor tick length=0pt,
+  axis line style={sepxaxis, line width=0.75bp},
+  axis x line*=middle, axis y line*=middle
+]
+\draw[sepxaxis, line width=0.75bp, line cap=butt]
+  ($(rel axis cs:0,1)+(6.67bp,-147.047bp)$) -- ($(rel axis cs:0,1)+(3.67bp,-147.047bp)$)
+  ($(rel axis cs:0,1)+(140.065bp,-58.465bp)$) -- ($(rel axis cs:0,1)+(140.065bp,-61.465bp)$);
+% Curve 3: branch-point (BP), dash-dot-dotted
+\addplot[sepxbp, line width=1.3125bp, line cap=butt, line join=round, dash pattern=on 6bp off 1.875bp on 1.125bp off 1.875bp on 1.125bp off 1.875bp] table[row sep=\\]{
+x y\\
+1.118 -6\\
+1.14 -4.65\\
+1.172 -3.3\\
+1.225 -1.951\\
+1.322 -0.602\\
+1.568 0.74\\
+2.659 1.897\\
+3.012 2.003\\
+4.957 2.247\\
+7.35 2.343\\
+9.749 2.386\\
+12.149 2.41\\
+14.549 2.426\\
+16.004 2.433\\
+};
+% Curve 2: flip (PD), short dashes
+\addplot[sepxflip, line width=1.3125bp, line cap=butt, line join=round, dash pattern=on 2.25bp off 2.25bp] table[row sep=\\]{
+x y\\
+16 1.306\\
+14.001 1.346\\
+12.003 1.396\\
+10.007 1.46\\
+8.012 1.546\\
+6.024 1.666\\
+4.052 1.85\\
+2.967 2.006\\
+2.14 2.175\\
+0.554 2.838\\
+0.366 3\\
+};
+% Curve 1: Neimark–Sacker (NS), neutral saddle (dotted)
+\addplot[sepxns, opacity=0.55, line width=1.125bp, line cap=round, line join=round, dash pattern=on 0bp off 2.6bp] table[row sep=\\]{
+x y\\
+14.865 1.356\\
+16.002 1.367\\
+};
+% Curve 1: Neimark–Sacker (NS), dashed
+\addplot[sepxns, line width=1.3125bp, line cap=butt, line join=round, dash pattern=on 6bp off 2.25bp] table[row sep=\\]{
+x y\\
+1.267 -6\\
+1.314 -4.875\\
+1.325 -4.65\\
+1.381 -3.751\\
+1.485 -2.627\\
+1.665 -1.507\\
+2.05 -0.405\\
+3.082 0.539\\
+4.898 0.987\\
+6.873 1.159\\
+7.032 1.168\\
+8.867 1.246\\
+10.465 1.289\\
+10.865 1.297\\
+12.865 1.331\\
+13.984 1.346\\
+14.865 1.356\\
+};
+% Weak resonances 1:q, each the tip of a tongue
+\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates {(1.253,-1.601) (2.035,-1.673)};
+\node[anchor=west, sepxlabel, text=sepxtick, font=\footnotesize] at ($(rel axis cs:0,1)+(36.048bp,-88.368bp)$) {$1{:}9$};
+\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates {(1.747,-0.216) (2.354,-0.593)};
+\node[anchor=west, sepxlabel, text=sepxtick, font=\footnotesize] at ($(rel axis cs:0,1)+(39.812bp,-70.395bp)$) {$1{:}8$};
+\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates {(2.427,0.406) (3.035,0.03)};
+\node[anchor=west, sepxlabel, text=sepxtick, font=\footnotesize] at ($(rel axis cs:0,1)+(48.889bp,-59.366bp)$) {$1{:}7$};
+\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates {(3.4,0.93) (3.645,0.366)};
+\node[anchor=west, sepxlabel, text=sepxtick, font=\footnotesize] at ($(rel axis cs:0,1)+(55.993bp,-54.113bp)$) {$1{:}6$};
+\addplot[sepxns, line width=0.75bp, line cap=butt] coordinates {(4.717,1.254) (4.962,0.691)};
+\node[anchor=west, sepxlabel, text=sepxtick, font=\footnotesize] at ($(rel axis cs:0,1)+(73.56bp,-48.363bp)$) {$1{:}5$};
+% Codimension-2 points
+\addplot[sepxhalo, only marks, mark=*, mark size=5.625bp, mark options={draw opacity=0, fill=sepxhalo}] table[row sep=\\]{
+x y\\
+14 1.346\\
+10.5 1.289\\
+7 1.167\\
+1.326 -4.64\\
+3 2\\
+};
+\addplot[only marks, sepxfp, mark=halfcircle*, mark options={rotate=90, fill=sepxfp, draw=sepxfp}, mark size=3.75bp, line width=1.125bp] table[row sep=\\]{
+x y\\
+14 1.346\\
+10.5 1.289\\
+7 1.167\\
+1.326 -4.64\\
+3 2\\
+};
+\node[anchor=south west, sepxlabel, text=sepxfp, font=\footnotesize] at ($(rel axis cs:0,1)+(198.673bp,-30.865bp)$) {R2};
+\node[anchor=south west, sepxlabel, text=sepxfp, font=\footnotesize] at ($(rel axis cs:0,1)+(151.985bp,-31.87bp)$) {R3};
+\node[anchor=south west, sepxlabel, text=sepxfp, font=\footnotesize] at ($(rel axis cs:0,1)+(105.296bp,-34.045bp)$) {R4};
+\node[anchor=south west, sepxlabel, text=sepxfp, font=\footnotesize] at ($(rel axis cs:0,1)+(29.604bp,-136.92bp)$) {CH};
+\node[anchor=south west, sepxlabel, text=sepxfp, font=\footnotesize] at ($(rel axis cs:0,1)+(51.938bp,-19.281bp)$) {LPPD};
+\node[anchor=north, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(140.065bp,-65.59bp)$) {$10$};
+\node[anchor=west, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(13.795bp,-147.047bp)$) {$-5$};
+\node[anchor=north west, sepxlabel, font=\footnotesize] at ($(rel axis cs:0,1)+(13.795bp,-65.59bp)$) {$0$};
+\node[anchor=south east, sepxlabel] at ($(rel axis cs:0,1)+(220.772bp,-55.465bp)$) {$a$};
+\node[anchor=north west, sepxlabel] at ($(rel axis cs:0,1)+(12.67bp,-4.5bp)$) {$\varepsilon$};
+\end{axis}
+\end{tikzpicture}

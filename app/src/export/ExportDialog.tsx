@@ -3,13 +3,16 @@ import type {
   ContinuationFigureRequest,
   ContinuationLatex,
   CsvFileOut,
+  CurvesFigureRequest,
   FigureLatexRequest,
+  FigureLatexResponse,
   FixedPointOut,
   LyapunovResponse,
   OrbitDiagramRequest,
   OrbitDiagramResponse,
   OrbitFigureRequest,
   PortraitResponse,
+  SavedFiles,
   SpecialPointOut,
   SystemKind,
 } from "../api/types";
@@ -20,7 +23,7 @@ import { makeViewport } from "../canvas/viewport";
 import { Button, IconButton, NumberField, SegmentedControl, withMinus } from "../components/controls";
 import { IconCheck, IconClose, IconCopy, IconError, IconInfo } from "../components/icons";
 import { Tex } from "../math/Tex";
-import { axisLatex, classificationTitle, fmt, latexToPlain, plural } from "../math/format";
+import { axisLatex, classificationTitle, fmt, latexToPlain, plainSubscripted, plural } from "../math/format";
 import {
   hasNullclineLayer,
   isCobweb,
@@ -36,8 +39,20 @@ import {
   systemTitle,
   SPECIAL_KINDS,
   isContinuation,
+  isCurves,
   type SpaceView,
 } from "../state/model";
+import {
+  CODIM2_KINDS,
+  CURVE_KINDS,
+  angleText,
+  drawnCurves,
+  normalFormText,
+  planePointRows,
+  planeSlice,
+  type PlanePointRow,
+} from "../state/curves";
+import { drawnHomoclinic } from "../state/homoclinic";
 import { spaceNames } from "../canvas/space";
 import type { StudioState } from "../state/useStudio";
 import { templateRef, templateById } from "../templates";
@@ -49,6 +64,8 @@ import {
   exportContinuationCsv,
   exportContinuationLatex,
   exportCsv,
+  exportCurvesCsv,
+  exportCurvesLatex,
   exportFigureLatex,
   exportFixedPointsLatex,
   exportLyapunovCsv,
@@ -59,6 +76,7 @@ import {
   saveContinuationLatex,
   saveCsv,
   saveCsvFile,
+  saveCurvesLatex,
   saveFigureLatex,
   saveOrbitLatex,
   savePngFile,
@@ -70,6 +88,7 @@ import {
   axisNames,
   buildContinuationExport,
   buildCsvRequest,
+  buildCurvesExport,
   buildFigureJob,
   buildLyapunovExport,
   buildOrbitExport,
@@ -79,10 +98,11 @@ import {
   icProjectId,
   orbitFigureRatio,
   screenPortrait,
+  type AnalysisKind,
   type ExportSource,
   type FigureJob,
 } from "./job";
-import { SPACE_LATEX_REFUSAL } from "../api/ipc.generated";
+import { CURVES_EXPORT_EMPTY, SPACE_LATEX_REFUSAL } from "../api/ipc.generated";
 import {
   CSV_MAX_SAMPLES,
   fileStem,
@@ -100,7 +120,7 @@ import {
 import { pngRaster, renderPng, spacePngDraw } from "./png";
 import { canvasMeasure, figureSvg } from "./svg";
 import type { ExportPalette } from "./theme";
-import { EXPORT_FONTS, exportTheme } from "./tokens";
+import { EXPORT_FONTS, exportCurveColors, exportTheme } from "./tokens";
 import "../styles/areas/export.css";
 
 interface Props {
@@ -371,6 +391,58 @@ function spaceAxesPlain(v: SpaceView, states: readonly { latex: string }[]): str
 
 const trajectories = (n: number) => plural(n, "trajectory", "trajectories");
 
+/** The analysis view as a sentence names it ("… shows no fixed points"). */
+const ANALYSIS_WORDS: Record<AnalysisKind, string> = {
+  lyapunov: "the Lyapunov view",
+  orbit: "the orbit diagram",
+  continuation: "the branch plot",
+  curves: "the parameter plane",
+};
+
+/** What the CSV of an analysis view holds ("the … as you see them now"), and its file's suffix. */
+const ANALYSIS_CSV: Record<AnalysisKind, { words: string; suffix: string }> = {
+  lyapunov: { words: "running estimates", suffix: "lyapunov" },
+  orbit: { words: "orbit diagram", suffix: "orbit-diagram" },
+  continuation: { words: "branches", suffix: "continuation" },
+  curves: { words: "curves", suffix: "curves" },
+};
+
+/** `cases[kind]()`: one case per analysis view, which the compiler checks. */
+const byAnalysis = <T,>(kind: AnalysisKind, cases: Record<AnalysisKind, () => T>): T => cases[kind]();
+
+/** The codimension-2 points table as it will be written: each point once, with the curves it lies on. */
+function PlanePointsPreview({ rows, names, map }: { rows: PlanePointRow[]; names: [string, string]; map: boolean }) {
+  if (rows.length === 0) return <p className="ds-export-hint export-hint-flush">No codimension-2 point was found on the curves.</p>;
+  return (
+    <table className="export-fp-table numeric-sm">
+      <thead>
+        <tr>
+          <th scope="col">Type</th>
+          <th scope="col">{names[0]}</th>
+          <th scope="col">{names[1]}</th>
+          <th scope="col">State</th>
+          {map && <th scope="col">Period</th>}
+          <th scope="col">Curves</th>
+          <th scope="col">Coefficients</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, k) => (
+          <tr key={k}>
+            <td>{CODIM2_KINDS[r.kind].label}</td>
+            <td>{withMinus(r.p[0].toFixed(6))}</td>
+            <td>{withMinus(r.p[1].toFixed(6))}</td>
+            <td>{r.x.length === 1 ? num(r.x[0], 6) : `(${r.x.map((v) => num(v, 6)).join(", ")})`}</td>
+            {map && <td>{r.period}</td>}
+            <td>{r.on.map((c) => CURVE_KINDS[c].label).join(", ")}</td>
+            <td>{withMinus(normalFormText(r.normalForm) ?? (r.angle === null ? "–" : angleText(r.angle)))}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, settings, onSettingsChange, onClose }: Props) {
   const ids = useId();
   const titleId = `${ids}-title`;
@@ -412,7 +484,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const compiles = !!sys && state.compileOk;
   const timeDependent = !!sys && !sys.autonomous;
   const chaos = sys ? analysisKind(state) : null;
-  const chaosWords = chaos === "lyapunov" ? "the Lyapunov view" : chaos === "orbit" ? "the orbit diagram" : "the branch plot";
+  const chaosWords = chaos ? ANALYSIS_WORDS[chaos] : "";
+  const hasSpecialPoints = chaos === "continuation" || chaos === "curves";
   const reasons = {
     field: kind === "map" ? "none: a map" : section ? "none: a Poincaré section" : space ? "none: a 3D view" : null,
     nullclines:
@@ -438,7 +511,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
           ? "LaTeX gives the spectrum as a table; export the running estimates as PNG or SVG"
           : null,
     spectrum: chaos === "lyapunov" ? null : "only the Lyapunov view has a spectrum",
-    specialPoints: chaos === "continuation" ? null : "only the branch plot has special points",
+    specialPoints: hasSpecialPoints ? null : "only the branch plot and the parameter plane have special points",
     equations: compiles ? null : "the equations don't compile",
     fixedPoints: !compiles
       ? "the equations don't compile"
@@ -451,7 +524,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   const contents: LatexContent[] =
     chaos === "lyapunov"
       ? ["spectrum", "figure", "equations", "fixedPoints"]
-      : chaos === "continuation"
+      : hasSpecialPoints
         ? ["figure", "specialPoints", "equations", "fixedPoints"]
         : ["figure", "equations", "fixedPoints"];
   const content: LatexContent = [opts.latexContent, ...contents].find((c) => contents.includes(c) && !contentReason[c]) ?? contents[0];
@@ -527,6 +600,16 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         : [],
     [chaos, compiled, params, view, runs],
   );
+  const curvesReq = chaos === "curves" ? buildCurvesExport(state, source) : null;
+  const { planeRows, homoclinicRows } = state;
+  const planeFigure = useMemo(() => {
+    const v = view;
+    if (chaos !== "curves" || !isCurves(v)) return null;
+    const curves = drawnCurves(planeRows);
+    const homoclinic = drawnHomoclinic(homoclinicRows);
+    return { curves, homoclinic, points: planePointRows(curves, v.curves.ranges), slice: planeSlice(v) };
+  }, [chaos, view, planeRows, homoclinicRows]);
+  const curveColors = exportCurveColors(opts.palette);
   const branchAxis = isContinuation(state.view) ? state.view.yAxis : null;
   const analysis: AnalysisFigure | null =
     chaos === "lyapunov"
@@ -535,7 +618,9 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         ? { kind: "orbit", res: orbitFig.res, pixelRatio: orbitRatio }
         : chaos === "continuation" && branchAxis && branches.length > 0
           ? { kind: "branch", branches, dim: sys?.states.length ?? 0, axis: branchAxis }
-          : null;
+          : chaos === "curves" && planeFigure && planeFigure.curves.length + planeFigure.homoclinic.length > 0
+            ? { kind: "curves", ...planeFigure, colors: curveColors }
+            : null;
   const continuationLatexReq = (which: ContinuationLatex): ContinuationFigureRequest | null =>
     continuationReq && {
       continuation: continuationReq,
@@ -547,8 +632,31 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       theme: opts.palette,
       standalone: opts.standalone,
     };
-  const branchLatex: ContinuationLatex | null =
-    chaos === "continuation" && (content === "figure" || content === "specialPoints") ? content : null;
+  const curvesLatexReq = (which: ContinuationLatex): CurvesFigureRequest | null =>
+    curvesReq && {
+      curves: curvesReq,
+      content: which,
+      xRange: state.view.xRange,
+      yRange: state.view.yRange,
+      widthCm: opts.widthCm,
+      heightCm: opts.heightCm,
+      theme: opts.palette,
+      standalone: opts.standalone,
+    };
+  // The branch plot's and the parameter plane's figure and table: the core
+  // follows the view's requests again for both.
+  const pairContent: ContinuationLatex | null =
+    hasSpecialPoints && (content === "figure" || content === "specialPoints") ? content : null;
+  const pairLatex: { key: string; copy: () => Promise<FigureLatexResponse>; save: (file: string) => Promise<SavedFiles | null> } | null =
+    (() => {
+      if (!pairContent) return null;
+      if (chaos === "curves") {
+        const req = curvesLatexReq(pairContent);
+        return req && { key: JSON.stringify(req), copy: () => exportCurvesLatex(req), save: (file) => saveCurvesLatex(req, file) };
+      }
+      const req = continuationLatexReq(pairContent);
+      return req && { key: JSON.stringify(req), copy: () => exportContinuationLatex(req), save: (file) => saveContinuationLatex(req, file) };
+    })();
   const orbitLatexReq = (): OrbitFigureRequest | null =>
     orbitFigReq && {
       orbit: orbitFigReq,
@@ -622,7 +730,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     chaos === "orbit" && format === "csv" ? JSON.stringify(orbitCsvReq) : null,
     chaos === "orbit" && format === "latex" ? JSON.stringify(orbitLatexReq()) : null,
     chaos === "continuation" && format === "csv" ? JSON.stringify(continuationReq) : null,
-    format === "latex" && branchLatex ? JSON.stringify(continuationLatexReq(branchLatex)) : null,
+    chaos === "curves" && format === "csv" ? JSON.stringify(curvesReq) : null,
+    format === "latex" && pairLatex ? pairLatex.key : null,
     name,
     ref,
     lines,
@@ -638,12 +747,12 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     const timer = window.setTimeout(async () => {
       try {
         if (format === "csv" && chaos) {
-          const file =
-            chaos === "lyapunov"
-              ? lyapunovReq && (await exportLyapunovCsv(lyapunovReq))
-              : chaos === "orbit"
-                ? orbitCsvReq && (await exportOrbitCsv(orbitCsvReq))
-                : continuationReq && (await exportContinuationCsv(continuationReq));
+          const file = await byAnalysis(chaos, {
+            lyapunov: async () => lyapunovReq && exportLyapunovCsv(lyapunovReq),
+            orbit: async () => orbitCsvReq && exportOrbitCsv(orbitCsvReq),
+            continuation: async () => continuationReq && exportContinuationCsv(continuationReq),
+            curves: async () => curvesReq && exportCurvesCsv(curvesReq),
+          });
           if (!file) return;
           if (live) setCsvFiles({ key, files: [file] });
         } else if (format === "csv") {
@@ -660,10 +769,9 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
           if (!req) return;
           const res = await exportOrbitLatex(req);
           if (live) setSnip({ key, tex: res.tex, notes: res.notes });
-        } else if (branchLatex) {
-          const req = continuationLatexReq(branchLatex);
-          if (!req) return;
-          const res = await exportContinuationLatex(req);
+        } else if (pairContent) {
+          if (!pairLatex) return;
+          const res = await pairLatex.copy();
           if (live) setSnip({ key, tex: res.tex, notes: res.notes });
         } else if (content === "figure") {
           const req = figureReq();
@@ -864,9 +972,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
   let primary: Action | null = null;
   let secondary: Action | null = null;
   let footNote: ReactNode = null;
-  const chaosCsv = chaos
-    ? `${stem}-${chaos === "lyapunov" ? "lyapunov" : chaos === "orbit" ? "orbit-diagram" : "continuation"}.csv`
-    : null;
+  const chaosCsv = chaos ? `${stem}-${ANALYSIS_CSV[chaos].suffix}.csv` : null;
   if (format === "latex") {
     const file =
       content === "figure"
@@ -874,7 +980,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         : content === "spectrum"
           ? `${stem}-lyapunov.tex`
           : content === "specialPoints"
-            ? `${stem}-special-points.tex`
+            ? `${stem}-${chaos === "curves" ? "plane-points" : "special-points"}.tex`
           : content === "equations"
             ? `${stem}-equations.tex`
             : `${stem}-fixed-points.tex`;
@@ -892,12 +998,11 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     };
     secondary = {
       label: "Save…",
-      ready: branchLatex ? !!continuationReq : content === "figure" ? (chaos === "orbit" ? !!orbitFigReq : !!job) : snipReady,
+      ready: pairContent ? !!pairLatex : content === "figure" ? (chaos === "orbit" ? !!orbitFigReq : !!job) : snipReady,
       act: () =>
         run(async () => {
-          if (branchLatex) {
-            const req = continuationLatexReq(branchLatex);
-            if (req) saveDone((await saveContinuationLatex(req, file))?.names);
+          if (pairContent) {
+            if (pairLatex) saveDone((await pairLatex.save(file))?.names);
           } else if (content === "figure" && chaos === "orbit") {
             const req = orbitLatexReq();
             if (req) saveDone((await saveOrbitLatex(req, file))?.names);
@@ -998,7 +1103,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         }),
     };
     footNote =
-      chaos === "continuation" ? (
+      hasSpecialPoints ? (
         <>
           Save… writes <span className="ds-num">{file}</span>, its .meta.json and{" "}
           <span className="ds-num">{file.replace(/\.csv$/, "-special.csv")}</span>
@@ -1051,12 +1156,15 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     ? scene.trajectories.reduce((n, t) => n + Math.max(0, t.out.t.length - (returnMap ? 1 : 0)), 0)
     : 0;
   const branchSpecial = chaos === "continuation" ? specialRows(branchRuns) : [];
+  const planePoints = planeFigure?.points ?? [];
+  const specialCount = chaos === "curves" ? planePoints.length : branchSpecial.length;
   const runWords = chaos
-    ? chaos === "lyapunov"
-      ? plural(sys?.states.length ?? 0, "running estimate")
-      : chaos === "orbit"
-        ? plural(orbitFigReq?.diagram.columns ?? 0, "parameter value")
-        : plural(branches.length, "branch", "branches")
+    ? byAnalysis(chaos, {
+        lyapunov: () => plural(sys?.states.length ?? 0, "running estimate"),
+        orbit: () => plural(orbitFigReq?.diagram.columns ?? 0, "parameter value"),
+        continuation: () => plural(branches.length, "branch", "branches"),
+        curves: () => plural((planeFigure?.curves.length ?? 0) + (planeFigure?.homoclinic.length ?? 0), "curve"),
+      })
     : cobweb
     ? plural(trajectoriesShown, "orbit")
     : returnMap
@@ -1065,8 +1173,8 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         ? plural(crossingsShown, "crossing")
         : trajectories(trajectoriesShown);
   const layerWords = chaos
-    ? chaos === "continuation"
-      ? [runWords, plural(branchSpecial.length, "special point")]
+    ? hasSpecialPoints
+      ? [runWords, plural(specialCount, "special point")]
       : [runWords]
     : [
     layers.field && "direction field",
@@ -1085,14 +1193,17 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
     return a.kind === "norm" ? "‖x‖" : latexToPlain(axisLatex(a, sys.states, kind));
   };
   const timeView = state.view.xAxis.kind === "time" || state.view.yAxis.kind === "time";
+  const planeNames: [string, string] = names ? [plainSubscripted(names.x), plainSubscripted(names.y)] : ["p", "q"];
+  const against = (x: string, y: string) => `${names ? latexToPlain(names.y) : y} against ${names ? latexToPlain(names.x) : x}`;
   const viewWords = sys
-    ? chaos === "lyapunov"
-      ? "Lyapunov spectrum"
-      : chaos === "orbit"
-        ? `orbit diagram of ${names ? latexToPlain(names.y) : "x"} against ${names ? latexToPlain(names.x) : "r"}`
-        : chaos === "continuation"
-          ? `branch plot of ${names ? latexToPlain(names.y) : "x"} against ${names ? latexToPlain(names.x) : "r"}`
-          : cobweb
+    ? chaos
+      ? byAnalysis(chaos, {
+          lyapunov: () => "Lyapunov spectrum",
+          orbit: () => `orbit diagram of ${against("r", "x")}`,
+          continuation: () => `branch plot of ${against("r", "x")}`,
+          curves: () => `parameter plane of ${planeNames[1]} against ${planeNames[0]}`,
+        })
+      : cobweb
       ? `cobweb of ${axisPlain(0)}`
       : space
         ? `3D view of ${spaceAxesPlain(state.view as SpaceView, sys.states)}`
@@ -1385,6 +1496,30 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
         </div>
       </div>
     );
+  } else if (format === "latex" && content === "specialPoints" && chaos === "curves") {
+    split = (
+      <div className="ds-export-split">
+        <figure className="ds-export-preview">
+          <div className="export-fp-preview">
+            <PlanePointsPreview
+              rows={planePoints}
+              names={planeNames}
+              map={kind === "map"}
+            />
+          </div>
+          <figcaption className="ds-export-preview-cap">
+            <span>Preview</span>
+            <span>{plural(planePoints.length, "special point")}</span>
+          </figcaption>
+        </figure>
+        <div className="ds-export-options">
+          <p className="ds-export-hint export-hint-flush">
+            Each codimension-2 point once, with the curves it lies on and its coefficients, as <code>\num{"{…}"}</code>{" "}
+            for siunitx; the caption names the types and says what the coefficients are.
+          </p>
+        </div>
+      </div>
+    );
   } else if (format === "latex" && content === "specialPoints") {
     split = (
       <div className="ds-export-split">
@@ -1435,21 +1570,30 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       </div>
     );
   } else if (format === "csv" && chaos) {
-    const columns =
-      chaos === "lyapunov"
-        ? `${kind === "map" ? "n" : "t"}, ${(sys?.states ?? []).map((_, i) => `lambda_${i + 1}`).join(", ")}`
-        : chaos === "orbit"
-          ? `${names ? latexToPlain(names.x) : "r"}, n, ${names ? latexToPlain(names.y) : "x"}`
-          : ["branch", "period", "point", names ? latexToPlain(names.x) : "r", ...(sys?.states ?? []).map((s) => s.name), "stable", "unstable"].join(", ");
+    const stateNames = (sys?.states ?? []).map((s) => s.name);
+    const paramName = (i: number | undefined, fallback: string) => (i === undefined ? undefined : sys?.params[i]?.name) ?? fallback;
+    const [columns, rowsText] = byAnalysis(chaos, {
+      lyapunov: () => [
+        `${kind === "map" ? "n" : "t"}, ${stateNames.map((_, i) => `lambda_${i + 1}`).join(", ")}`,
+        "one row per sampled renormalization, the last row the final estimate.",
+      ],
+      orbit: () => [
+        `${names ? latexToPlain(names.x) : "r"}, n, ${names ? latexToPlain(names.y) : "x"}`,
+        `one row per kept iterate at each of the ${orbitCsvReq?.diagram.columns ?? 0} parameter values on screen.`,
+      ],
+      continuation: () => [
+        ["branch", "period", "point", names ? latexToPlain(names.x) : "r", ...stateNames, "stable", "unstable"].join(", "),
+        "one row per point of each branch (a k-cycle's point is k rows); the special points go to a second file.",
+      ],
+      curves: () => [
+        ["curve", "kind", "period", "point", paramName(curvesReq?.free[0], "p"), paramName(curvesReq?.free[1], "q"), ...stateNames, "neutral"].join(", "),
+        "one row per point of each curve; the codimension-2 points go to a second file.",
+      ],
+    });
     split = (
       <div className="ds-export-options export-csv-options">
         <p className="ds-export-hint export-hint-flush">
-          Columns {columns};{" "}
-          {chaos === "lyapunov"
-            ? "one row per sampled renormalization, the last row the final estimate."
-            : chaos === "orbit"
-              ? `one row per kept iterate at each of the ${orbitCsvReq?.diagram.columns ?? 0} parameter values on screen.`
-              : "one row per point of each branch (a k-cycle's point is k rows); the special points go to a second file."}
+          Columns {columns}; {rowsText}
         </p>
       </div>
     );
@@ -1530,16 +1674,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
       .filter(Boolean)
       .join(" ") || null;
   const figureContent = format === "svg" || format === "png" || (format === "latex" && content === "figure");
-  const csvWords =
-    chaos === "lyapunov"
-      ? "running estimates"
-      : chaos === "orbit"
-        ? "orbit diagram"
-        : chaos === "continuation"
-          ? "branches"
-          : section
-            ? "crossings"
-            : "trajectories";
+  const csvWords = chaos ? ANALYSIS_CSV[chaos].words : section ? "crossings" : "trajectories";
   const codeText =
     format === "csv"
       ? csvFiles && csvReady
@@ -1603,7 +1738,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
                   : format === "latex" && content === "spectrum"
                     ? `${name}, the Lyapunov spectrum`
                     : format === "latex" && content === "specialPoints"
-                    ? `${name}, the special points of the branches`
+                    ? `${name}, the special points of the ${chaos === "curves" ? "curves" : "branches"}`
                     : format === "csv"
                     ? `${name}, the ${csvWords} as you see ${chaos === "orbit" ? "it" : "them"} now`
                     : `${name}, ${viewWords}, as you see it now`}
@@ -1661,6 +1796,7 @@ export function ExportDialog({ state, title, sourceRef, fileStem: stemProp, sett
               There are no branches to export yet. Continue from a fixed point in the Continuation panel first.
             </Notice>
           )}
+          {wantsFigure && chaos === "curves" && !analysis && <Notice kind="info">{CURVES_EXPORT_EMPTY}</Notice>}
           {snipError && showCode && <Notice kind="error">{snipError}</Notice>}
           {notice && <Notice kind={notice.kind}>{notice.text}</Notice>}
 

@@ -24,8 +24,11 @@ import type {
   CsvRequest,
   CsvResponse,
   CurveKindOut,
+  CurveOut,
   CurveRequest,
   CurveResponse,
+  CurvesExportRequest,
+  CurvesFigureRequest,
   DocumentStateRequest,
   ExportPortraitRequest,
   FigureLatexRequest,
@@ -55,6 +58,7 @@ import type {
   ResonanceTickOut,
   SaveContinuationFigureRequest,
   SaveCsvFileRequest,
+  SaveCurvesFigureRequest,
   SaveCsvRequest,
   SavedFiles,
   SavedProject,
@@ -72,10 +76,10 @@ import type {
 } from "./types";
 import { BLANK_TEMPLATE, TEMPLATES, type Template } from "../templates";
 import { mockConvertLines, mockTemplateIndex } from "./mockLookup";
-import { BLOW_UP_THRESHOLD, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
+import { BLOW_UP_THRESHOLD, CURVES_EXPORT_EMPTY, LYAPUNOV_HISTORY, MAX_SECTION_POINTS } from "./ipc.generated";
 import { METHODS } from "../state/methods";
 import { roundWithUncertainty } from "../state/model";
-import { SAME_POINT_TOL } from "../state/curves";
+import { CODIM2_KINDS, CURVE_KINDS, HOMOCLINIC_LABEL, SAME_POINT_TOL, planePointRows } from "../state/curves";
 
 type Rhs = (t: number, x: number[], p: number[]) => number[];
 
@@ -2656,6 +2660,114 @@ export async function mockExportContinuationCsv(req: ContinuationExportRequest):
   const stem = `${mockSlug(req.title)}-continuation`;
   const meta = {
     format: "separatrix-continuation",
+    format_version: 1,
+    title: req.title,
+    csv: `${stem}.csv`,
+    special_csv: `${stem}-special.csv`,
+    columns: header,
+    note: "Browser preview.",
+  };
+  return {
+    stem,
+    csv: [header.join(","), ...rows].join("\n") + "\n",
+    meta: JSON.stringify(meta, null, 2) + "\n",
+    special: special.join("\n") + "\n",
+  };
+}
+
+/** The plane's curves followed again by the stand-in, those it can't follow left out, as the core does. */
+async function mockPlaneCurves(req: CurvesExportRequest): Promise<CurveOut[]> {
+  if (req.curves.length === 0 && req.homoclinic.length === 0) throw CURVES_EXPORT_EMPTY;
+  const runs = await Promise.allSettled(req.curves.map((r) => mockCurve(r)));
+  return runs.flatMap((run) => (run.status === "fulfilled" ? [run.value.curve] : []));
+}
+
+export async function mockExportCurvesLatex(req: CurvesFigureRequest): Promise<FigureLatexResponse> {
+  const c = req.curves;
+  const sys = mockSystemOf(c.systemId);
+  const [p1, p2] = c.free.map((i) => sys.params[i]?.latex ?? "p");
+  const curves = await mockPlaneCurves(c);
+  if (req.content === "specialPoints") {
+    const rows = planePointRows(curves, c.ranges);
+    const tex = [
+      `% Separatrix codimension-2 points: ${c.title}`,
+      PREVIEW_NOTE,
+      "% Needs: \\usepackage{amsmath} \\usepackage{booktabs} \\usepackage{siunitx}",
+      "\\begin{table}",
+      "\\centering",
+      "\\begin{tabular}{@{}llll@{}}",
+      "\\toprule",
+      `Type & $${p1}$ & $${p2}$ & Curves \\\\`,
+      "\\midrule",
+      ...rows.map(
+        (r) =>
+          `${CODIM2_KINDS[r.kind].label} & \\num{${r.p[0].toFixed(6)}} & \\num{${r.p[1].toFixed(6)}} & ${r.on.map((k) => CURVE_KINDS[k].label).join(", ")} \\\\`,
+      ),
+      "\\bottomrule",
+      "\\end{tabular}",
+      "\\end{table}",
+      "",
+    ].join("\n");
+    return { tex, points: rows.length, thinned: false, notes: [] };
+  }
+  const line = (label: string, k: number, p1s: number[], p2s: number[]) => [
+    `% Curve ${k + 1}: ${label}`,
+    `\\addplot coordinates {${p1s.map((a, i) => `(${a},${p2s[i]})`).join(" ")}};`,
+  ];
+  const plots = [
+    ...curves.flatMap((cv, k) => line(CURVE_KINDS[cv.kind].label, k, cv.p1, cv.p2)),
+    ...c.homoclinic.flatMap((h, k) => line(HOMOCLINIC_LABEL, curves.length + k, h.p1, h.p2)),
+  ];
+  const tex = [
+    `% Separatrix parameter plane: ${c.title}`,
+    PREVIEW_NOTE,
+    "% Needs: \\usepackage{amsmath} \\usepackage{pgfplots} \\pgfplotsset{compat=1.18} \\usetikzlibrary{calc}",
+    "\\begin{tikzpicture}",
+    `\\begin{axis}[xmin=${req.xRange[0]}, xmax=${req.xRange[1]}, ymin=${req.yRange[0]}, ymax=${req.yRange[1]}]`,
+    ...plots,
+    "\\end{axis}",
+    "\\end{tikzpicture}",
+    "",
+  ].join("\n");
+  const points = [...curves, ...c.homoclinic].reduce((n, cv) => n + cv.p1.length, 0);
+  return { tex, points, thinned: false, notes: [] };
+}
+
+export async function mockSaveCurvesLatex(req: SaveCurvesFigureRequest): Promise<SavedFiles | null> {
+  const chosen = takeDialog("nextSavePath", withExt(fileName(req.suggestedName) || "figure", "tex").path);
+  if (chosen === null) return null;
+  const name = withExt(fileName(chosen), "tex").path;
+  mockSaved(name, (await mockExportCurvesLatex(req.figure)).tex);
+  return { names: [name] };
+}
+
+export async function mockExportCurvesCsv(req: CurvesExportRequest): Promise<CsvFileOut> {
+  const sys = mockSystemOf(req.systemId);
+  const dim = sys.states.length;
+  const curves = await mockPlaneCurves(req);
+  const [p1, p2] = req.free.map((i) => sys.params[i]?.name ?? "p");
+  const names = sys.states.map((st) => st.name);
+  const header = ["curve", "kind", "period", "point", p1, p2, ...names, "neutral"];
+  const all = [
+    ...curves.map((cv) => ({ label: CURVE_KINDS[cv.kind].label, period: cv.period, p1: cv.p1, p2: cv.p2, x: cv.x, neutral: cv.neutral })),
+    ...req.homoclinic.map((h) => ({ label: HOMOCLINIC_LABEL, period: 1, p1: h.p1, p2: h.p2, x: h.x, neutral: h.p1.map(() => false) })),
+  ];
+  const rows = all.flatMap((cv, k) =>
+    cv.p1.map((a, i) => [k + 1, cv.label, cv.period, i, a, cv.p2[i], ...cv.x.slice(i * dim, i * dim + dim), cv.neutral[i]].join(",")),
+  );
+  const special = [
+    ["curve", "point", "type", "period", p1, p2, ...names, "a", "b", "c", "theta"].join(","),
+    ...curves.flatMap((cv, k) =>
+      cv.special.map((sp) => {
+        const nf = sp.normalForm;
+        const [a, b, c] = nf?.kind === "bogdanovTakens" ? [nf.a, nf.b, ""] : nf?.kind === "cusp" ? ["", "", nf.c] : ["", "", ""];
+        return [k + 1, sp.index, CODIM2_KINDS[sp.kind].label, cv.period, sp.p[0], sp.p[1], ...sp.x, a, b, c, sp.angle ?? ""].join(",");
+      }),
+    ),
+  ];
+  const stem = `${mockSlug(req.title)}-curves`;
+  const meta = {
+    format: "separatrix-curves",
     format_version: 1,
     title: req.title,
     csv: `${stem}.csv`,

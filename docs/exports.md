@@ -20,6 +20,9 @@ text and files.
 | LaTeX branch plot | `latex_continuation::continuation_figure` | pgfplots; stable runs solid, unstable dashed, special points as glyphs with labels |
 | LaTeX special points | `latex_continuation::special_points_table` | booktabs `table`, siunitx `\num{0.346410}` |
 | Continuation CSV + `.meta.json` | `csv::continuation` | `branch,period,point,<param>,<states>,stable,unstable`, plus `<stem>-special.csv` |
+| LaTeX parameter plane | `latex_curves::curves_figure` | pgfplots; each curve in its kind's colour and dash pattern, neutral stretches dotted, codimension-2 points as glyphs with labels, 1:q ticks |
+| LaTeX codimension-2 points | `latex_curves::plane_points_table` | booktabs `table`, each point once with the curves it lies on and its coefficients |
+| Parameter plane CSV + `.meta.json` | `csv::curves` | `curve,kind,period,point,<across>,<up>,<states>,neutral`, plus `<stem>-special.csv` |
 | Export portrait | `simplify::simplify_portrait` | cut at the first non-finite point, RDP at 0.25 px (the graph of f in a cobweb at 0.0625 px, so it shows no facets when zoomed); a section's crossings and a 3D view's trajectories are only cut |
 | Clipboard PNG | `raster::decode_rgba` | for `Image::new_owned(rgba, w, h)` |
 
@@ -258,6 +261,138 @@ which round the exact decimal value of the double, and the norm is
 function decides a printed digit or a kept point. The goldens are built from
 literal data: the Sel'kov branch at `a = 0.08` with the core's Hopf points,
 and the logistic cascade's special points.
+
+## Parameter plane
+
+The Parameter plane (curves of bifurcations in two parameters) exports its
+curves. The LaTeX and the CSV come from the core: `export_curves_latex`,
+`save_curves_latex` and `export_curves_csv` take the view's own
+`CurveRequest`s, one per curve the plane draws (a row merged into an earlier
+curve, or one that failed, draws nothing and is not sent), in a
+`CurvesExportRequest`, and follow them again. The last run is cached by those
+requests (their `requestId`s aside), so the figure, the table, the CSV and
+their Save share one. A curve the core can't follow is left out; with none
+left the export fails with that curve's reason, and with no curve at all
+with `CURVES_EXPORT_EMPTY` (a generated constant, so the browser preview says
+the same): "There are no curves to export yet. Follow a fold, Hopf, flip or
+Neimark–Sacker point of the Branch view in two parameters first." A
+homoclinic curve is a job that takes seconds to minutes and can be
+cancelled, so the request carries its points as the view drew them
+(`HomoclinicExport { p1, p2, x }`) instead of following it again; the shell
+checks that their lengths fit. The Branch view's range, when the plane draws
+it, comes as `slice: { range, at }`. PNG and SVG draw the screen's own curves
+through `drawCurves`.
+
+| Format | What |
+| --- | --- |
+| LaTeX | Figure: the pgfplots figure below. Special points: the booktabs table of the codimension-2 points below. Fixed points is disabled (the view shows none); Equations is as in any view. |
+| CSV | the curves' points, `<stem>.meta.json`, and the codimension-2 points in `<stem>-special.csv` |
+| PNG, SVG | the view as drawn (`drawCurves`, without the crosshair and the live inset), in the export palette's `curve-*` colours, with the axis names |
+
+The figure has the screen's frame, the across parameter's LaTeX across and
+the up parameter's up. In z-order:
+
+- The Branch view's range (`% The Branch view's range, at K = 0.4`), when the
+  plane draws it: a line in `plot-tick`, 0.75 bp, at the up value the
+  branches were computed at, with a 3 px bar at each end that lies in view.
+- Each curve, in kind order (fold, Hopf, branch point, flip, Neimark–Sacker,
+  then the homoclinic curves) and numbered as the CSV numbers them, as one
+  group of `\addplot`s under `% Curve 2: Hopf (H), dashed`: its neutral-saddle
+  stretches first (a segment is neutral when both its ends are, as
+  `segmentRuns` splits it on screen), in its colour at 0.55 opacity, 1.125 bp
+  wide, round dots `dash pattern=on 0bp off 2.6bp`; then the rest, 1.3125 bp
+  (1.75 px), butt caps, in its kind's pattern.
+- The weak resonances 1:q of each Neimark–Sacker curve: a 14 px stroke across
+  the curve at its nearest point on screen (`nearestSegment`, the normal
+  turned down the screen) in `curve-ns`, 0.75 bp, and the label `$1{:}5$` in
+  `plot-tick` on the label halo 3 px beyond it.
+- Each codimension-2 point once (merged across curves as below): a
+  half-filled glyph on a halo, and its label (`BT`, `CP`, `GH`, `ZH`, `HH`,
+  `R1` to `R4`, `CH`, `LPPD`, `GPD`) 7 px right of and 5 px above it in
+  `plot-fp`.
+
+| Kind | Colour | Pattern (bp) |
+| --- | --- | --- |
+| Fold (LP) | `curve-fold` | solid |
+| Hopf (H) | `curve-hopf` | `on 6bp off 2.25bp` |
+| Branch point (BP) | `curve-bp` | `on 6bp off 1.875bp on 1.125bp off 1.875bp on 1.125bp off 1.875bp` |
+| Flip (PD) | `curve-flip` | `on 2.25bp off 2.25bp` |
+| Neimark–Sacker (NS) | `curve-ns` | `on 6bp off 2.25bp` |
+| Homoclinic (Hom) | `curve-hom` | `on 6bp off 2.25bp on 1.125bp off 2.25bp` |
+| Neutral stretch | its kind's, 0.55 opacity | `on 0bp off 2.6bp` |
+
+The patterns are the design system's (PhasePlane README, Parameter plane):
+the screen's patterns in units of the line scale at 0.75 bp per px. The
+README gives none for homoclinic curves; theirs is derived the same way from
+the screen's `8, 3, 1.5, 3 × s` (`CURVE_STYLES` in `app/src/canvas/curves.ts`),
+which gives `6, 2.25, 1.125, 2.25`. The slice and the ticks are `\addplot
+coordinates` in data units, so they keep the screen's z-order; only the
+labels are nodes. The labels always sit right of and above their point,
+where the screen tries four sides. There is no legend inside the figure, as
+in the other exports; the header has one in a comment line instead:
+
+```
+% Parameter plane: K against k_2, followed in k_2 from 0.5 to 2.5 and K from 0 to 2; 3 curves, 5 codimension-2 points.
+% Legend: LP fold (solid); H Hopf (dashed); Hom homoclinic (dash-dotted); dotted where a curve is a neutral saddle, no bifurcation; the bar is the Branch view's range.
+```
+
+The `Parameters:` line leaves both free parameters out. Curves are clipped to
+the view grown by 8 px. Data is inline for Copy; Save writes
+`<base>-curve-<k>.dat`, `<base>-curve-<k>-neutral.dat` and
+`<base>-special-points.dat` beside the `.tex`. Above 5,000 rows a comment
+suggests lualatex; nothing is thinned.
+
+The codimension-2 points table lists each point once
+(`PlaneRun::special_points`, the inspector's `planePointRows`: the same kind
+and period with each parameter within `1e-6` of its range of the other's is
+one row, naming every curve it was found on), by kind and then across.
+Columns: Type (the label), both parameters, the state (a cycle's first point),
+Period for a map, Curves (the labels of the curves it lies on, `LP, H`), and
+the coefficients the core computed: `a` and `b` (Bogdanov–Takens), `c` (the
+cusp), `θ` (on a Neimark–Sacker curve). A column no row fills is left out,
+and a row without a value has `--`. The parameters and θ are
+`\num{<num::to_fixed(v, 6)>}`, states and coefficients six significant digits
+(`num::si`), and a state below `1e-12` of the column's largest prints as 0.
+The rows' sentences (what each point means) are not written: they are
+paragraphs that read the screen's sides ("above", "below"), not table cells.
+The caption names the system, the plane, the other parameters' values, a
+legend of the types present and of the curves' labels, and says what `a`,
+`b`, `c` and `θ` are (`ẇ₁ = β₁ + β₂w₀ + a w₀² + b w₀w₁` with `a ≥ 0`;
+`ẇ = β₁ + β₂w + c w³` with `‖q‖ = 1`; the angle of the critical multipliers
+`e^{±iθ}`). Label `tab:<title-slug>-plane-points`; Save suggests
+`<stem>-plane-points.tex`.
+
+```latex
+Type & $k_{2}$ & $K$ & $(x, y, s)$ & Curves & $a$ & $b$ & $c$ \\
+\midrule
+BT & \num{1.161199} & \num{0.722339} & $(\num{0.016337}, \num{0.63841}, \num{0.200456})$ & LP, H & \num{0.0482256} & \num{1.93763} & -- \\
+CP & \num{1.006408} & \num{0.355991} & $(\num{0.0359406}, \num{0.352005}, \num{0.45137})$ & LP & -- & -- & \num{0.362789} \\
+```
+
+The CSV has one row per point of each curve in arclength order: `curve`
+(from 1, the bifurcation curves in the view's order, then the homoclinic
+curves), `kind` (`LP`, `H`, `BP`, `PD`, `NS`, `Hom`), `period`, `point` (from
+0), the across and up parameters' names, every state by name, and `neutral`
+(`true` at a neutral saddle; always `false` on a homoclinic curve).
+`<stem>-special.csv` has `curve,point,type,period,<across>,<up>,<states>,a,b,c,theta`,
+one row per codimension-2 point as each curve reports it (not merged), the
+coefficients empty where the point has none. `<stem>.meta.json` has `format:
+"separatrix-curves"`, `csv`, `special_csv`, the system, the sliders'
+parameters, `columns`, `special_columns`, `across`, `up`, `ranges` (the box),
+one entry per curve (`curve`, `kind`, `period`, `points`, `special`, and
+`ticks`, the weak resonances `{ q, p }`) and notes. The stem is
+`<title-slug>-curves`; Save writes `<name>.csv`, `<name>-special.csv` and
+`<name>.meta.json` and rewrites `csv` and `special_csv` to the names written.
+
+Numbers go through `num::shortest`, `num::si` and `num::to_fixed`, and the
+tick's normal uses `sqrt` (no `hypot`), so no platform `libm` function decides
+a printed digit. The goldens are built from literal data, a few curves of the
+reference script's output (`tests/common/plane.rs`): CO oxidation's fold
+curve (a cusp and two Bogdanov–Takens points), its Hopf curve (both BT, two
+Bautin points, neutral past BT) and a homoclinic curve, with the Branch
+view's range; and the predator–prey map's Neimark–Sacker curve (R2, R3, R4,
+CH and the ticks 1:5 to 1:9), a flip curve and the branch-point curve, which
+meet at one fold-flip point.
 
 ## The system
 
@@ -581,7 +716,8 @@ Shared with the TypeScript tests, in `crates/export/tests/vectors/`:
   sheep, Lorenz over t ≤ 10, the Hénon map, the logistic map as a time
   series and as a cobweb (with its fixed-point table and external files), a saddle-node, a
   linear system with a parameter table, MathLive commands, text mode,
-  subscripted states, names that need escaping;
+  subscripted states, names that need escaping, the Sel'kov branch plot, and
+  the CO oxidation and predator–prey parameter planes;
   `UPDATE_GOLDEN=1 cargo test -p separatrix-export --test golden` rewrites
   `tests/golden/`), `tests/rules.rs` (CSV, clipping, the 5,000-point rule),
   `tests/vectors.rs`.

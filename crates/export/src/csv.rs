@@ -11,8 +11,8 @@ use serde::Serialize;
 
 use crate::latex_util::title_slug;
 use crate::model::{
-    ContinuationRun, Labels, LyapunovRun, Method, OrbitRun, SectionSpec, SystemKind, SystemMeta,
-    Trajectory,
+    codim2_label, ContinuationRun, Labels, LyapunovRun, Method, NormalForm, OrbitRun, PlaneRun,
+    SectionSpec, SystemKind, SystemMeta, Trajectory,
 };
 use crate::num::shortest;
 use crate::words::{status_id, time_name};
@@ -545,8 +545,8 @@ struct ContinuationMeta<'a> {
     notes: Vec<&'static str>,
 }
 
-/// A branch plot's CSV, its `.meta.json` and the special points'
-/// `<stem>-special.csv`.
+/// A branch plot's (or the parameter plane's) CSV, its `.meta.json` and
+/// the special points' `<stem>-special.csv`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContinuationCsv {
     /// `<stem>.csv` and `<stem>.meta.json`.
@@ -646,6 +646,151 @@ pub fn continuation(sys: &SystemMeta, run: &ContinuationRun, app_version: &str) 
             "stable: every eigenvalue has Re < 0 (flow) or every multiplier |mu| < 1 (map); unstable: how many do not. A special point is neutral: not stable, with the smaller count of its two sides.",
             "The special CSV names each point by branch and point; omega is the frequency at a Hopf point (H) and the angle arg mu at a Neimark-Sacker point (NS); lyapunov is the first Lyapunov coefficient at H, with <p, q> = 1 and <q, q> = 1/2.",
             "The swept parameter's value in params is the slider's; each branch starts at its own value.",
+        ],
+    });
+    ContinuationCsv {
+        file: CsvFile { stem, csv, meta },
+        special,
+    }
+}
+
+#[derive(Serialize)]
+struct MetaTick {
+    q: usize,
+    p: (f64, f64),
+}
+
+#[derive(Serialize)]
+struct MetaCurve {
+    curve: usize,
+    kind: &'static str,
+    period: usize,
+    points: usize,
+    special: usize,
+    ticks: Vec<MetaTick>,
+}
+
+#[derive(Serialize)]
+struct CurvesMeta<'a> {
+    format: &'static str,
+    format_version: u32,
+    app_version: &'a str,
+    title: &'a str,
+    csv: String,
+    special_csv: String,
+    system: MetaSystem<'a>,
+    params: Vec<MetaParam<'a>>,
+    columns: Vec<String>,
+    special_columns: Vec<String>,
+    across: &'a str,
+    up: &'a str,
+    ranges: ((f64, f64), (f64, f64)),
+    curves: Vec<MetaCurve>,
+    notes: Vec<&'static str>,
+}
+
+/// The parameter plane's curves as rows
+/// `curve,kind,period,point,<across>,<up>,<states…>,neutral` (curves from 1
+/// in the view's order, the homoclinic curves last; points from 0 in
+/// arclength order), the codimension-2 points as rows
+/// `curve,point,type,period,<across>,<up>,<states…>,a,b,c,theta` as each
+/// curve reports them (empty where a point has none), and the metadata with
+/// the weak resonances of each curve.
+pub fn curves(sys: &SystemMeta, run: &PlaneRun, app_version: &str) -> ContinuationCsv {
+    let dim = sys.labels.states.len();
+    let name = |i: usize, fallback: &'static str| {
+        sys.labels
+            .params
+            .get(i)
+            .map_or(fallback, |p| p.name.as_str())
+    };
+    let (across, up) = (name(run.free.0, "p"), name(run.free.1, "q"));
+    let states: Vec<String> = sys.labels.states.iter().map(|s| s.name.clone()).collect();
+    let mut columns: Vec<String> = ["curve", "kind", "period", "point", across, up]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    columns.extend(states.iter().cloned());
+    columns.push("neutral".into());
+    let mut special_columns: Vec<String> = ["curve", "point", "type", "period", across, up]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    special_columns.extend(states.iter().cloned());
+    special_columns.extend(["a", "b", "c", "theta"].iter().map(|s| s.to_string()));
+    let mut csv = record(&columns);
+    let mut special = record(&special_columns);
+    let mut curves = Vec::new();
+    for (k, c) in run.curves.iter().enumerate() {
+        for i in 0..c.len() {
+            let mut cells = vec![
+                (k + 1).to_string(),
+                c.kind.label().to_string(),
+                c.period.to_string(),
+                i.to_string(),
+                shortest(c.p1[i]),
+                shortest(c.p2[i]),
+            ];
+            let x = c.x.get(i * dim..(i + 1) * dim).unwrap_or(&[]);
+            cells.extend(x.iter().map(|&v| shortest(v)));
+            cells.push(c.neutral.get(i).copied().unwrap_or(false).to_string());
+            csv.push_str(&record(&cells));
+        }
+        for sp in &c.special {
+            let mut cells = vec![
+                (k + 1).to_string(),
+                sp.index.to_string(),
+                codim2_label(sp.kind).to_string(),
+                c.period.to_string(),
+                shortest(sp.p.0),
+                shortest(sp.p.1),
+            ];
+            cells.extend(sp.x.iter().map(|&v| shortest(v)));
+            let (a, b, cc) = match sp.normal_form {
+                Some(NormalForm::BogdanovTakens { a, b }) => {
+                    (shortest(a), shortest(b), String::new())
+                }
+                Some(NormalForm::Cusp { c }) => (String::new(), String::new(), shortest(c)),
+                None => (String::new(), String::new(), String::new()),
+            };
+            cells.extend([a, b, cc, sp.angle.map_or(String::new(), shortest)]);
+            special.push_str(&record(&cells));
+        }
+        curves.push(MetaCurve {
+            curve: k + 1,
+            kind: c.kind.label(),
+            period: c.period,
+            points: c.len(),
+            special: c.special.len(),
+            ticks: c
+                .ticks
+                .iter()
+                .map(|t| MetaTick { q: t.q, p: t.p })
+                .collect(),
+        });
+    }
+    let stem = format!("{}-curves", title_slug(sys.title));
+    let meta = pretty(&CurvesMeta {
+        format: "separatrix-curves",
+        format_version: 1,
+        app_version,
+        title: sys.title,
+        csv: format!("{stem}.csv"),
+        special_csv: format!("{stem}-special.csv"),
+        system: meta_system(sys),
+        params: meta_params(sys.labels),
+        columns,
+        special_columns,
+        across,
+        up,
+        ranges: run.ranges,
+        curves,
+        notes: vec![
+            "One row per point of each curve in arclength order, point counted from 0; kind is LP (fold), H (Hopf), BP (branch point), PD (flip), NS (Neimark-Sacker) or Hom (homoclinic); a map's state is the cycle's first point.",
+            "neutral: the point is a neutral saddle, where the curve's equations hold without a bifurcation (real eigenvalues +-kappa on a Hopf curve, real multipliers mu and 1/mu on a Neimark-Sacker curve).",
+            "The special CSV names each codimension-2 point by curve and point; a and b are the Bogdanov-Takens coefficients (oriented so that a >= 0), c the cusp's cubic coefficient, theta the angle of the critical multipliers on a Neimark-Sacker curve.",
+            "ticks are the weak resonances 1:q on a Neimark-Sacker curve, p the across and up parameters there.",
+            "The across and up parameters' values in params are the sliders'; each curve has its own.",
         ],
     });
     ContinuationCsv {

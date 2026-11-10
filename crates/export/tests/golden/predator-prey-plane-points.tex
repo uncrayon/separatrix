@@ -1,0 +1,20 @@
+% Separatrix codimension-2 points: Predator–prey map (MatContM Tutorial M-II)
+%   x_{n+1} = a*x_n*(1 - x_n) - 3*x_n*y_n/(1 + varepsilon*x_n)
+%   y_{n+1} = 3.5*x_n*y_n/(1 + varepsilon*x_n)
+% Needs: \usepackage{amsmath} \usepackage{booktabs} \usepackage{siunitx}
+\begin{table}
+\centering
+\caption{Predator--prey map: codimension-two points of the bifurcation curves in the $(a, \varepsilon)$ plane. R2: 1:2 resonance; R3: 1:3 resonance; R4: 1:4 resonance; CH: Chenciner; LPPD: fold-flip. Curves names the curves each point was found on (BP branch point, PD flip, NS Neimark--Sacker). The state of a cycle is its first point. $\theta$ is the angle of the critical multipliers $e^{\pm i\theta}$ on the Neimark--Sacker curve.}
+\label{tab:predator-prey-map-plane-points}
+\begin{tabular}{@{}lllllll@{}}
+\toprule
+Type & $a$ & $\varepsilon$ & $(x, y)$ & Period & Curves & $\theta$ \\
+\midrule
+R2 & \num{14.000000} & \num{1.346154} & $(\num{0.464286}, \num{3.52083})$ & \num{1} & PD, NS & \num{3.141593} \\
+R3 & \num{10.500000} & \num{1.289474} & $(\num{0.452381}, \num{2.50694})$ & \num{1} & NS & \num{2.094395} \\
+R4 & \num{7.000000} & \num{1.166667} & $(\num{0.428571}, \num{1.5})$ & \num{1} & NS & \num{1.570796} \\
+CH & \num{1.325730} & \num{-4.640055} & $(\num{0.122849}, \num{0.0233425})$ & \num{1} & NS & \num{0.625603} \\
+LPPD & \num{3.000000} & \num{2.000000} & $(\num{0.666667}, \num{0})$ & \num{1} & BP, PD & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
