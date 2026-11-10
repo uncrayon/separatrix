@@ -105,9 +105,9 @@ One parameter, `T = 0.04`, from `F = 3` at
 
 | Point | F published | F recomputed |
 | --- | --- | --- |
-| Hopf | 2.85996783 | not recomputed |
-| Hopf | 2.46723305 | not recomputed |
-| Hopf | 1.61975642 | not recomputed |
+| Hopf | 2.85996783 | 2.85987541 |
+| Hopf | 2.46723305 | 2.46722212 |
+| Hopf | 1.61975642 | 1.61965782 |
 | Fold | 1.54664839 | 1.54664837, at (1.31178553, −0.04287500, 0.18038939, −0.15702758) |
 
 Two parameters:
@@ -115,12 +115,19 @@ Two parameters:
 | Point | On | (F, T) published | Recomputed | Coefficient published |
 | --- | --- | --- | --- | --- |
 | Bogdanov–Takens | fold, Hopf | (1.4467165285, 0.0209401396) | (1.4467167, 0.02094017) at (1.2256405, −0.03632079, 0.19728832, −0.12339001) | a = 0.2144233, b = 0.6065142 |
-| Zero-Hopf | fold | T = 0.00012644, F not printed | no | none |
-| Bautin | Hopf | (2.3763590350, 0.0501975132) | no | ℓ₂ = 0.1557753, ω = 0.6903671 |
-| Hopf–Hopf | Hopf | T = 0.02627340, F not printed | no | none |
+| Zero-Hopf | fold | T = 0.00012644, F not printed | (1.2834192961, 0.0001265408) at (1.0598439, −0.01327681, 0.23513412, −0.02086092) | none |
+| Bautin | Hopf | (2.3763590350, 0.0501975132) | (2.3763600882, 0.0501974320) at (1.15285369, −0.02825526, 0.2131069, −0.51291693), ω = 0.6903675 | ℓ₂ = 0.1557753, ω = 0.6903671 |
+| Hopf–Hopf | Hopf | T = 0.02627340, F not printed | (2.5332211070, 0.0262739430) at (1.10143957, −0.02072803, 0.22506669, −0.55758627), ω = 1.151545, 0.743219 | none |
 
 The fold curve is symmetric in `T`: the source lists the mirror points at `T = −0.00012655` and
 `T = −0.02094041`. At the Bogdanov–Takens point the other two eigenvalues are `0.18549 ± 1.24506i`.
+
+The recomputed values solve each point's conditions on the characteristic polynomial
+`λ⁴ + p₁λ³ + p₂λ² + p₃λ + p₄` directly: zero-Hopf `p₄ = 0` and `p₃ = p₁p₂`; Hopf–Hopf `p₁ = p₃ = 0`;
+Bautin the Hopf condition `p₁p₂p₃ − p₃² − p₁²p₄ = 0` with `ℓ₁ = 0` for the critical pair. The
+zero-Hopf mirror is at `T = −0.0001265408`, symmetric to every digit, where the source's two values
+differ in their fourth figure. The source's Hopf points, Bautin `F` and Hopf–Hopf `T` are off by
+`10⁻⁴`, `10⁻⁶` and `5·10⁻⁷`, the same looseness.
 
 ## 3. Predator–prey map (2 equations)
 
