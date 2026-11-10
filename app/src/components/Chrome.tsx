@@ -10,6 +10,7 @@ import {
   continuationSummary,
   countText,
   isContinuation,
+  isParameterView,
   isLyapunov,
   isOrbit,
   isReturnMap,
@@ -25,6 +26,7 @@ import {
   type SolverSettings,
 } from "../state/model";
 import type { StudioActions, StudioState } from "../state/useStudio";
+import { buildCurveJobs, curveRows, curvesSummary, isCurves } from "../state/curves";
 import { templateRef, templateById } from "../templates";
 import { isMacPlatform, shortcutLabel } from "../project/shortcuts";
 import {
@@ -79,6 +81,8 @@ export interface TopBarActions {
   onExport: () => void;
   /** Export… is unavailable (nothing compiled yet). */
   exportDisabled?: boolean;
+  /** Why export is off, for its tooltip. */
+  exportReason?: string;
 }
 
 interface TopBarProps extends TopBarActions {
@@ -104,6 +108,7 @@ export function TopBar({
   onSaveAs,
   onExport,
   exportDisabled,
+  exportReason,
 }: TopBarProps) {
   const tpl = state.sourceTemplateId ? templateById(state.sourceTemplateId) : undefined;
   const title = systemTitle(
@@ -182,7 +187,7 @@ export function TopBar({
           disabled={exportDisabled}
           aria-keyshortcuts={MAC ? "Meta+E" : "Control+E"}
           data-tooltip={`Export (${keys("e")})`}
-          data-tooltip-desc="The figure as LaTeX, SVG or PNG, the equations, or the data as CSV."
+          data-tooltip-desc={exportReason ?? "The figure as LaTeX, SVG or PNG, the equations, or the data as CSV."}
         >
           <IconExport />
           <span>Export…</span>
@@ -253,6 +258,16 @@ function branchSummary(s: { points: number; special: number }, branches: number)
     num: n(s.points),
     tail: ` ${s.points === 1 ? "point" : "points"} · ${n(s.special)} special`,
     tip: `${n(branches)} ${branches === 1 ? "branch" : "branches"} of ${n(s.points)} points, with ${n(s.special)} special ${s.special === 1 ? "point" : "points"}`,
+  };
+}
+
+function curvesStatus(s: { points: number; special: number; curves: number }) {
+  const n = (v: number) => v.toLocaleString("en-US");
+  return {
+    lead: "",
+    num: n(s.curves),
+    tail: ` ${s.curves === 1 ? "curve" : "curves"} · ${n(s.points)} points · ${n(s.special)} special`,
+    tip: `${n(s.curves)} ${s.curves === 1 ? "curve" : "curves"} of ${n(s.points)} points, with ${n(s.special)} special ${s.special === 1 ? "point" : "points"}`,
   };
 }
 
@@ -371,10 +386,14 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
   const lyapunov = isLyapunov(state.view) ? state.view : null;
   const orbit = isOrbit(state.view) ? state.view : null;
   const branch = isContinuation(state.view) ? state.view : null;
-  const plot = isContinuation(state.view) ? null : state.view;
-  const p = lyapunov || orbit || branch ? null : state.portrait;
+  const plane = isCurves(state.view) ? state.view : null;
+  const plot = isParameterView(state.view) ? null : state.view;
+  const p = lyapunov || orbit || branch || plane ? null : state.portrait;
   const branches = branch ? shownBranches(state) : [];
   const branchRuns = branches.map((b) => b.run);
+  const curveJobs = plane ? buildCurveJobs(state) : [];
+  const curvesDone = curveJobs.filter((j) => j.meta.key in state.curveRuns).length;
+  const planeRows = plane ? curveRows(curveJobs.map((job) => ({ job, run: state.curveRuns[job.meta.key] })), plane.curves.ranges) : [];
   const sys = state.compiled;
   const kind = sys?.kind;
   const states = sys?.states ?? [];
@@ -384,13 +403,16 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
       ? orbitCurrent(state)
       : branch
         ? branches.length > 0 && branchRuns.every((r) => r !== undefined)
-        : !!p && !!sys && p.meta.systemId === sys.systemId;
+        : plane
+          ? curveJobs.length > 0 && curvesDone === curveJobs.length
+          : !!p && !!sys && p.meta.systemId === sys.systemId;
   const run = lyapunov && current ? state.lyapunov : null;
   const diagram = orbit && current ? state.orbit : null;
   const followed = branch && current ? continuationSummary(branchRuns) : null;
+  const traced = plane && current ? curvesSummary(planeRows, plane.curves.ranges) : null;
   const drawMs = useOrbitDrawMs();
   const nFp =
-    state.layers.fixedPoints && !lyapunov && !orbit && !branch ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
+    state.layers.fixedPoints && !lyapunov && !orbit && !branch && !plane ? (searchedFixedPoints(sys, p, state.shapeId)?.length ?? null) : null;
   const crossings =
     p && current && p.meta.view.kind === "section" && state.view.kind === "section"
       ? sectionCounts(p.res, state.solver.transient)
@@ -410,6 +432,8 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
 
   const waiting = branch
     ? !current && branches.length > 0
+    : plane
+      ? !current && curveJobs.length > 0
     : lyapunov || orbit
       ? !current && state.ics.some((ic) => ic.x0.length === states.length)
       : !current;
@@ -425,6 +449,8 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
       : "t"
     : swept
       ? (sys?.params[swept.param]?.latex ?? "")
+      : plane
+        ? (sys?.params[plane.across]?.latex ?? "")
       : plot
         ? (cobwebNames?.x ?? axisName(plot.xAxis, plot.yAxis, states, kind))
         : "";
@@ -436,6 +462,8 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
         ? branch.yAxis.kind === "state"
           ? (states[branch.yAxis.index]?.latex ?? "")
           : "\\lVert x \\rVert"
+        : plane
+          ? (sys?.params[plane.up]?.latex ?? "")
         : plot
           ? (cobwebNames?.y ?? axisName(plot.yAxis, plot.xAxis, states, kind))
           : "";
@@ -445,14 +473,19 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
       ? orbitSummary(orbit.orbit, state.orbitColumns)
       : branch
         ? branchSummary(continuationSummary(branchRuns), branches.length)
-        : solverSummary(state.solver, kind);
-  const settingsId = orbit ? "orbit-settings" : branch ? "continuation-settings" : "solver-settings";
+        : plane
+          ? curvesStatus(curvesSummary(planeRows, plane.curves.ranges))
+          : solverSummary(state.solver, kind);
+  const settingsId = orbit ? "orbit-settings" : branch ? "continuation-settings" : plane ? "curves-settings" : "solver-settings";
   const settingsTip = orbit
     ? "Open orbit diagram settings"
     : branch
       ? "Open continuation settings"
-      : "Open solver settings";
-  const done = run ?? diagram ?? (followed ? { res: followed, roundTripMs: followed.roundTripMs } : null) ?? p;
+      : plane
+        ? "Open the curves' settings"
+        : "Open solver settings";
+  const summed = followed ?? traced;
+  const done = run ?? diagram ?? (summed ? { res: summed, roundTripMs: summed.roundTripMs } : null) ?? p;
   const t = done ? timing(done.res.elapsedMs) : null;
   const drawn = diagram && drawMs !== null ? ` Drawn in ${fmt(drawMs, 2)} ms.` : "";
   const timingDesc = done
@@ -566,14 +599,23 @@ export function StatusBar({ state, actions, beforeUpdate }: StatusBarProps) {
               <circle cx="8" cy="8" r="5.75" opacity="0.3" />
               <path d="M8 2.25a5.75 5.75 0 0 1 5.75 5.75" />
             </svg>
-            <span className="ds-statusbar-text">Computing…</span>
+            <span className="ds-statusbar-text">
+              {plane ? (
+                <>
+                  Curves <span className="ds-statusbar-num">{curvesDone}</span> of{" "}
+                  <span className="ds-statusbar-num">{curveJobs.length}</span> · searching
+                </>
+              ) : (
+                "Computing…"
+              )}
+            </span>
           </span>
         ) : (
           t && (
             <span className="ds-statusbar-item" data-tooltip={timingLabel} data-tooltip-desc={timingDesc}>
               <span className="ds-statusbar-text">
                 <span className="ds-statusbar-wide">
-                  {run ? "Lyapunov " : diagram ? "Orbit " : followed ? "Continuation " : "Portrait "}
+                  {run ? "Lyapunov " : diagram ? "Orbit " : followed ? "Continuation " : traced ? "Curves " : "Portrait "}
                 </span>
                 <span className="ds-statusbar-num">{t.num}</span> {t.unit}
               </span>

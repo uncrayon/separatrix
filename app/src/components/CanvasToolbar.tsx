@@ -12,6 +12,7 @@ import {
   fitOrbitRange,
   hasNullclineLayer,
   isContinuation,
+  isParameterView,
   shownBranches,
   isCobweb,
   isLyapunov,
@@ -31,6 +32,7 @@ import {
   type ViewChoice,
 } from "../state/model";
 import { cobwebFit, orbitValues } from "../canvas/cobweb";
+import { buildCurveJobs, curveRows, drawnCurves, fitCurveRanges, isCurves } from "../state/curves";
 import { Select } from "./controls";
 import { systemNameOf } from "./systemName";
 import {
@@ -99,6 +101,7 @@ const PICKER: Record<ViewChoice, { noun: string; name: string; axes: string }> =
   lyapunov: { noun: "Lyapunov spectrum", name: "Lyapunov spectrum", axes: "." },
   orbit: { noun: "Orbit diagram", name: "orbit diagram", axes: "." },
   continuation: { noun: "Branch plot", name: "continuation", axes: "; its parameter and the state up are picked in the inspector." },
+  curves: { noun: "Parameter plane", name: "parameter plane", axes: "; its two parameters are picked in the inspector." },
 };
 
 /** "Phase plane, time series or cobweb". */
@@ -120,7 +123,8 @@ export function CanvasToolbar({ state, actions }: Props) {
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view);
   const branch = isContinuation(state.view);
-  const analysis = lyapunov || orbit || branch;
+  const plane = isCurves(state.view);
+  const analysis = lyapunov || orbit || branch || plane;
 
   const zoomToFit = () => {
     const v = state.view;
@@ -136,7 +140,16 @@ export function CanvasToolbar({ state, actions }: Props) {
                 sys.states.length,
                 v.yAxis,
               )
-            : fitView(state);
+            : isCurves(v)
+              ? fitCurveRanges(
+                  drawnCurves(
+                    curveRows(
+                      buildCurveJobs(state).map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
+                      v.curves.ranges,
+                    ),
+                  ),
+                )
+              : fitView(state);
     if (fit) actions.setView({ ...v, ...fit } as typeof v);
     else actions.resetView();
   };
@@ -149,6 +162,8 @@ export function CanvasToolbar({ state, actions }: Props) {
         ? "Zoom to fit the diagram over the slider's range"
         : branch
           ? "Zoom to fit the branches"
+        : plane
+          ? "Zoom to fit the curves"
         : lyapunov
           ? "Zoom to fit the run (or double-click the plot)"
           : "Zoom to fit the trajectories",
@@ -376,7 +391,7 @@ function fitOrbit(state: StudioState): { xRange: [number, number]; yRange: [numb
 
 function fitView(state: StudioState): { xRange: [number, number]; yRange: [number, number] } | null {
   const sys = state.compiled;
-  if (!sys || isContinuation(state.view)) return null;
+  if (!sys || isParameterView(state.view)) return null;
   const dim = sys.states.length;
   const { xAxis: rx } = state.view;
   if (isReturnMap(state.view) && rx.kind === "state") {
@@ -483,8 +498,9 @@ function AxisPicker({
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view) ? state.view : null;
   const branch = isContinuation(state.view) ? state.view : null;
-  const plot = isContinuation(state.view) ? null : state.view;
-  const viewOnly = cobweb || space || lyapunov || !!orbit || !!branch;
+  const plane = isCurves(state.view) ? state.view : null;
+  const plot = isParameterView(state.view) ? null : state.view;
+  const viewOnly = cobweb || space || lyapunov || !!orbit || !!branch || !!plane;
   const { x: xLatex, y: yLatex } = lyapunov
     ? { x: isMap ? "n" : "t", y: "\\lambda" }
     : orbit
@@ -494,6 +510,8 @@ function AxisPicker({
             x: sys.params[branch.param]?.latex ?? "",
             y: branch.yAxis.kind === "state" ? (sys.states[branch.yAxis.index]?.latex ?? "") : "\\lVert x \\rVert",
           }
+        : plane
+          ? { x: sys.params[plane.across]?.latex ?? "", y: sys.params[plane.up]?.latex ?? "" }
         : plot
           ? viewAxisLabels(plot, sys.states, sys.kind)
           : { x: "", y: "" };

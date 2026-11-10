@@ -270,6 +270,8 @@ function byKey<T>(list: readonly T[] | undefined, key: (t: T) => unknown): Map<u
  */
 export function projectFromState(s: DocumentState, opts: SerializeOptions = {}): ProjectFile {
   const loaded = opts.loaded ?? null;
+  // The file format has no Parameter plane yet: it saves the view the plane came from.
+  const view = s.view.kind === "curves" ? s.view.home : s.view;
   const pending = !!opts.pending && !!loaded;
   const lsys = loaded?.system;
   const states = pending ? (lsys?.states ?? []) : (s.compiled?.states.map((st) => st.name) ?? lsys?.states ?? []);
@@ -311,14 +313,14 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const lviews = loaded?.views ?? [];
     const at = primaryViewIndex(lviews);
     const lv: ProjectView | undefined = at >= 0 ? lviews[at] : undefined;
-    const cobweb = s.view.kind === "cobweb";
-    const section = s.view.kind === "section" ? s.view.section : null;
-    const space = s.view.kind === "space" ? s.view : null;
-    const lyapunov = s.view.kind === "lyapunov" ? s.view.lyapunov : null;
-    const orbit = s.view.kind === "orbit" ? s.view : null;
-    const continuation = s.view.kind === "continuation" ? s.view : null;
+    const cobweb = view.kind === "cobweb";
+    const section = view.kind === "section" ? view.section : null;
+    const space = view.kind === "space" ? view : null;
+    const lyapunov = view.kind === "lyapunov" ? view.lyapunov : null;
+    const orbit = view.kind === "orbit" ? view : null;
+    const continuation = view.kind === "continuation" ? view : null;
     const swept = orbit ?? continuation;
-    const next = cobweb || (!!section && sameStateAxes(s.view.xAxis, s.view.yAxis));
+    const next = cobweb || (!!section && sameStateAxes(view.xAxis, view.yAxis));
     const exponent: ProjectAxis = { kind: "exponent" };
     const paramAxis = (name: string | undefined): ProjectAxis => {
       const fresh: ProjectAxis = name === undefined ? { kind: "param" } : { kind: "param", name };
@@ -327,7 +329,7 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
     const primary: ProjectView = {
       ...lv,
       id: lv?.id || "main",
-      ...(cobweb || section || space || lyapunov || swept ? { kind: s.view.kind } : {}),
+      ...(cobweb || section || space || lyapunov || swept ? { kind: view.kind } : {}),
       ...(section ? { section: sectionOut(lv?.section, section, states) } : {}),
       ...(lyapunov
         ? {
@@ -350,17 +352,17 @@ export function projectFromState(s: DocumentState, opts: SerializeOptions = {}):
           }
         : {}),
       ...(continuation ? { continuation: continuationOut(lv?.continuation, continuation.continuation) } : {}),
-      x_axis: swept ? paramAxis(s.params[swept.param]?.name) : axisOut(lv?.x_axis, s.view.xAxis, states),
+      x_axis: swept ? paramAxis(s.params[swept.param]?.name) : axisOut(lv?.x_axis, view.xAxis, states),
       y_axis: lyapunov
         ? lv?.y_axis?.kind === "exponent"
           ? { ...lv.y_axis, ...exponent }
           : exponent
-        : s.view.yAxis.kind === "norm"
+        : view.yAxis.kind === "norm"
           ? { ...(lv?.y_axis?.kind === "norm" ? lv.y_axis : {}), kind: "norm" }
-          : axisOut(lv?.y_axis, s.view.yAxis, states, next),
+          : axisOut(lv?.y_axis, view.yAxis, states, next),
       ...(space ? { z_axis: axisOut(lv?.z_axis, space.zAxis, states) } : {}),
-      x_range: [s.view.xRange[0], s.view.xRange[1]],
-      y_range: [s.view.yRange[0], s.view.yRange[1]],
+      x_range: [view.xRange[0], view.xRange[1]],
+      y_range: [view.yRange[0], view.yRange[1]],
       ...(space
         ? {
             z_range: [space.zRange[0], space.zRange[1]] as [number, number],

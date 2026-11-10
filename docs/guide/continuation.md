@@ -64,6 +64,10 @@ At a BP or PD row, **Switch branch** follows the second branch both ways. At a f
 map, that branch is the cycle of twice the period. A point you have already switched at reads
 "Followed as Branch k" instead.
 
+At an LP, H, PD or NS row, **Follow in two parameters…** frees a second parameter and follows the
+bifurcation in the [Parameter plane](parameter-plane.md). **Search in two parameters**, in the
+Special points header, follows all of them.
+
 ## Check the numbers
 
 The continuation gate checks the same command against closed-form values. Two examples:

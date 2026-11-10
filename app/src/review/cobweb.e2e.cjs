@@ -259,8 +259,10 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     assert.equal(await page.locator(`[id="${why}"]`).innerText(), "A phase plane needs at least 2 states. Logistic map has 1.");
     // The group names the reason too (arrow keys skip the option), and the labels are short, with the full name kept.
     const group = page.locator(".panel-right [role=radiogroup][aria-label=View]");
-    assert.equal(await group.getAttribute("aria-describedby"), why);
-    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb", "λ", "Orbit", "Branch"]);
+    const planeWhy = await viewRadio(page, "Parameter plane").getAttribute("aria-describedby");
+    assert.equal(await group.getAttribute("aria-describedby"), `${why} ${planeWhy}`);
+    assert.equal(await page.locator(`[id="${planeWhy}"]`).innerText(), "The parameter plane needs two parameters; Logistic map has 1.");
+    assert.deepEqual(await group.getByRole("radio").allInnerTexts(), ["Phase", "Series", "Cobweb", "λ", "Orbit", "Branch", "Parameter plane"]);
     assert.equal(await phase.getAttribute("title") ?? (await phase.getAttribute("data-tooltip")), "Phase plane");
     // Every label fits inside its segment, in projector mode at 1,024 px too.
     await page.setViewportSize({ width: 1024, height: 768 });
@@ -275,7 +277,7 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
         return range.getBoundingClientRect().width + pad <= el.getBoundingClientRect().width + 0.5;
       }),
     );
-    assert.deepEqual(fits, [true, true, true, true, true, true]);
+    assert.deepEqual(fits, [true, true, true, true, true, true, true]);
     await page.evaluate(() => (document.documentElement.dataset.theme = "dark"));
     await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -283,7 +285,7 @@ test("Time series and back: no graph asked for, then the cobweb's ranges come ba
     await page.getByRole("button", { name: /^Cobweb:/ }).click();
     const menu = page.getByRole("menu");
     const items = menu.getByRole("menuitemradio");
-    assert.deepEqual(await items.locator(".axes-menu-label").allInnerTexts(), ["Phase plane", "Time series", "Cobweb", "Lyapunov spectrum", "Orbit diagram", "Continuation"]);
+    assert.deepEqual(await items.locator(".axes-menu-label").allInnerTexts(), ["Phase plane", "Time series", "Cobweb", "Lyapunov spectrum", "Orbit diagram", "Continuation", "Parameter plane"]);
     // The disabled one says why, visibly, under it.
     const disabled = menu.getByRole("menuitemradio", { name: /^Phase plane/ });
     assert.equal(await disabled.getAttribute("aria-disabled"), "true");

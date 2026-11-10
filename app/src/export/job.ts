@@ -34,6 +34,7 @@ import {
   isCobweb,
   isLyapunov,
   isContinuation,
+  isCurves,
   isOrbit,
   isReturnMap,
   isSection,
@@ -188,6 +189,7 @@ export function axisNames(s: StudioSnapshot): { x: string; y: string } | null {
   if (isOrbit(v)) return { x: sys.params[v.param]?.latex ?? "r", y: sys.states[v.yAxis.index]?.latex ?? "x" };
   if (isContinuation(v))
     return { x: sys.params[v.param]?.latex ?? "r", y: v.yAxis.kind === "state" ? (sys.states[v.yAxis.index]?.latex ?? "x") : "\\lVert x \\rVert" };
+  if (isCurves(v)) return { x: sys.params[v.across]?.latex ?? "p", y: sys.params[v.up]?.latex ?? "q" };
   return viewAxisLabels(v, sys.states, sys.kind);
 }
 

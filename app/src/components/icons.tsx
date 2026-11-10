@@ -200,6 +200,21 @@ export const IconStepForward = (p: IconProps) => (
   </Svg>
 );
 
+export const IconSearch = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="7" cy="7" r="4.25" />
+    <path d="m10.2 10.2 3.3 3.3" />
+  </Svg>
+);
+
+/** Follow a bifurcation: a curve through a point. */
+export const IconFollow = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M2.5 13.5C5 13 6.5 10.5 8 8s3-5 5.5-5.5" />
+    <circle cx="8" cy="8" r="1.75" fill="currentColor" />
+  </Svg>
+);
+
 export const IconInfo = (p: IconProps) => (
   <Svg {...p}>
     <circle cx="8" cy="8" r="6" />

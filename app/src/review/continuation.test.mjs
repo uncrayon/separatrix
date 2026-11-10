@@ -47,9 +47,9 @@ const logistic = system("map", ["x"], ["r"]);
 const selkov = system("ode", ["x", "y"], ["a", "b"]);
 const sliders = (sys, values) => sys.params.map((p, i) => ({ name: p.name, latex: p.latex, value: values[i], min: 0, max: 4 }));
 
-test("the Branch view is the last choice of a flow and a map, offered with a parameter to vary", () => {
-  assert.equal(model.viewChoicesFor(selkov).at(-1), "continuation");
-  assert.equal(model.viewChoicesFor(logistic).at(-1), "continuation");
+test("the Branch view comes just before the Parameter plane for a flow and a map, offered with a parameter to vary", () => {
+  assert.deepEqual(model.viewChoicesFor(selkov).slice(-2), ["continuation", "curves"]);
+  assert.deepEqual(model.viewChoicesFor(logistic).slice(-2), ["continuation", "curves"]);
   assert.equal(model.VIEW_CHOICE_LABELS.continuation, "Continuation");
   assert.equal(model.VIEW_CHOICE_SHORT.continuation, "Branch");
   assert.deepEqual(model.continuationAvailability(logistic), { ok: true });

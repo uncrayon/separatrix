@@ -95,6 +95,11 @@ export function latexToPlain(s: string): string {
   return latexToPlainText(s).replace(/-/g, "−");
 }
 
+/** {@link latexToPlain} with a digit subscript as subscript digits: `k_{2}` as "k₂". */
+export function plainSubscripted(latex: string): string {
+  return latexToPlain(latex).replace(/_(\d+)/g, (_, d: string) => d.replace(/\d/g, (c) => "₀₁₂₃₄₅₆₇₈₉"[Number(c)]));
+}
+
 /**
  * A diagnostic from the core for display. Messages are prose that quote
  * maths (`\dot{x} = -x`, `'*'`), so LaTeX is spelled out but hyphens stay

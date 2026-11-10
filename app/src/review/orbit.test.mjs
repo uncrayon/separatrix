@@ -58,7 +58,7 @@ function snapshot(over = {}) {
 }
 
 test("the orbit diagram is a map's view, offered only with a parameter to sweep", () => {
-  assert.deepEqual(model.viewChoicesFor(logistic).at(-2), "orbit");
+  assert.deepEqual(model.viewChoicesFor(logistic).at(-3), "orbit");
   assert.equal(model.viewChoicesFor({ ...logistic, kind: "ode" }).includes("orbit"), false);
   assert.deepEqual(model.viewChoiceAvailability(logistic).orbit, { ok: true });
   assert.deepEqual(model.orbitAvailability(map(["x"], []), "Tent map"), {

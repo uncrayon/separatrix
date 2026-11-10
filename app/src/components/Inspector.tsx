@@ -21,6 +21,7 @@ import {
   fmt,
   latexToPlain,
   mapMultiplier,
+  plainSubscripted,
   mapStabilityHint,
   sameAxis,
   viewAxisLabels,
@@ -38,6 +39,8 @@ import {
   continuationSettingsError,
   fitBranchRanges,
   isContinuation,
+  isCurves,
+  isParameterView,
   pointSeed,
   shownBranches,
   specialRows,
@@ -101,6 +104,25 @@ import { landedOnSource, looksStiff, STATUS_WORDS, stopText } from "./runStatus"
 import { fixedPointGlyph } from "../canvas/draw";
 import { COBWEB_DEDUPE_ITERATES, distinctSegments, orbitValues } from "../canvas/cobweb";
 import { FixedPointIcon } from "../canvas/PortraitCanvas";
+import { CurveSample } from "../canvas/CurvesCanvas";
+import {
+  CODIM2_KINDS,
+  CURVE_KINDS,
+  buildCurveJobs,
+  curveKindOf,
+  curveRows,
+  curvesAvailability,
+  curvesSettingsError,
+  drawnCurves,
+  mergedText,
+  neutralText,
+  nextParam,
+  onCurvesText,
+  planePointRows,
+  retryStep,
+  stallText,
+  type CurvesView,
+} from "../state/curves";
 import {
   hasComplexEigenvalue,
   numberedEigenvalues,
@@ -116,6 +138,8 @@ import {
   IconEyeOff,
   IconField,
   IconFixedPoint,
+  IconFollow,
+  IconSearch,
   IconNullcline,
   IconTrajectoryAdd,
   IconTrash,
@@ -132,6 +156,7 @@ const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boo
 const short = (v: number, digits = 4) => withMinus(fmt(v, digits, COMPUTED_ZERO));
 
 const atTime = (v: number) => (Math.abs(v - Math.round(v)) < 1e-9 ? withMinus(String(Math.round(v))) : dec(v, 2));
+
 
 const plainName = (latex: string) => latexToPlain(latex);
 
@@ -151,6 +176,8 @@ type SectionKey =
   | "lyapunov"
   | "orbit"
   | "continuation"
+  | "curves"
+  | "planePoints"
   | "solver"
   | "fixedPoints"
   | "trajectories"
@@ -166,6 +193,8 @@ export function Inspector({ state, actions }: Props) {
     lyapunov: true,
     orbit: true,
     continuation: true,
+    curves: true,
+    planePoints: true,
     solver: true,
     fixedPoints: true,
     trajectories: state.ics.length <= 5,
@@ -175,6 +204,7 @@ export function Inspector({ state, actions }: Props) {
   const lyapunov = isLyapunov(state.view);
   const orbit = isOrbit(state.view);
   const branch = isContinuation(state.view);
+  const plane = isCurves(state.view);
   const sel = state.selection;
   const [direction, setDirection] = useState<ContinuationDirection>("both");
   const selKind = sel?.kind ?? null;
@@ -196,7 +226,7 @@ export function Inspector({ state, actions }: Props) {
         <p className="inspector-empty body ds-muted">Pick a template or type an equation to see its settings here.</p>
       ) : (
         <>
-          {!lyapunov && !orbit && !branch && (
+          {!lyapunov && !orbit && !branch && !plane && (
             <LayersSection state={state} actions={actions} open={open.layers} onToggle={(v) => setOpen("layers", v)} />
           )}
           <ViewSection state={state} actions={actions} open={open.axes} onToggle={(v) => setOpen("axes", v)} />
@@ -221,6 +251,17 @@ export function Inspector({ state, actions }: Props) {
               onDirection={setDirection}
             />
           )}
+          {plane && (
+            <>
+              <CurvesSection state={state} actions={actions} open={open.curves} onToggle={(v) => setOpen("curves", v)} />
+              <PlanePointsSection
+                state={state}
+                actions={actions}
+                open={open.planePoints}
+                onToggle={(v) => setOpen("planePoints", v)}
+              />
+            </>
+          )}
           {isSection(state.view) && (
             <PoincareSection
               state={state}
@@ -229,10 +270,10 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("section", v)}
             />
           )}
-          {!(lyapunov && sys.kind === "map") && !orbit && !branch && (
+          {!(lyapunov && sys.kind === "map") && !orbit && !branch && !plane && (
             <SolverSection state={state} actions={actions} open={open.solver} onToggle={(v) => setOpen("solver", v)} />
           )}
-          {!lyapunov && !orbit && !branch && (
+          {!lyapunov && !orbit && !branch && !plane && (
             <FixedPointsSection
               state={state}
               actions={actions}
@@ -241,7 +282,7 @@ export function Inspector({ state, actions }: Props) {
               direction={direction}
             />
           )}
-          {!branch && (
+          {!branch && !plane && (
             <TrajectoriesSection
               state={state}
               actions={actions}
@@ -249,7 +290,7 @@ export function Inspector({ state, actions }: Props) {
               onToggle={(v) => setOpen("trajectories", v)}
             />
           )}
-          {sel?.kind === "ic" && (
+          {sel?.kind === "ic" && !plane && (
             <SelectedTrajectorySection
               state={state}
               actions={actions}
@@ -377,7 +418,8 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
   const sys = state.compiled!;
   const kind = sys.kind;
   const shown = state.view;
-  const view = isContinuation(shown) ? null : shown;
+  const view = isParameterView(shown) ? null : shown;
+  const plane = isCurves(shown) ? shown : null;
   const cobweb = !!view && isCobweb(view);
   const section = !!view && isSection(view);
   const space = view && isSpace(view) ? view : null;
@@ -439,7 +481,11 @@ function ViewSection({ state, actions, open, onToggle }: SectionProps) {
           );
         })}
       </div>
-      {!view ? (
+      {plane ? (
+        <p className="ds-panel-section-hint caption" data-plane-caption="">
+          {sliceCaption(plane, sys.params.map((q) => plainSubscripted(q.latex)))}
+        </p>
+      ) : !view ? (
         <p className="ds-panel-section-hint caption">
           The parameter across and the measure up are set in the Continuation panel.
         </p>
@@ -944,16 +990,20 @@ function ContinuationSection({
   const view = state.view;
   const yId = useId();
   const pId = useId();
+  const freeId = useId();
+  const [follow, setFollow] = useState<{ key: string; up: number } | null>(null);
   if (!isContinuation(view)) return null;
+  const twoParams = curvesAvailability(sys).ok;
   const c = view.continuation;
   const [lo, hi] = c.range;
   const p = sys.params[view.param];
   const pLatex = p?.latex ?? "p";
-  const pName = plainName(pLatex);
+  const pName = plainSubscripted(pLatex);
   const names = sys.states.map((st) => plainName(st.latex));
   const shown = shownBranches(state);
   const runs = shown.map((b) => b.run);
   const rows = specialRows(runs);
+  const followable = twoParams && rows.some(({ at }) => curveKindOf(at.kind));
   const value = state.params[view.param]?.value;
   const fp = state.selection?.kind === "fp" && state.selection.x.length === sys.states.length ? state.selection.x : null;
   const settingError = (patch: Partial<typeof c>) => {
@@ -1113,7 +1163,21 @@ function ContinuationSection({
           })}
         </ul>
       )}
-      <h3 className="ds-panel-section-subhead label">Special points</h3>
+      <div className="inspector-subhead-row">
+        <h3 className="ds-panel-section-subhead label">Special points</h3>
+        {twoParams && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<IconSearch />}
+            disabled={!followable}
+            data-tooltip="Follow every fold, Hopf, flip and Neimark–Sacker point here in two parameters"
+            onClick={actions.searchInPlane}
+          >
+            Search in two parameters
+          </Button>
+        )}
+      </div>
       {rows.length === 0 ? (
         <p className="ds-panel-section-hint caption" data-special-points="">
           {shown.some((b) => !b.run) ? "Computing…" : "None on these branches."}
@@ -1126,6 +1190,9 @@ function ContinuationSection({
             const text = parts.join("  ");
             const switched = info.switches ? switchedBranch(c.seeds, at) : null;
             const switchedShown = switched === null ? -1 : shown.findIndex((b) => b.job.meta.seed === switched - 1);
+            const curveKind = twoParams ? curveKindOf(at.kind) : null;
+            const rowKey = `${at.kind}-${at.period}-${at.p}`;
+            const panel = follow?.key === rowKey ? follow : null;
             return (
               <li key={`${at.kind}-${at.period}-${at.p}`} className="ds-fp-item" data-special-kind={at.kind}>
                 <button
@@ -1142,22 +1209,79 @@ function ContinuationSection({
                       {parts.map((part, i) => (
                         <Fragment key={i}>
                           {i > 0 && "  "}
-                          <span className="nowrap">{part}</span>
+                          <span className={part.includes(", ") ? undefined : "nowrap"}>{part}</span>
                         </Fragment>
                       ))}
                     </span>
                   </span>
                 </button>
-                {info.switches && (
+                {(info.switches || curveKind) && (
                   <div className="ds-fp-detail">
-                    {switched === null ? (
-                      <Button size="sm" onClick={() => actions.addSeed(switchSeed(at))}>
-                        Switch branch
+                    {info.switches &&
+                      (switched === null ? (
+                        <Button size="sm" onClick={() => actions.addSeed(switchSeed(at))}>
+                          Switch branch
+                        </Button>
+                      ) : (
+                        <span className="caption" data-switched-branch={switchedShown + 1}>
+                          Followed as Branch {switchedShown + 1}
+                        </span>
+                      ))}
+                    {curveKind && !panel && (
+                      <Button
+                        size="sm"
+                        icon={<IconFollow />}
+                        aria-expanded={false}
+                        onClick={() => setFollow({ key: rowKey, up: nextParam(view.param, sys.params.length) })}
+                      >
+                        Follow in two parameters…
                       </Button>
-                    ) : (
-                      <span className="caption" data-switched-branch={switchedShown + 1}>
-                        Followed as Branch {switchedShown + 1}
-                      </span>
+                    )}
+                    {curveKind && panel && (
+                      <div className="inspector-follow" role="group" aria-label={`Follow this ${CURVE_KINDS[curveKind].point} in two parameters`}>
+                        <p className="body-strong inspector-follow-title">
+                          Follow this {CURVE_KINDS[curveKind].point} in two parameters
+                        </p>
+                        <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+                          <div className="ds-panel-section-kv-row">
+                            <dt className="ds-panel-section-key body">
+                              <label className="inspector-key-label" htmlFor={freeId}>
+                                Free also
+                              </label>
+                            </dt>
+                            <dd className="ds-panel-section-value ds-panel-section-value--field">
+                              <Select
+                                id={freeId}
+                                size="sm"
+                                math
+                                value={`p${panel.up}`}
+                                options={sys.params.flatMap((q, i) =>
+                                  i === view.param ? [] : [{ value: `p${i}`, label: optionName(q.latex) }],
+                                )}
+                                onChange={(v) => setFollow({ key: rowKey, up: Number(v.slice(1)) })}
+                              />
+                            </dd>
+                          </div>
+                        </dl>
+                        <p className="ds-panel-section-hint caption" data-follow-note="">
+                          {followNote(pName, plainSubscripted(sys.params[panel.up]?.latex ?? ""), state.params[panel.up])}
+                        </p>
+                        <div className="inspector-follow-actions">
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => {
+                              setFollow(null);
+                              actions.followInPlane(at, panel.up);
+                            }}
+                          >
+                            Follow
+                          </Button>
+                          <Button size="sm" onClick={() => setFollow(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -1169,6 +1293,296 @@ function ContinuationSection({
       <p className="ds-panel-section-hint caption">
         LP fold, H Hopf, BP branch point, PD period doubling (flip), NS Neimark–Sacker. Solid where the fixed point is
         stable, dashed where it is not. Click a row to set {pName} there.
+        {twoParams && " Follow in two parameters frees a second parameter and draws the curve in the Parameter plane."}
+      </p>
+    </PanelSection>
+  );
+}
+
+/** "Opens the Parameter plane with k₂ across and K up, from 0 to 2." */
+function followNote(across: string, up: string, p: { min: number; max: number } | undefined): string {
+  const range = p && p.min < p.max ? `, from ${short(p.min)} to ${short(p.max)}` : "";
+  return `Opens the Parameter plane with ${across} across and ${up} up${range}.`;
+}
+
+/** Whether the plane's slice line is drawn, and why. */
+function sliceCaption(v: CurvesView, names: readonly string[]): string {
+  if (!v.branch) return "Across and up are set in the Curves panel. Open the Branch view first to see its range here too.";
+  if (v.branch.param === v.across) return "Across is always the Branch view’s parameter, so the two views line up.";
+  return `The Branch view’s range is hidden: it is a range of ${names[v.branch.param]}, and ${names[v.across]} is across here.`;
+}
+
+const PLANE_DIRECTIONS: SegmentOption<ContinuationDirection>[] = [
+  { value: "forward", label: "Forward", title: "One way from each starting point" },
+  { value: "backward", label: "Backward", title: "The other way from each starting point" },
+  { value: "both", label: "Both", title: "Both ways from each starting point, joined into one curve" },
+];
+
+function CurvesSection({ state, actions, open, onToggle }: SectionProps) {
+  const sys = state.compiled!;
+  const view = state.view;
+  const aId = useId();
+  const uId = useId();
+  if (!isCurves(view)) return null;
+  const c = view.curves;
+  const names = sys.params.map((q) => plainSubscripted(q.latex));
+  const latex = sys.params.map((q) => q.latex);
+  const jobs = buildCurveJobs(state);
+  const rows = curveRows(
+    jobs.map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
+    c.ranges,
+  );
+  const done = jobs.filter((j) => j.meta.key in state.curveRuns).length;
+  const searching = done < jobs.length;
+  const soFar = planePointRows(drawnCurves(rows), c.ranges).length;
+  const shownCount = rows.filter((r) => r.status === "done").length;
+  const settingError = (patch: Partial<typeof c>) => {
+    const err = curvesSettingsError({ ...c, ...patch });
+    return err ? err.message : null;
+  };
+  const whole = (v: number) => v.toLocaleString("en-US");
+  const paramOptions = sys.params.map((q, i) => ({ value: `p${i}`, label: optionName(q.latex) }));
+  const rangeRow = (which: 0 | 1, id: string) => {
+    const [lo, hi] = c.ranges[which];
+    const i = which === 0 ? view.across : view.up;
+    const set = (r: [number, number]) =>
+      actions.setCurves({ ranges: which === 0 ? [r, c.ranges[1]] : [c.ranges[0], r] });
+    const err = (r: [number, number]) => settingError({ ranges: which === 0 ? [r, c.ranges[1]] : [c.ranges[0], r] });
+    return (
+      <>
+        <div className="ds-panel-section-kv-row">
+          <dt className="ds-panel-section-key body">
+            <label className="inspector-key-label" htmlFor={id}>
+              {which === 0 ? "Across" : "Up"}
+            </label>
+          </dt>
+          <dd className="ds-panel-section-value ds-panel-section-value--field">
+            <Select
+              id={id}
+              size="sm"
+              math
+              value={`p${i}`}
+              options={paramOptions}
+              onChange={(v) => actions.setCurvesParam(which === 0 ? "across" : "up", Number(v.slice(1)))}
+            />
+          </dd>
+        </div>
+        <FieldRow label="Range" tip={`The ${names[i]} the curves stay between`}>
+          <span className="inspector-range-pair">
+            <NumberField
+              size="sm"
+              lead={<Tex latex={`${latex[i]} \\geq`} />}
+              value={lo}
+              onCommit={(v) => set([v, hi])}
+              validate={(v) => err([v, hi])}
+              digits={6}
+              ariaLabel={`Lowest ${names[i]}`}
+            />
+            <NumberField
+              size="sm"
+              lead={<Tex latex="\leq" />}
+              value={hi}
+              onCommit={(v) => set([lo, v])}
+              validate={(v) => err([lo, v])}
+              digits={6}
+              ariaLabel={`Highest ${names[i]}`}
+            />
+          </span>
+        </FieldRow>
+      </>
+    );
+  };
+  return (
+    <PanelSection title="Curves" id="curves-settings" count={shownCount} open={open} onToggle={onToggle}>
+      <dl className="ds-panel-section-kv ds-panel-section-kv--fields">
+        {rangeRow(0, aId)}
+        {rangeRow(1, uId)}
+        <FieldRow label="Δs" tip="The first step along each curve, in arclength; steps grow to twice it where the curve is straight">
+          <NumberField
+            size="sm"
+            lead={<Tex latex="\Delta s =" />}
+            value={c.ds}
+            onCommit={(v) => actions.setCurves({ ds: v })}
+            validate={(v) => settingError({ ds: v })}
+            digits={6}
+            ariaLabel="First step in arclength"
+          />
+        </FieldRow>
+        <FieldRow label="Max points" tip={`The most points of a curve each way, up to ${whole(MAX_CONTINUATION_POINTS)}`}>
+          <NumberField
+            size="sm"
+            lead={<Tex latex="N =" />}
+            value={c.maxPoints}
+            onCommit={(v) => actions.setCurves({ maxPoints: Math.round(v) })}
+            validate={(v) => settingError({ maxPoints: Math.round(v) })}
+            format={whole}
+            ariaLabel="Most points of a curve each way"
+          />
+        </FieldRow>
+      </dl>
+      <div className="inspector-continue">
+        <SegmentedControl
+          size="sm"
+          fill
+          ariaLabel="Direction"
+          value={c.direction}
+          options={PLANE_DIRECTIONS}
+          onChange={(direction) => actions.setCurves({ direction })}
+        />
+      </div>
+      {searching && (
+        <div className="inspector-search" role="status" data-curves-search="">
+          <span className="caption">
+            <span className="numeric-sm">{done}</span> of <span className="numeric-sm">{jobs.length}</span> curves · special
+            points so far: <span className="numeric-sm">{soFar}</span>
+          </span>
+          <Button size="sm" onClick={actions.stopCurves}>
+            Stop
+          </Button>
+        </div>
+      )}
+      <h3 className="ds-panel-section-subhead label">Curves</h3>
+      {rows.length === 0 ? (
+        <p className="ds-panel-section-hint caption">Curves appear here, one per bifurcation followed.</p>
+      ) : (
+        <ul className="ds-traj-list" aria-label="Curves" data-curves="">
+          {rows.map((row) => {
+            const seed = c.seeds[row.job.meta.seed];
+            const kind = seed.kind;
+            const info = CURVE_KINDS[kind];
+            const [pa, pu] = [seed.params[view.across], seed.params[view.up]];
+            const from = `From ${info.label} at ${names[view.across]} = ${dec(pa, 4)}, ${names[view.up]} = ${short(pu)}`;
+            const curve = row.status === "done" || row.status === "merged" ? row.res.curve : null;
+            const ends = curve ? [curve.end.first, curve.end.last].filter((e): e is BranchStop => e !== null) : [];
+            const neutral = curve ? neutralText(curve) : "";
+            const status =
+              row.status === "computing"
+                ? null
+                : row.status === "failed"
+                  ? row.error
+                  : row.status === "merged"
+                    ? mergedText(row.into)
+                    : `${whole(curve!.p1.length)} points · stopped at ${[...new Set(ends.map((e) => BRANCH_STOPS[e]))].join(" and ")}${neutral ? ` · ${neutral}` : ""}`;
+            const stall = row.status === "done" ? stallText(row.res.curve, [names[view.across], names[view.up]], sys.kind) : null;
+            const retry = retryStep(c.ds);
+            return (
+              <li
+                key={row.job.meta.key}
+                className="ds-traj-row inspector-curve-row"
+                data-curve-kind={kind}
+                data-curve-status={row.status}
+              >
+                <span className="ds-traj-select inspector-branch">
+                  <span className="ds-traj-line">
+                    <span className="inspector-curve-swatch">
+                      <CurveSample kind={kind} />
+                    </span>
+                    <span className="body-strong">{info.name}</span>
+                    {row.status === "computing" && (
+                      <span className="caption inspector-curve-tag" role="status">
+                        Computing…
+                      </span>
+                    )}
+                    {stall && <span className="caption inspector-curve-tag inspector-curve-tag--warn">Stopped early</span>}
+                  </span>
+                  <span className="ds-traj-meta">
+                    <span className="numeric-sm">{from}</span>
+                    {status && <span className={cx("caption", row.status === "failed" && "inspector-branch-error")}>{status}</span>}
+                  </span>
+                </span>
+                <span className="ds-traj-actions">
+                  <IconButton
+                    size="sm"
+                    label={`Remove the ${info.name.toLowerCase()} from ${info.label}`}
+                    tipAlign="end"
+                    onClick={() => actions.removeCurveSeed(row.job.meta.seed)}
+                  >
+                    <IconTrash />
+                  </IconButton>
+                </span>
+                {stall && (
+                  <div className="ds-diagnostic ds-diagnostic--block ds-diagnostic--warning inspector-stall" role="status">
+                    <IconWarning className="ds-diagnostic-icon" />
+                    <span className="ds-diagnostic-body">
+                      <span className="ds-diagnostic-word">Warning</span>
+                      <span className="ds-diagnostic-msg">{stall}</span>
+                      <span className="ds-diagnostic-meta caption">
+                        Δs {short(c.ds)} · stopped after {whole(curve!.p1.length)} points
+                      </span>
+                      <span className="ds-diagnostic-actions">
+                        <Button size="sm" onClick={() => actions.setCurves({ ds: retry })}>
+                          Retry with Δs = {short(retry)}
+                        </Button>
+                      </span>
+                    </span>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </PanelSection>
+  );
+}
+
+function PlanePointsSection({ state, actions, open, onToggle }: SectionProps) {
+  const sys = state.compiled!;
+  const view = state.view;
+  if (!isCurves(view)) return null;
+  const names = sys.params.map((q) => plainSubscripted(q.latex));
+  const stateNames = sys.states.map((st) => plainSubscripted(st.latex));
+  const rows = planePointRows(
+    drawnCurves(
+      curveRows(
+        buildCurveJobs(state).map((job) => ({ job, run: state.curveRuns[job.meta.key] })),
+        view.curves.ranges,
+      ),
+    ),
+    view.curves.ranges,
+  );
+  const [a, u] = [names[view.across], names[view.up]];
+  return (
+    <PanelSection title="Special points" count={rows.length} open={open} onToggle={onToggle}>
+      {rows.length === 0 ? (
+        <p className="ds-panel-section-hint caption" data-plane-points="">
+          None on these curves.
+        </p>
+      ) : (
+        <ul className="ds-fp-list" aria-label="Special points" data-plane-points="">
+          {rows.map((pt) => {
+            const info = CODIM2_KINDS[pt.kind];
+            const where = `${a} = ${dec(pt.p[0], 6)}  ${u} = ${dec(pt.p[1], 6)}`;
+            const at = stateNames.map((n, i) => `${n} = ${dec(pt.x[i], 4)}`).join(", ");
+            return (
+              <li key={`${pt.kind}-${pt.p[0]}-${pt.p[1]}`} className="ds-fp-item" data-plane-point={pt.kind}>
+                <button
+                  type="button"
+                  className="ds-fp-row"
+                  aria-label={`${info.name}: ${where}. Set both parameters to it`}
+                  data-tooltip={`${info.name}: set ${a} and ${u} here`}
+                  onClick={() => actions.setPlaneParams(pt.p[0], pt.p[1])}
+                >
+                  <FixedPointIcon kind="half" />
+                  <span className="ds-fp-row-text">
+                    <span className="ds-fp-class">
+                      <span className="body-strong">{info.label}</span> <span className="body">{info.name}</span>
+                    </span>
+                    <span className="ds-fp-eig numeric-sm inspector-special-text">{where}</span>
+                    <span className="ds-fp-eig numeric-sm">{at}</span>
+                    <span className="caption inspector-plane-on">{onCurvesText(pt.on)}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="ds-panel-section-hint caption">
+        {sys.kind === "map"
+          ? "R1 to R4 strong resonances, CH Chenciner, LPPD fold-flip, GPD generalized flip."
+          : "BT Bogdanov–Takens, CP cusp, GH Bautin (generalized Hopf), ZH zero-Hopf, HH Hopf–Hopf."}{" "}
+        Click a row to set both parameters there.
       </p>
     </PanelSection>
   );

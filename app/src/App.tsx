@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useSta
 import { isTauri } from "./api/client";
 import type { RecentProject } from "./api/types";
 import { BranchCanvas } from "./canvas/BranchCanvas";
+import { CurvesCanvas } from "./canvas/CurvesCanvas";
 import { LyapunovCanvas } from "./canvas/LyapunovCanvas";
 import { OrbitCanvas } from "./canvas/OrbitCanvas";
 import { PortraitCanvas } from "./canvas/PortraitCanvas";
@@ -18,7 +19,7 @@ import { projectStem } from "./project/names";
 import { useProjectDocument } from "./project/useProjectDocument";
 import { useShortcuts } from "./project/useShortcuts";
 import { useStudio } from "./state/useStudio";
-import { isContinuation, isLyapunov, isOrbit, isSpace } from "./state/model";
+import { isContinuation, isCurves, isLyapunov, isOrbit, isSpace } from "./state/model";
 import type { Template } from "./templates";
 
 type Theme = "dark" | "light";
@@ -161,7 +162,8 @@ export default function App() {
   const save = useCallback(() => void doc.save(), [doc.save]);
   const saveAs = useCallback(() => void doc.saveAs(), [doc.saveAs]);
 
-  const canExport = state.compiled !== null;
+  // The export formats have no Parameter plane yet (M9 of the special-bifurcations plan).
+  const canExport = state.compiled !== null && !isCurves(state.view);
   useShortcuts(
     {
       new: newSystem,
@@ -192,6 +194,7 @@ export default function App() {
           onSaveAs={saveAs}
           onExport={openExport}
           exportDisabled={!canExport}
+          exportReason={isCurves(state.view) ? "The Parameter plane can't be exported yet; another view can." : undefined}
         />
         <div className="workspace">
           <SystemPanel state={state} actions={actions} />
@@ -210,6 +213,8 @@ export default function App() {
               <OrbitCanvas state={state} actions={actions} toolbar={<CanvasToolbar state={state} actions={actions} />} />
             ) : isContinuation(state.view) ? (
               <BranchCanvas state={state} actions={actions} toolbar={<CanvasToolbar state={state} actions={actions} />} />
+            ) : isCurves(state.view) ? (
+              <CurvesCanvas state={state} actions={actions} toolbar={<CanvasToolbar state={state} actions={actions} />} />
             ) : (
               <PortraitCanvas
                 state={state}
