@@ -63,7 +63,7 @@ def l1(m, u):
     value times omega."""
     _, A, B, C = parts(m, u)
     w, V = np.linalg.eig(A)
-    i = np.argmax(w.imag)
+    i = np.argmin(np.where(w.imag > 0, abs(w.real), np.inf))  # the critical pair, nearest the axis
     om = w[i].imag
     q = V[:, i] / np.linalg.norm(V[:, i])
     wl, W = np.linalg.eig(A.T)
@@ -204,6 +204,70 @@ def lorenz84():
         return [*F_, c[4], c[3]]
 
     solve(bt, [*w, 0.022], "BT (published F=1.4467165, T=0.0209401)")
+
+    # λ⁴ + p₁λ³ + p₂λ² + p₃λ + p₄ has a pair ±iω where p₁p₂p₃ − p₃² − p₁²p₄ = 0 (Routh–Hurwitz).
+    def hopf(A):
+        _, p1, p2, p3, p4 = np.poly(A)
+        return p1 * p2 * p3 - p3**2 - p1**2 * p4
+
+    def arclength(G, u0, u1, h, n):
+        """Pseudo-arclength with a secant predictor: G(u) has len(u) − 1 equations."""
+        path = [np.array(u0, float), np.array(u1, float)]
+        for _ in range(n):
+            t = path[-1] - path[-2]
+            t /= np.linalg.norm(t)
+            pred = path[-1] + h * t
+            path.append(fsolve(lambda u: [*G(u), t @ (u - pred)], pred, xtol=1e-13))
+        return path
+
+    def crossings(path, f):
+        return [a for a, b in zip(path, path[1:]) if f(a) * f(b) < 0]
+
+    def solved(g, u0):
+        """The root of g near u0, or None where fsolve does not converge (a pole of the test)."""
+        u = fsolve(g, u0, xtol=1e-14)
+        return u if np.abs(g(u)).max() < 1e-10 else None
+
+    # The branch at T = 0.04 by arclength from F = 3, past its fold: the three Hopf points.
+    G = lambda u: parts(m, [*u, 0.04])[0]
+    u0 = np.array([*v[:0], *fsolve(lambda q: parts(m, [*q, 3.0, 0.04])[0], [2.9787, -0.0387, 0.0582, -0.0211], xtol=1e-13), 3.0])
+    u1 = np.array([*fsolve(lambda q: parts(m, [*q, 2.999, 0.04])[0], u0[:4], xtol=1e-13), 2.999])
+    branch = arclength(G, u0, u1, 0.003, 1300)
+    on_hopf = lambda u, Tv: [*parts(m, [*u, Tv])[0], hopf(parts(m, [*u, Tv])[1])]
+    hopfs = [fsolve(lambda u: on_hopf(u, 0.04), a, xtol=1e-13) for a in crossings(branch, lambda u: hopf(parts(m, [*u, 0.04])[1]))]
+    for h_ in hopfs:
+        print(f"H at T=0.04: F={h_[4]:.8f} (published 2.85996783, 2.46723305, 1.61975642)")
+    # Each Hopf curve in (x, F, T) from T = 0.04 both ways. HH: the other pair on the axis too,
+    # where p₁ = p₃ = 0. GH: ℓ₁ = 0 where the critical pair is a Hopf pair.
+    poly = lambda u: np.poly(parts(m, list(u))[1])
+    for h_ in hopfs:
+        hc = lambda u: on_hopf(u[:5], u[5])
+        start = np.array([*h_, 0.04])
+        for dT in (1e-4, -1e-4):
+            u1 = np.array([*fsolve(lambda u: on_hopf(u, 0.04 + dT), h_, xtol=1e-13), 0.04 + dT])
+            path = [u for u in arclength(hc, start, u1, 2e-3, 600) if -0.1 < u[5] < 0.2 and 0 < u[4] < 4]
+            for a in crossings(path, lambda u: poly(u)[1]):
+                u = solved(lambda u: [*parts(m, list(u))[0], poly(u)[1], poly(u)[3]], a)
+                if u is None:
+                    continue
+                ev = np.sort_complex(np.linalg.eigvals(parts(m, list(u))[1]))
+                print(f"HH: F={u[4]:.10f} T={u[5]:.10f} x={np.array2string(u[:4], precision=8)} eig={np.round(ev, 6)} (published T=0.02627340)")
+            for a in crossings(path, lambda u: l1(m, list(u))[0]):
+                u = solved(lambda u: [*on_hopf(u[:5], u[5]), l1(m, list(u))[0]], a)
+                if u is None:
+                    continue
+                print(f"GH: F={u[4]:.10f} T={u[5]:.10f} x={np.array2string(u[:4], precision=8)} omega={l1(m, list(u))[1]:.7f} (published 2.3763590350, 0.0501975132)")
+    # ZH on the fold curve: p₄ = 0 and the cubic λ³ + p₁λ² + p₂λ + p₃ has ±iω, p₃ = p₁p₂.
+    fc = lambda u: [*parts(m, list(u))[0], np.linalg.det(parts(m, list(u))[1])]
+    start = np.array([*w, 0.022])
+    u1 = np.array([*fsolve(lambda q: fold(q, 0.0219), w, xtol=1e-13), 0.0219])
+    path = [u for u in arclength(fc, start, u1, 2e-3, 1500) if -0.05 < u[5] < 0.05]
+    for a in crossings(path, lambda u: poly(u)[3] - poly(u)[1] * poly(u)[2]):
+        u = solved(lambda u: [*fc(u), poly(u)[3] - poly(u)[1] * poly(u)[2]], a)
+        if u is None:
+            continue
+        ev = np.sort_complex(np.linalg.eigvals(parts(m, list(u))[1]))
+        print(f"ZH: F={u[4]:.10f} T={u[5]:.10f} x={np.array2string(u[:4], precision=8)} eig={np.round(ev, 6)} (published T=0.00012644, mirror -0.00012655)")
 
 
 def predator_prey_map():
