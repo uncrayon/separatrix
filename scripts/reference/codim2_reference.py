@@ -8,7 +8,8 @@ the result is independent of the code under test.
 
 With --mock-curves PATH it also follows the CO oxidation fold and Hopf curves
 by pseudo-arclength continuation, samples the predator–prey map's curves from
-their closed forms, and writes them as the browser preview's mock data.
+their closed forms, follows the homoclinic curves that start at the CO oxidation's
+Bogdanov–Takens points, and writes them as the browser preview's mock data.
 """
 
 import argparse
@@ -17,6 +18,7 @@ import json
 import numpy as np
 import sympy as sp
 from scipy.integrate import solve_ivp
+from scipy.interpolate import CubicSpline
 from scipy.optimize import brentq, fsolve
 
 np.set_printoptions(precision=6, suppress=True, linewidth=150)
@@ -336,6 +338,127 @@ def delayed_logistic():
         print(f"  1:{q} resonance: r = {rv:.10f}, eps = {2 / rv - 1:.10f}")
 
 
+def shoot(f, A, xs, rho, eps=1e-6, tmax=300.0, chunk=2.0, left=0.3, half=1, escape=False, far=np.inf, rtol=1e-11):
+    """The split function of a homoclinic orbit to the saddle xs, whose unstable
+    manifold is one-dimensional (negate f and A for a one-dimensional stable one).
+
+    One half of that manifold is followed from xs + half eps v, half = ±1. The orbit
+    is back when its distance from the unstable line xs + R v is under rho times the
+    largest distance from xs so far, so the radius scales with the orbit. That
+    needs only the stable coordinates to be small, so it is met for a wide range of
+    parameters around a root, unlike a ball around xs. It counts once the orbit has
+    left, when that distance first reaches `left` of the largest. Returns (l·(x − xs)
+    at the first re-entry, the time of it, that largest distance, True), or None if
+    the orbit does not come back by tmax. With `escape` an orbit that settles or runs
+    to tmax instead gives (l·(x − xs) at its end, that time, the largest distance,
+    False): the side it left on. With `far` it also gives up once the orbit is that far
+    from xs, and `rtol` is the integrator's tolerance."""
+    w, V = np.linalg.eig(A)
+    v = V[:, np.argmax(w.real)].real
+    v *= half / np.linalg.norm(v)
+    wl, W = np.linalg.eig(A.T)
+    l = W[:, np.argmax(wl.real)].real
+    l /= l @ v
+    P = np.eye(len(xs)) - np.outer(v, l)
+    t0, u, top, gone = 0.0, xs + eps * v, eps, False
+    while t0 < tmax:
+        s = solve_ivp(f, [t0, t0 + chunk], u, dense_output=True, rtol=rtol, atol=1e-14, method="DOP853")
+        ts = np.linspace(t0, t0 + chunk, 201)
+        d = s.sol(ts) - xs[:, None]
+        n = np.linalg.norm(d, axis=0)
+        ns = np.linalg.norm(P @ d, axis=0)
+        run = np.maximum(top, np.maximum.accumulate(n))
+        away = gone | np.maximum.accumulate(ns >= left * run)
+        hit = np.concatenate([[gone], away[:-1]]) & (ns < rho * run)
+        if hit.any():
+            k = max(np.argmax(hit), 1)
+            ball = rho * run[k]
+            g = lambda t: np.linalg.norm(P @ (s.sol(t) - xs)) - ball
+            tc = brentq(g, ts[k - 1], ts[k], xtol=1e-12) if g(ts[k - 1]) > 0 else ts[k]
+            return float(l @ (s.sol(tc) - xs)), tc, run[k], True
+        t0, u, top, gone = t0 + chunk, s.y[:, -1], run[-1], bool(away[-1])
+        settled = run[-1] > 1e3 * eps and np.linalg.norm(f(t0, u)) < 1e-9
+        if n.max() > 1e6 or (escape and (settled or n.max() > far)):
+            break
+    return (float(l @ (u - xs)), t0, top, False) if escape and top < 1e6 else None
+
+
+def follow_homoclinic(split, p0, t0, box, close, h=2e-3, h_max=2e-2, h_min=1e-6, tol=1e-8, max_points=3000, done=None, log=None):
+    """Follow the zeros of split(p) in the plane of two parameters, from near the
+    zero p0 in the direction t0 and then the other way. A step predicts along the
+    tangent, then looks for a sign change of split on the line through the
+    prediction normal to the tangent, in windows that double up to half a step,
+    and bisects it. split gives (value, time, size, returned) or None, and only the
+    sign of the value matters, except that the zero is kept only if close(that tuple)
+    holds at an end of its bisection, which a jump to another loop fails; with
+    close=None every sign change is kept. Parameters are scaled by the box. Returns
+    the points, and why each end stopped. done(p) may name a reason to stop at the
+    point p just found."""
+    w = np.array([box[0][1] - box[0][0], box[1][1] - box[1][0]])
+    sign = lambda p: None if (r := split(p * w)) is None else (np.sign(r[0]), r)
+
+    def root_near(q, nrm, e, e_max):
+        """The zero on the line q + s nrm with the smallest window around s = 0, and s."""
+        while e <= e_max:
+            lo, hi = sign(q - e * nrm), sign(q + e * nrm)
+            if lo is not None and hi is not None and lo[0] * hi[0] < 0:
+                a, b = -e, e
+                while b - a > tol:
+                    mid = 0.5 * (a + b)
+                    sm = sign(q + mid * nrm)
+                    if sm is None:
+                        break
+                    a, b = (mid, b) if sm[0] * lo[0] > 0 else (a, mid)
+                ok = close is None or any(close(r) for r in (split((q + a * nrm) * w), split((q + b * nrm) * w)) if r is not None and r[3])
+                if ok:
+                    return 0.5 * (a + b)
+            e *= 2
+        return None
+
+    halves, stops = [], []
+    for direction in (-1, 1):
+        t = direction * np.asarray(t0, float) / w
+        t /= np.linalg.norm(t)
+        p = np.asarray(p0, float) / w
+        s0 = root_near(p, np.array([-t[1], t[0]]), 1e-4, 1e-2)
+        p = p if s0 is None else p + s0 * np.array([-t[1], t[0]])
+        out, step, off, why = [p.copy()], h, 0.0, "range"
+        while True:
+            if len(out) >= max_points:
+                why = "maxPoints"
+                break
+            nrm = np.array([-t[1], t[0]])
+            q = p + step * t
+            s = root_near(q, nrm, max(2 * abs(off), 0.02 * step), 0.5 * step)
+            if s is None:
+                step /= 2
+                if step < h_min:
+                    why = "stepTooSmall"
+                    break
+                continue
+            root = q + s * nrm
+            tn = (root - p) / np.linalg.norm(root - p)
+            if tn @ t < 0.5:
+                step /= 2
+                if step < h_min:
+                    why = "stepTooSmall"
+                    break
+                continue
+            t, p, off = tn, root, s
+            out.append(p.copy())
+            step = min(1.5 * step, h_max) if abs(off) < 0.1 * step else step
+            if log and len(out) % log == 0:
+                print(len(out), np.round(p * w, 6), step, flush=True)
+            if not (box[0][0] <= p[0] * w[0] <= box[0][1] and box[1][0] <= p[1] * w[1] <= box[1][1]):
+                break
+            if done and (reason := done(p * w)):
+                why = reason
+                break
+        halves.append([x * w for x in out])
+        stops.append(why)
+    return halves[0][::-1] + halves[1][1:], stops
+
+
 def freire():
     print("\n===== 4. Freire circuit (AUTO-07p HomCont demo cir) =====")
     r, a3, b3 = 0.6, 0.328578, 0.933578
@@ -365,40 +488,70 @@ def freire():
         sigma = f" sigma={(w[i] + rest[0]).real:.5f}" if abs(rest[0].imag) > 1e-6 else ""
         print(f"{lab:36s} nu={nu:.7f} beta={be:.7f} eig={np.array2string(w, precision=5)}{sigma}")
 
-    def split(nu, be, eps=1e-6, ball=0.05):
-        """The unstable coordinate of the unstable manifold when it first
-        comes back within `ball` of the origin: zero on a homoclinic orbit, up
-        to the curvature of the stable manifold inside the ball."""
-        _, _, v, l = spec(nu, be)
-        leave = lambda t, u, *_: np.linalg.norm(u) - ball
-        leave.direction, leave.terminal = 1, True
-        kw = dict(args=(nu, be), rtol=1e-11, atol=1e-14, method="DOP853")
-        s1 = solve_ivp(f, [0, 400], eps * v, events=leave, **kw)
-        s2 = solve_ivp(f, [0, 60], s1.y[:, -1], dense_output=True, **kw)
-        t = np.linspace(0, 60, 60001)
-        U = s2.sol(t)
-        n = np.linalg.norm(U, axis=0)
-        if not (n > 0.3).any():
-            return None
-        far = np.argmax(n > 0.3)
-        if not (n[far:] < ball).any():
-            return None
-        k = far + np.argmax(n[far:] < ball)
-        return l @ U[:, k], t[k]
+    def split(nu, be, rho=0.05):
+        A = np.array([[-(be + nu) / r, be / r, 0], [be, -be, -1], [0, 1, 0]])
+        return shoot(lambda t, u: f(t, u, nu, be), A, np.zeros(3), rho)
 
-    for be, lo, hi, pts in ((0.6, -0.7240, -0.7190, 26), (0.4535645, -0.7300, -0.7200, 41)):
+    def homoclinic_nu(be, lo, hi, pts, rho):
+        """Every converged root of the split in [lo, hi] at this β."""
         nus = np.linspace(lo, hi, pts)
-        res = [split(n, be) for n in nus]
+        res = [split(n, be, rho) for n in nus]
+        roots = []
         for i in range(pts - 1):
             if res[i] and res[i + 1] and res[i][0] * res[i + 1][0] < 0:
                 a, b, sa = nus[i], nus[i + 1], res[i][0]
-                for _ in range(40):
+                for _ in range(50):
                     mid = 0.5 * (a + b)
-                    sm = split(mid, be)
+                    sm = split(mid, be, rho)
                     if sm is None:
                         break
                     a, b = (mid, b) if sm[0] * sa > 0 else (a, mid)
-                print(f"beta={be}: homoclinic by shooting at nu = {0.5 * (a + b):.8f}, return time {sm[1]:.2f}")
+                root, end = 0.5 * (a + b), split(0.5 * (a + b), be, rho)
+                if end is None:
+                    print(f"  beta={be}, rho={rho}: sign change near nu = {root:.8f} loses the return, dropped")
+                elif abs(end[0]) < 1e-3 * rho * end[2]:
+                    roots.append((root, end[1]))
+                else:
+                    print(f"  beta={be}, rho={rho}: sign change near nu = {root:.8f} is a jump (|split| = {abs(end[0]):.1e}), dropped")
+        return roots
+
+    for be, lo, hi, pts in ((0.6, -0.7240, -0.7190, 26), (0.4535645, -0.7300, -0.7200, 41)):
+        nu = None
+        for rho in (0.05, 0.025, 0.0125):
+            roots = homoclinic_nu(be, lo, hi, pts, rho) if nu is None else homoclinic_nu(be, nu - 1e-4, nu + 1e-4, 9, rho)
+            if not roots:
+                print(f"beta={be}, rho={rho}: no converged root")
+                continue
+            for k, (nu_r, tr) in enumerate(roots):
+                w, i, *_ = spec(nu_r, be)
+                sig = (w[i] + np.delete(w, i)[0]).real
+                print(f"beta={be}, rho={rho}: homoclinic by shooting at nu = {nu_r:.8f}, return time {tr:.2f}, sigma = {sig:.5f}")
+            if rho == 0.05 and nu is None:
+                nu = min(roots, key=lambda q: q[1])[0]
+
+    box = ((-1.2, -0.4), (0.1, 1.0))
+    rho = 0.05
+
+    def shot(p):
+        nu, be = p
+        A = np.array([[-(be + nu) / r, be / r, 0], [be, -be, -1], [0, 1, 0]])
+        return shoot(lambda t, u: f(t, u, nu, be), A, np.zeros(3), rho, escape=True)
+
+    curve, stops = follow_homoclinic(shot, [-0.7213093, 0.6], [-0.037, -1], box, lambda q: abs(q[0]) < 1e-3 * rho * q[2], h_max=1e-2)
+    C = np.array(curve)
+    bt = np.array([-np.sqrt(r), np.sqrt(r)])
+    sig = np.array([(lambda w: (w.real.max() + np.delete(w, w.real.argmax()).real.max()))(spec(*q)[0]) for q in C])
+    print(f"\nHomoclinic curve followed in (nu, beta) from the start point, {len(C)} points, ends: {stops[0]} and {stops[1]}")
+    print(f"  end near BT:  nu = {C[0][0]:.6f}, beta = {C[0][1]:.6f}, {np.linalg.norm(C[0] - bt):.4f} from BT, {np.linalg.norm((C[0] - bt) / [0.8, 0.9]):.4f} in box units")
+    print(f"  other end:    nu = {C[-1][0]:.6f}, beta = {C[-1][1]:.6f}, {np.linalg.norm(C[-1] - bt):.4f} from BT")
+    below = C[np.argsort(C[:, 1])]
+    below = below[np.concatenate([[True], np.diff(below[:, 1]) > 1e-9])]
+    for be, nu_ref in ((0.6, -0.7213093), (0.4535645, -0.7256925)):
+        nu_c = float(CubicSpline(below[:, 1], below[:, 0])(be))
+        print(f"  at beta = {be}: nu = {nu_c:.7f} on the curve, AUTO {nu_ref}, difference {nu_c - nu_ref:+.1e}")
+    flip = np.flatnonzero(np.diff(np.sign(sig)))
+    cross = [C[i][1] + (C[i + 1][1] - C[i][1]) * sig[i] / (sig[i] - sig[i + 1]) for i in flip]
+    print(f"  sigma runs from {sig[0]:.5f} at the BT end to {sig[-1]:.5f}; it changes sign at beta = {', '.join(f'{b:.4f}' for b in cross)} (AUTO: 0.5912315)")
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +670,181 @@ def co_curves(m, hopf, pts):
         print(f"  {kind:14s} {also} (K = 0.4) is {gap:.1e} from the curve followed from {seed}")
         assert gap < 1e-5
         out.append(curve_json(kind, U[:, 3], U[:, 4], U[:, :3], neutral, special, CO_BOX))
-    return {"free": [0, 1], "curves": out}
+        if kind == "hopf":
+            hopf_curve = (U, np.array(neutral))
+    return {"free": [0, 1], "curves": out}, hopf_curve
+
+
+def saddle_quantities(w):
+    """σ, whether the saddle is a saddle-focus, and whether Shilnikov's chaos is near,
+    from the eigenvalues w of a saddle with a one-dimensional unstable manifold, or a
+    one-dimensional stable one (the orbit is then followed in reversed time)."""
+    pos, neg = w[w.real > 0], w[w.real < 0]
+    lead = lambda v: v[np.argmin(np.abs(v.real))]
+    reverse = len(pos) == 2
+    two, one = (pos, neg) if reverse else (neg, pos)
+    pair = lead(two)
+    focus = bool(abs(pair.imag) > 1e-9)
+    return float(lead(pos).real + lead(neg).real), focus, bool(focus and abs(pair.real) < abs(one[0].real)), reverse
+
+
+def equilibria(m, p, centre, radius, tries=300):
+    sols = []
+    rng = np.random.default_rng(1)
+    for _ in range(tries):
+        x, _, ok, _ = fsolve(lambda y: np.array(m["F"](*y, *p), float).ravel(), centre + radius * rng.uniform(-1, 1, len(centre)), xtol=1e-13, full_output=True)
+        if ok == 1 and np.linalg.norm(np.array(m["F"](*x, *p), float)) < 1e-11 and not any(np.linalg.norm(x - y) < 1e-7 for y in sols):
+            sols.append(x)
+    return sols
+
+
+def co_homoclinic(m, pts, hopf_curve):
+    """Homoclinic curves of the CO oxidation model that start at its Bogdanov–Takens points.
+
+    Near such a point the saddle of the saddle / anti-saddle pair has a one-dimensional
+    unstable manifold, and its two halves end at the anti-saddle or at the sink far away
+    from it. The homoclinic curve is where a half flips from one to the other, a zero of
+    the side it ends on, so that is what is followed, by follow_homoclinic."""
+    print("\n===== Mock curves: CO oxidation homoclinic orbits from the Bogdanov–Takens points =====")
+    U, neutral = hopf_curve
+    scale = np.array([CO_BOX[0][1] - CO_BOX[0][0], CO_BOX[1][1] - CO_BOX[1][0]])
+    out = []
+    for key in ("BT1", "BT2"):
+        bt = pts[key]
+        dist = np.linalg.norm((U[:, 3:5] - bt[3:5]) / scale, axis=1)
+        near = int(np.argmin(dist))
+        true_side = [i for i in range(len(U)) if not neutral[i] and dist[i] > 0.04 and abs(i - near) < 200]
+        side = np.sign(true_side[0] - near)
+        print(f"  {key}: Hopf curve, nearest point {near} ({dist[near]:.1e} from {key}), true Hopf for index {'above' if side > 0 else 'below'} it")
+        start = None
+        for i in sorted(true_side, key=lambda i: dist[i]):
+            if abs(i - near) % 10:
+                continue
+            at = U[i, 3:5]
+            tang = U[i + 1, 3:5] - U[i - 1, 3:5]
+            tang /= np.linalg.norm(tang)
+            nrm = np.array([-tang[1], tang[0]])
+            saddles = [x for x in equilibria(m, at, U[i, :3], 0.3) if (np.linalg.eigvals(np.array(m["J"](*x, *at), float)).real > 0).sum() == 1 and np.abs(np.linalg.eigvals(np.array(m["J"](*x, *at), float)).imag).max() < 1e-9]
+            if not saddles:
+                continue
+            x_s = min(saddles, key=lambda x: np.linalg.norm(x - U[i, :3]))
+            others = [x for x in equilibria(m, at, U[i, :3], 0.6) if np.linalg.norm(x - x_s) > 1e-6 and x.min() >= 0 and x.sum() <= 1]
+            track = {"x": x_s, "a": min(others, key=lambda x: np.linalg.norm(x - x_s)), "n": max(others, key=lambda x: np.linalg.norm(x - x_s)), "hist": []}
+            for half in (1, -1):
+                side_of = co_side(m, track, half)
+                ds = np.linspace(-4e-3, 4e-3, 41)
+                vals = [side_of(at + d * nrm) for d in ds]
+                for j in range(len(ds) - 1):
+                    if vals[j] is not None and vals[j + 1] is not None and vals[j][0] * vals[j + 1][0] < 0:
+                        a, b = ds[j], ds[j + 1]
+                        for _ in range(40):
+                            mid = 0.5 * (a + b)
+                            a, b = (mid, b) if side_of(at + mid * nrm)[0] * vals[j][0] > 0 else (a, mid)
+                        start = (at + 0.5 * (a + b) * nrm, tang, half, side_of, track, i)
+                        break
+                if start:
+                    break
+            if start:
+                break
+        if start is None:
+            print(f"  {key}: no flip of the unstable manifold's ends near the Hopf curve, no homoclinic curve")
+            continue
+        p0, tang, half, side_of, track, i = start
+        print(f"  {key}: homoclinic point {np.round(p0, 6)} near Hopf point {i}, half {half:+d} of the unstable manifold")
+        pts_h, stops = follow_homoclinic(side_of, p0, tang, CO_BOX, None, h=2e-3, h_max=5e-3, tol=1e-7, done=lambda p: "shrunk" if one_dimensional(m, track, p) < 0.01 else None, log=20)
+        P = np.array(pts_h)
+        print(f"  {key}: {len(P)} points, ends {np.round(P[0], 5)} ({stops[0]}) and {np.round(P[-1], 5)} ({stops[1]})")
+        out.append(hom_json(m, key, bt, P, stops, half, track))
+    return out
+
+
+def co_side(m, track, half, rho0=0.05):
+    """Which way the half of the saddle's unstable manifold ends: +1 at the
+    anti-saddle's side, -1 at the sink far from it; None where the equilibria are lost."""
+
+    def newton(p, x0):
+        x = fsolve(lambda y: np.array(m["F"](*y, *p), float).ravel(), x0, xtol=1e-14)
+        return x if np.linalg.norm(np.array(m["F"](*x, *p), float)) < 1e-10 and np.linalg.norm(x - x0) < 0.1 else None
+
+    def side(p):
+        if track["hist"]:
+            nearest = min(track["hist"], key=lambda h: np.linalg.norm(h[0] - p))
+            track.update(x=nearest[1], a=nearest[2], n=nearest[3])
+        x, a, n = (newton(p, track[k]) for k in "xan")
+        if x is None or a is None or n is None:
+            return None
+        A = np.array(m["J"](*x, *p), float)
+        w = np.linalg.eigvals(A)
+        if (w.real > 0).sum() not in (1, 2):
+            return None
+        sign = 1 if (w.real > 0).sum() == 1 else -1
+        track.update(x=x, a=a, n=n)
+        track["hist"].append((np.array(p, float), x, a, n))
+        far = 0.5 * np.linalg.norm(n - x)
+        r = shoot(lambda t, u: sign * np.array(m["F"](*u, *p), float).ravel(), sign * A, x, rho0, tmax=1500.0, chunk=5.0, half=half, escape=True, left=2.0, far=far, rtol=1e-9)
+        return None if r is None else (1.0 if r[2] < far else -1.0, r[1], r[2], True)
+
+    return side
+
+
+def saddle_at(m, track, p):
+    """The saddle at p, from the nearest one tracked so far, and its eigenvalues."""
+    x = fsolve(lambda y: np.array(m["F"](*y, *p), float).ravel(), min(track["hist"], key=lambda h: np.linalg.norm(h[0] - p))[1], xtol=1e-14)
+    return x, np.linalg.eigvals(np.array(m["J"](*x, *p), float))
+
+
+def one_dimensional(m, track, p):
+    """The size of the eigenvalue of the saddle's one-dimensional manifold, which goes to 0 at a Bogdanov–Takens point."""
+    w = saddle_at(m, track, p)[1]
+    return abs(w.real.max()) if (w.real > 0).sum() == 1 else abs(w.real.min())
+
+
+def hom_json(m, key, bt, P, stops, half, track):
+    """The homoclinic curve P (rows of k₂, K) as the preview's mock entry, with the saddle,
+    σ and the rest at each point, and the Bogdanov–Takens point it starts from."""
+    r = lambda v: float(f"{v:.8g}")
+    cols = {k: [] for k in ("x", "sigma", "focus", "chaotic", "returnTime", "reversed")}
+    missing = []
+    for p in P:
+        x, w = saddle_at(m, track, p)
+        A = np.array(m["J"](*x, *p), float)
+        sigma, focus, chaotic, reverse = saddle_quantities(w)
+        sign = -1 if reverse else 1
+        # The slower the stable direction against the unstable one, the larger a radius the return has to be measured at.
+        slow = min(1.0, -(sign * w).real[(sign * w).real < 0].max() / (sign * w).real.max())
+        field = lambda t, u: sign * np.array(m["F"](*u, *p), float).ravel()
+        for rho in (min(0.12, 0.05**slow), 0.12, 0.05):
+            back = shoot(field, sign * A, x, rho, tmax=1500.0, chunk=5.0, half=half, escape=True, rtol=1e-9)
+            if back[3]:
+                break
+        if not back[3]:
+            missing.append(len(cols["sigma"]))
+        cols["x"] += [r(v) for v in x]
+        cols["sigma"].append(r(sigma))
+        cols["focus"].append(focus)
+        cols["chaotic"].append(chaotic)
+        cols["returnTime"].append(r(back[1]) if back[3] else None)
+        cols["reversed"].append(reverse)
+    for i in missing:
+        near = [j for j in range(len(P)) if cols["returnTime"][j] is not None]
+        cols["returnTime"][i] = cols["returnTime"][min(near, key=lambda j: abs(j - i))]
+    print(f"  {key}: no first return found at {len(missing)} of {len(P)} points; they take the return time of the nearest point that has one")
+    print(f"  {key}: sigma in [{min(cols['sigma']):.5f}, {max(cols['sigma']):.5f}], focus at {sum(cols['focus'])} points, chaotic at {sum(cols['chaotic'])}, reversed {cols['reversed'][0]}")
+    return {
+        "bt": [r(bt[3]), r(bt[4])],
+        "x": [r(v) for v in bt[:3]],
+        "curve": {
+            "p1": [r(v) for v in P[:, 0]],
+            "p2": [r(v) for v in P[:, 1]],
+            "x": cols["x"],
+            "sigma": cols["sigma"],
+            "focus": cols["focus"],
+            "chaotic": cols["chaotic"],
+            "returnTime": cols["returnTime"],
+            "reversed": cols["reversed"][0],
+            "end": {"first": stops[0], "last": stops[1]},
+        },
+    }
 
 
 def pp_curves(pts):
@@ -603,7 +930,9 @@ if __name__ == "__main__":
     delayed_logistic()
     freire()
     if path:
-        data = {"co-oxidation": co_curves(*co), "predator-prey-map": pp_curves(pp)}
+        co_data, hopf_curve = co_curves(*co)
+        co_data["homoclinic"] = co_homoclinic(co[0], co[2], hopf_curve)
+        data = {"co-oxidation": co_data, "predator-prey-map": pp_curves(pp)}
         with open(path, "w") as f:
             json.dump(data, f, separators=(",", ":"))
             f.write("\n")
