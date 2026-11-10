@@ -157,6 +157,18 @@ def bykov():
         ("GH  (published 0.924255, 0.305879)", [0.064311, 0.211095, 0.554870, 0.924255, 0.305879]),
     ]):
         pts[key] = solve(lambda v: [*parts(m, v)[0], hopf(parts(m, v)[1]), l1(m, v)[0]], u0, lab, lambda v: "omega=%.6f" % l1(m, v)[1])
+    # At K = 2 the Hopf test c₀ = c₁c₂ holds with c₁ < 0: eigenvalues ±√(−c₁), a neutral saddle.
+    at2 = lambda v: parts(m, [*v, 2.0])
+    for lab, u0 in [
+        ("K=2 neutral (published Q2=1.271108)", [0.019639, 0.726320, 0.084680, 1.271108]),
+        ("K=2 neutral (published Q2=1.640254)", [0.128699, 0.384105, 0.162399, 1.640254]),
+    ]:
+        solve(
+            lambda v: [*at2(v)[0], hopf(at2(v)[1])],
+            u0,
+            lab,
+            lambda v: "Q2=%.10f c1=%.6f eig=%s" % (v[3], np.poly(at2(v)[1])[2], np.sort(np.linalg.eigvals(at2(v)[1]).real)),
+        )
     return m, hopf, {k: np.array(v, float) for k, v in pts.items()}
 
 

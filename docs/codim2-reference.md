@@ -75,8 +75,17 @@ Two parameters:
 The cusp's state is the least well conditioned: MatCont prints `(0.035940, 0.352008, 0.451368)`.
 The coefficients `(a, b)`, `c` and `ℓ₂` are not recomputed.
 
-At `K = 2` the two Hopf labels on the equilibrium curve are neutral saddles (`k₂ = 1.271108` and
-`1.640254`), which must not be reported as Hopf points.
+At `K = 2` the Hopf test changes sign twice on the equilibrium curve. Both points are neutral
+saddles, with real eigenvalues `±κ`, and must not be reported as Hopf points:
+
+| Point | k₂ published | k₂ recomputed | (x, y, s) recomputed | Eigenvalues recomputed |
+| --- | --- | --- | --- | --- |
+| Neutral saddle | 1.271108 | 1.2711072431 | (0.01963903, 0.72632119, 0.08467993) | ±0.141035, −10.805364 |
+| Neutral saddle | 1.640254 | 1.6402536400 | (0.12869877, 0.38410555, 0.16239856) | ±0.126780, −10.833563 |
+
+The first published value is one unit off in its sixth decimal: the recomputed `1.2711072431`
+rounds to `1.271107`. The two-parameter Hopf curve from `K = 0.4` reaches `K = 2` at the same
+`1.2711072431`.
 
 ## 2. Extended Lorenz-84 (flow, 4 equations)
 

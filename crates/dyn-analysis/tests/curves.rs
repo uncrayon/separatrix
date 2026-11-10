@@ -235,10 +235,8 @@ fn co_oxidation_hopf_curve_turns_neutral_past_each_bogdanov_takens_point() {
     let co = co();
     let ranges = ((0.5, 2.0), (0.4, 2.0));
     let cases = [
-        (1.0410, (1.41762764, 0.97139757), Some(1.640254)),
-        // The published 1.271108 is not checked: f = 0 with c₀ = c₁c₂ at
-        // K = 2, solved directly, gives 1.27110724, as this curve does.
-        (1.0516, (1.16119871, 0.72233907), None),
+        (1.0410, (1.41762764, 0.97139757), 1.6402536400),
+        (1.0516, (1.16119871, 0.72233907), 1.2711072431),
     ];
     for (k2, bt, at_k_2) in cases {
         let c = co.curve(SpecialKind::Hopf, k2, ranges, 0.01);
@@ -254,13 +252,11 @@ fn co_oxidation_hopf_curve_turns_neutral_past_each_bogdanov_takens_point() {
         );
         let last = c.points.last().unwrap();
         assert_eq!(last.p.1, 2.0);
-        if let Some(want) = at_k_2 {
-            assert!(
-                (last.p.0 - want).abs() <= 5e-7,
-                "neutral at k2 = {}",
-                last.p.0
-            );
-        }
+        assert!(
+            (last.p.0 - at_k_2).abs() <= 1e-8,
+            "neutral at k2 = {}",
+            last.p.0
+        );
     }
 }
 
