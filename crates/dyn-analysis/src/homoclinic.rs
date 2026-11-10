@@ -459,9 +459,15 @@ impl Shooter<'_> {
 
     /// The homoclinic orbit between two neighbouring samples of `path`: a
     /// sign change of the split, or the edge of the set where it is defined,
-    /// bisected in `t` until the parameters agree to `1e-13`. It is a root
-    /// only if the split went to zero; a jump of the split, or an edge where
-    /// the orbit grazes the ellipsoid, is not.
+    /// bisected in `t` until the midpoint's parameters round to an end's. It
+    /// is a root only if the split went to zero; a jump of the split, or an
+    /// edge where the orbit grazes the ellipsoid, is not.
+    ///
+    /// The bisection runs to the resolution of `f64` because the split can
+    /// be steep: next to CO oxidation's first BT point, in the box of the
+    /// tests, it moves by 3e-6 when the parameters move by 1e-13 of
+    /// themselves, so a bracket stopped there passed [`ROOT_SPLIT`] or not
+    /// by the last digits of the BT point.
     fn root(
         &self,
         path: &dyn Fn(f64) -> Vec<f64>,
@@ -476,16 +482,11 @@ impl Shooter<'_> {
         };
         let positive = lo.split().is_some_and(|s| s > 0.0);
         for _ in 0..MAX_ROOT_BISECTION {
-            let pinned = lo
-                .params
-                .iter()
-                .zip(&hi.params)
-                .all(|(l, h)| (h - l).abs() <= 1e-13 * (1.0 + l.abs()));
-            if pinned {
-                break;
-            }
             let t = 0.5 * (lo.t + hi.t);
             let params = path(t);
+            if params == lo.params || params == hi.params {
+                break;
+            }
             let Some(lin) = linearize(
                 self.f,
                 &params,
