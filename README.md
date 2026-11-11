@@ -69,10 +69,13 @@ Build the installers for your platform:
 
 ```sh
 cd app
-npx tauri build
+npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
-The installers land in `target/release/bundle/`.
+The installers land in `target/release/bundle/`. The flag skips the updater signatures, whose key
+only the Release workflow holds; without it the build stops at the end. Each OS builds its own
+installers. [docs/building.md](docs/building.md) has the exact commands for macOS, Linux (also from
+a Mac, with Docker) and Windows.
 
 ## Repository layout
 
